@@ -282,10 +282,12 @@ use crate::notification::NotificationContext;
 use crate::root_view::{
     quake_mode_window_id, quake_mode_window_is_open, OpenFromRestoredArg, OpenPath,
 };
+#[cfg(not(feature = "local_only"))]
+use crate::server::telemetry::TelemetryCollector;
 pub use crate::server::telemetry::{
     AgentModeEntrypoint, AgentModeEntrypointSelectionType, TelemetryEvent,
 };
-use crate::server::telemetry::{AppStartupInfo, CloseTarget, PaletteSource, TelemetryCollector};
+use crate::server::telemetry::{AppStartupInfo, CloseTarget, PaletteSource};
 use crate::terminal::CustomSecretRegexUpdater;
 use crate::util::bindings::is_binding_cross_platform;
 use crate::workspace::{PaneViewLocator, Workspace, WorkspaceAction};
@@ -1181,14 +1183,14 @@ fn initialize_app(
     ctx.add_singleton_model(AntivirusInfo::new);
 
     cfg_if::cfg_if! {
-        if #[cfg(feature = "crash_reporting")] {
+        if #[cfg(all(feature = "crash_reporting", not(feature = "local_only")))] {
             let is_crash_reporting_enabled = crash_reporting::init(ctx);
         } else {
             let is_crash_reporting_enabled = false;
         }
     }
     // Send buffered pre-init errors to Sentry now that the client is ready.
-    #[cfg(feature = "crash_reporting")]
+    #[cfg(all(feature = "crash_reporting", not(feature = "local_only")))]
     for err in _pre_sentry_errors {
         sentry::integrations::anyhow::capture_anyhow(&err);
     }
@@ -1413,12 +1415,15 @@ fn initialize_app(
     ctx.add_singleton_model(CustomSecretRegexUpdater::new);
 
     // Register the `TelemetryCollection` singleton model.
-    let server_api_clone = server_api.clone();
-    ctx.add_singleton_model(|ctx| {
-        let telemetry_collector = TelemetryCollector::new(server_api_clone);
-        telemetry_collector.initialize_telemetry_collection(ctx);
-        telemetry_collector
-    });
+    #[cfg(not(feature = "local_only"))]
+    {
+        let server_api_clone = server_api.clone();
+        ctx.add_singleton_model(|ctx| {
+            let telemetry_collector = TelemetryCollector::new(server_api_clone);
+            telemetry_collector.initialize_telemetry_collection(ctx);
+            telemetry_collector
+        });
+    }
     timer.mark_interval_end("INITIALIZE_TELEMETRY_COLLECTION");
 
     // Register initial keybindings prior to creating menus
@@ -1845,11 +1850,14 @@ fn app_callbacks(is_integration_test: bool) -> warpui::platform::AppCallbacks {
             }
             ctx.dispatch_global_action("root_view:update_quake_mode_state", &update_quake_mode_arg);
 
-            let auth_state = AuthStateProvider::as_ref(ctx).get();
-            ctx.record_app_blur(
-                auth_state.user_id().map(|uid| uid.as_string()),
-                auth_state.anonymous_id(),
-            );
+            #[cfg(not(feature = "local_only"))]
+            {
+                let auth_state = AuthStateProvider::as_ref(ctx).get();
+                ctx.record_app_blur(
+                    auth_state.user_id().map(|uid| uid.as_string()),
+                    auth_state.anonymous_id(),
+                );
+            }
         })),
         on_will_terminate: Some(Box::new(move |ctx| {
             NotebookManager::handle(ctx).update(ctx, |manager, ctx| {
@@ -1862,14 +1870,17 @@ fn app_callbacks(is_integration_test: bool) -> warpui::platform::AppCallbacks {
                 writer.terminate();
             });
 
-            let auth_state = AuthStateProvider::as_ref(ctx).get();
-            ctx.try_record_daily_app_focus_duration(
-                auth_state.user_id().map(|uid| uid.as_string()),
-                auth_state.anonymous_id(),
-            );
-            TelemetryCollector::handle(ctx).update(ctx, |telemetry_collector, ctx| {
-                telemetry_collector.flush_telemetry_events_for_shutdown(ctx);
-            });
+            #[cfg(not(feature = "local_only"))]
+            {
+                let auth_state = AuthStateProvider::as_ref(ctx).get();
+                ctx.try_record_daily_app_focus_duration(
+                    auth_state.user_id().map(|uid| uid.as_string()),
+                    auth_state.anonymous_id(),
+                );
+                TelemetryCollector::handle(ctx).update(ctx, |telemetry_collector, ctx| {
+                    telemetry_collector.flush_telemetry_events_for_shutdown(ctx);
+                });
+            }
 
             // Shutdown all LSP servers gracefully before app termination
             lsp::LspManagerModel::handle(ctx).update(ctx, |manager, ctx| {
@@ -2334,6 +2345,13 @@ pub fn init_feature_flags() {
             FeatureFlag::CreateEnvironmentSlashCommand,
             FeatureFlag::CloudEnvironments,
             FeatureFlag::ForceLogin,
+            FeatureFlag::CrashReporting,
+            FeatureFlag::CocoaSentry,
+            FeatureFlag::LogExpensiveFramesInSentry,
+            FeatureFlag::RecordAppActiveEvents,
+            FeatureFlag::SendTelemetryToFile,
+            FeatureFlag::WithSandboxTelemetry,
+            FeatureFlag::AgentModeAnalytics,
         ];
         for flag in disabled_flags {
             flag.set_enabled(false);

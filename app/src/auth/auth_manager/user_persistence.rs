@@ -1,13 +1,16 @@
 use serde::{Deserialize, Serialize};
 use warp_graphql::scalars::time::ServerTimestamp;
 use warpui::AppContext;
-use warpui_extras::secure_storage::{self, AppContextExt};
+use warpui_extras::secure_storage;
+#[cfg(not(feature = "local_only"))]
+use warpui_extras::secure_storage::AppContextExt;
 
 use crate::auth::{
     user::{AnonymousUserType, FirebaseAuthTokens, PersonalObjectLimits, UserMetadata},
     UserUid,
 };
 
+#[cfg(not(feature = "local_only"))]
 const USER_STORAGE_KEY: &str = "User";
 
 /// Helper function to set `true` as the default for a serde field on PersistedUser.

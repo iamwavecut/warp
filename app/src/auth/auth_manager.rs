@@ -9,9 +9,9 @@ use settings::Setting as _;
 use uuid::Uuid;
 use warp_core::channel::ChannelState;
 use warp_core::features::FeatureFlag;
-use warp_graphql::mutations::create_anonymous_user::{
-    AnonymousUserType, CreateAnonymousUserResult,
-};
+#[cfg(not(feature = "local_only"))]
+use warp_graphql::mutations::create_anonymous_user::AnonymousUserType;
+use warp_graphql::mutations::create_anonymous_user::CreateAnonymousUserResult;
 use warpui::{clipboard::ClipboardContent, Entity, ModelContext, SingletonEntity, UpdateModel};
 
 use super::auth_state::{AuthState, PersistAction};
@@ -55,6 +55,7 @@ use url::Url;
 use user_persistence::PersistedUser;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "local_only", allow(dead_code))]
 pub enum AuthManagerEvent {
     /// Successfully authenticated a user with no errors.
     AuthComplete,
@@ -102,6 +103,7 @@ pub struct AuthManager {
     pending_auth_state: Option<String>,
 }
 
+#[cfg_attr(feature = "local_only", allow(dead_code))]
 impl AuthManager {
     /// Creates a new instance of the AuthManager. The auth state must already be initialized through
     /// [`AuthStateProvider`].

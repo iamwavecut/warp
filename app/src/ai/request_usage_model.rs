@@ -1,5 +1,6 @@
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent::AIAgentExchangeId;
+#[cfg(not(feature = "local_only"))]
 use crate::auth::AuthStateProvider;
 use crate::pricing::PricingInfoModel;
 use crate::server::server_api::ai::AIClient;
@@ -7,6 +8,7 @@ use crate::settings::AISettings;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::workspaces::workspace::WorkspaceUid;
 use crate::BlocklistAIHistoryModel;
+#[cfg(not(feature = "local_only"))]
 use ai::api_keys::ApiKeyManager;
 use chrono::{DateTime, Utc};
 use instant::Instant;
@@ -49,6 +51,7 @@ pub struct BonusGrant {
 }
 
 /// The key for the corresponding entry in UserDefaults.
+#[cfg_attr(feature = "local_only", allow(dead_code))]
 const REQUEST_LIMIT_INFO_CACHE_KEY: &str = "AIRequestLimitInfo";
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -148,6 +151,7 @@ impl RequestLimitInfo {
     }
 }
 
+#[cfg_attr(feature = "local_only", allow(dead_code))]
 fn cache_request_limit_info(request_limit_info: RequestLimitInfo, app_mut: &mut AppContext) {
     if let Ok(serialized) = serde_json::to_string(&request_limit_info) {
         let _ = app_mut
@@ -156,6 +160,7 @@ fn cache_request_limit_info(request_limit_info: RequestLimitInfo, app_mut: &mut 
     }
 }
 
+#[cfg_attr(feature = "local_only", allow(dead_code))]
 fn get_cached_request_limit_info(app_mut: &mut AppContext) -> Option<RequestLimitInfo> {
     app_mut
         .private_user_preferences()
@@ -183,6 +188,7 @@ impl Entity for AIRequestUsageModel {
 }
 
 pub enum AIRequestUsageModelEvent {
+    #[cfg_attr(feature = "local_only", allow(dead_code))]
     RequestUsageUpdated,
     RequestBonusRefunded {
         requests_refunded: i32,
@@ -193,25 +199,26 @@ pub enum AIRequestUsageModelEvent {
 
 impl AIRequestUsageModel {
     pub fn new(ai_client: Arc<dyn AIClient>, ctx: &mut ModelContext<Self>) -> Self {
-        // Check if the user has cached request limit info from before.
-        // This is only used to show the latest known value before we finish refreshing from the server below.
-        let cached_request_limit_info = get_cached_request_limit_info(ctx);
-        let request_limit_info = cached_request_limit_info.unwrap_or_default();
+        #[cfg(not(feature = "local_only"))]
+        let request_limit_info = get_cached_request_limit_info(ctx).unwrap_or_default();
 
         #[cfg(feature = "local_only")]
-        let request_limit_info = RequestLimitInfo {
-            limit: 999999999,
-            num_requests_used_since_refresh: 0,
-            next_refresh_time: ServerTimestamp::new(Utc::now() + chrono::Duration::days(365)),
-            is_unlimited: true,
-            request_limit_refresh_duration: RequestLimitRefreshDuration::Monthly,
-            is_unlimited_voice: true,
-            voice_request_limit: 999999999,
-            voice_requests_used_since_last_refresh: 0,
-            is_unlimited_codebase_indices: true,
-            max_codebase_indices: 999999,
-            max_files_per_repo: 999999,
-            embedding_generation_batch_size: 100,
+        let request_limit_info = {
+            let _ = ctx;
+            RequestLimitInfo {
+                limit: 999999999,
+                num_requests_used_since_refresh: 0,
+                next_refresh_time: ServerTimestamp::new(Utc::now() + chrono::Duration::days(365)),
+                is_unlimited: true,
+                request_limit_refresh_duration: RequestLimitRefreshDuration::Monthly,
+                is_unlimited_voice: true,
+                voice_request_limit: 999999999,
+                voice_requests_used_since_last_refresh: 0,
+                is_unlimited_codebase_indices: true,
+                max_codebase_indices: 999999,
+                max_files_per_repo: 999999,
+                embedding_generation_batch_size: 100,
+            }
         };
 
         Self {
@@ -269,6 +276,7 @@ impl AIRequestUsageModel {
         }
     }
 
+    #[cfg_attr(feature = "local_only", allow(dead_code))]
     pub fn update_request_limit_info(
         &mut self,
         request_limit_info: RequestLimitInfo,
@@ -544,6 +552,7 @@ impl AIRequestUsageModel {
             .unwrap_or(0)
     }
 
+    #[cfg_attr(feature = "local_only", allow(dead_code))]
     fn total_user_interactive_bonus_credits_remaining(&self) -> i32 {
         let now = Utc::now();
         self.bonus_grants

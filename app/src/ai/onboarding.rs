@@ -4,9 +4,13 @@ use ai::LLMId;
 use onboarding::slides::OnboardingModelInfo;
 use onboarding::OnboardingAuthState;
 use warp_core::ui::icons::Icon;
-use warpui::{AppContext, SingletonEntity};
+use warpui::AppContext;
+#[cfg(not(feature = "local_only"))]
+use warpui::SingletonEntity;
 
+#[cfg(not(feature = "local_only"))]
 use crate::auth::AuthStateProvider;
+#[cfg(not(feature = "local_only"))]
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
 use super::llms::{DisableReason, LLMInfo, LLMPreferences};

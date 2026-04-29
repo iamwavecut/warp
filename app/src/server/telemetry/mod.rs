@@ -1,3 +1,4 @@
+#[cfg(not(feature = "local_only"))]
 mod collector;
 mod context;
 pub mod context_provider;
@@ -7,6 +8,7 @@ pub mod rudder_message;
 pub mod secret_redaction;
 
 use chrono::Utc;
+#[cfg(not(feature = "local_only"))]
 pub use collector::*;
 pub use context::telemetry_context;
 pub use events::*;
@@ -42,6 +44,7 @@ fn rudder_event_file_path() -> PathBuf {
 }
 
 /// Removes all telemetry events from the app telemetry event queue.
+#[cfg_attr(feature = "local_only", allow(dead_code))]
 pub fn clear_event_queue() {
     let _ = warpui::telemetry::flush_events();
 }
