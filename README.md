@@ -147,10 +147,18 @@ Run the built binary directly:
 ./target/debug/warp-oss
 ```
 
-Optional: build a macOS `.app` bundle. This requires `cargo-bundle` and signing tooling installed by the bootstrap script:
+Optional: build a macOS `.app` bundle. This requires `cargo-bundle` and signing tooling installed by the bootstrap script.
+
+If `cargo-bundle` is missing, install the revision used by Warp's bootstrap script:
 
 ```bash
-./script/run --features local_only --dont-open
+cargo install cargo-bundle --git=https://github.com/burtonageo/cargo-bundle --rev ae4c76e92c08774bf54ff077b1c52e3d1cd6c16d
+```
+
+When running in some non-interactive terminals, this `cargo-bundle` revision can panic with `Term(ColorOutOfRange)`. Use a 256-color TERM plus no-color env flags:
+
+```bash
+TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
 ```
 
 The app bundle is created under:
@@ -243,6 +251,7 @@ On the current macOS development machine, the following checks were run successf
 cargo fmt --check
 cargo build --features local_only --all-targets
 cargo build --features gui,local_only -p warp --bin warp-oss
+TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
 ```
 
 The repository scripts referenced by the Linux/macOS paths were syntax-checked with `bash -n`, and the Windows build scripts were inspected for the documented PowerShell entrypoints.
