@@ -6,7 +6,6 @@ use regex::Regex;
 #[cfg(not(feature = "local_only"))]
 use warp_core::features::FeatureFlag;
 use warp_core::report_if_error;
-use warp_core::user_preferences::GetUserPreferences as _;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity, UpdateModel};
 
 use crate::ai::blocklist::telemetry_banner::should_collect_ai_ugc_telemetry;
@@ -258,52 +257,29 @@ impl PrivacySettings {
         let auth_client = ServerApiProvider::as_ref(ctx).get_auth_client();
 
         #[cfg(feature = "local_only")]
-        let is_telemetry_enabled = false;
-        #[cfg(not(feature = "local_only"))]
-        let is_telemetry_enabled: bool = ctx
-            .private_user_preferences()
-            .read_value(TELEMETRY_ENABLED_DEFAULTS_KEY)
-            .unwrap_or_default()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(true);
+        let (
+            is_telemetry_enabled,
+            is_crash_reporting_enabled,
+            is_cloud_conversation_storage_enabled,
+        ) = (false, false, false);
 
-        #[cfg(feature = "local_only")]
-        let is_crash_reporting_enabled = false;
         #[cfg(not(feature = "local_only"))]
-        let is_crash_reporting_enabled: bool = ctx
-            .private_user_preferences()
-            .read_value(CRASH_REPORTING_ENABLED_DEFAULTS_KEY)
-            .unwrap_or_default()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(true);
-
-        #[cfg(feature = "local_only")]
-        let is_cloud_conversation_storage_enabled = false;
-        #[cfg(not(feature = "local_only"))]
-        let is_cloud_conversation_storage_enabled: bool = ctx
-            .private_user_preferences()
-            .read_value(CLOUD_CONVERSATION_STORAGE_ENABLED_DEFAULTS_KEY)
-            .unwrap_or_default()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(true);
-
-        // Make sure the user-preferences stores match what's in memory.
-        // Needed for warp drive preferences to work and no harm in doing in general.
-        let _ = ctx.private_user_preferences().write_value(
-            TELEMETRY_ENABLED_DEFAULTS_KEY,
-            serde_json::to_string(&is_telemetry_enabled)
-                .expect("is_telemetry_enabled is a boolean."),
-        );
-        let _ = ctx.private_user_preferences().write_value(
-            CRASH_REPORTING_ENABLED_DEFAULTS_KEY,
-            serde_json::to_string(&is_crash_reporting_enabled)
-                .expect("is_crash_reporting_enabled is a boolean."),
-        );
-        let _ = ctx.private_user_preferences().write_value(
-            CLOUD_CONVERSATION_STORAGE_ENABLED_DEFAULTS_KEY,
-            serde_json::to_string(&is_cloud_conversation_storage_enabled)
-                .expect("is_cloud_conversation_storage_enabled is a boolean."),
-        );
+        let (
+            is_telemetry_enabled,
+            is_crash_reporting_enabled,
+            is_cloud_conversation_storage_enabled,
+        ) = {
+            // Initialize from `WarpDrivePrivacySettings`, which is the source of truth for these
+            // booleans.
+            let warp_drive_privacy = WarpDrivePrivacySettings::as_ref(ctx);
+            (
+                *warp_drive_privacy.is_telemetry_enabled.value(),
+                *warp_drive_privacy.is_crash_reporting_enabled.value(),
+                *warp_drive_privacy
+                    .is_cloud_conversation_storage_enabled
+                    .value(),
+            )
+        };
 
         // Listen for changes to the cloud model and update ourselves when they happen.
         ctx.subscribe_to_model(&WarpDrivePrivacySettings::handle(ctx), |me, event, ctx| {
@@ -410,17 +386,31 @@ impl PrivacySettings {
         ctx.notify();
     }
 
-    pub fn refresh_to_default(&mut self) {
+    pub fn reset_state(&mut self) {
         // TODO(zach): this seems incorrect - should we also update the values on disk?
-        self.is_telemetry_enabled = true;
-        self.is_crash_reporting_enabled = true;
-        self.is_cloud_conversation_storage_enabled = true;
+        #[cfg(feature = "local_only")]
+        {
+            self.is_telemetry_enabled = false;
+            self.is_crash_reporting_enabled = false;
+            self.is_cloud_conversation_storage_enabled = false;
+        }
+        #[cfg(not(feature = "local_only"))]
+        {
+            self.is_telemetry_enabled = true;
+            self.is_crash_reporting_enabled = true;
+            self.is_cloud_conversation_storage_enabled = true;
+        }
         self.is_telemetry_force_enabled = false;
         self.is_enterprise_secret_redaction_enabled = false;
     }
 
     /// Fetch the user's privacy settings from the server if any or update the server settings.
     pub fn fetch_or_update_settings(&self, ctx: &mut ModelContext<Self>) {
+        if cfg!(feature = "local_only") {
+            let _ = (self, ctx);
+            return;
+        }
+
         let auth_client_clone = self.auth_client.clone();
         let _ = ctx.spawn(
             async move { auth_client_clone.get_user_settings().await },
@@ -543,6 +533,12 @@ impl PrivacySettings {
         new_value: bool,
         ctx: &mut ModelContext<PrivacySettings>,
     ) {
+        #[cfg(feature = "local_only")]
+        let new_value = {
+            let _ = new_value;
+            false
+        };
+
         let old_value = self.is_crash_reporting_enabled;
         if new_value != old_value {
             self.is_crash_reporting_enabled = new_value;
@@ -579,6 +575,12 @@ impl PrivacySettings {
         new_value: bool,
         ctx: &mut ModelContext<PrivacySettings>,
     ) {
+        #[cfg(feature = "local_only")]
+        let new_value = {
+            let _ = new_value;
+            false
+        };
+
         let old_value = self.is_telemetry_enabled;
         if new_value != old_value {
             self.is_telemetry_enabled = new_value;
@@ -608,6 +610,12 @@ impl PrivacySettings {
         new_value: bool,
         ctx: &mut ModelContext<PrivacySettings>,
     ) {
+        #[cfg(feature = "local_only")]
+        let new_value = {
+            let _ = new_value;
+            false
+        };
+
         let old_value = self.is_cloud_conversation_storage_enabled;
         if new_value == old_value {
             return;

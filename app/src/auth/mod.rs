@@ -320,6 +320,6 @@ fn remove_cloud_persisted_settings(app: &mut AppContext) {
 
     // Reset the Privacy Settings in the login screen to default values.
     PrivacySettings::handle(app).update(app, |privacy_settings, _| {
-        privacy_settings.refresh_to_default();
+        privacy_settings.reset_state();
     });
 }
