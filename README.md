@@ -2,7 +2,7 @@
 
 > Original upstream README: [warpdotdev/warp README.md](https://github.com/warpdotdev/warp/blob/master/README.md)
 
-This repository is a local-only experimental fork of [Warp](https://github.com/warpdotdev/warp). It keeps the open-source Warp client codebase, but changes the default product assumptions: no registration, no login flow, no Firebase-backed anonymous user, no Warp cloud dependency, and BYOK-oriented AI plumbing.
+This repository is a local-only experimental fork of [Warp](https://github.com/warpdotdev/warp). It keeps the open-source Warp client codebase, but changes the default product assumptions: no registration, no login flow, no Firebase-backed anonymous user, no telemetry/crash-reporting pipeline in local-only builds, no Warp Drive/cloud-gated product flow, and BYOK-oriented AI plumbing.
 
 ## Notice
 
@@ -25,6 +25,25 @@ This notice is not legal advice. If you want to use this fork beyond local evalu
 - Skips persisted server credentials.
 - Starts directly in the terminal workspace instead of the auth/onboarding UI.
 
+### No telemetry or crash-reporting pipeline in `local_only`
+
+When built with `local_only`:
+
+- `send_telemetry_*` macros are no-ops.
+- The telemetry collector singleton is not initialized.
+- App blur/focus telemetry recording and shutdown telemetry flushing are skipped.
+- Crash reporting / Sentry initialization is skipped.
+- Telemetry/crash-related feature flags are forcibly disabled:
+  - `CrashReporting`
+  - `CocoaSentry`
+  - `LogExpensiveFramesInSentry`
+  - `RecordAppActiveEvents`
+  - `SendTelemetryToFile`
+  - `WithSandboxTelemetry`
+  - `AgentModeAnalytics`
+- Privacy settings force telemetry off.
+- The Privacy settings telemetry toggle is hidden.
+
 ### No cloud-gated product flow
 
 When built with `local_only`, cloud-dependent feature flags are forcibly disabled after feature initialization, including:
@@ -35,7 +54,11 @@ When built with `local_only`, cloud-dependent feature flags are forcibly disable
 - Warp Environments / environment slash command
 - Orchestration cloud event/push flags
 - Oz handoff / sync ambient plans
+- Warp Drive is disabled at the runtime/UI gate (`DriveSettings::is_warp_drive_enabled()` returns `false` under `local_only`)
+- Data management / delete-account UI
 - Force-login behavior
+
+Cloud-oriented code remains in the source tree where it is needed for type compatibility with the upstream architecture, but the local-only build disables the product entry points, feature flags, telemetry hooks, and visible account/cloud UI paths listed above.
 
 ### BYOK-oriented AI groundwork
 
@@ -65,7 +88,8 @@ Upstream Warp AI requests normally pass through `warp_multi_agent_api` / `warp-p
 ## Repository and branch
 
 - Fork: `https://github.com/iamwavecut/warp`
-- Branch: `local-byok`
+- Default branch: `master`
+- Development branch used for local-only work: `local-byok`
 - Primary feature flag: `local_only`
 
 ## Custom provider configuration
@@ -114,7 +138,8 @@ All platforms need:
 ```bash
 git clone https://github.com/iamwavecut/warp.git
 cd warp
-git checkout local-byok
+# Default branch is master. Use local-byok only if you want the development branch explicitly.
+# git checkout local-byok
 git lfs install
 git lfs pull
 ```
@@ -254,7 +279,7 @@ cargo build --features gui,local_only -p warp --bin warp-oss
 TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
 ```
 
-The repository scripts referenced by the Linux/macOS paths were syntax-checked with `bash -n`, and the Windows build scripts were inspected for the documented PowerShell entrypoints.
+The `local_only` Rust build is warning-free as of this revision. The macOS bundle flow also completes without Rust compiler warnings; the OSS channel may print informational messages when optional upstream/internal assets are unavailable.
 
 ## Upstream documentation
 
