@@ -101,11 +101,8 @@ const AUTH_URL_STATE_QUERY_PARAM: &str = "state";
 #[derive(Debug, Clone)]
 pub struct AuthRedirectPayload {
     pub refresh_token: RefreshToken,
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     pub user_uid: Option<UserUid>,
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     pub deleted_anonymous_user: Option<bool>,
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     pub state: Option<String>,
 }
 
@@ -153,7 +150,6 @@ const MODAL_WIDTH: f32 = 352.;
 pub enum AuthViewVariant {
     Initial,
     RequireLoginCloseable,
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     HitDriveObjectLimitCloseable,
     ShareRequirementCloseable,
 }

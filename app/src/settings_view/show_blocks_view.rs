@@ -614,6 +614,11 @@ impl SettingsPageMeta for ShowBlocksView {
     }
 
     fn should_render(&self, ctx: &AppContext) -> bool {
+        if true {
+            let _ = ctx;
+            return false;
+        }
+
         let is_anonymous = AuthStateProvider::as_ref(ctx)
             .get()
             .is_anonymous_or_logged_out();

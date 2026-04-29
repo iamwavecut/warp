@@ -1,44 +1,39 @@
-# Warp Local-Only BYOK Fork
+# Warp Local-First Fork
 
 > Original upstream README: [warpdotdev/warp README.md](https://github.com/warpdotdev/warp/blob/master/README.md)
 
-Experimental local-only fork of [Warp](https://github.com/warpdotdev/warp) for evaluation and source-code research.
+Experimental local-first fork of [Warp](https://github.com/warpdotdev/warp) for evaluation, source-code research, and local AI workflows.
 
 This fork is **not** intended for production, commercial redistribution, or hosted/managed terminal use. Review the upstream licenses before using or distributing it:
 
-- [AGPL v3](LICENSE-AGPL) — most of this repository.
-- [MIT](LICENSE-MIT) — Warp UI crates (`warpui_core`, `warpui`).
+- [AGPL v3](LICENSE-AGPL) - most of this repository.
+- [MIT](LICENSE-MIT) - Warp UI crates (`warpui_core`, `warpui`).
 
-## What changed
+## Current Direction
 
-When built with `local_only`, this fork changes Warp from a cloud/account-oriented product into a local-first client:
+This fork no longer treats local mode as an optional product branch. The app is expected to run as a local-first terminal by default:
 
-- No registration, login, browser auth, device auth, or Firebase anonymous user.
-- Starts directly in the terminal workspace.
-- Telemetry macros are no-ops.
-- Telemetry collector, app focus telemetry, shutdown telemetry flush, crash reporting, and Sentry are not initialized.
-- Cloud/account UI entry points are hidden or disabled, including Warp Drive, data-management/delete-account UI, Agent Management, Ambient Agents RTC, Cloud Mode, Cloud Conversations, cloud environments, managed secrets, orchestration cloud flags, and force-login behavior.
-- AI quotas are local/unlimited; server quota refresh is skipped.
-- Local/non-cloud AI UX gates are unlocked in `local_only`, including BYOK/custom providers, active AI, prompt/code suggestions toggles, next-command availability, AI autonomy gates, and codebase-context limits.
-- Billing, subscription, upgrade, Stripe, cloud-agent capacity, and other hosted/cloud-only surfaces stay hidden or no-op in `local_only`.
-- AI model list is populated from local custom provider settings.
-- Agent requests for custom models go directly to OpenAI-compatible `/chat/completions` endpoints using a normal HTTP client. They do **not** use Warp's `/ai/multi-agent` cloud endpoint or try to pass custom provider data through Warp protobuf request settings.
+- no required registration, browser login, device auth, or Firebase anonymous user;
+- no telemetry collection, app focus telemetry, shutdown telemetry flush, crash reporting, CocoaSentry, or Sentry;
+- no Warp account, billing, subscription, Stripe, upgrade, quota, paywall, referral, Teams, Shared Blocks, or Warp Drive cloud UI;
+- no Warp cloud/protobuf endpoint for custom AI provider calls;
+- no proprietary hosted Warp agent/server auth flow;
+- preserved local terminal UX, MCP, local tooling, vertical tabs/sidebar, and local agent surfaces where they can work locally;
+- BYOK and OpenAI-compatible custom providers are the primary AI provider path.
 
-Some upstream cloud/protobuf types remain in the source tree because existing UI/history code uses those internal Rust types for local event handling. The local-only custom-provider execution path does not send requests to Warp's cloud AI endpoint.
+The historical `local_only` Cargo feature remains only as a compatibility alias for older commands. New code should not introduce behavior forks on `local_only`; if behavior belongs in this fork, make it the default.
 
-## Branch
+Some upstream cloud/server types still exist in the source tree because local UI and history code reuse internal Rust types. Their presence is not a promise that the hosted Warp service path is supported in this fork.
 
-The maintained branch is:
+## User And Settings UI
 
-```text
-master
-```
+The former account surface is now a local `User` surface. It shows the local system user's display name when available and falls back to the system username. It must not show Warp test-user strings, plan labels, billing state, upgrade prompts, logout, settings sync, referrals, invites, Slack, feedback, Teams, Cloud Platform, Environments, Shared Blocks, or Warp Drive entry points.
 
-Older development branch names such as `local-byok` are no longer used for new work.
+Settings exposes `LLM providers` for custom OpenAI-compatible providers. The old proprietary key-only provider UI is intentionally removed from the visible settings surface.
 
-## Configure custom providers
+## Configure LLM Providers
 
-Add OpenAI-compatible providers to the Warp settings TOML:
+Use Settings > Agents > LLM providers, or edit the settings TOML directly:
 
 ```toml
 [[agents.custom_providers]]
@@ -47,10 +42,12 @@ base_url = "http://localhost:1234/v1"
 models = ["qwen3-coder", "llama-local"]
 api_type = "open_ai_compatible"
 
-# Optional. If omitted, Warp first tries a custom key stored in secure storage;
-# if neither exists, it sends the request without an Authorization header.
+# Optional. If omitted, Warp first tries a custom key stored in secure storage.
+# If neither exists, it sends the request without an Authorization header.
 api_key_env_var = "LOCAL_OPENAI_API_KEY"
 ```
+
+In the UI, the environment-variable field may be entered as either `LOCAL_OPENAI_API_KEY` or `$LOCAL_OPENAI_API_KEY`; the leading `$` is stripped before lookup.
 
 Model IDs are exposed internally as:
 
@@ -64,14 +61,14 @@ For example:
 custom/local-openai-compatible/qwen3-coder
 ```
 
-The direct client sends:
+Custom provider requests go directly to:
 
 ```http
 POST <base_url>/chat/completions
 Authorization: Bearer ***   # only when a key is configured
 ```
 
-with `stream = false` for the current implementation.
+They do not use Warp's `/ai/multi-agent` cloud endpoint.
 
 ## Build
 
@@ -84,12 +81,12 @@ git lfs install
 git lfs pull
 ```
 
-Compiler/build checks:
+Recommended checks:
 
 ```bash
 cargo fmt --check
+cargo build --all-targets
 cargo build --features local_only --all-targets
-cargo build --features gui,local_only -p warp --bin warp-oss
 ```
 
 Run the debug binary:
@@ -111,23 +108,30 @@ Bundle path:
 target/debug/bundle/osx/WarpOss.app
 ```
 
+Launch from the repository root:
+
+```bash
+open target/debug/bundle/osx/WarpOss.app
+```
+
 ## Verification
 
-The current macOS development checkout is verified with:
+The current local-first fork is typically verified with:
 
 ```bash
 cargo fmt --check
-cargo test -p warp --features local_only parses_custom_model_ids_into_provider_and_model
-cargo test -p warp --features local_only builds_chat_completions_url_from_base_url
+cargo test -p warp --features local_only custom_provider -- --nocapture
+cargo test -p warp --features local_only direct_openai -- --nocapture
+cargo test -p warp --features local_only defaults_to_true -- --nocapture
+cargo test -p warp --features local_only local_only_account_section_is_user_and_cloud_sections_are_hidden -- --nocapture
 cargo build --all-targets
 cargo build --features local_only --all-targets
-cargo build --features gui,local_only -p warp --bin warp-oss
 TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
 ```
 
-`cargo build --features local_only --all-targets` is warning-free.
+Warnings from dead hosted auth/cloud/telemetry paths may appear while those upstream modules still exist. Treat build failures as blockers; warnings should be evaluated case by case and removed when deleting the underlying hosted code is safe.
 
-## Upstream docs
+## Upstream Docs
 
 - [Original README](https://github.com/warpdotdev/warp/blob/master/README.md)
 - [Original repository](https://github.com/warpdotdev/warp)

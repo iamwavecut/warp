@@ -639,12 +639,15 @@ impl Input {
                 ctx.dispatch_typed_action(&TerminalAction::InitProject);
             }
             _ if command.name == commands::CHANGELOG.name => {
-                if !FeatureFlag::Changelog.is_enabled() {
+                if true || !FeatureFlag::Changelog.is_enabled() {
                     return false;
                 }
                 ctx.dispatch_typed_action(&WorkspaceAction::ViewLatestChangelog);
             }
             _ if command.name == commands::FEEDBACK.name => {
+                if true {
+                    return false;
+                }
                 ctx.dispatch_typed_action(&WorkspaceAction::SendFeedback);
             }
             _ if command.name == commands::OPEN_CODE_REVIEW.name => {
@@ -723,6 +726,9 @@ impl Input {
                 });
             }
             _ if command.name == commands::USAGE.name => {
+                if true {
+                    return false;
+                }
                 ctx.dispatch_typed_action(&TerminalAction::OpenBillingAndUsagePane);
             }
             _ if command.name == commands::REMOTE_CONTROL.name => {
@@ -743,6 +749,9 @@ impl Input {
                 ctx.emit(Event::StartRemoteControl);
             }
             _ if command.name == commands::COST.name => {
+                if true {
+                    return false;
+                }
                 let history = BlocklistAIHistoryModel::handle(ctx);
                 let conversation = history
                     .as_ref(ctx)

@@ -23,14 +23,14 @@ use crate::cloud_object::ObjectType;
 use crate::editor::{EditorOptions, InteractionState, SingleLineEditorOptions, TextColors};
 use crate::settings::InputSettings;
 use crate::settings::{
-    AIAutoDetectionEnabled, AICommandDenylist, AISettingsChangedEvent,
-    AgentModeCodingPermissionsType, AgentModeCommandExecutionDenylist,
+    custom_provider_config_from_ui, AIAutoDetectionEnabled, AICommandDenylist,
+    AISettingsChangedEvent, AgentModeCodingPermissionsType, AgentModeCommandExecutionDenylist,
     AgentModeCommandExecutionPredicate, AgentModeQuerySuggestionsEnabled, AwsBedrockAutoLogin,
     AwsBedrockCredentialsEnabled, CanUseWarpCreditsWithByok, CodeSettings, CodebaseContextEnabled,
-    FileBasedMcpEnabled, GitOperationsAutogenEnabled, IncludeAgentCommandsInHistory,
-    IntelligentAutosuggestionsEnabled, MemoryEnabled, NLDInTerminalEnabled,
-    NaturalLanguageAutosuggestionsEnabled, OrchestrationEnabled, RuleSuggestionsEnabled,
-    SharedBlockTitleGenerationEnabled, ShouldRenderCLIAgentToolbar,
+    CustomApiType, CustomProviderConfig, FileBasedMcpEnabled, GitOperationsAutogenEnabled,
+    IncludeAgentCommandsInHistory, IntelligentAutosuggestionsEnabled, MemoryEnabled,
+    NLDInTerminalEnabled, NaturalLanguageAutosuggestionsEnabled, OrchestrationEnabled,
+    RuleSuggestionsEnabled, SharedBlockTitleGenerationEnabled, ShouldRenderCLIAgentToolbar,
     ShouldRenderUseAgentToolbarForUserCommands, ShouldShowOzUpdatesInZeroState, ShowAgentTips,
     ShowConversationHistory, ShowHintText, ThinkingDisplayMode, VoiceInputEnabled,
     WarpDriveContextEnabled,
@@ -38,7 +38,7 @@ use crate::settings::{
 use crate::terminal::session_settings::{SessionSettings, SessionSettingsChangedEvent};
 use crate::terminal::CLIAgent;
 use crate::view_components::{
-    action_button::{ActionButton, ButtonSize, SecondaryTheme},
+    action_button::{ActionButton, ButtonSize, DangerNakedTheme, SecondaryTheme},
     FilterableDropdown, SubmittableTextInput, SubmittableTextInputEvent,
 };
 use crate::workspaces::user_workspaces::UserWorkspacesEvent;
@@ -94,6 +94,8 @@ use super::{
 pub enum AISubpage {
     /// The main "WarpAgent" page: global AI toggle + Active AI + Input + Other sections.
     WarpAgent,
+    /// Local/BYOK LLM provider configuration.
+    LLMProviders,
     /// Agent profiles and permissions.
     Profiles,
     /// Knowledge / Rules settings.
@@ -106,6 +108,7 @@ impl AISubpage {
     pub fn from_section(section: SettingsSection) -> Option<Self> {
         match section {
             SettingsSection::WarpAgent => Some(Self::WarpAgent),
+            SettingsSection::LLMProviders => Some(Self::LLMProviders),
             SettingsSection::AgentProfiles => Some(Self::Profiles),
             SettingsSection::Knowledge => Some(Self::Knowledge),
             SettingsSection::ThirdPartyCLIAgents => Some(Self::ThirdPartyCLIAgents),
@@ -1506,8 +1509,7 @@ impl AISettingsPageView {
                     widgets.push(Box::new(VoiceWidget::default()));
                 }
                 widgets.push(Box::new(CLIAgentWidget::default()));
-                widgets.push(Box::new(ApiKeysWidget::new(ctx)));
-                widgets.push(Box::new(AwsBedrockWidget::new(ctx)));
+                widgets.push(Box::new(LLMProvidersWidget::new(ctx)));
                 widgets.push(Box::new(AgentAttributionWidget::default()));
                 widgets.push(Box::new(OtherAIWidget::default()));
                 if FeatureFlag::AgentModeComputerUse.is_enabled() {
@@ -1546,13 +1548,14 @@ impl AISettingsPageView {
                 if voice_supported {
                     widgets.push(Box::new(VoiceWidget::default()));
                 }
-                widgets.push(Box::new(ApiKeysWidget::new(ctx)));
-                widgets.push(Box::new(AwsBedrockWidget::new(ctx)));
                 widgets.push(Box::new(AgentAttributionWidget::default()));
                 widgets.push(Box::new(OtherAIWidget::default()));
                 if FeatureFlag::AgentModeComputerUse.is_enabled() {
                     widgets.push(Box::new(CloudAgentComputerUseWidget::default()));
                 }
+            }
+            Some(AISubpage::LLMProviders) => {
+                widgets.push(Box::new(LLMProvidersWidget::new(ctx)));
             }
             Some(AISubpage::Profiles) => {
                 if !FeatureFlag::UsageBasedPricing.is_enabled() {
@@ -2256,6 +2259,8 @@ pub enum AISettingsPageAction {
     ToggleAwsBedrockAutoLogin,
     ToggleAwsBedrockCredentialsEnabled,
     RefreshAwsBedrockCredentials,
+    AddLLMProvider,
+    RemoveLLMProvider(usize),
     ToggleCloudAgentComputerUse,
     ToggleFileBasedMcp,
     ToggleIncludeAgentCommandsInHistory,
@@ -2659,7 +2664,7 @@ impl TypedActionView for AISettingsPageView {
                 ctx.notify();
             }
             AISettingsPageAction::AttemptLoginGatedUpgrade => {
-                if cfg!(feature = "local_only") {
+                if true {
                     return;
                 }
 
@@ -2954,6 +2959,32 @@ impl TypedActionView for AISettingsPageView {
                     drop(refresh_aws_credentials(manager, ctx));
                 });
                 ctx.notify();
+            }
+            AISettingsPageAction::AddLLMProvider => {
+                let mut providers = AISettings::as_ref(ctx).custom_providers.clone();
+                let name = unique_custom_provider_name(&providers);
+                providers.push(CustomProviderConfig {
+                    name,
+                    base_url: "http://localhost:1234/v1".to_string(),
+                    models: Vec::new(),
+                    api_key_env_var: None,
+                    api_type: CustomApiType::OpenAiCompatible,
+                });
+                persist_custom_provider_configs(providers, ctx);
+                self.page = Self::build_page(self.active_subpage, ctx);
+                ctx.notify();
+            }
+            AISettingsPageAction::RemoveLLMProvider(index) => {
+                let mut providers = AISettings::as_ref(ctx).custom_providers.clone();
+                if *index < providers.len() {
+                    let removed = providers.remove(*index);
+                    persist_custom_provider_configs(providers, ctx);
+                    ApiKeyManager::handle(ctx).update(ctx, |manager, ctx| {
+                        manager.set_custom_key(removed.name, None, ctx);
+                    });
+                    self.page = Self::build_page(self.active_subpage, ctx);
+                    ctx.notify();
+                }
             }
             AISettingsPageAction::ToggleCloudAgentComputerUse => {
                 AISettings::handle(ctx).update(ctx, |settings, ctx| {
@@ -3529,6 +3560,10 @@ impl SettingsWidget for UsageWidget {
         "a.i. ai usage limit plan"
     }
 
+    fn should_render(&self, _app: &AppContext) -> bool {
+        false
+    }
+
     fn render(
         &self,
         _view: &Self::View,
@@ -3653,7 +3688,7 @@ impl SettingsWidget for UsageWidget {
             usage_header,
             request_usage_row,
         ];
-        if !cfg!(feature = "local_only") {
+        if false {
             children.push(
                 Container::new(upgrade_cta.finish())
                     .with_margin_bottom(16.)
@@ -5483,10 +5518,12 @@ impl SettingsWidget for AIFactWidget {
             column.add_child(self.render_rule_suggestions_toggle(view, ai_settings, app));
         }
 
-        column
-            .with_child(button)
-            .with_child(self.render_warp_drive_context_toggle(view, ai_settings, app))
-            .finish()
+        column.add_child(button);
+        if false {
+            column.add_child(self.render_warp_drive_context_toggle(view, ai_settings, app));
+        }
+
+        column.finish()
     }
 }
 
@@ -6279,6 +6316,445 @@ impl SettingsWidget for CloudAgentComputerUseWidget {
     }
 }
 
+#[derive(Clone)]
+struct LLMProviderEditorHandles {
+    original_name: String,
+    name_editor: ViewHandle<EditorView>,
+    base_url_editor: ViewHandle<EditorView>,
+    models_editor: ViewHandle<EditorView>,
+    api_key_editor: ViewHandle<EditorView>,
+    api_key_env_var_editor: ViewHandle<EditorView>,
+    remove_button: ViewHandle<ActionButton>,
+}
+
+struct LLMProvidersWidget {
+    providers: Vec<LLMProviderEditorHandles>,
+    add_provider_button: ViewHandle<ActionButton>,
+}
+
+fn unique_custom_provider_name(providers: &[CustomProviderConfig]) -> String {
+    let base = "local-openai-compatible";
+    if providers.iter().all(|provider| provider.name != base) {
+        return base.to_string();
+    }
+
+    (2..)
+        .map(|suffix| format!("{base}-{suffix}"))
+        .find(|candidate| providers.iter().all(|provider| provider.name != *candidate))
+        .expect("infinite range must produce a provider name")
+}
+
+fn refresh_custom_provider_models(ctx: &mut ViewContext<AISettingsPageView>) {
+    LLMPreferences::handle(ctx).update(ctx, |prefs, ctx| {
+        prefs.refresh_available_models(ctx);
+    });
+}
+
+fn persist_custom_provider_configs(
+    configs: Vec<CustomProviderConfig>,
+    ctx: &mut ViewContext<AISettingsPageView>,
+) {
+    AISettings::handle(ctx).update(ctx, |settings, ctx| {
+        report_if_error!(settings.custom_providers.set_value(configs, ctx));
+    });
+    refresh_custom_provider_models(ctx);
+}
+
+fn create_llm_provider_editor(
+    initial_text: String,
+    placeholder: &'static str,
+    is_password: bool,
+    multiline: bool,
+    ctx: &mut ViewContext<AISettingsPageView>,
+) -> ViewHandle<EditorView> {
+    ctx.add_typed_action_view(move |ctx| {
+        let appearance = Appearance::as_ref(ctx);
+        let text = TextOptions {
+            font_size_override: Some(appearance.ui_font_size()),
+            font_family_override: Some(appearance.monospace_font_family()),
+            text_colors_override: Some(TextColors {
+                default_color: appearance.theme().active_ui_text_color(),
+                disabled_color: appearance.theme().disabled_ui_text_color(),
+                hint_color: appearance.theme().disabled_ui_text_color(),
+            }),
+            ..Default::default()
+        };
+
+        let mut editor = if multiline {
+            EditorView::new(
+                EditorOptions {
+                    autogrow: true,
+                    soft_wrap: true,
+                    text,
+                    ..Default::default()
+                },
+                ctx,
+            )
+        } else {
+            EditorView::single_line(
+                SingleLineEditorOptions {
+                    is_password,
+                    text,
+                    ..Default::default()
+                },
+                ctx,
+            )
+        };
+        editor.set_placeholder_text(placeholder, ctx);
+        editor.set_buffer_text(&initial_text, ctx);
+        editor
+    })
+}
+
+fn sync_llm_provider_editors_to_settings(
+    providers: &[LLMProviderEditorHandles],
+    ctx: &mut ViewContext<AISettingsPageView>,
+) {
+    let mut configs = Vec::new();
+    let mut key_updates = Vec::new();
+
+    for provider in providers {
+        let name = provider.name_editor.as_ref(ctx).buffer_text(ctx);
+        let base_url = provider.base_url_editor.as_ref(ctx).buffer_text(ctx);
+        let models = provider.models_editor.as_ref(ctx).buffer_text(ctx);
+        let api_key_env_var = provider.api_key_env_var_editor.as_ref(ctx).buffer_text(ctx);
+        let api_key = provider.api_key_editor.as_ref(ctx).buffer_text(ctx);
+
+        let Some(config) =
+            custom_provider_config_from_ui(&name, &base_url, &models, &api_key_env_var)
+        else {
+            continue;
+        };
+
+        if configs
+            .iter()
+            .any(|existing: &CustomProviderConfig| existing.name == config.name)
+        {
+            continue;
+        }
+
+        key_updates.push((
+            provider.original_name.clone(),
+            config.name.clone(),
+            api_key.trim().is_empty().not().then_some(api_key),
+        ));
+        configs.push(config);
+    }
+
+    persist_custom_provider_configs(configs, ctx);
+    ApiKeyManager::handle(ctx).update(ctx, |manager, ctx| {
+        for (original_name, current_name, api_key) in key_updates {
+            if original_name != current_name {
+                manager.set_custom_key(original_name, None, ctx);
+            }
+            manager.set_custom_key(current_name, api_key, ctx);
+        }
+    });
+    ctx.notify();
+}
+
+impl LLMProvidersWidget {
+    fn new(ctx: &mut ViewContext<<Self as SettingsWidget>::View>) -> Self {
+        let stored_keys = ApiKeyManager::as_ref(ctx).keys().custom.clone();
+        let providers = AISettings::as_ref(ctx).custom_providers.clone();
+
+        let mut editor_handles = providers
+            .iter()
+            .enumerate()
+            .map(|(index, provider)| {
+                let name_editor = create_llm_provider_editor(
+                    provider.name.clone(),
+                    "local-openai-compatible",
+                    false,
+                    false,
+                    ctx,
+                );
+                let base_url_editor = create_llm_provider_editor(
+                    provider.base_url.clone(),
+                    "http://localhost:1234/v1",
+                    false,
+                    false,
+                    ctx,
+                );
+                let models_editor = create_llm_provider_editor(
+                    provider.models.join("\n"),
+                    "qwen3-coder, llama-local",
+                    false,
+                    true,
+                    ctx,
+                );
+                let api_key_editor = create_llm_provider_editor(
+                    stored_keys.get(&provider.name).cloned().unwrap_or_default(),
+                    "sk-...",
+                    true,
+                    false,
+                    ctx,
+                );
+                let api_key_env_var_editor = create_llm_provider_editor(
+                    provider
+                        .api_key_env_var
+                        .as_ref()
+                        .map(|env_var| format!("${env_var}"))
+                        .unwrap_or_default(),
+                    "$LOCAL_OPENAI_API_KEY",
+                    false,
+                    false,
+                    ctx,
+                );
+                let remove_button = ctx.add_typed_action_view(move |_| {
+                    ActionButton::new("Remove", DangerNakedTheme)
+                        .with_icon(Icon::Trash)
+                        .with_size(ButtonSize::Small)
+                        .on_click(move |ctx| {
+                            ctx.dispatch_typed_action(AISettingsPageAction::RemoveLLMProvider(
+                                index,
+                            ));
+                        })
+                });
+
+                LLMProviderEditorHandles {
+                    original_name: provider.name.clone(),
+                    name_editor,
+                    base_url_editor,
+                    models_editor,
+                    api_key_editor,
+                    api_key_env_var_editor,
+                    remove_button,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        for provider in editor_handles.clone() {
+            for editor in [
+                provider.name_editor,
+                provider.base_url_editor,
+                provider.models_editor,
+                provider.api_key_editor,
+                provider.api_key_env_var_editor,
+            ] {
+                let providers = editor_handles.clone();
+                ctx.subscribe_to_view(&editor, move |_, _, event, ctx| {
+                    if matches!(event, EditorEvent::Blurred | EditorEvent::Enter) {
+                        sync_llm_provider_editors_to_settings(&providers, ctx);
+                    }
+                });
+            }
+        }
+
+        let add_provider_button = ctx.add_typed_action_view(|_| {
+            ActionButton::new("Add provider", SecondaryTheme)
+                .with_icon(Icon::Plus)
+                .with_size(ButtonSize::Small)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AISettingsPageAction::AddLLMProvider);
+                })
+        });
+
+        Self {
+            providers: std::mem::take(&mut editor_handles),
+            add_provider_button,
+        }
+    }
+
+    fn render_editor_input(
+        appearance: &Appearance,
+        label: &'static str,
+        editor: ViewHandle<EditorView>,
+    ) -> Box<dyn Element> {
+        let editor_style = UiComponentStyles {
+            padding: Some(Coords {
+                top: 10.,
+                bottom: 10.,
+                left: 16.,
+                right: 16.,
+            }),
+            background: Some(appearance.theme().surface_2().into()),
+            ..Default::default()
+        };
+
+        Flex::column()
+            .with_spacing(8.)
+            .with_child(
+                Text::new_inline(label, appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                    .with_color(appearance.theme().active_ui_text_color().into())
+                    .finish(),
+            )
+            .with_child(
+                appearance
+                    .ui_builder()
+                    .text_input(editor)
+                    .with_style(editor_style)
+                    .build()
+                    .finish(),
+            )
+            .finish()
+    }
+
+    fn render_provider_card(
+        &self,
+        provider: &LLMProviderEditorHandles,
+        index: usize,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let provider_name = provider.name_editor.as_ref(app).buffer_text(app);
+        let provider_name = provider_name.trim();
+        let title = if provider_name.is_empty() {
+            format!("Provider {}", index + 1)
+        } else {
+            provider_name.to_string()
+        };
+
+        let header = Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(
+                Expanded::new(
+                    1.,
+                    Flex::column()
+                        .with_spacing(4.)
+                        .with_child(
+                            Text::new_inline(title, appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                                .with_style(Properties::default().weight(Weight::Semibold))
+                                .with_color(appearance.theme().active_ui_text_color().into())
+                                .finish(),
+                        )
+                        .with_child(
+                            Text::new_inline(
+                                "OpenAI-compatible API",
+                                appearance.ui_font_family(),
+                                CONTENT_FONT_SIZE,
+                            )
+                            .with_color(
+                                appearance
+                                    .theme()
+                                    .sub_text_color(appearance.theme().surface_1())
+                                    .into(),
+                            )
+                            .finish(),
+                        )
+                        .finish(),
+                )
+                .finish(),
+            )
+            .with_child(ChildView::new(&provider.remove_button).finish())
+            .finish();
+
+        Container::new(
+            Flex::column()
+                .with_spacing(16.)
+                .with_child(header)
+                .with_child(Self::render_editor_input(
+                    appearance,
+                    "Provider name",
+                    provider.name_editor.clone(),
+                ))
+                .with_child(Self::render_editor_input(
+                    appearance,
+                    "Base URL",
+                    provider.base_url_editor.clone(),
+                ))
+                .with_child(Self::render_editor_input(
+                    appearance,
+                    "Models",
+                    provider.models_editor.clone(),
+                ))
+                .with_child(Self::render_editor_input(
+                    appearance,
+                    "API key",
+                    provider.api_key_editor.clone(),
+                ))
+                .with_child(Self::render_editor_input(
+                    appearance,
+                    "API key environment variable",
+                    provider.api_key_env_var_editor.clone(),
+                ))
+                .finish(),
+        )
+        .with_uniform_padding(16.)
+        .with_background(appearance.theme().surface_1())
+        .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
+        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+        .finish()
+    }
+}
+
+impl SettingsWidget for LLMProvidersWidget {
+    type View = AISettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "llm providers openai compatible custom local byo byok api key environment variable models"
+    }
+
+    fn render(
+        &self,
+        _view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let mut content = Flex::column()
+            .with_spacing(16.)
+            .with_child(render_separator(appearance))
+            .with_child(
+                Flex::row()
+                    .with_main_axis_size(MainAxisSize::Max)
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_child(
+                        Expanded::new(
+                            1.,
+                            build_sub_header(
+                                appearance,
+                                "LLM providers",
+                                Some(styles::header_font_color(true, app)),
+                            )
+                            .finish(),
+                        )
+                        .finish(),
+                    )
+                    .with_child(ChildView::new(&self.add_provider_button).finish())
+                    .finish(),
+            )
+            .with_child(render_ai_setting_description(
+                "Configure local or BYOK OpenAI-compatible model providers. Direct API keys are stored locally; environment variables are resolved at request time.",
+                true,
+                app,
+            ));
+
+        if self.providers.is_empty() {
+            content.add_child(
+                Container::new(
+                    Text::new(
+                        "No LLM providers configured.",
+                        appearance.ui_font_family(),
+                        CONTENT_FONT_SIZE,
+                    )
+                    .with_color(
+                        appearance
+                            .theme()
+                            .sub_text_color(appearance.theme().surface_1())
+                            .into(),
+                    )
+                    .finish(),
+                )
+                .with_uniform_padding(16.)
+                .with_background(appearance.theme().surface_1())
+                .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
+                .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                .finish(),
+            );
+        } else {
+            for (index, provider) in self.providers.iter().enumerate() {
+                content.add_child(self.render_provider_card(provider, index, appearance, app));
+            }
+        }
+
+        Container::new(content.finish())
+            .with_margin_bottom(HEADER_PADDING)
+            .finish()
+    }
+}
+
+#[allow(dead_code)]
 struct ApiKeysWidget {
     openai_api_key_editor: ViewHandle<EditorView>,
     anthropic_api_key_editor: ViewHandle<EditorView>,
@@ -6288,6 +6764,7 @@ struct ApiKeysWidget {
     upgrade_highlight_index: HighlightedHyperlink,
 }
 
+#[allow(dead_code)]
 impl ApiKeysWidget {
     fn new(ctx: &mut ViewContext<<Self as SettingsWidget>::View>) -> Self {
         let ai_settings = AISettings::as_ref(ctx);
@@ -6482,7 +6959,7 @@ impl ApiKeysWidget {
         ));
 
         // Show upgrade CTA if BYOK is not enabled
-        if !is_byo_enabled {
+        if false && !is_byo_enabled {
             let auth_state = AuthStateProvider::as_ref(app).get();
             let upgrade_text_fragments = if let Some(team) =
                 UserWorkspaces::as_ref(app).current_team()
@@ -6602,7 +7079,7 @@ impl SettingsWidget for ApiKeysWidget {
             )
             .with_child(self.render_api_keys_section(appearance, app, is_byo_enabled));
 
-        if is_byo_enabled {
+        if false && is_byo_enabled {
             column.add_child(
                 Container::new(self.render_can_use_warp_credits_with_byok_toggle(view, app))
                     .with_margin_top(16.)
@@ -6616,6 +7093,7 @@ impl SettingsWidget for ApiKeysWidget {
     }
 }
 
+#[allow(dead_code)]
 struct AwsBedrockWidget {
     aws_auth_refresh_command_editor: ViewHandle<EditorView>,
     aws_auth_refresh_profile_editor: ViewHandle<EditorView>,
@@ -6624,6 +7102,7 @@ struct AwsBedrockWidget {
     refresh_credentials_button: ViewHandle<ActionButton>,
 }
 
+#[allow(dead_code)]
 impl AwsBedrockWidget {
     fn new(ctx: &mut ViewContext<<Self as SettingsWidget>::View>) -> Self {
         let ai_settings = AISettings::as_ref(ctx);

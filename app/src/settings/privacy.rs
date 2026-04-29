@@ -3,8 +3,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use regex::Regex;
-#[cfg(not(feature = "local_only"))]
-use warp_core::features::FeatureFlag;
 use warp_core::report_if_error;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity, UpdateModel};
 
@@ -201,18 +199,8 @@ impl PrivacySettingsSnapshot {
     }
 
     pub fn should_disable_telemetry(&self) -> bool {
-        #[cfg(feature = "local_only")]
-        {
-            let _ = self;
-            true
-        }
-        #[cfg(not(feature = "local_only"))]
-        {
-            // If a user has opted in to the agent mode analytics experiment, telemetry must be enabled.
-            !self.is_telemetry_enabled
-                && !self.is_telemetry_force_enabled
-                && !FeatureFlag::AgentModeAnalytics.is_enabled()
-        }
+        let _ = self;
+        true
     }
 
     pub fn should_collect_ai_ugc_telemetry(&self) -> bool {
@@ -256,30 +244,11 @@ impl PrivacySettings {
         let auth_state = AuthStateProvider::as_ref(ctx).get().clone();
         let auth_client = ServerApiProvider::as_ref(ctx).get_auth_client();
 
-        #[cfg(feature = "local_only")]
         let (
             is_telemetry_enabled,
             is_crash_reporting_enabled,
             is_cloud_conversation_storage_enabled,
         ) = (false, false, false);
-
-        #[cfg(not(feature = "local_only"))]
-        let (
-            is_telemetry_enabled,
-            is_crash_reporting_enabled,
-            is_cloud_conversation_storage_enabled,
-        ) = {
-            // Initialize from `WarpDrivePrivacySettings`, which is the source of truth for these
-            // booleans.
-            let warp_drive_privacy = WarpDrivePrivacySettings::as_ref(ctx);
-            (
-                *warp_drive_privacy.is_telemetry_enabled.value(),
-                *warp_drive_privacy.is_crash_reporting_enabled.value(),
-                *warp_drive_privacy
-                    .is_cloud_conversation_storage_enabled
-                    .value(),
-            )
-        };
 
         // Listen for changes to the cloud model and update ourselves when they happen.
         ctx.subscribe_to_model(&WarpDrivePrivacySettings::handle(ctx), |me, event, ctx| {
@@ -387,26 +356,16 @@ impl PrivacySettings {
     }
 
     pub fn reset_state(&mut self) {
-        // TODO(zach): this seems incorrect - should we also update the values on disk?
-        #[cfg(feature = "local_only")]
-        {
-            self.is_telemetry_enabled = false;
-            self.is_crash_reporting_enabled = false;
-            self.is_cloud_conversation_storage_enabled = false;
-        }
-        #[cfg(not(feature = "local_only"))]
-        {
-            self.is_telemetry_enabled = true;
-            self.is_crash_reporting_enabled = true;
-            self.is_cloud_conversation_storage_enabled = true;
-        }
+        self.is_telemetry_enabled = false;
+        self.is_crash_reporting_enabled = false;
+        self.is_cloud_conversation_storage_enabled = false;
         self.is_telemetry_force_enabled = false;
         self.is_enterprise_secret_redaction_enabled = false;
     }
 
     /// Fetch the user's privacy settings from the server if any or update the server settings.
     pub fn fetch_or_update_settings(&self, ctx: &mut ModelContext<Self>) {
-        if cfg!(feature = "local_only") {
+        if true {
             let _ = (self, ctx);
             return;
         }
@@ -533,7 +492,6 @@ impl PrivacySettings {
         new_value: bool,
         ctx: &mut ModelContext<PrivacySettings>,
     ) {
-        #[cfg(feature = "local_only")]
         let new_value = {
             let _ = new_value;
             false
@@ -550,13 +508,7 @@ impl PrivacySettings {
                     .set_value(new_value, ctx);
             });
 
-            if self.auth_state.is_logged_in() {
-                let auth_client = self.auth_client.clone();
-                let _ = ctx.spawn(
-                    async move { auth_client.set_is_crash_reporting_enabled(new_value).await },
-                    |_, _, _| (),
-                );
-            }
+            let _ = self.auth_state.is_logged_in();
             ctx.emit(PrivacySettingsChangedEvent::UpdateIsCrashReportingEnabled {
                 old_value,
                 new_value,
@@ -575,7 +527,6 @@ impl PrivacySettings {
         new_value: bool,
         ctx: &mut ModelContext<PrivacySettings>,
     ) {
-        #[cfg(feature = "local_only")]
         let new_value = {
             let _ = new_value;
             false
@@ -590,13 +541,7 @@ impl PrivacySettings {
                 let _ = settings.is_telemetry_enabled.set_value(new_value, ctx);
             });
 
-            if self.auth_state.is_logged_in() {
-                let auth_client = self.auth_client.clone();
-                let _ = ctx.spawn(
-                    async move { auth_client.set_is_telemetry_enabled(new_value).await },
-                    |_, _, _| (),
-                );
-            }
+            let _ = self.auth_state.is_logged_in();
             ctx.emit(PrivacySettingsChangedEvent::UpdateIsTelemetryEnabled {
                 old_value,
                 new_value,
@@ -610,7 +555,6 @@ impl PrivacySettings {
         new_value: bool,
         ctx: &mut ModelContext<PrivacySettings>,
     ) {
-        #[cfg(feature = "local_only")]
         let new_value = {
             let _ = new_value;
             false
@@ -630,17 +574,7 @@ impl PrivacySettings {
                 .set_value(new_value, ctx);
         });
 
-        if self.auth_state.is_logged_in() {
-            let auth_client = self.auth_client.clone();
-            let _ = ctx.spawn(
-                async move {
-                    auth_client
-                        .set_is_cloud_conversation_storage_enabled(new_value)
-                        .await
-                },
-                |_, _, _| (),
-            );
-        }
+        let _ = self.auth_state.is_logged_in();
 
         ctx.emit(
             PrivacySettingsChangedEvent::UpdateIsCloudConversationStorageEnabled {

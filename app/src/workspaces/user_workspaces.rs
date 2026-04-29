@@ -389,7 +389,7 @@ impl UserWorkspaces {
     /// In the future, we should store active AI enablement on the policy directly. For now, we
     /// proxy whether active AI by checking if prompt suggestions, next command, or code suggestions are enabled.
     pub fn is_active_ai_allowed(&self) -> bool {
-        if cfg!(feature = "local_only") {
+        if true {
             return true;
         }
 
@@ -410,7 +410,7 @@ impl UserWorkspaces {
     /// are on the Warp Plan or the build is dogfood (both our internal Warp team and dogfood
     /// team are billed as enterprise).
     pub fn ai_allowed_for_current_team(&self) -> bool {
-        if cfg!(feature = "local_only") {
+        if true {
             return true;
         }
 
@@ -426,7 +426,7 @@ impl UserWorkspaces {
     /// Whether Prompt Suggestions should be toggleable for the current user, based on the active policies.
     /// Note that the value may be incorrect if called before the team's billing metadata has been fetched.
     pub fn is_prompt_suggestions_toggleable(&self) -> bool {
-        if cfg!(feature = "local_only") {
+        if true {
             return true;
         }
 
@@ -443,7 +443,7 @@ impl UserWorkspaces {
     /// Whether Code Suggestions should be toggleable for the current user, based on the active policies.
     /// Note that the value may be incorrect if called before the team's billing metadata has been fetched.
     pub fn is_code_suggestions_toggleable(&self) -> bool {
-        if cfg!(feature = "local_only") {
+        if true {
             return true;
         }
 
@@ -460,7 +460,7 @@ impl UserWorkspaces {
     /// Whether Next Command should be toggleable for the current user, based on the active policies.
     /// Note that the value may be incorrect if called before the team's billing metadata has been fetched.
     pub fn is_next_command_enabled(&self) -> bool {
-        if cfg!(feature = "local_only") {
+        if true {
             return true;
         }
 
@@ -478,7 +478,7 @@ impl UserWorkspaces {
     /// Note that the value may be incorrect if called before the team's billing metadata has been fetched.
     /// If voice input support is not compiled into this build, always returns `false`.
     pub fn is_voice_enabled(&self) -> bool {
-        if cfg!(feature = "local_only") {
+        if true {
             return cfg!(feature = "voice_input");
         }
 
@@ -498,7 +498,7 @@ impl UserWorkspaces {
     /// Note that the value may be incorrect if called before the team's billing metadata has been fetched.
     /// For solo users (no workspace), this is controlled by the `SoloUserByok` feature flag.
     pub fn is_byo_api_key_enabled(&self) -> bool {
-        if cfg!(feature = "local_only") {
+        if true {
             return true;
         }
 
@@ -575,7 +575,7 @@ impl UserWorkspaces {
     /// if so, we'll fall back to their billing metadata's value. Once we've migrated everyone
     /// into org settings, we should remove `is_enabled` from the policy and delete this function.
     pub fn is_ai_autonomy_allowed(&self) -> bool {
-        if cfg!(feature = "local_only") {
+        if true {
             return true;
         }
 
@@ -1472,7 +1472,7 @@ impl UserWorkspaces {
     /// global AI settings, and codebase-specific settings.
     /// Prefer this function to determine whether to show indexing-related functionality.
     pub fn is_codebase_context_enabled(&self, app: &AppContext) -> bool {
-        if cfg!(feature = "local_only") {
+        if true {
             return AISettings::as_ref(app).is_any_ai_enabled(app)
                 && *CodeSettings::as_ref(app).codebase_context_enabled.value();
         }
@@ -1519,7 +1519,7 @@ impl UserWorkspaces {
 
     /// Updates whether or not session sharing is enabled based on the current team's tier policy.
     fn update_session_sharing_enablement(&self, ctx: &AppContext) {
-        if cfg!(feature = "local_only") {
+        if true {
             let _ = ctx;
             FeatureFlag::CreatingSharedSessions.set_enabled(false);
             return;

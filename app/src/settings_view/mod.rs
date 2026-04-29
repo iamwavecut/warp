@@ -207,6 +207,7 @@ pub enum SettingsSection {
     AI,
     // ── Agents umbrella subpages ──
     WarpAgent,
+    LLMProviders,
     AgentProfiles,
     AgentMCPServers,
     Knowledge,
@@ -230,12 +231,14 @@ use std::fmt::{self, Display};
 impl Display for SettingsSection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            SettingsSection::Account => write!(f, "User"),
             SettingsSection::BillingAndUsage => write!(f, "Billing and usage"),
             SettingsSection::Keybindings => write!(f, "Keyboard shortcuts"),
             SettingsSection::SharedBlocks => write!(f, "Shared blocks"),
             SettingsSection::MCPServers => write!(f, "MCP Servers"),
             SettingsSection::WarpDrive => write!(f, "Warp Drive"),
             SettingsSection::WarpAgent => write!(f, "Warp Agent"),
+            SettingsSection::LLMProviders => write!(f, "LLM providers"),
             SettingsSection::AgentProfiles => write!(f, "Profiles"),
             SettingsSection::AgentMCPServers => write!(f, "MCP servers"),
             SettingsSection::Knowledge => write!(f, "Knowledge"),
@@ -260,6 +263,7 @@ impl SettingsSection {
         matches!(
             self,
             Self::WarpAgent
+                | Self::LLMProviders
                 | Self::AgentProfiles
                 | Self::AgentMCPServers
                 | Self::Knowledge
@@ -297,6 +301,7 @@ impl SettingsSection {
     pub fn ai_subpages() -> &'static [Self] {
         &[
             Self::WarpAgent,
+            Self::LLMProviders,
             Self::AgentProfiles,
             Self::AgentMCPServers,
             Self::Knowledge,
@@ -313,6 +318,20 @@ impl SettingsSection {
     pub fn cloud_platform_subpages() -> &'static [Self] {
         &[Self::CloudEnvironments, Self::OzCloudAPIKeys]
     }
+
+    /// Cloud/account-backed surfaces that are intentionally hidden in this fork.
+    pub fn is_hidden_in_local_only(&self) -> bool {
+        matches!(
+            self,
+            Self::BillingAndUsage
+                | Self::Referrals
+                | Self::SharedBlocks
+                | Self::Teams
+                | Self::WarpDrive
+                | Self::CloudEnvironments
+                | Self::OzCloudAPIKeys
+        )
+    }
 }
 
 impl FromStr for SettingsSection {
@@ -322,6 +341,7 @@ impl FromStr for SettingsSection {
         match s {
             "About" => Ok(Self::About),
             "Account" => Ok(Self::Account),
+            "User" => Ok(Self::Account),
             "AI" => Ok(Self::AI),
             "MCP Servers" => Ok(Self::MCPServers),
             "Billing and usage" => Ok(Self::BillingAndUsage),
@@ -337,6 +357,7 @@ impl FromStr for SettingsSection {
             "WarpDrive" | "Warp Drive" => Ok(Self::WarpDrive),
             // This page was called "Oz" at one point, keep for backward compatibility.
             "Oz" | "Warp Agent" => Ok(Self::WarpAgent),
+            "LLM providers" | "LLMProviders" => Ok(Self::LLMProviders),
             "Profiles" | "AgentProfiles" => Ok(Self::AgentProfiles),
             "MCP servers" | "AgentMCPServers" => Ok(Self::AgentMCPServers),
             "Knowledge" => Ok(Self::Knowledge),
@@ -1222,6 +1243,23 @@ impl SettingsView {
             Some(section) if section.is_subpage() => section,
             other => other.unwrap_or_default(),
         };
+        let initial_page = if initial_page.is_hidden_in_local_only() {
+            SettingsSection::Account
+        } else {
+            initial_page
+        };
+
+        for item in &mut nav_items {
+            if let SettingsNavItem::Umbrella(umbrella) = item {
+                umbrella
+                    .subpages
+                    .retain(|section| !section.is_hidden_in_local_only());
+            }
+        }
+        nav_items.retain(|item| match item {
+            SettingsNavItem::Page(section) => !section.is_hidden_in_local_only(),
+            SettingsNavItem::Umbrella(umbrella) => !umbrella.subpages.is_empty(),
+        });
 
         // Auto-expand the umbrella if the initial page is one of its subpages.
         if initial_page.is_subpage() {
@@ -1589,10 +1627,6 @@ impl SettingsView {
     ) {
         match event {
             MainSettingsPageEvent::CheckForUpdate => ctx.emit(SettingsViewEvent::CheckForUpdate),
-            MainSettingsPageEvent::SignupAnonymousUser => {
-                ctx.emit(SettingsViewEvent::SignupAnonymousUser)
-            }
-            _ => (),
         }
     }
 
@@ -1853,6 +1887,11 @@ impl SettingsView {
             SettingsSection::Code => SettingsSection::CodeIndexing,
             other => other,
         };
+        let section = if section.is_hidden_in_local_only() {
+            SettingsSection::Account
+        } else {
+            section
+        };
 
         // For AI subpages, the backing page is the AI page. Check it exists.
         let page_section = section.parent_page_section();
@@ -1944,6 +1983,10 @@ impl SettingsView {
     }
 
     fn should_render_page(&self, settings_page: &SettingsPage, app: &AppContext) -> bool {
+        if settings_page.section.is_hidden_in_local_only() {
+            return false;
+        }
+
         match &settings_page.view_handle {
             SettingsPageViewHandle::Main(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::Teams(v) => v.as_ref(app).should_render(app),

@@ -58,13 +58,11 @@ use crate::view_components::DismissibleToast;
 use crate::window_settings::WindowSettings;
 use crate::workspace::hoa_onboarding::mark_hoa_onboarding_completed;
 use crate::workspace::WorkspaceAction;
-use crate::workspaces::team_tester::TeamTesterStatus;
 use crate::workspaces::update_manager::TeamUpdateManager;
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 use crate::{
     app_state::{AppState, PaneUuid, WindowSnapshot},
     autoupdate::{RequestType, UpdateReady},
-    changelog_model::ChangelogRequestType,
     pane_group::{NewTerminalOptions, PanesLayout},
     send_telemetry_from_ctx,
     server::{server_api::ServerTime, telemetry::TelemetryEvent},
@@ -1753,52 +1751,9 @@ impl RootView {
             workspace_setting,
         };
 
-        let auth_onboarding_state = {
-            #[cfg(feature = "local_only")]
-            {
-                // In local_only mode, always go directly to the terminal workspace.
-                let _ = &auth_state;
-                AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx))
-            }
-            #[cfg(not(feature = "local_only"))]
-            if auth_state.is_logged_in() {
-                AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx))
-            } else {
-                cfg_if! {
-                    if #[cfg(target_family = "wasm")] {
-                        AuthOnboardingState::WebImport(AuthOnboardingTarget::Workspace(workspace_args.into()))
-                    } else {
-                        // When OpenWarpNewSettingsModes is enabled, show onboarding before login for
-                        // users who haven't completed it yet (tracked via a local UserPreferences key).
-                        let has_completed_local_onboarding = FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
-                            && has_completed_local_onboarding(ctx);
-                        let should_show_pre_login_onboarding = FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
-                            && FeatureFlag::AgentOnboarding.is_enabled()
-                            && !has_completed_local_onboarding;
-                        if FeatureFlag::ForceLogin.is_enabled() {
-                            // ForceLogin is true for Preview
-                            AuthOnboardingState::Auth(workspace_args.into())
-                        } else if should_show_pre_login_onboarding {
-                            let workspace_args_box: Box<WorkspaceArgs> = workspace_args.into();
-                            let onboarding_view = Self::create_agent_onboarding_view(ctx);
-                            onboarding_view.update(ctx, |view, ctx| {
-                                view.start_onboarding(ctx);
-                            });
-                            AuthOnboardingState::Onboarding {
-                                onboarding_view,
-                                target: AuthOnboardingTarget::Workspace(workspace_args_box),
-                            }
-                        } else if FeatureFlag::SkipFirebaseAnonymousUser.is_enabled() {
-                            // When SkipFirebaseAnonymousUser is enabled, skip the login screen
-                            // entirely and go directly into the workspace.
-                            AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx))
-                        } else {
-                            AuthOnboardingState::Auth(workspace_args.into())
-                        }
-                    }
-                }
-            }
-        };
+        let _ = &auth_state;
+        let auth_onboarding_state =
+            AuthOnboardingState::Terminal(workspace_args.create_workspace(ctx));
 
         let needs_sso_link_view = ctx.add_typed_action_view(|_| NeedsSsoLinkView::new());
 
@@ -1827,12 +1782,6 @@ impl RootView {
         };
 
         match &root_view.auth_onboarding_state {
-            AuthOnboardingState::Terminal(workspace) if FeatureFlag::Changelog.is_enabled() => {
-                // Only show the changelog if we aren't about to launch the authentication flow
-                workspace.update(ctx, |workspace, ctx| {
-                    workspace.check_for_changelog(ChangelogRequestType::WindowLaunch, ctx);
-                })
-            }
             AuthOnboardingState::Auth(_) => {
                 // ApplePressAndHoldEnabled is the setting for whether or not the accent
                 // menu is shown when a key is held. If "false", we repeat the character
@@ -2865,38 +2814,12 @@ impl RootView {
     /// Shows the user the settings view of their newly joined team
     /// within the app.
     pub fn handle_team_intent_link_action(&mut self, _: &(), ctx: &mut ViewContext<Self>) -> bool {
-        // Force-open warp drive.
-        let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
-            ctx.dispatch_typed_action_for_view(
-                window_id,
-                handle.id(),
-                &WorkspaceAction::OpenWarpDrive,
-            );
-            ctx.windows().show_window_and_focus_app(window_id);
-        } else {
-            log::error!("Auth not complete before trying to open warp drive");
-        }
-
-        // Use the team tester model to notify relevant subscribers to refresh their data.
-        TeamTesterStatus::handle(ctx).update(ctx, |model, ctx| {
-            model.initiate_data_pollers(true, ctx);
-        });
+        let _ = ctx;
         true
     }
 
     pub fn open_team_settings_page(&mut self, _: &(), ctx: &mut ViewContext<Self>) -> bool {
-        let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
-            ctx.dispatch_typed_action_for_view(
-                window_id,
-                handle.id(),
-                &WorkspaceAction::ShowSettingsPage(SettingsSection::Teams),
-            );
-            ctx.windows().show_window_and_focus_app(window_id);
-        } else {
-            log::error!("Auth not complete before trying to open team settings page");
-        }
+        let _ = ctx;
         true
     }
 

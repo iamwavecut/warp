@@ -166,6 +166,24 @@ impl User {
         self.metadata.display_name.clone()
     }
 
+    pub fn local() -> Self {
+        Self {
+            local_id: UserUid::new("local_user"),
+            metadata: UserMetadata {
+                email: String::new(),
+                display_name: Some("Local User".to_string()),
+                photo_url: None,
+            },
+            is_onboarded: true,
+            needs_sso_link: false,
+            anonymous_user_type: None,
+            is_on_work_domain: false,
+            linked_at: None,
+            personal_object_limits: None,
+            principal_type: PrincipalType::User,
+        }
+    }
+
     pub fn test() -> Self {
         Self {
             local_id: UserUid::new(TEST_USER_UID),

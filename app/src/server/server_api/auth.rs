@@ -1,6 +1,6 @@
 use std::{result::Result as StdResult, sync::Arc};
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use cynic::{MutationBuilder, QueryBuilder};
 use firebase::{FetchAccessTokenResponse, FirebaseError};
@@ -184,13 +184,11 @@ pub trait AuthClient: 'static + Send + Sync {
     async fn set_user_is_onboarded(&self) -> Result<bool>;
 
     /// Requests a device authorization code from the server. This is only used for headless CLI/SDK authentication.
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     async fn request_device_code(
         &self,
     ) -> StdResult<oauth2::StandardDeviceAuthorizationResponse, UserAuthenticationError>;
 
     /// Wait for the request to be approved or rejected and exchange it for a short-lived custom access token.
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     async fn exchange_device_access_token(
         &self,
         details: &oauth2::StandardDeviceAuthorizationResponse,
@@ -243,12 +241,8 @@ impl AuthClient for ServerApi {
     }
 
     async fn get_or_refresh_access_token(&self) -> Result<AuthToken> {
-        if cfg!(feature = "skip_login") {
-            bail!("skip_login enabled; failing all authenticated requests");
-        }
-
         let Some(credentials) = self.auth_state.credentials() else {
-            bail!("Attempted to retrieve access token when user is logged out");
+            return Ok(AuthToken::NoAuth);
         };
 
         match credentials {
@@ -284,7 +278,6 @@ impl AuthClient for ServerApi {
             Credentials::SessionCookie => Ok(AuthToken::NoAuth),
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             Credentials::Test => Ok(AuthToken::NoAuth),
-            #[cfg(feature = "local_only")]
             Credentials::Local => Ok(AuthToken::NoAuth),
         }
     }
@@ -848,9 +841,7 @@ pub enum UserAuthenticationError {
     #[error("Firebase returned a user error when fetching an ID token")]
     UserAccountDisabled(FirebaseError),
     #[error("Invalid state parameter in auth redirect")]
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     InvalidStateParameter,
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     #[error("Missing state parameter in auth redirect")]
     MissingStateParameter,
     #[error("unexpected error occurred when fetching an ID token: {0:#}")]
@@ -904,7 +895,6 @@ impl From<FirebaseError> for UserAuthenticationError {
 
 #[derive(Error, Debug)]
 /// Error type when creating anonymous users
-#[cfg_attr(feature = "local_only", allow(dead_code))]
 pub enum AnonymousUserCreationError {
     #[error("The network request to create the anonymous user failed")]
     CreationFailed,

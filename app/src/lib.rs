@@ -282,8 +282,6 @@ use crate::notification::NotificationContext;
 use crate::root_view::{
     quake_mode_window_id, quake_mode_window_is_open, OpenFromRestoredArg, OpenPath,
 };
-#[cfg(not(feature = "local_only"))]
-use crate::server::telemetry::TelemetryCollector;
 pub use crate::server::telemetry::{
     AgentModeEntrypoint, AgentModeEntrypointSelectionType, TelemetryEvent,
 };
@@ -1264,18 +1262,7 @@ fn initialize_app(
 
     ctx.add_singleton_model(AntivirusInfo::new);
 
-    cfg_if::cfg_if! {
-        if #[cfg(all(feature = "crash_reporting", not(feature = "local_only")))] {
-            let is_crash_reporting_enabled = crash_reporting::init(ctx);
-        } else {
-            let is_crash_reporting_enabled = false;
-        }
-    }
-    // Send buffered pre-init errors to Sentry now that the client is ready.
-    #[cfg(all(feature = "crash_reporting", not(feature = "local_only")))]
-    for err in _pre_sentry_errors {
-        sentry::integrations::anyhow::capture_anyhow(&err);
-    }
+    let is_crash_reporting_enabled = false;
     timer.mark_interval_end("INIT_CRASH_REPORTING");
 
     if let LaunchMode::App { .. } = launch_mode {
@@ -1498,16 +1485,6 @@ fn initialize_app(
 
     ctx.add_singleton_model(CustomSecretRegexUpdater::new);
 
-    // Register the `TelemetryCollection` singleton model.
-    #[cfg(not(feature = "local_only"))]
-    {
-        let server_api_clone = server_api.clone();
-        ctx.add_singleton_model(|ctx| {
-            let telemetry_collector = TelemetryCollector::new(server_api_clone);
-            telemetry_collector.initialize_telemetry_collection(ctx);
-            telemetry_collector
-        });
-    }
     timer.mark_interval_end("INITIALIZE_TELEMETRY_COLLECTION");
 
     // Register initial keybindings prior to creating menus
@@ -1933,15 +1910,6 @@ fn app_callbacks(is_integration_test: bool) -> warpui::platform::AppCallbacks {
                 }
             }
             ctx.dispatch_global_action("root_view:update_quake_mode_state", &update_quake_mode_arg);
-
-            #[cfg(not(feature = "local_only"))]
-            {
-                let auth_state = AuthStateProvider::as_ref(ctx).get();
-                ctx.record_app_blur(
-                    auth_state.user_id().map(|uid| uid.as_string()),
-                    auth_state.anonymous_id(),
-                );
-            }
         })),
         on_will_terminate: Some(Box::new(move |ctx| {
             NotebookManager::handle(ctx).update(ctx, |manager, ctx| {
@@ -1953,18 +1921,6 @@ fn app_callbacks(is_integration_test: bool) -> warpui::platform::AppCallbacks {
             PersistenceWriter::handle(ctx).update(ctx, |writer, _ctx| {
                 writer.terminate();
             });
-
-            #[cfg(not(feature = "local_only"))]
-            {
-                let auth_state = AuthStateProvider::as_ref(ctx).get();
-                ctx.try_record_daily_app_focus_duration(
-                    auth_state.user_id().map(|uid| uid.as_string()),
-                    auth_state.anonymous_id(),
-                );
-                TelemetryCollector::handle(ctx).update(ctx, |telemetry_collector, ctx| {
-                    telemetry_collector.flush_telemetry_events_for_shutdown(ctx);
-                });
-            }
 
             // Shutdown all LSP servers gracefully before app termination
             lsp::LspManagerModel::handle(ctx).update(ctx, |manager, ctx| {
@@ -2415,55 +2371,49 @@ pub fn init_feature_flags() {
         flag.set_enabled(true);
     }
 
-    // In local_only mode, forcefully disable all cloud-dependent feature flags.
-    // These features require server-side infrastructure that doesn't exist in a
-    // fully local build.
-    #[cfg(feature = "local_only")]
-    {
-        let disabled_flags: &[FeatureFlag] = &[
-            FeatureFlag::CloudObjects,
-            FeatureFlag::CloudMode,
-            FeatureFlag::CloudModeFromLocalSession,
-            FeatureFlag::CloudModeHostSelector,
-            FeatureFlag::CloudModeImageContext,
-            FeatureFlag::WarpManagedSecrets,
-            FeatureFlag::OrchestrationV2,
-            FeatureFlag::Orchestration,
-            FeatureFlag::SyncAmbientPlans,
-            FeatureFlag::OzHandoff,
-            FeatureFlag::OzIdentityFederation,
-            FeatureFlag::OzLaunchModal,
-            FeatureFlag::ConversationApi,
-            FeatureFlag::CloudConversations,
-            FeatureFlag::CloudModeSetupV2,
-            FeatureFlag::CloudModeInputV2,
-            FeatureFlag::CreateEnvironmentSlashCommand,
-            FeatureFlag::CloudEnvironments,
-            FeatureFlag::ScheduledAmbientAgents,
-            FeatureFlag::AmbientAgentsCommandLine,
-            FeatureFlag::AmbientAgentsImageUpload,
-            FeatureFlag::AmbientAgentsRTC,
-            FeatureFlag::SshRemoteServer,
-            FeatureFlag::CreatingSharedSessions,
-            FeatureFlag::ViewingSharedSessions,
-            FeatureFlag::AgentSharedSessions,
-            FeatureFlag::ForceLogin,
-            FeatureFlag::APIKeyAuthentication,
-            FeatureFlag::APIKeyManagement,
-            FeatureFlag::UsageBasedPricing,
-            FeatureFlag::CrashReporting,
-            FeatureFlag::CocoaSentry,
-            FeatureFlag::LogExpensiveFramesInSentry,
-            FeatureFlag::RecordAppActiveEvents,
-            FeatureFlag::SendTelemetryToFile,
-            FeatureFlag::WithSandboxTelemetry,
-            FeatureFlag::AgentModeAnalytics,
-            FeatureFlag::AgentManagementView,
-            FeatureFlag::AgentManagementDetailsView,
-        ];
-        for flag in disabled_flags {
-            flag.set_enabled(false);
-        }
+    // This fork is always local-first. Cloud/account/billing/telemetry surfaces
+    // stay off regardless of Cargo feature selection; local AI, MCP, BYOK, CLI
+    // agents, and other locally implementable workflows stay available.
+    let disabled_flags: &[FeatureFlag] = &[
+        FeatureFlag::CloudObjects,
+        FeatureFlag::CloudMode,
+        FeatureFlag::CloudModeFromLocalSession,
+        FeatureFlag::CloudModeHostSelector,
+        FeatureFlag::CloudModeImageContext,
+        FeatureFlag::WarpManagedSecrets,
+        FeatureFlag::OrchestrationV2,
+        FeatureFlag::Orchestration,
+        FeatureFlag::SyncAmbientPlans,
+        FeatureFlag::OzHandoff,
+        FeatureFlag::OzIdentityFederation,
+        FeatureFlag::OzLaunchModal,
+        FeatureFlag::ConversationApi,
+        FeatureFlag::CloudConversations,
+        FeatureFlag::CloudModeSetupV2,
+        FeatureFlag::CloudModeInputV2,
+        FeatureFlag::CreateEnvironmentSlashCommand,
+        FeatureFlag::CloudEnvironments,
+        FeatureFlag::ScheduledAmbientAgents,
+        FeatureFlag::AmbientAgentsImageUpload,
+        FeatureFlag::AmbientAgentsRTC,
+        FeatureFlag::SshRemoteServer,
+        FeatureFlag::CreatingSharedSessions,
+        FeatureFlag::ViewingSharedSessions,
+        FeatureFlag::AgentSharedSessions,
+        FeatureFlag::ForceLogin,
+        FeatureFlag::APIKeyAuthentication,
+        FeatureFlag::APIKeyManagement,
+        FeatureFlag::UsageBasedPricing,
+        FeatureFlag::CrashReporting,
+        FeatureFlag::CocoaSentry,
+        FeatureFlag::LogExpensiveFramesInSentry,
+        FeatureFlag::RecordAppActiveEvents,
+        FeatureFlag::SendTelemetryToFile,
+        FeatureFlag::WithSandboxTelemetry,
+        FeatureFlag::AgentModeAnalytics,
+    ];
+    for flag in disabled_flags {
+        flag.set_enabled(false);
     }
 
     features::mark_initialized();

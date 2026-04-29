@@ -686,7 +686,7 @@ impl SettingsPageMeta for BillingAndUsagePageView {
     }
 
     fn should_render(&self, ctx: &AppContext) -> bool {
-        if cfg!(feature = "local_only") {
+        if true {
             let _ = ctx;
             return false;
         }
@@ -699,7 +699,7 @@ impl SettingsPageMeta for BillingAndUsagePageView {
     }
 
     fn on_page_selected(&mut self, _: bool, ctx: &mut ViewContext<Self>) {
-        if cfg!(feature = "local_only") {
+        if true {
             let _ = ctx;
             return;
         }
@@ -779,7 +779,7 @@ impl TypedActionView for BillingAndUsagePageView {
 
         match action {
             BillingAndUsagePageAction::Upgrade { team_uid, user_id } => {
-                if cfg!(feature = "local_only") {
+                if true {
                     let _ = (team_uid, user_id, ctx);
                     return;
                 }
@@ -808,7 +808,7 @@ impl TypedActionView for BillingAndUsagePageView {
                 ctx.emit(BillingAndUsagePageEvent::SignupAnonymousUser);
             }
             BillingAndUsagePageAction::AttemptLoginGatedUpgrade => {
-                if cfg!(feature = "local_only") {
+                if true {
                     return;
                 }
 

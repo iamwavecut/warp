@@ -1,4 +1,4 @@
-#[cfg(not(feature = "local_only"))]
+#[allow(dead_code)]
 mod collector;
 mod context;
 pub mod context_provider;
@@ -8,22 +8,20 @@ pub mod rudder_message;
 pub mod secret_redaction;
 
 use chrono::Utc;
-#[cfg(not(feature = "local_only"))]
-pub use collector::*;
 pub use context::telemetry_context;
 pub use events::*;
 
 use crate::auth::UserUid;
-use crate::features::FeatureFlag;
 use crate::server::telemetry::context::AttachContext;
 use crate::server::telemetry_ext::TelemetryExt;
 use crate::settings::PrivacySettingsSnapshot;
 use crate::ChannelState;
 use anyhow::Result;
 use futures::FutureExt;
+#[cfg(test)]
+use rudder_message::BatchMessageItem as RudderBatchMessage;
 use rudder_message::{
-    Batch as RudderBatch, BatchMessage as RudderBatchMessageWithMetadata,
-    BatchMessageItem as RudderBatchMessage, Message as RudderMessage,
+    Batch as RudderBatch, BatchMessage as RudderBatchMessageWithMetadata, Message as RudderMessage,
 };
 use std::fs::File;
 #[cfg(not(target_family = "wasm"))]
@@ -44,7 +42,6 @@ fn rudder_event_file_path() -> PathBuf {
 }
 
 /// Removes all telemetry events from the app telemetry event queue.
-#[cfg_attr(feature = "local_only", allow(dead_code))]
 pub fn clear_event_queue() {
     let _ = warpui::telemetry::flush_events();
 }
@@ -96,23 +93,7 @@ impl TelemetryApi {
     pub async fn flush_events(&self, settings_snapshot: PrivacySettingsSnapshot) -> Result<usize> {
         let events = warpui::telemetry::flush_events();
         let event_count = events.len();
-
-        #[cfg(not(target_family = "wasm"))]
-        if FeatureFlag::SendTelemetryToFile.is_enabled() {
-            self.persist_events_to_telemetry_log_file(events.clone())?;
-        }
-
-        if ChannelState::is_release_bundle() || FeatureFlag::WithSandboxTelemetry.is_enabled() {
-            self.send_batch_messages_to_rudder(
-                events
-                    .into_iter()
-                    .map(Event::to_rudder_batch_message)
-                    .collect(),
-                settings_snapshot,
-            )
-            .await?;
-        }
-
+        let _ = settings_snapshot;
         Ok(event_count)
     }
 
@@ -123,23 +104,7 @@ impl TelemetryApi {
         path: &Path,
         settings_snapshot: PrivacySettingsSnapshot,
     ) -> Result<()> {
-        if path.exists() {
-            let file = File::open(path)?;
-            let events: Vec<RudderBatchMessage> = serde_json::from_reader(file)?;
-            if !events.is_empty() {
-                let rudder_batch_messages = events
-                    .into_iter()
-                    .map(|message| RudderBatchMessageWithMetadata {
-                        message,
-                        // We don't persist any events that contain sensitive user data.
-                        contains_ugc: false,
-                    })
-                    .collect();
-                self.send_batch_messages_to_rudder(rudder_batch_messages, settings_snapshot)
-                    .await?;
-                log::info!("Successfully flushed events to rudder from disk");
-            }
-        }
+        let _ = (path, settings_snapshot);
         Ok(())
     }
 
@@ -151,11 +116,9 @@ impl TelemetryApi {
         max_event_count: usize,
         settings_snapshot: PrivacySettingsSnapshot,
     ) -> Result<()> {
-        self.flush_and_persist_events_at_path(
-            max_event_count,
-            settings_snapshot,
-            rudder_event_file_path(),
-        )
+        let _ = (max_event_count, settings_snapshot);
+        clear_event_queue();
+        Ok(())
     }
 
     fn flush_and_persist_events_at_path(
@@ -220,17 +183,8 @@ impl TelemetryApi {
         event: impl warp_core::telemetry::TelemetryEvent,
         settings_snapshot: PrivacySettingsSnapshot,
     ) -> Result<()> {
-        let event = warpui::telemetry::create_event(
-            user_id.map(|uid| uid.as_string()),
-            anonymous_id,
-            event.name().into(),
-            event.payload(),
-            event.contains_ugc(),
-            warpui::time::get_current_time(),
-        );
-
-        self.send_telemetry_event_internal(event, settings_snapshot)
-            .await
+        let _ = (self, user_id, anonymous_id, event, settings_snapshot);
+        Ok(())
     }
 
     /// Internal implementation for sending telemetry events. This reduces code size, since
@@ -243,45 +197,8 @@ impl TelemetryApi {
         settings_snapshot: PrivacySettingsSnapshot,
     ) -> impl Future<Output = Result<()>> + '_ {
         let work = async move {
-            if settings_snapshot.should_disable_telemetry() {
-                log::info!("Not sending telemetry event because telemetry is disabled.");
-                return Result::Ok(());
-            }
-
-            #[cfg(not(target_family = "wasm"))]
-            if FeatureFlag::SendTelemetryToFile.is_enabled() {
-                self.persist_events_to_telemetry_log_file(vec![event.clone()])?;
-            }
-
-            if !(ChannelState::is_release_bundle()
-                || FeatureFlag::WithSandboxTelemetry.is_enabled())
-            {
-                return Result::Ok(());
-            }
-
-            let rudder_batch = vec![event.to_rudder_batch_message()];
-
-            let result = self
-                .send_batch_messages_to_rudder(rudder_batch, settings_snapshot)
-                .await;
-
-            // This is only conditionally compiled because `is_connect` is not
-            // available on wasm.  If additional checks are made against the
-            // `reqwest::Error`, this condition should be performed specifically
-            // against `is_connect` and not the whole loop.
-            #[cfg(not(target_family = "wasm"))]
-            if let Err(error) = &result {
-                for cause in error.chain() {
-                    if let Some(err) = cause.downcast_ref::<reqwest::Error>() {
-                        if err.is_connect() {
-                            log::warn!("Failed to send telemetry event: {error}");
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-
-            result
+            let _ = (self, event, settings_snapshot);
+            Result::Ok(())
         };
 
         // On WASM, the work future is non-Send, because the HTTP request future contains a reference to a JS

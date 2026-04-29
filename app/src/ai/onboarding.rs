@@ -5,14 +5,8 @@ use onboarding::slides::OnboardingModelInfo;
 use onboarding::OnboardingAuthState;
 use warp_core::ui::icons::Icon;
 use warpui::AppContext;
-#[cfg(not(feature = "local_only"))]
-use warpui::SingletonEntity;
 
-#[cfg(not(feature = "local_only"))]
-use crate::auth::AuthStateProvider;
 use crate::experiments::FreeTierDefaultModel;
-#[cfg(not(feature = "local_only"))]
-use crate::workspaces::user_workspaces::UserWorkspaces;
 
 use super::llms::{DisableReason, LLMInfo, LLMPreferences};
 
@@ -67,25 +61,6 @@ pub fn apply_free_tier_default_model_override(
 }
 
 pub fn current_onboarding_auth_state(ctx: &AppContext) -> OnboardingAuthState {
-    #[cfg(feature = "local_only")]
-    {
-        let _ = ctx;
-        return OnboardingAuthState::FreeUser;
-    }
-    #[cfg(not(feature = "local_only"))]
-    {
-        let auth_state = AuthStateProvider::as_ref(ctx).get();
-        if auth_state.is_anonymous_or_logged_out() {
-            return OnboardingAuthState::LoggedOut;
-        }
-        let is_on_paid_plan = UserWorkspaces::as_ref(ctx)
-            .current_workspace()
-            .map(|w| w.billing_metadata.is_user_on_paid_plan())
-            .unwrap_or(false);
-        if is_on_paid_plan {
-            OnboardingAuthState::PayingUser
-        } else {
-            OnboardingAuthState::FreeUser
-        }
-    }
+    let _ = ctx;
+    OnboardingAuthState::FreeUser
 }

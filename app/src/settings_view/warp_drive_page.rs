@@ -88,7 +88,7 @@ impl SettingsPageMeta for WarpDriveSettingsPageView {
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
+        false && FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
     }
 
     fn update_filter(&mut self, query: &str, ctx: &mut ViewContext<Self>) -> MatchData {

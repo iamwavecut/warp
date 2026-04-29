@@ -7,7 +7,10 @@ use super::{
 };
 
 pub fn sections(ctx: &mut ViewContext<ResourceCenterMainView>) -> Vec<Section> {
-    let mut sections = vec![Section::Changelog()];
+    let mut sections = vec![];
+    if false {
+        sections.push(Section::Changelog());
+    }
 
     if FeatureFlag::AvatarInTabBar.is_enabled() {
         return sections;

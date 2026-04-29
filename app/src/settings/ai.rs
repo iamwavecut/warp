@@ -87,6 +87,45 @@ pub enum CustomApiType {
     OpenAiCompatible,
 }
 
+pub fn parse_custom_provider_models(input: &str) -> Vec<String> {
+    input
+        .split([',', '\n'])
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .fold(Vec::new(), |mut models, model| {
+            if !models.iter().any(|existing| existing == model) {
+                models.push(model.to_string());
+            }
+            models
+        })
+}
+
+pub fn normalize_custom_provider_env_var(input: &str) -> Option<String> {
+    let trimmed = input.trim().trim_start_matches('$').trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+pub fn custom_provider_config_from_ui(
+    name: &str,
+    base_url: &str,
+    models: &str,
+    api_key_env_var: &str,
+) -> Option<CustomProviderConfig> {
+    let name = name.trim();
+    let base_url = base_url.trim();
+    if name.is_empty() || base_url.is_empty() {
+        return None;
+    }
+
+    Some(CustomProviderConfig {
+        name: name.to_string(),
+        base_url: base_url.to_string(),
+        models: parse_custom_provider_models(models),
+        api_key_env_var: normalize_custom_provider_env_var(api_key_env_var),
+        api_type: CustomApiType::OpenAiCompatible,
+    })
+}
+
 pub enum FocusedTerminalInfoEvent {
     TerminalInfoUpdated,
 }

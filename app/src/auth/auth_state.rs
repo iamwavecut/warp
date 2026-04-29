@@ -1,3 +1,6 @@
+use std::env;
+#[cfg(unix)]
+use std::ffi::CStr;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -7,7 +10,6 @@ use anyhow::anyhow;
 use chrono::{DateTime, Duration, Utc};
 use parking_lot::RwLock;
 use uuid::Uuid;
-use warp_core::channel::{Channel, ChannelState};
 use warp_graphql::object_permissions::OwnerType;
 use warpui::{AppContext, Entity, SingletonEntity};
 
@@ -21,7 +23,7 @@ use super::{
     auth_manager::user_persistence::PersistedUser,
     credentials::Credentials,
     user::{AnonymousUserType, FirebaseAuthTokens, PersonalObjectLimits, PrincipalType, User},
-    UserUid, API_KEY_PREFIX,
+    UserUid,
 };
 
 const ANONYMOUS_USER_NOTIFICATION_BLOCK_TIMER: Duration = Duration::days(7);
@@ -73,73 +75,16 @@ impl AuthState {
         }
     }
 
-    /// Creates and initializes auth state. Checks, in order:
-    /// 1. Test user (test/integration/skip_login builds)
-    /// 2. Provided API key
-    /// 3. WARP_USER_SECRET environment variable
-    /// 4. Persisted user from secure storage
+    /// Creates and initializes auth state for the local fork.
+    ///
+    /// There is no remote account branch in this build: every app session runs
+    /// as the local system user with local unauthenticated credentials.
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
-    pub fn initialize(ctx: &AppContext, api_key: Option<String>) -> Self {
+    pub fn initialize(ctx: &AppContext, _api_key: Option<String>) -> Self {
         let state = Self::new(ctx);
-
-        if Self::should_use_test_user() {
-            state.set_user(Some(User::test()));
-            #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
-            state.set_credentials(Some(Credentials::Test));
-            #[cfg(all(
-                feature = "local_only",
-                not(any(test, feature = "integration_tests", feature = "skip_login"))
-            ))]
-            state.set_credentials(Some(Credentials::Local));
-            return state;
-        }
-
-        if let Some(api_key_value) = api_key {
-            log::info!("Authenticating via API key");
-            let formatted = if api_key_value.starts_with(API_KEY_PREFIX) {
-                api_key_value
-            } else {
-                format!("{API_KEY_PREFIX}{api_key_value}")
-            };
-            state.set_credentials(Some(Credentials::ApiKey {
-                key: formatted,
-                owner_type: None,
-            }));
-            return state;
-        }
-
-        // Try WARP_USER_SECRET environment variable.
-        if let Some(persisted) = option_env!("WARP_USER_SECRET")
-            .and_then(|s| serde_json::from_str::<PersistedUser>(s).ok())
-        {
-            state.apply_persisted_user(persisted);
-            return state;
-        }
-
-        // Try reading from secure storage.
-        match PersistedUser::from_secure_storage(ctx) {
-            Ok(persisted) => {
-                if persisted.auth_tokens.refresh_token.is_empty() {
-                    log::warn!(
-                        "Found persisted user with empty refresh token; clearing secure storage entry"
-                    );
-                    let _ = PersistedUser::remove_from_secure_storage(ctx).map_err(|err| {
-                        log::warn!("Unable to clear invalid user from secure storage: {err:?}");
-                    });
-                } else {
-                    state.apply_persisted_user(persisted);
-                }
-            }
-            Err(err) => {
-                log::info!("Unable to read user from secure storage: {err:?}");
-            }
-        }
-
+        state.set_user(Some(User::local()));
+        state.set_credentials(Some(Credentials::Local));
         state
-    }
-
-    fn should_use_test_user() -> bool {
-        cfg!(any(test, feature = "skip_login")) || ChannelState::channel() == Channel::Integration
     }
 
     /// Determines the appropriate persistence action based on the current auth state.
@@ -175,7 +120,6 @@ impl AuthState {
             (Some(_), Some(Credentials::SessionCookie)) => PersistAction::DoNothing,
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             (Some(_), Some(Credentials::Test)) => PersistAction::DoNothing,
-            #[cfg(feature = "local_only")]
             (Some(_), Some(Credentials::Local)) => PersistAction::DoNothing,
             // Credentials without a user, or user without credentials - transient states
             // during initialization or refresh; no persistence action needed.
@@ -234,7 +178,6 @@ impl AuthState {
             Some(Credentials::Test) => {
                 log::info!("Ignoring Firebase token update for Test credentials");
             }
-            #[cfg(feature = "local_only")]
             Some(Credentials::Local) => {
                 log::info!("Ignoring Firebase token update for Local credentials");
             }
@@ -248,15 +191,8 @@ impl AuthState {
 
     /// Determines whether the user should be considered as logged in.
     pub fn is_logged_in(&self) -> bool {
-        #[cfg(feature = "local_only")]
-        {
-            let _ = self;
-            true
-        }
-        #[cfg(not(feature = "local_only"))]
-        {
-            self.credentials.read().is_some()
-        }
+        let _ = self;
+        true
     }
 
     /// Returns whether the user should be treated as not having a full account.
@@ -266,15 +202,8 @@ impl AuthState {
     /// during the transient state where credentials exist but user data hasn't loaded
     /// yet, the user is conservatively treated as lacking a full account.
     pub fn is_anonymous_or_logged_out(&self) -> bool {
-        #[cfg(feature = "local_only")]
-        {
-            let _ = self;
-            false
-        }
-        #[cfg(not(feature = "local_only"))]
-        {
-            !self.is_logged_in() || self.is_user_anonymous().unwrap_or(true)
-        }
+        let _ = self;
+        false
     }
 
     /// Returns the cached access token, if any exists. This method *will not* check if the JWT is
@@ -286,15 +215,14 @@ impl AuthState {
 
     /// Returns the user's display name.
     pub fn username_for_display(&self) -> Option<String> {
-        Some(self.user.read().as_ref()?.username_for_display().to_owned())
+        let _ = self;
+        Some(local_system_display_name())
     }
 
     /// Returns the user's display name, does NOT fall back to email.
     pub fn display_name(&self) -> Option<String> {
-        self.user
-            .read()
-            .as_ref()
-            .and_then(|user| user.display_name().to_owned())
+        let _ = self;
+        Some(local_system_display_name())
     }
 
     /// Returns the user's email. Note the non-obvious semantics of this function:
@@ -302,10 +230,8 @@ impl AuthState {
     /// If the user is logged in and anonymous, their email will be an empty string.
     /// If the user is not logged in, their email will be `None`.
     pub fn user_email(&self) -> Option<String> {
-        self.user
-            .read()
-            .as_ref()
-            .map(|user| user.metadata.email.clone())
+        let _ = self;
+        None
     }
 
     /// Returns whether the user considered onboarded to Warp.
@@ -388,10 +314,8 @@ impl AuthState {
     /// Returns the user's photo URL from Firebase,
     /// typically acquired from linking a provider like Google/GitHub.
     pub fn user_photo_url(&self) -> Option<String> {
-        self.user
-            .read()
-            .as_ref()
-            .and_then(|user| user.metadata.photo_url.clone())
+        let _ = self;
+        None
     }
 
     /// Returns whether or not the user needs to link their account to an SSO provider.
@@ -550,3 +474,104 @@ impl Entity for AuthStateProvider {
 }
 
 impl SingletonEntity for AuthStateProvider {}
+
+fn local_system_display_name() -> String {
+    let (full_name, username) = local_system_user_names();
+    pick_local_system_display_name(full_name, username.or_else(env_username))
+}
+
+fn pick_local_system_display_name(full_name: Option<String>, username: Option<String>) -> String {
+    full_name
+        .and_then(trimmed_non_empty)
+        .or_else(|| username.and_then(trimmed_non_empty))
+        .unwrap_or_else(|| "User".to_owned())
+}
+
+fn env_username() -> Option<String> {
+    ["USER", "LOGNAME", "USERNAME"]
+        .iter()
+        .find_map(|key| env::var(key).ok().and_then(trimmed_non_empty))
+}
+
+fn trimmed_non_empty(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+#[cfg(unix)]
+fn local_system_user_names() -> (Option<String>, Option<String>) {
+    // SAFETY: getpwuid returns a pointer owned by libc. We copy C strings
+    // immediately and tolerate null pointers or non-UTF8 data by falling back.
+    unsafe {
+        let passwd = libc::getpwuid(libc::getuid());
+        if passwd.is_null() {
+            return (None, None);
+        }
+
+        let username = c_string((*passwd).pw_name).and_then(trimmed_non_empty);
+        let full_name = c_string((*passwd).pw_gecos)
+            .and_then(|gecos| gecos.split(',').next().map(str::to_owned))
+            .and_then(|name| expand_gecos_name(name, username.as_deref()))
+            .and_then(trimmed_non_empty);
+
+        (full_name, username)
+    }
+}
+
+#[cfg(not(unix))]
+fn local_system_user_names() -> (Option<String>, Option<String>) {
+    (None, None)
+}
+
+#[cfg(unix)]
+fn c_string(ptr: *const libc::c_char) -> Option<String> {
+    if ptr.is_null() {
+        return None;
+    }
+
+    // SAFETY: caller gives us a pointer from libc's passwd entry and we check
+    // for null before copying it into an owned Rust string.
+    unsafe { CStr::from_ptr(ptr) }
+        .to_str()
+        .ok()
+        .map(str::to_owned)
+}
+
+#[cfg(unix)]
+fn expand_gecos_name(name: String, username: Option<&str>) -> Option<String> {
+    if !name.contains('&') {
+        return Some(name);
+    }
+
+    let username = username?;
+    let mut chars = username.chars();
+    let expanded_username = chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect::<String>())
+        .unwrap_or_else(|| username.to_owned());
+    Some(name.replace('&', &expanded_username))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pick_local_system_display_name;
+
+    #[test]
+    fn local_display_name_prefers_system_full_name() {
+        assert_eq!(
+            pick_local_system_display_name(
+                Some("  Ada Lovelace  ".to_owned()),
+                Some("ada".to_owned())
+            ),
+            "Ada Lovelace"
+        );
+    }
+
+    #[test]
+    fn local_display_name_falls_back_to_username() {
+        assert_eq!(
+            pick_local_system_display_name(Some(" ".to_owned()), Some("wavecut".to_owned())),
+            "wavecut"
+        );
+    }
+}

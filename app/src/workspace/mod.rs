@@ -84,6 +84,10 @@ pub fn is_feedback_skill_available(ctx: &AppContext) -> bool {
             .is_some()
 }
 
+fn cloud_account_ui_enabled() -> bool {
+    false
+}
+
 use crate::workspace::view::{
     LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME, LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME,
     LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME, LEFT_PANEL_WARP_DRIVE_BINDING_NAME,
@@ -768,6 +772,7 @@ pub fn init(app: &mut AppContext) {
         )
         .with_group(bindings::BindingGroup::Navigation.as_str())
         .with_context_predicate(id!("Workspace") & id!(flags::ENABLE_WARP_DRIVE))
+        .with_enabled(cloud_account_ui_enabled)
         .with_mac_key_binding("ctrl-4")
         .with_linux_or_windows_key_binding("alt-4"),
         EditableBinding::new(
@@ -793,7 +798,8 @@ pub fn init(app: &mut AppContext) {
                 .with_custom_description(bindings::MAC_MENUS_CONTEXT, "Warp Drive"),
             WorkspaceAction::ToggleWarpDrive,
         )
-        .with_context_predicate(id!("Workspace") & id!(flags::ENABLE_WARP_DRIVE)),
+        .with_context_predicate(id!("Workspace") & id!(flags::ENABLE_WARP_DRIVE))
+        .with_enabled(cloud_account_ui_enabled),
         EditableBinding::new(
             TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME,
             BindingDescription::new("Toggle Agent conversation list view").with_custom_description(
@@ -1028,7 +1034,8 @@ pub fn init(app: &mut AppContext) {
             },
         )
         .with_context_predicate(id!("Workspace"))
-        .with_custom_action(CustomAction::SearchDrive),
+        .with_custom_action(CustomAction::SearchDrive)
+        .with_enabled(cloud_account_ui_enabled),
     ]);
 
     if FeatureFlag::Autoupdate.is_enabled() {
@@ -1059,7 +1066,8 @@ pub fn init(app: &mut AppContext) {
         WorkspaceAction::LogOut,
     )
     .with_group(bindings::BindingGroup::Settings.as_str())
-    .with_context_predicate(id!("Workspace") & !id!("IsAnonymousUser"))]);
+    .with_context_predicate(id!("Workspace") & !id!("IsAnonymousUser"))
+    .with_enabled(cloud_account_ui_enabled)]);
 
     if !FeatureFlag::AvatarInTabBar.is_enabled() {
         app.register_editable_bindings([EditableBinding::new(
@@ -1079,7 +1087,8 @@ pub fn init(app: &mut AppContext) {
             WorkspaceAction::ExportAllWarpDriveObjects,
         )
         .with_group(bindings::BindingGroup::Settings.as_str())
-        .with_context_predicate(id!("Workspace") & id!(flags::ENABLE_WARP_DRIVE))]);
+        .with_context_predicate(id!("Workspace") & id!(flags::ENABLE_WARP_DRIVE))
+        .with_enabled(cloud_account_ui_enabled)]);
     }
 
     // CLI install/uninstall actions (macOS only)
@@ -1103,7 +1112,7 @@ pub fn init(app: &mut AppContext) {
         ]);
     }
 
-    if FeatureFlag::Changelog.is_enabled() {
+    if cloud_account_ui_enabled() && FeatureFlag::Changelog.is_enabled() {
         app.register_editable_bindings([
             // Always show the "View latest changelog" action in the command palette,
             // but without a keybinding when the update toast is not visible.
@@ -1351,7 +1360,7 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
         .with_custom_action(CustomAction::ShowSettings),
         EditableBinding::new(
             "workspace:show_settings_account_page",
-            "Open Settings: Account",
+            "Open Settings: User",
             WorkspaceAction::ShowSettingsPage(SettingsSection::Account),
         )
         .with_context_predicate(id!("Workspace"))
@@ -1381,7 +1390,8 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
         )
         .with_group(bindings::BindingGroup::Settings.as_str())
         .with_context_predicate(id!("Workspace"))
-        .with_custom_action(CustomAction::ViewSharedBlocks),
+        .with_custom_action(CustomAction::ViewSharedBlocks)
+        .with_enabled(cloud_account_ui_enabled),
         EditableBinding::new(
             "workspace:show_settings_keyboard_shortcuts_page",
             BindingDescription::new("Open Settings: Keyboard Shortcuts").with_custom_description(
@@ -1410,7 +1420,8 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
         )
         .with_group(bindings::BindingGroup::Settings.as_str())
         .with_custom_action(CustomAction::OpenTeamSettings)
-        .with_context_predicate(id!("Workspace")),
+        .with_context_predicate(id!("Workspace"))
+        .with_enabled(cloud_account_ui_enabled),
         EditableBinding::new(
             "workspace:show_settings_privacy_page",
             BindingDescription::new("Open Settings: Privacy"),
@@ -1440,7 +1451,8 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
             WorkspaceAction::ShowSettingsPage(SettingsSection::BillingAndUsage),
         )
         .with_group(bindings::BindingGroup::Settings.as_str())
-        .with_context_predicate(id!("Workspace")),
+        .with_context_predicate(id!("Workspace"))
+        .with_enabled(cloud_account_ui_enabled),
         EditableBinding::new(
             "workspace:show_settings_code_page",
             BindingDescription::new("Open Settings: Code"),
@@ -1454,14 +1466,16 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
             WorkspaceAction::ShowSettingsPage(SettingsSection::Referrals),
         )
         .with_group(bindings::BindingGroup::Settings.as_str())
-        .with_context_predicate(id!("Workspace")),
+        .with_context_predicate(id!("Workspace"))
+        .with_enabled(cloud_account_ui_enabled),
         EditableBinding::new(
             "workspace:show_settings_environments_page",
             BindingDescription::new("Open Settings: Environments"),
             WorkspaceAction::ShowSettingsPage(SettingsSection::CloudEnvironments),
         )
         .with_group(bindings::BindingGroup::Settings.as_str())
-        .with_context_predicate(id!("Workspace")),
+        .with_context_predicate(id!("Workspace"))
+        .with_enabled(cloud_account_ui_enabled),
         EditableBinding::new(
             "workspace:show_mcp_servers_settings_page",
             BindingDescription::new("Open Settings: MCP Servers"),
@@ -1491,13 +1505,15 @@ fn add_overflow_menu_items_as_editable_binding(app: &mut AppContext) {
             WorkspaceAction::ShowReferralSettingsPage,
         )
         .with_context_predicate(id!("Workspace"))
+        .with_enabled(cloud_account_ui_enabled)
         .with_custom_action(CustomAction::ReferAFriend),
         EditableBinding::new(
             "workspace:link_to_slack",
             "Join our Slack community (opens external link)",
             WorkspaceAction::JoinSlack,
         )
-        .with_context_predicate(id!("Workspace")),
+        .with_context_predicate(id!("Workspace"))
+        .with_enabled(cloud_account_ui_enabled),
         EditableBinding::new(
             "workspace:link_to_user_docs",
             "View user docs (opens external link)",
@@ -1511,7 +1527,8 @@ fn add_overflow_menu_items_as_editable_binding(app: &mut AppContext) {
             ),
             WorkspaceAction::SendFeedback,
         )
-        .with_context_predicate(id!("Workspace")),
+        .with_context_predicate(id!("Workspace"))
+        .with_enabled(cloud_account_ui_enabled),
         #[cfg(not(target_family = "wasm"))]
         EditableBinding::new(
             "workspace:view_logs",

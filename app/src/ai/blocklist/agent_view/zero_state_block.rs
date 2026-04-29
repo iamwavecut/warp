@@ -985,7 +985,7 @@ fn should_render_oz_updates_section(
     should_show_oz_updates: bool,
     has_oz_updates: bool,
 ) -> bool {
-    is_oz_changelog_updates_enabled && should_show_oz_updates && has_oz_updates
+    false && is_oz_changelog_updates_enabled && should_show_oz_updates && has_oz_updates
 }
 
 fn render_oz_updates(props: OzUpdatesProps<'_>, app: &AppContext) -> Option<Box<dyn Element>> {

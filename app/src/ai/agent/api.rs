@@ -1,7 +1,6 @@
 pub(crate) mod convert_conversation;
 mod convert_from;
 mod convert_to;
-#[cfg(feature = "local_only")]
 mod direct_openai;
 mod r#impl;
 
@@ -119,7 +118,6 @@ pub struct RequestParams {
 
     /// User-provided API keys for AI providers (BYO API Key).
     pub api_keys: Option<warp_multi_agent_api::request::settings::ApiKeys>,
-    #[cfg(feature = "local_only")]
     pub(crate) custom_provider_route: Option<direct_openai::CustomProviderRoute>,
     pub allow_use_of_warp_credits_with_byok: bool,
     pub autonomy_level: warp_multi_agent_api::AutonomyLevel,
@@ -246,7 +244,6 @@ impl RequestParams {
         let allow_use_of_warp_credits_with_byok =
             *AISettings::as_ref(app).can_use_warp_credits_with_byok;
 
-        #[cfg(feature = "local_only")]
         let custom_provider_route = direct_openai::parse_custom_model_id(
             request_input.model_id.as_str(),
         )
@@ -263,6 +260,7 @@ impl RequestParams {
             let env_key = provider
                 .api_key_env_var
                 .as_deref()
+                .and_then(crate::settings::normalize_custom_provider_env_var)
                 .and_then(|env_var| std::env::var(env_var).ok());
             Some(direct_openai::CustomProviderRoute {
                 provider_name: custom_model.provider_name.clone(),
@@ -304,13 +302,6 @@ impl RequestParams {
             .get_ask_user_question_setting(app, terminal_view_id)
             != crate::ai::execution_profiles::AskUserQuestionPermission::Never;
 
-        #[cfg(not(feature = "local_only"))]
-        let orchestration_enabled = ai_settings.is_orchestration_enabled(app)
-            && session_context
-                .session_type()
-                .as_ref()
-                .is_none_or(|t| matches!(t, crate::terminal::model::session::SessionType::Local));
-        #[cfg(feature = "local_only")]
         let orchestration_enabled = false;
 
         // Reconcile the persisted override against the active base model's
@@ -353,7 +344,6 @@ impl RequestParams {
             planning_enabled: true,
             should_redact_secrets,
             api_keys,
-            #[cfg(feature = "local_only")]
             custom_provider_route,
             allow_use_of_warp_credits_with_byok,
             autonomy_level,

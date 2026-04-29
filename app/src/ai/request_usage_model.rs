@@ -1,15 +1,10 @@
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent::AIAgentExchangeId;
-#[cfg(not(feature = "local_only"))]
-use crate::auth::AuthStateProvider;
-use crate::pricing::PricingInfoModel;
 use crate::server::server_api::ai::AIClient;
 use crate::settings::AISettings;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::workspaces::workspace::WorkspaceUid;
 use crate::BlocklistAIHistoryModel;
-#[cfg(not(feature = "local_only"))]
-use ai::api_keys::ApiKeyManager;
 use chrono::{DateTime, Utc};
 use instant::Instant;
 use serde::{Deserialize, Serialize};
@@ -51,7 +46,6 @@ pub struct BonusGrant {
 }
 
 /// The key for the corresponding entry in UserDefaults.
-#[cfg_attr(feature = "local_only", allow(dead_code))]
 const REQUEST_LIMIT_INFO_CACHE_KEY: &str = "AIRequestLimitInfo";
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -151,7 +145,6 @@ impl RequestLimitInfo {
     }
 }
 
-#[cfg_attr(feature = "local_only", allow(dead_code))]
 fn cache_request_limit_info(request_limit_info: RequestLimitInfo, app_mut: &mut AppContext) {
     if let Ok(serialized) = serde_json::to_string(&request_limit_info) {
         let _ = app_mut
@@ -160,13 +153,29 @@ fn cache_request_limit_info(request_limit_info: RequestLimitInfo, app_mut: &mut 
     }
 }
 
-#[cfg_attr(feature = "local_only", allow(dead_code))]
 fn get_cached_request_limit_info(app_mut: &mut AppContext) -> Option<RequestLimitInfo> {
     app_mut
         .private_user_preferences()
         .read_value(REQUEST_LIMIT_INFO_CACHE_KEY)
         .unwrap_or_default()
         .and_then(|serialized| serde_json::from_str(serialized.as_str()).ok())
+}
+
+fn local_request_limit_info() -> RequestLimitInfo {
+    RequestLimitInfo {
+        limit: 999999999,
+        num_requests_used_since_refresh: 0,
+        next_refresh_time: ServerTimestamp::new(Utc::now() + chrono::Duration::days(365)),
+        is_unlimited: true,
+        request_limit_refresh_duration: RequestLimitRefreshDuration::Monthly,
+        is_unlimited_voice: true,
+        voice_request_limit: 999999999,
+        voice_requests_used_since_last_refresh: 0,
+        is_unlimited_codebase_indices: true,
+        max_codebase_indices: 999999,
+        max_files_per_repo: 999999,
+        embedding_generation_batch_size: 100,
+    }
 }
 
 pub struct AIRequestUsageModel {
@@ -188,7 +197,6 @@ impl Entity for AIRequestUsageModel {
 }
 
 pub enum AIRequestUsageModelEvent {
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     RequestUsageUpdated,
     RequestBonusRefunded {
         requests_refunded: i32,
@@ -199,27 +207,8 @@ pub enum AIRequestUsageModelEvent {
 
 impl AIRequestUsageModel {
     pub fn new(ai_client: Arc<dyn AIClient>, ctx: &mut ModelContext<Self>) -> Self {
-        #[cfg(not(feature = "local_only"))]
-        let request_limit_info = get_cached_request_limit_info(ctx).unwrap_or_default();
-
-        #[cfg(feature = "local_only")]
-        let request_limit_info = {
-            let _ = ctx;
-            RequestLimitInfo {
-                limit: 999999999,
-                num_requests_used_since_refresh: 0,
-                next_refresh_time: ServerTimestamp::new(Utc::now() + chrono::Duration::days(365)),
-                is_unlimited: true,
-                request_limit_refresh_duration: RequestLimitRefreshDuration::Monthly,
-                is_unlimited_voice: true,
-                voice_request_limit: 999999999,
-                voice_requests_used_since_last_refresh: 0,
-                is_unlimited_codebase_indices: true,
-                max_codebase_indices: 999999,
-                max_files_per_repo: 999999,
-                embedding_generation_batch_size: 100,
-            }
-        };
+        let _ = get_cached_request_limit_info(ctx);
+        let request_limit_info = local_request_limit_info();
 
         Self {
             ai_client,
@@ -247,36 +236,10 @@ impl AIRequestUsageModel {
 
     /// Spawns a task to refresh the latest AI request usage and bonus grants, fetching from the server.
     pub fn refresh_request_usage_async(&mut self, ctx: &mut ModelContext<Self>) {
-        #[cfg(feature = "local_only")]
-        {
-            let _ = ctx;
-            log::info!("local_only: skipping refresh_request_usage_async");
-            return;
-        }
-
-        #[cfg(not(feature = "local_only"))]
-        {
-            if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
-                return;
-            }
-
-            let ai_client = self.ai_client.clone();
-            ctx.spawn(
-                async move { ai_client.get_request_limit_info().await },
-                |model, result, ctx| match result {
-                    Ok(usage_info) => {
-                        model.bonus_grants = usage_info.bonus_grants;
-                        model.update_request_limit_info(usage_info.request_limit_info, ctx);
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to retrieve initial request limit info: {e:#}");
-                    }
-                },
-            );
-        }
+        let _ = ctx;
+        log::info!("local workflow: skipping server request usage refresh");
     }
 
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     pub fn update_request_limit_info(
         &mut self,
         request_limit_info: RequestLimitInfo,
@@ -413,45 +376,8 @@ impl AIRequestUsageModel {
     /// 6. user has BYOK enabled and has provided at least one API key
     /// Use this method as the starting point for AI availability checking.
     pub fn has_any_ai_remaining(&self, ctx: &AppContext) -> bool {
-        #[cfg(feature = "local_only")]
-        {
-            let _ = (self, ctx);
-            // In local_only mode, AI is always available (BYOK or unlimited local usage).
-            true
-        }
-
-        #[cfg(not(feature = "local_only"))]
-        {
-            let current_workspace = UserWorkspaces::as_ref(ctx).current_workspace();
-
-            let has_base_plan_ai_requests = self.has_requests_remaining();
-
-            let user_bonus_credits = self.total_user_interactive_bonus_credits_remaining() > 0;
-            let workspace_bonus_credits = current_workspace
-                .map(|workspace| self.total_workspace_bonus_credits_remaining(workspace.uid) > 0)
-                .unwrap_or_default();
-
-            let workspace_has_overages =
-                current_workspace.is_some_and(|workspace| workspace.are_overages_remaining());
-
-            let is_payg_enabled = current_workspace
-                .is_some_and(|w| w.billing_metadata.is_enterprise_pay_as_you_go_enabled());
-
-            let is_enterprise_auto_reload_enabled = current_workspace
-                .is_some_and(|w| w.billing_metadata.is_enterprise_auto_reload_enabled());
-
-            // If you have provided your own API key,
-            // it doesn't matter if you are out of warp-provided requests.
-            let has_byo_api_key = UserWorkspaces::as_ref(ctx).is_byo_api_key_enabled()
-                && ApiKeyManager::as_ref(ctx).keys().has_any_key();
-
-            has_base_plan_ai_requests
-                || (user_bonus_credits || workspace_bonus_credits)
-                || workspace_has_overages
-                || is_payg_enabled
-                || is_enterprise_auto_reload_enabled
-                || has_byo_api_key
-        }
+        let _ = (self, ctx);
+        true
     }
 
     pub fn requests_used(&self) -> usize {
@@ -552,7 +478,6 @@ impl AIRequestUsageModel {
             .unwrap_or(0)
     }
 
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     fn total_user_interactive_bonus_credits_remaining(&self) -> i32 {
         let now = Utc::now();
         self.bonus_grants
@@ -570,65 +495,8 @@ impl AIRequestUsageModel {
         &self,
         ctx: &AppContext,
     ) -> BuyCreditsBannerDisplayState {
-        // Early return if user dismissed
-        if self.buy_addon_credits_banner_dismissed {
-            return BuyCreditsBannerDisplayState::Hidden;
-        }
-        let current_workspace = UserWorkspaces::as_ref(ctx).current_workspace();
-        let policy_allows_purchasing = current_workspace
-            .map(|w| {
-                w.billing_metadata
-                    .tier
-                    .purchase_add_on_credits_policy
-                    .is_some_and(|p| p.enabled)
-            })
-            .unwrap_or(false);
-
-        // TODO: we might want to suggest credits purchase if request_remain/bonus credits is below certain threshold
-        // something to consider after launch
-        // Ambient-only credits are usable for cloud agents and should not suppress this banner.
-        let now = Utc::now();
-        let has_non_ambient_bonus_credits = self
-            .bonus_grants
-            .iter()
-            .filter(|grant| grant.grant_type != BonusGrantType::AmbientOnly)
-            .filter(|grant| grant.expiration.is_none_or(|exp| now < exp))
-            .filter(|grant| grant.request_credits_remaining > 0)
-            .any(|grant| match grant.scope {
-                BonusGrantScope::User => true,
-                BonusGrantScope::Workspace(uid) => {
-                    current_workspace.is_some_and(|workspace| workspace.uid == uid)
-                }
-            });
-        if !policy_allows_purchasing
-            || self.has_requests_remaining()
-            || has_non_ambient_bonus_credits
-        {
-            return BuyCreditsBannerDisplayState::Hidden;
-        }
-
-        let auto_reload_enabled = current_workspace
-            .is_some_and(|w| w.settings.addon_credits_settings.auto_reload_enabled);
-        if !auto_reload_enabled {
-            return BuyCreditsBannerDisplayState::OutOfCredits;
-        }
-
-        let at_monthly_limit =
-            current_workspace.is_some_and(|w| w.is_at_addon_credits_monthly_limit());
-
-        let auto_reload_would_exceed = current_workspace
-            .and_then(|workspace| {
-                let options = PricingInfoModel::as_ref(ctx).addon_credits_options()?;
-                let price = workspace.get_auto_reload_price_cents(options)?;
-                Some(workspace.would_addon_purchase_reach_limit(price))
-            })
-            .unwrap_or(false);
-
-        if at_monthly_limit || auto_reload_would_exceed {
-            BuyCreditsBannerDisplayState::MonthlyLimitReached
-        } else {
-            BuyCreditsBannerDisplayState::Hidden
-        }
+        let _ = (self, ctx);
+        BuyCreditsBannerDisplayState::Hidden
     }
 
     pub fn dismiss_buy_credits_banner(&mut self, ctx: &mut ModelContext<Self>) {

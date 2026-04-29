@@ -1,8 +1,6 @@
 use settings::{
     macros::define_settings_group, RespectUserSyncSetting, SupportedPlatforms, SyncToCloud,
 };
-#[cfg(not(feature = "local_only"))]
-use warp_core::features::FeatureFlag;
 
 use super::DriveSortOrder;
 
@@ -42,19 +40,7 @@ impl WarpDriveSettings {
     /// Returns `false` when the user is anonymous or fully logged out,
     /// regardless of the user setting.
     pub fn is_warp_drive_enabled(app: &warpui::AppContext) -> bool {
-        #[cfg(feature = "local_only")]
-        {
-            let _ = app;
-            false
-        }
-        #[cfg(not(feature = "local_only"))]
-        {
-            use warpui::SingletonEntity as _;
-            let is_anonymous_or_logged_out = FeatureFlag::SkipFirebaseAnonymousUser.is_enabled()
-                && crate::auth::AuthStateProvider::as_ref(app)
-                    .get()
-                    .is_anonymous_or_logged_out();
-            *Self::as_ref(app).enable_warp_drive && !is_anonymous_or_logged_out
-        }
+        let _ = app;
+        false
     }
 }

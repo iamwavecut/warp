@@ -1724,7 +1724,7 @@ impl SettingsPageMeta for TeamsPageView {
     }
 
     fn should_render(&self, _ctx: &AppContext) -> bool {
-        true
+        false
     }
 
     fn on_tab_pressed(&mut self, ctx: &mut ViewContext<Self>) {

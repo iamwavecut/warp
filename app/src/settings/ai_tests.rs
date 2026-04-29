@@ -30,6 +30,45 @@ fn create_test_request_limit_info(
     }
 }
 
+#[test]
+fn parses_custom_provider_model_input_for_ui() {
+    assert_eq!(
+        parse_custom_provider_models("qwen3-coder, llama-local\nqwen3-coder\n  gpt-oss "),
+        vec!["qwen3-coder", "llama-local", "gpt-oss"]
+    );
+}
+
+#[test]
+fn normalizes_custom_provider_env_var_from_ui() {
+    assert_eq!(
+        normalize_custom_provider_env_var("  $LOCAL_OPENAI_API_KEY "),
+        Some("LOCAL_OPENAI_API_KEY".to_string())
+    );
+    assert_eq!(normalize_custom_provider_env_var("   "), None);
+}
+
+#[test]
+fn builds_openai_compatible_custom_provider_from_ui_fields() {
+    let provider = custom_provider_config_from_ui(
+        " local-openai-compatible ",
+        " http://localhost:1234/v1/ ",
+        "qwen3-coder\nllama-local",
+        "$LOCAL_OPENAI_API_KEY",
+    )
+    .expect("provider config should be valid");
+
+    assert_eq!(
+        provider,
+        CustomProviderConfig {
+            name: "local-openai-compatible".to_string(),
+            base_url: "http://localhost:1234/v1/".to_string(),
+            models: vec!["qwen3-coder".to_string(), "llama-local".to_string()],
+            api_key_env_var: Some("LOCAL_OPENAI_API_KEY".to_string()),
+            api_type: CustomApiType::OpenAiCompatible,
+        }
+    );
+}
+
 // FocusedTerminalInfo Tests
 
 #[test]

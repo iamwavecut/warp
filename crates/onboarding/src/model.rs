@@ -34,7 +34,7 @@ impl UICustomizationSettings {
     /// Defaults for terminal mode (all features disabled).
     pub fn terminal_defaults() -> Self {
         Self {
-            use_vertical_tabs: false,
+            use_vertical_tabs: true,
             show_conversation_history: false,
             show_project_explorer: false,
             show_global_search: false,

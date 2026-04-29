@@ -6,6 +6,7 @@ use settings_page::MatchData;
 #[test]
 fn ai_subpages_are_identified() {
     assert!(SettingsSection::WarpAgent.is_ai_subpage());
+    assert!(SettingsSection::LLMProviders.is_ai_subpage());
     assert!(SettingsSection::AgentProfiles.is_ai_subpage());
     assert!(SettingsSection::AgentMCPServers.is_ai_subpage());
     assert!(SettingsSection::Knowledge.is_ai_subpage());
@@ -62,6 +63,10 @@ fn ai_subpages_map_to_ai_backing_page() {
     );
     assert_eq!(
         SettingsSection::AgentProfiles.parent_page_section(),
+        SettingsSection::AI
+    );
+    assert_eq!(
+        SettingsSection::LLMProviders.parent_page_section(),
         SettingsSection::AI
     );
     assert_eq!(
@@ -129,6 +134,7 @@ fn non_subpage_sections_map_to_themselves() {
 fn ai_subpages_list_contains_all_ai_subpage_variants() {
     let subpages = SettingsSection::ai_subpages();
     assert!(subpages.contains(&SettingsSection::WarpAgent));
+    assert!(subpages.contains(&SettingsSection::LLMProviders));
     assert!(subpages.contains(&SettingsSection::AgentProfiles));
     assert!(subpages.contains(&SettingsSection::AgentMCPServers));
     assert!(subpages.contains(&SettingsSection::Knowledge));
@@ -171,6 +177,7 @@ fn match_data_countable_zero_is_not_truthy() {
 #[test]
 fn subpage_display_names_are_correct() {
     assert_eq!(SettingsSection::WarpAgent.to_string(), "Warp Agent");
+    assert_eq!(SettingsSection::LLMProviders.to_string(), "LLM providers");
     assert_eq!(SettingsSection::AgentProfiles.to_string(), "Profiles");
     assert_eq!(SettingsSection::AgentMCPServers.to_string(), "MCP servers");
     assert_eq!(SettingsSection::Knowledge.to_string(), "Knowledge");
@@ -211,6 +218,10 @@ fn subpage_from_str_parses_display_names() {
         Ok(SettingsSection::WarpAgent)
     );
     assert_eq!(
+        SettingsSection::from_str("LLM providers"),
+        Ok(SettingsSection::LLMProviders)
+    );
+    assert_eq!(
         SettingsSection::from_str("Profiles"),
         Ok(SettingsSection::AgentProfiles)
     );
@@ -230,6 +241,33 @@ fn subpage_from_str_parses_display_names() {
         SettingsSection::from_str("Oz Cloud API Keys"),
         Ok(SettingsSection::OzCloudAPIKeys)
     );
+}
+
+#[test]
+fn local_only_account_section_is_user_and_cloud_sections_are_hidden() {
+    assert_eq!(SettingsSection::Account.to_string(), "User");
+    assert_eq!(
+        SettingsSection::from_str("User"),
+        Ok(SettingsSection::Account)
+    );
+
+    for section in [
+        SettingsSection::BillingAndUsage,
+        SettingsSection::Referrals,
+        SettingsSection::SharedBlocks,
+        SettingsSection::Teams,
+        SettingsSection::WarpDrive,
+        SettingsSection::CloudEnvironments,
+        SettingsSection::OzCloudAPIKeys,
+    ] {
+        assert!(
+            section.is_hidden_in_local_only(),
+            "{section:?} should be hidden in local_only"
+        );
+    }
+
+    assert!(!SettingsSection::Account.is_hidden_in_local_only());
+    assert!(!SettingsSection::MCPServers.is_hidden_in_local_only());
 }
 
 // ── Subpage search filter simulation ────────────────────────────────────────

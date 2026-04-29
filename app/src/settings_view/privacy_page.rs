@@ -75,18 +75,8 @@ const FONT_SIZE: f32 = 12.;
 
 const SAFE_MODE_TITLE: &str = "Secret redaction";
 static SAFE_MODE_DESCRIPTION: LazyLock<&'static str> = LazyLock::new(|| {
-    #[cfg(feature = "local_only")]
-    {
-        "When this setting is enabled, Warp will scan blocks and prompts for potential sensitive \
-        information before using local-only features. You can customize this list via regexes."
-    }
-    #[cfg(not(feature = "local_only"))]
-    {
-        "When this setting is enabled, Warp will scan blocks, the contents of \
-        Warp Drive objects, and Oz prompts for potential sensitive \
-        information and prevent saving or sending this data to any \
-        servers. You can customize this list via regexes."
-    }
+    "When this setting is enabled, Warp will scan blocks and prompts for potential sensitive \
+    information before using local features. You can customize this list via regexes."
 });
 const USER_SECRET_REGEX_TITLE: &str = "Custom secret redaction";
 const USER_SECRET_REGEX_DESCRIPTION: &str =
@@ -1451,22 +1441,8 @@ impl SettingsWidget for AppAnalyticsWidget {
     }
 
     fn should_render(&self, app: &AppContext) -> bool {
-        #[cfg(feature = "local_only")]
-        {
-            let _ = app;
-            return false;
-        }
-
-        #[cfg(not(feature = "local_only"))]
-        {
-            // Builds without a telemetry config (e.g. OpenWarp) cannot ship
-            // telemetry, so the toggle would be a no-op. Hide it in that case.
-            if !ChannelState::is_telemetry_available() {
-                return false;
-            }
-            let privacy_settings = PrivacySettings::as_ref(app);
-            !privacy_settings.is_telemetry_force_enabled()
-        }
+        let _ = app;
+        false
     }
 
     fn render(
@@ -1628,13 +1604,8 @@ impl SettingsWidget for CrashReportsWidget {
     }
 
     fn should_render(&self, app: &AppContext) -> bool {
-        // Builds without a crash reporting config (e.g. OpenWarp) cannot ship
-        // crash reports, so the toggle would be a no-op. Hide it in that case.
-        if !ChannelState::is_crash_reporting_available() {
-            return false;
-        }
-        let privacy_settings = PrivacySettings::as_ref(app);
-        !privacy_settings.is_telemetry_force_enabled()
+        let _ = app;
+        false
     }
 
     fn render(
@@ -1895,14 +1866,7 @@ impl SettingsWidget for DataManagementWidget {
     }
 
     fn should_render(&self, _app: &AppContext) -> bool {
-        #[cfg(feature = "local_only")]
-        {
-            false
-        }
-        #[cfg(not(feature = "local_only"))]
-        {
-            true
-        }
+        false
     }
 
     fn render(

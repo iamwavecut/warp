@@ -873,7 +873,6 @@ impl LLMPreferences {
     }
 
     /// Fetches the latest set of models from the server for the currently logged in user, and updates the model.
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     pub fn refresh_authed_models(&self, ctx: &mut ModelContext<Self>) {
         // Don't try to fetch auth'd models if the user is not logged in yet.
         if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
@@ -897,7 +896,6 @@ impl LLMPreferences {
     }
 
     /// No auth required (i.e. to populate the pre-login onboarding picker).
-    #[cfg_attr(feature = "local_only", allow(dead_code))]
     fn refresh_public_models(&self, ctx: &mut ModelContext<Self>) {
         let ai_api_client = ServerApiProvider::as_ref(ctx).get_ai_client();
         ctx.spawn(
@@ -916,25 +914,11 @@ impl LLMPreferences {
     }
 
     pub fn refresh_available_models(&self, ctx: &mut ModelContext<Self>) {
-        #[cfg(feature = "local_only")]
-        {
-            self.refresh_custom_provider_models(ctx);
-            return;
-        }
-
-        #[cfg(not(feature = "local_only"))]
-        {
-            if AuthStateProvider::as_ref(ctx).get().is_logged_in() {
-                self.refresh_authed_models(ctx);
-            } else {
-                self.refresh_public_models(ctx);
-            }
-        }
+        self.refresh_custom_provider_models(ctx);
     }
 
-    /// In local_only mode, build the model list from custom provider configs
-    /// stored in AISettings instead of fetching from the server.
-    #[cfg(feature = "local_only")]
+    /// Build the model list from custom provider configs stored in AISettings
+    /// instead of fetching hosted model metadata from Warp servers.
     fn refresh_custom_provider_models(&self, ctx: &mut ModelContext<Self>) {
         use crate::settings::AISettings;
 

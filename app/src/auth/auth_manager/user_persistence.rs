@@ -2,16 +2,11 @@ use serde::{Deserialize, Serialize};
 use warp_graphql::scalars::time::ServerTimestamp;
 use warpui::AppContext;
 use warpui_extras::secure_storage;
-#[cfg(not(feature = "local_only"))]
-use warpui_extras::secure_storage::AppContextExt;
 
 use crate::auth::{
     user::{AnonymousUserType, FirebaseAuthTokens, PersonalObjectLimits, UserMetadata},
     UserUid,
 };
-
-#[cfg(not(feature = "local_only"))]
-const USER_STORAGE_KEY: &str = "User";
 
 /// Helper function to set `true` as the default for a serde field on PersistedUser.
 fn default_as_true() -> bool {
@@ -66,45 +61,20 @@ pub enum UserPersistenceError {
 
 impl PersistedUser {
     pub fn from_secure_storage(ctx: &AppContext) -> Result<PersistedUser, UserPersistenceError> {
-        #[cfg(feature = "local_only")]
-        {
-            let _ = ctx;
-            Err(UserPersistenceError::SecureStorageError(
-                secure_storage::Error::NotFound,
-            ))
-        }
-        #[cfg(not(feature = "local_only"))]
-        {
-            let value = ctx.secure_storage().read_value(USER_STORAGE_KEY)?;
-            Ok(serde_json::from_str::<PersistedUser>(&value)?)
-        }
+        let _ = ctx;
+        Err(UserPersistenceError::SecureStorageError(
+            secure_storage::Error::NotFound,
+        ))
     }
 
     pub fn write_to_secure_storage(&self, ctx: &AppContext) -> Result<(), UserPersistenceError> {
-        #[cfg(feature = "local_only")]
-        {
-            let _ = ctx;
-            Ok(())
-        }
-        #[cfg(not(feature = "local_only"))]
-        {
-            let serialized_user = serde_json::to_string(self)?;
-            Ok(ctx
-                .secure_storage()
-                .write_value(USER_STORAGE_KEY, &serialized_user)?)
-        }
+        let _ = (self, ctx);
+        Ok(())
     }
 
     pub fn remove_from_secure_storage(ctx: &AppContext) -> Result<(), UserPersistenceError> {
-        #[cfg(feature = "local_only")]
-        {
-            let _ = ctx;
-            Ok(())
-        }
-        #[cfg(not(feature = "local_only"))]
-        {
-            Ok(ctx.secure_storage().remove_value(USER_STORAGE_KEY)?)
-        }
+        let _ = ctx;
+        Ok(())
     }
 }
 

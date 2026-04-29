@@ -535,8 +535,6 @@ fn all_commands() -> Vec<StaticCommand> {
         ADD_MCP,
         ADD_PROMPT.clone(),
         ADD_RULE,
-        COST,
-        FEEDBACK.clone(),
         INDEX,
         INIT,
         OPEN_PROJECT_RULES,
@@ -547,11 +545,15 @@ fn all_commands() -> Vec<StaticCommand> {
         PLAN.clone(),
         RENAME_TAB.clone(),
         SET_TAB_COLOR.clone(),
-        USAGE,
         CONVERSATIONS,
         EXPORT_TO_CLIPBOARD,
         MODEL.clone(),
     ];
+
+    if false {
+        commands.extend([COST, USAGE]);
+        commands.push(FEEDBACK.clone());
+    }
 
     if FeatureFlag::LocalDockerSandbox.is_enabled() {
         commands.push(CREATE_DOCKER_SANDBOX);
@@ -563,7 +565,7 @@ fn all_commands() -> Vec<StaticCommand> {
         commands.push(REMOTE_CONTROL);
     }
 
-    if FeatureFlag::Changelog.is_enabled() {
+    if false && FeatureFlag::Changelog.is_enabled() {
         commands.push(CHANGELOG);
     }
 

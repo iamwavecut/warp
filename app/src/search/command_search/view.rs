@@ -976,7 +976,7 @@ impl TypedActionView for CommandSearchView {
             } => self.handle_result_selected(*result_index, *result_action.clone(), ctx),
             Resize => ctx.emit(CommandSearchEvent::Resize),
             OpenUpgradeLink(upgrade_link) => {
-                if cfg!(feature = "local_only") {
+                if true {
                     let _ = upgrade_link;
                     return;
                 }
@@ -984,7 +984,7 @@ impl TypedActionView for CommandSearchView {
                 ctx.open_url(upgrade_link);
             }
             AttemptLoginGatedUpgrade => {
-                if cfg!(feature = "local_only") {
+                if true {
                     return;
                 }
 
