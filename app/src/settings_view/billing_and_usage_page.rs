@@ -686,6 +686,11 @@ impl SettingsPageMeta for BillingAndUsagePageView {
     }
 
     fn should_render(&self, ctx: &AppContext) -> bool {
+        if cfg!(feature = "local_only") {
+            let _ = ctx;
+            return false;
+        }
+
         let is_anonymous = AuthStateProvider::as_ref(ctx)
             .get()
             .is_anonymous_or_logged_out();
@@ -694,6 +699,11 @@ impl SettingsPageMeta for BillingAndUsagePageView {
     }
 
     fn on_page_selected(&mut self, _: bool, ctx: &mut ViewContext<Self>) {
+        if cfg!(feature = "local_only") {
+            let _ = ctx;
+            return;
+        }
+
         self.purchase_addon_credits_loading = false;
         std::mem::drop(
             TeamUpdateManager::handle(ctx)
@@ -768,14 +778,21 @@ impl TypedActionView for BillingAndUsagePageView {
         }
 
         match action {
-            BillingAndUsagePageAction::Upgrade { team_uid, user_id } => match team_uid {
-                Some(team_uid) => {
-                    ctx.open_url(&UserWorkspaces::upgrade_link_for_team(*team_uid));
+            BillingAndUsagePageAction::Upgrade { team_uid, user_id } => {
+                if cfg!(feature = "local_only") {
+                    let _ = (team_uid, user_id, ctx);
+                    return;
                 }
-                None => {
-                    ctx.open_url(&UserWorkspaces::upgrade_link(*user_id));
+
+                match team_uid {
+                    Some(team_uid) => {
+                        ctx.open_url(&UserWorkspaces::upgrade_link_for_team(*team_uid));
+                    }
+                    None => {
+                        ctx.open_url(&UserWorkspaces::upgrade_link(*user_id));
+                    }
                 }
-            },
+            }
             BillingAndUsagePageAction::GenerateStripeBillingPortalLink { team_uid } => {
                 UserWorkspaces::handle(ctx).update(ctx, |user_workspaces, ctx| {
                     user_workspaces.generate_stripe_billing_portal_link(*team_uid, ctx);
@@ -791,6 +808,10 @@ impl TypedActionView for BillingAndUsagePageView {
                 ctx.emit(BillingAndUsagePageEvent::SignupAnonymousUser);
             }
             BillingAndUsagePageAction::AttemptLoginGatedUpgrade => {
+                if cfg!(feature = "local_only") {
+                    return;
+                }
+
                 AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
                     auth_manager.attempt_login_gated_feature(
                         action.into(),

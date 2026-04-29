@@ -19,6 +19,8 @@ When built with `local_only`, this fork changes Warp from a cloud/account-orient
 - Telemetry collector, app focus telemetry, shutdown telemetry flush, crash reporting, and Sentry are not initialized.
 - Cloud/account UI entry points are hidden or disabled, including Warp Drive, data-management/delete-account UI, Agent Management, Ambient Agents RTC, Cloud Mode, Cloud Conversations, cloud environments, managed secrets, orchestration cloud flags, and force-login behavior.
 - AI quotas are local/unlimited; server quota refresh is skipped.
+- Local/non-cloud AI UX gates are unlocked in `local_only`, including BYOK/custom providers, active AI, prompt/code suggestions toggles, next-command availability, AI autonomy gates, and codebase-context limits.
+- Billing, subscription, upgrade, Stripe, cloud-agent capacity, and other hosted/cloud-only surfaces stay hidden or no-op in `local_only`.
 - AI model list is populated from local custom provider settings.
 - Agent requests for custom models go directly to OpenAI-compatible `/chat/completions` endpoints using a normal HTTP client. They do **not** use Warp's `/ai/multi-agent` cloud endpoint or try to pass custom provider data through Warp protobuf request settings.
 
@@ -66,7 +68,7 @@ The direct client sends:
 
 ```http
 POST <base_url>/chat/completions
-Authorization: Bearer <api key>   # only when a key is configured
+Authorization: Bearer ***   # only when a key is configured
 ```
 
 with `stream = false` for the current implementation.
@@ -117,6 +119,7 @@ The current macOS development checkout is verified with:
 cargo fmt --check
 cargo test -p warp --features local_only parses_custom_model_ids_into_provider_and_model
 cargo test -p warp --features local_only builds_chat_completions_url_from_base_url
+cargo build --all-targets
 cargo build --features local_only --all-targets
 cargo build --features gui,local_only -p warp --bin warp-oss
 TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open

@@ -976,9 +976,18 @@ impl TypedActionView for CommandSearchView {
             } => self.handle_result_selected(*result_index, *result_action.clone(), ctx),
             Resize => ctx.emit(CommandSearchEvent::Resize),
             OpenUpgradeLink(upgrade_link) => {
+                if cfg!(feature = "local_only") {
+                    let _ = upgrade_link;
+                    return;
+                }
+
                 ctx.open_url(upgrade_link);
             }
             AttemptLoginGatedUpgrade => {
+                if cfg!(feature = "local_only") {
+                    return;
+                }
+
                 AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
                     auth_manager.attempt_login_gated_feature(
                         "Upgrade AI Usage",

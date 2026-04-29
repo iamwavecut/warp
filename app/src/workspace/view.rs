@@ -8306,26 +8306,28 @@ impl Workspace {
             );
         }
 
-        // Check if the user is on any paid plan to determine whether to show "Billing and Usage" or "Upgrade"
-        let is_on_paid_plan = UserWorkspaces::as_ref(app)
-            .current_workspace()
-            .map(|workspace| workspace.billing_metadata.is_user_on_paid_plan())
-            .unwrap_or(false);
+        if !cfg!(feature = "local_only") {
+            // Check if the user is on any paid plan to determine whether to show "Billing and Usage" or "Upgrade"
+            let is_on_paid_plan = UserWorkspaces::as_ref(app)
+                .current_workspace()
+                .map(|workspace| workspace.billing_metadata.is_user_on_paid_plan())
+                .unwrap_or(false);
 
-        if is_on_paid_plan {
-            items.push(
-                MenuItemFields::new("Billing and usage")
-                    .with_on_select_action(WorkspaceAction::ShowSettingsPage(
-                        SettingsSection::BillingAndUsage,
-                    ))
-                    .into_item(),
-            );
-        } else {
-            items.push(
-                MenuItemFields::new("Upgrade")
-                    .with_on_select_action(WorkspaceAction::ShowUpgrade)
-                    .into_item(),
-            );
+            if is_on_paid_plan {
+                items.push(
+                    MenuItemFields::new("Billing and usage")
+                        .with_on_select_action(WorkspaceAction::ShowSettingsPage(
+                            SettingsSection::BillingAndUsage,
+                        ))
+                        .into_item(),
+                );
+            } else {
+                items.push(
+                    MenuItemFields::new("Upgrade")
+                        .with_on_select_action(WorkspaceAction::ShowUpgrade)
+                        .into_item(),
+                );
+            }
         }
 
         items.push(
@@ -19986,6 +19988,10 @@ impl TypedActionView for Workspace {
                 source,
             } => self.toggle_palette(*palette_mode, *source, ctx),
             ShowUpgrade => {
+                if cfg!(feature = "local_only") {
+                    return;
+                }
+
                 send_telemetry_from_ctx!(TelemetryEvent::UserMenuUpgradeClicked, ctx);
 
                 let auth_state = AuthStateProvider::as_ref(ctx).get();
@@ -20812,6 +20818,10 @@ impl TypedActionView for Workspace {
                 ctx.notify();
             }
             AttemptLoginGatedAIUpgrade => {
+                if cfg!(feature = "local_only") {
+                    return;
+                }
+
                 AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
                     auth_manager.attempt_login_gated_feature(
                         "Upgrade AI Usage",

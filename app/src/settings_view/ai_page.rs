@@ -2513,6 +2513,10 @@ impl TypedActionView for AISettingsPageView {
                 ctx.notify();
             }
             AISettingsPageAction::AttemptLoginGatedUpgrade => {
+                if cfg!(feature = "local_only") {
+                    return;
+                }
+
                 AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
                     auth_manager.attempt_login_gated_feature(
                         action.into(),
@@ -3467,16 +3471,20 @@ impl SettingsWidget for UsageWidget {
             })
         }
 
-        Flex::column()
-            .with_children([
-                render_separator(appearance),
-                usage_header,
-                request_usage_row,
+        let mut children = vec![
+            render_separator(appearance),
+            usage_header,
+            request_usage_row,
+        ];
+        if !cfg!(feature = "local_only") {
+            children.push(
                 Container::new(upgrade_cta.finish())
                     .with_margin_bottom(16.)
                     .finish(),
-            ])
-            .finish()
+            );
+        }
+
+        Flex::column().with_children(children).finish()
     }
 }
 
