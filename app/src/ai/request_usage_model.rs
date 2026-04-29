@@ -198,6 +198,22 @@ impl AIRequestUsageModel {
         let cached_request_limit_info = get_cached_request_limit_info(ctx);
         let request_limit_info = cached_request_limit_info.unwrap_or_default();
 
+        #[cfg(feature = "local_only")]
+        let request_limit_info = RequestLimitInfo {
+            limit: 999999999,
+            num_requests_used_since_refresh: 0,
+            next_refresh_time: ServerTimestamp::new(Utc::now() + chrono::Duration::days(365)),
+            is_unlimited: true,
+            request_limit_refresh_duration: RequestLimitRefreshDuration::Monthly,
+            is_unlimited_voice: true,
+            voice_request_limit: 999999999,
+            voice_requests_used_since_last_refresh: 0,
+            is_unlimited_codebase_indices: true,
+            max_codebase_indices: 999999,
+            max_files_per_repo: 999999,
+            embedding_generation_batch_size: 100,
+        };
+
         Self {
             ai_client,
             request_limit_info,
@@ -224,23 +240,33 @@ impl AIRequestUsageModel {
 
     /// Spawns a task to refresh the latest AI request usage and bonus grants, fetching from the server.
     pub fn refresh_request_usage_async(&mut self, ctx: &mut ModelContext<Self>) {
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+        #[cfg(feature = "local_only")]
+        {
+            let _ = ctx;
+            log::info!("local_only: skipping refresh_request_usage_async");
             return;
         }
 
-        let ai_client = self.ai_client.clone();
-        ctx.spawn(
-            async move { ai_client.get_request_limit_info().await },
-            |model, result, ctx| match result {
-                Ok(usage_info) => {
-                    model.bonus_grants = usage_info.bonus_grants;
-                    model.update_request_limit_info(usage_info.request_limit_info, ctx);
-                }
-                Err(e) => {
-                    log::warn!("Failed to retrieve initial request limit info: {e:#}");
-                }
-            },
-        );
+        #[cfg(not(feature = "local_only"))]
+        {
+            if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+                return;
+            }
+
+            let ai_client = self.ai_client.clone();
+            ctx.spawn(
+                async move { ai_client.get_request_limit_info().await },
+                |model, result, ctx| match result {
+                    Ok(usage_info) => {
+                        model.bonus_grants = usage_info.bonus_grants;
+                        model.update_request_limit_info(usage_info.request_limit_info, ctx);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to retrieve initial request limit info: {e:#}");
+                    }
+                },
+            );
+        }
     }
 
     pub fn update_request_limit_info(
@@ -379,35 +405,45 @@ impl AIRequestUsageModel {
     /// 6. user has BYOK enabled and has provided at least one API key
     /// Use this method as the starting point for AI availability checking.
     pub fn has_any_ai_remaining(&self, ctx: &AppContext) -> bool {
-        let current_workspace = UserWorkspaces::as_ref(ctx).current_workspace();
+        #[cfg(feature = "local_only")]
+        {
+            let _ = (self, ctx);
+            // In local_only mode, AI is always available (BYOK or unlimited local usage).
+            true
+        }
 
-        let has_base_plan_ai_requests = self.has_requests_remaining();
+        #[cfg(not(feature = "local_only"))]
+        {
+            let current_workspace = UserWorkspaces::as_ref(ctx).current_workspace();
 
-        let user_bonus_credits = self.total_user_interactive_bonus_credits_remaining() > 0;
-        let workspace_bonus_credits = current_workspace
-            .map(|workspace| self.total_workspace_bonus_credits_remaining(workspace.uid) > 0)
-            .unwrap_or_default();
+            let has_base_plan_ai_requests = self.has_requests_remaining();
 
-        let workspace_has_overages =
-            current_workspace.is_some_and(|workspace| workspace.are_overages_remaining());
+            let user_bonus_credits = self.total_user_interactive_bonus_credits_remaining() > 0;
+            let workspace_bonus_credits = current_workspace
+                .map(|workspace| self.total_workspace_bonus_credits_remaining(workspace.uid) > 0)
+                .unwrap_or_default();
 
-        let is_payg_enabled = current_workspace
-            .is_some_and(|w| w.billing_metadata.is_enterprise_pay_as_you_go_enabled());
+            let workspace_has_overages =
+                current_workspace.is_some_and(|workspace| workspace.are_overages_remaining());
 
-        let is_enterprise_auto_reload_enabled = current_workspace
-            .is_some_and(|w| w.billing_metadata.is_enterprise_auto_reload_enabled());
+            let is_payg_enabled = current_workspace
+                .is_some_and(|w| w.billing_metadata.is_enterprise_pay_as_you_go_enabled());
 
-        // If you have provided your own API key,
-        // it doesn't matter if you are out of warp-provided requests.
-        let has_byo_api_key = UserWorkspaces::as_ref(ctx).is_byo_api_key_enabled()
-            && ApiKeyManager::as_ref(ctx).keys().has_any_key();
+            let is_enterprise_auto_reload_enabled = current_workspace
+                .is_some_and(|w| w.billing_metadata.is_enterprise_auto_reload_enabled());
 
-        has_base_plan_ai_requests
-            || (user_bonus_credits || workspace_bonus_credits)
-            || workspace_has_overages
-            || is_payg_enabled
-            || is_enterprise_auto_reload_enabled
-            || has_byo_api_key
+            // If you have provided your own API key,
+            // it doesn't matter if you are out of warp-provided requests.
+            let has_byo_api_key = UserWorkspaces::as_ref(ctx).is_byo_api_key_enabled()
+                && ApiKeyManager::as_ref(ctx).keys().has_any_key();
+
+            has_base_plan_ai_requests
+                || (user_bonus_credits || workspace_bonus_credits)
+                || workspace_has_overages
+                || is_payg_enabled
+                || is_enterprise_auto_reload_enabled
+                || has_byo_api_key
+        }
     }
 
     pub fn requests_used(&self) -> usize {
