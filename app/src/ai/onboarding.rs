@@ -37,17 +37,25 @@ pub fn build_onboarding_models(prefs: &LLMPreferences) -> (Vec<OnboardingModelIn
 }
 
 pub fn current_onboarding_auth_state(ctx: &AppContext) -> OnboardingAuthState {
-    let auth_state = AuthStateProvider::as_ref(ctx).get();
-    if auth_state.is_anonymous_or_logged_out() {
-        return OnboardingAuthState::LoggedOut;
+    #[cfg(feature = "local_only")]
+    {
+        let _ = ctx;
+        return OnboardingAuthState::FreeUser;
     }
-    let is_on_paid_plan = UserWorkspaces::as_ref(ctx)
-        .current_workspace()
-        .map(|w| w.billing_metadata.is_user_on_paid_plan())
-        .unwrap_or(false);
-    if is_on_paid_plan {
-        OnboardingAuthState::PayingUser
-    } else {
-        OnboardingAuthState::FreeUser
+    #[cfg(not(feature = "local_only"))]
+    {
+        let auth_state = AuthStateProvider::as_ref(ctx).get();
+        if auth_state.is_anonymous_or_logged_out() {
+            return OnboardingAuthState::LoggedOut;
+        }
+        let is_on_paid_plan = UserWorkspaces::as_ref(ctx)
+            .current_workspace()
+            .map(|w| w.billing_metadata.is_user_on_paid_plan())
+            .unwrap_or(false);
+        if is_on_paid_plan {
+            OnboardingAuthState::PayingUser
+        } else {
+            OnboardingAuthState::FreeUser
+        }
     }
 }

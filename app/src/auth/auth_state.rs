@@ -86,6 +86,11 @@ impl AuthState {
             state.set_user(Some(User::test()));
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             state.set_credentials(Some(Credentials::Test));
+            #[cfg(all(
+                feature = "local_only",
+                not(any(test, feature = "integration_tests", feature = "skip_login"))
+            ))]
+            state.set_credentials(Some(Credentials::Local));
             return state;
         }
 
@@ -170,6 +175,8 @@ impl AuthState {
             (Some(_), Some(Credentials::SessionCookie)) => PersistAction::DoNothing,
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             (Some(_), Some(Credentials::Test)) => PersistAction::DoNothing,
+            #[cfg(feature = "local_only")]
+            (Some(_), Some(Credentials::Local)) => PersistAction::DoNothing,
             // Credentials without a user, or user without credentials - transient states
             // during initialization or refresh; no persistence action needed.
             (None, Some(_)) | (Some(_), None) => PersistAction::DoNothing,
@@ -219,18 +226,37 @@ impl AuthState {
     /// Reports an error if the current credentials are not Firebase.
     pub(crate) fn update_firebase_tokens(&self, new_auth_tokens: FirebaseAuthTokens) {
         let mut write_lock = self.credentials.write();
-        if let Some(Credentials::Firebase(tokens)) = write_lock.as_mut() {
-            *tokens = new_auth_tokens;
-        } else {
-            report_error!(anyhow!(
-                "Tried to update Firebase tokens without Firebase credentials"
-            ));
+        match write_lock.as_mut() {
+            Some(Credentials::Firebase(tokens)) => {
+                *tokens = new_auth_tokens;
+            }
+            #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
+            Some(Credentials::Test) => {
+                log::info!("Ignoring Firebase token update for Test credentials");
+            }
+            #[cfg(feature = "local_only")]
+            Some(Credentials::Local) => {
+                log::info!("Ignoring Firebase token update for Local credentials");
+            }
+            _ => {
+                report_error!(anyhow!(
+                    "Tried to update Firebase tokens without Firebase credentials"
+                ));
+            }
         }
     }
 
     /// Determines whether the user should be considered as logged in.
     pub fn is_logged_in(&self) -> bool {
-        self.credentials.read().is_some()
+        #[cfg(feature = "local_only")]
+        {
+            let _ = self;
+            true
+        }
+        #[cfg(not(feature = "local_only"))]
+        {
+            self.credentials.read().is_some()
+        }
     }
 
     /// Returns whether the user should be treated as not having a full account.
@@ -240,7 +266,15 @@ impl AuthState {
     /// during the transient state where credentials exist but user data hasn't loaded
     /// yet, the user is conservatively treated as lacking a full account.
     pub fn is_anonymous_or_logged_out(&self) -> bool {
-        !self.is_logged_in() || self.is_user_anonymous().unwrap_or(true)
+        #[cfg(feature = "local_only")]
+        {
+            let _ = self;
+            false
+        }
+        #[cfg(not(feature = "local_only"))]
+        {
+            !self.is_logged_in() || self.is_user_anonymous().unwrap_or(true)
+        }
     }
 
     /// Returns the cached access token, if any exists. This method *will not* check if the JWT is

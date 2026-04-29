@@ -28,6 +28,9 @@ pub enum Credentials {
     /// Test credentials used in unit tests, integration tests, and skip_login builds.
     #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
     Test,
+    /// Local-only credentials for local_only builds where no server auth is needed.
+    #[cfg(feature = "local_only")]
+    Local,
 }
 
 impl Credentials {
@@ -39,6 +42,8 @@ impl Credentials {
             Credentials::SessionCookie => None,
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             Credentials::Test => None,
+            #[cfg(feature = "local_only")]
+            Credentials::Local => None,
         }
     }
 
@@ -50,6 +55,8 @@ impl Credentials {
             Credentials::SessionCookie => None,
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             Credentials::Test => None,
+            #[cfg(feature = "local_only")]
+            Credentials::Local => None,
         }
     }
 
@@ -61,6 +68,8 @@ impl Credentials {
             Credentials::SessionCookie => None,
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             Credentials::Test => None,
+            #[cfg(feature = "local_only")]
+            Credentials::Local => None,
         }
     }
 
@@ -72,6 +81,8 @@ impl Credentials {
             Credentials::SessionCookie => None,
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             Credentials::Test => None,
+            #[cfg(feature = "local_only")]
+            Credentials::Local => None,
         }
     }
 
@@ -83,6 +94,8 @@ impl Credentials {
             Credentials::SessionCookie => AuthToken::NoAuth,
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             Credentials::Test => AuthToken::NoAuth,
+            #[cfg(feature = "local_only")]
+            Credentials::Local => AuthToken::NoAuth,
         }
     }
 
@@ -96,6 +109,8 @@ impl Credentials {
             Credentials::SessionCookie => Some(LoginToken::SessionCookie),
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             Credentials::Test => None,
+            #[cfg(feature = "local_only")]
+            Credentials::Local => None,
         }
     }
 }

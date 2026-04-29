@@ -1,89 +1,266 @@
-<a href="https://www.warp.dev">
-    <img width="1024" alt="Warp Agentic Development Environment product preview" src="https://github.com/user-attachments/assets/9976b2da-2edd-4604-a36c-8fd53719c6d4" />
-</a>
+# Warp Local-Only BYOK Fork
 
-<p align="center">
-  <a href="https://www.warp.dev">Website</a>
-  ·
-  <a href="https://www.warp.dev/code">Code</a>
-  ·
-  <a href="https://www.warp.dev/agents">Agents</a>
-  ·
-  <a href="https://www.warp.dev/terminal">Terminal</a>
-  ·
-  <a href="https://www.warp.dev/drive">Drive</a>
-  ·
-  <a href="https://docs.warp.dev">Docs</a>
-  ·
-  <a href="https://www.warp.dev/blog/how-warp-works">How Warp Works</a>
-</p>
+> Original upstream README: [warpdotdev/warp README.md](https://github.com/warpdotdev/warp/blob/master/README.md)
 
-> [!NOTE]
-> OpenAI is the founding sponsor of the new, open-source Warp repository, and the new agentic management workflows are powered by GPT models.
+This repository is a local-only experimental fork of [Warp](https://github.com/warpdotdev/warp). It keeps the open-source Warp client codebase, but changes the default product assumptions: no registration, no login flow, no Firebase-backed anonymous user, no Warp cloud dependency, and BYOK-oriented AI plumbing.
 
-<h1></h1>
+## Notice
 
-## About
+This fork is provided **only for evaluation, research, education, and source-code review**.
 
-[Warp](https://www.warp.dev) is an agentic development environment, born out of the terminal. Use Warp's built-in coding agent, or bring your own CLI agent (Claude Code, Codex, Gemini CLI, and others).
+In accordance with the licensing model of the original Warp project, this fork is **not intended for production use, commercial redistribution, or use as a hosted/managed terminal product**. Review the upstream licenses before using, modifying, or distributing this code:
 
-## Installation
+- [AGPL v3 license](LICENSE-AGPL) — applies to most of this repository.
+- [MIT license](LICENSE-MIT) — applies to Warp's UI framework crates (`warpui_core` and `warpui`).
 
-You can [download Warp](https://www.warp.dev/download) and [read our docs](https://docs.warp.dev/) for platform-specific instructions.
+This notice is not legal advice. If you want to use this fork beyond local evaluation, review the upstream license obligations and consult qualified counsel.
 
-## Licensing
+## What this fork changes
 
-Warp's UI framework (the `warpui_core` and `warpui` crates) are licensed under the [MIT license](LICENSE-MIT).
+### Local-only application mode
 
-The rest of the code in this repository is licensed under the [AGPL v3](LICENSE-AGPL).
+- Extends the existing `local_only` Cargo feature.
+- Runs without login, registration, or browser/device auth.
+- Adds `Credentials::Local` for local-only builds.
+- Skips persisted server credentials.
+- Starts directly in the terminal workspace instead of the auth/onboarding UI.
 
-## Open Source & Contributing
+### No cloud-gated product flow
 
-Warp's client codebase is open source and lives in this repository. We welcome community contributions and have designed a lightweight workflow to help new contributors get started. For the full contribution flow, read our [CONTRIBUTING.md](CONTRIBUTING.md) guide.
+When built with `local_only`, cloud-dependent feature flags are forcibly disabled after feature initialization, including:
 
-### Issue to PR
+- Cloud Mode flags (`CloudMode`, `CloudModeFromLocalSession`, `CloudModeHostSelector`, `CloudModeImageContext`)
+- Cloud Conversations
+- Warp Managed Secrets
+- Warp Environments / environment slash command
+- Orchestration cloud event/push flags
+- Oz handoff / sync ambient plans
+- Force-login behavior
 
-Before filing, [search existing issues](https://github.com/warpdotdev/warp/issues?q=is%3Aissue+is%3Aopen+sort%3Areactions-%2B1-desc) for your bug or feature request. If nothing exists, [file an issue](https://github.com/warpdotdev/warp/issues/new/choose) using our templates. Security vulnerabilities should be reported privately as described in [CONTRIBUTING.md](CONTRIBUTING.md#reporting-security-issues).
+### BYOK-oriented AI groundwork
 
-Once filed, a Warp maintainer reviews the issue and may apply a readiness label: [`ready-to-spec`](https://github.com/warpdotdev/warp/issues?q=is%3Aissue+is%3Aopen+label%3Aready-to-spec) signals the design is open for contributors to spec out, and [`ready-to-implement`](https://github.com/warpdotdev/warp/issues?q=is%3Aissue+is%3Aopen+label%3Aready-to-implement) signals the design is settled and code PRs are welcome. Anyone can pick up a labeled issue — mention **@oss-maintainers** on an issue if you'd like it considered for a readiness label.
+- Adds `LLMProvider::Custom(String)`.
+- Adds custom API-key storage: `ApiKeys.custom: HashMap<String, String>`.
+- Adds `ApiKeyManager::set_custom_key()`.
+- Adds `CustomProviderConfig` to AI settings:
+  - provider name
+  - OpenAI-compatible base URL
+  - model ID list
+  - API type (`open_ai_compatible`)
+- Adds `agents.custom_providers` TOML settings support.
+- Builds local `ModelsByFeature` choices from `AISettings.custom_providers` instead of fetching model lists from Warp servers in `local_only` mode.
 
-### Building the Repo Locally
+### Unlimited local AI quota checks
 
-To build and run Warp from source:
+- Disables server quota refresh in `local_only`.
+- Initializes request limits as effectively unlimited.
+- Makes AI availability checks pass locally.
 
-```bash
-./script/bootstrap   # platform-specific setup
-./script/run         # build and run Warp
-./script/presubmit   # fmt, clippy, and tests
+### Current limitation
+
+The UI/settings/model-list groundwork for custom providers is present, but direct request routing to a custom OpenAI-compatible endpoint still needs a dedicated local HTTP path.
+
+Upstream Warp AI requests normally pass through `warp_multi_agent_api` / `warp-proto-apis`. That protobuf request settings type does not currently carry arbitrary custom provider base URLs. The remaining work is to bypass that cloud-oriented API path for `LLMProvider::Custom(_)` and route directly to the configured endpoint.
+
+## Repository and branch
+
+- Fork: `https://github.com/iamwavecut/warp`
+- Branch: `local-byok`
+- Primary feature flag: `local_only`
+
+## Custom provider configuration
+
+Example TOML shape for a local settings file:
+
+```toml
+[[agents.custom_providers]]
+name = "local-openai-compatible"
+base_url = "http://localhost:1234/v1"
+models = ["qwen3-coder", "llama-local"]
+api_type = "open_ai_compatible"
 ```
 
-See [WARP.md](WARP.md) for the full engineering guide, including coding style, testing, and platform-specific notes.
+API keys for custom providers are stored separately by the API-key manager, keyed by provider name.
 
-## Joining the Team
+## Build instructions
 
-Interested in joining the team? See our [open roles](https://www.warp.dev/careers).
+The commands below build the local-only OSS binary with the GUI feature enabled:
 
-## Support and Questions
+```bash
+cargo build --features gui,local_only -p warp --bin warp-oss
+```
 
-1. See our [docs](https://docs.warp.dev/) for a comprehensive guide to Warp's features.
-2. Join our [Slack Community](https://go.warp.dev/join-preview) to connect with other users and get help from the Warp team.
-3. Try our [Preview build](https://www.warp.dev/download-preview) to test the latest experimental features.
-4. Mention **@oss-maintainers** on any issue to escalate to the team — for example, if you encounter problems with the automated agents.
+The resulting debug binary is usually:
 
-## Code of Conduct
+```text
+target/debug/warp-oss
+```
 
-We ask everyone to be respectful and empathetic. Warp follows the [Code of Conduct](CODE_OF_CONDUCT.md). To report violations, email warp-coc at warp.dev.
+For a faster compiler-only check without GUI bundling:
 
-## Open Source Dependencies
+```bash
+cargo build --features local_only -p warp
+```
 
-We'd like to call out a few of the [open source dependencies](https://docs.warp.dev/help/licenses) that have helped Warp to get off the ground:
+### Common prerequisites
 
-* [Tokio](https://github.com/tokio-rs/tokio)
-* [NuShell](https://github.com/nushell/nushell)
-* [Fig Completion Specs](https://github.com/withfig/autocomplete)
-* [Warp Server Framework](https://github.com/seanmonstar/warp)
-* [Alacritty](https://github.com/alacritty/alacritty)
-* [Hyper HTTP library](https://github.com/hyperium/hyper)
-* [FontKit](https://github.com/servo/font-kit)
-* [Core-foundation](https://github.com/servo/core-foundation-rs)
-* [Smol](https://github.com/smol-rs/smol)
+All platforms need:
+
+1. Git
+2. Git LFS
+3. Rust/Cargo via rustup
+4. A checked-out clone of this fork and branch
+
+```bash
+git clone https://github.com/iamwavecut/warp.git
+cd warp
+git checkout local-byok
+git lfs install
+git lfs pull
+```
+
+### macOS
+
+Prerequisites:
+
+- macOS with Xcode installed
+- Xcode command-line tools selected
+- Homebrew
+- Rust/Cargo
+- Git LFS
+
+Bootstrap using upstream scripts if needed:
+
+```bash
+./script/bootstrap
+```
+
+Build the local-only OSS binary:
+
+```bash
+cargo build --features gui,local_only -p warp --bin warp-oss
+```
+
+Run the built binary directly:
+
+```bash
+./target/debug/warp-oss
+```
+
+Optional: build a macOS `.app` bundle. This requires `cargo-bundle` and signing tooling installed by the bootstrap script.
+
+If `cargo-bundle` is missing, install the revision used by Warp's bootstrap script:
+
+```bash
+cargo install cargo-bundle --git=https://github.com/burtonageo/cargo-bundle --rev ae4c76e92c08774bf54ff077b1c52e3d1cd6c16d
+```
+
+When running in some non-interactive terminals, this `cargo-bundle` revision can panic with `Term(ColorOutOfRange)`. Use a 256-color TERM plus no-color env flags:
+
+```bash
+TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
+```
+
+The app bundle is created under:
+
+```text
+target/debug/bundle/osx/WarpOss.app
+```
+
+### Linux
+
+Prerequisites:
+
+- A recent Linux distribution with development packages
+- Rust/Cargo
+- Git LFS
+- System libraries required by the upstream Warp Linux build
+
+Bootstrap on Debian/Ubuntu-like systems:
+
+```bash
+./script/bootstrap
+```
+
+Build the local-only OSS binary:
+
+```bash
+cargo build --features gui,local_only -p warp --bin warp-oss
+```
+
+Run:
+
+```bash
+./target/debug/warp-oss
+```
+
+Optional packaging helpers exist under `script/linux/`:
+
+```bash
+./script/linux/bundle
+./script/linux/bundle_appimage
+./script/linux/bundle_deb
+./script/linux/bundle_rpm
+```
+
+Those package scripts may require additional platform packages and should be treated as upstream experimental tooling.
+
+### Windows
+
+Prerequisites:
+
+- Windows 10/11
+- Git for Windows
+- Rust/Cargo via rustup
+- Git LFS
+- CMake
+- Inno Setup if building an installer
+
+Bootstrap from PowerShell:
+
+```powershell
+.\script\windows\bootstrap.ps1
+```
+
+Build the local-only OSS binary:
+
+```powershell
+cargo build --features gui,local_only -p warp --bin warp-oss
+```
+
+Run:
+
+```powershell
+.\target\debug\warp-oss.exe
+```
+
+Optional installer build:
+
+```powershell
+cargo build --features gui,local_only -p warp --bin warp-oss --release
+iscc .\script\windows\windows-installer.iss /DMyAppExeName=warp-oss.exe /DTargetProfileDir=release
+```
+
+See `script/windows/README.md` for upstream Inno Setup details.
+
+## Verification performed for this fork
+
+On the current macOS development machine, the following checks were run successfully:
+
+```bash
+cargo fmt --check
+cargo build --features local_only --all-targets
+cargo build --features gui,local_only -p warp --bin warp-oss
+TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
+```
+
+The repository scripts referenced by the Linux/macOS paths were syntax-checked with `bash -n`, and the Windows build scripts were inspected for the documented PowerShell entrypoints.
+
+## Upstream documentation
+
+For the original product documentation and contribution guide, see:
+
+- [Original README](https://github.com/warpdotdev/warp/blob/master/README.md)
+- [Original repository](https://github.com/warpdotdev/warp)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [WARP.md](WARP.md)

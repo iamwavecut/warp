@@ -2312,6 +2312,34 @@ pub fn init_feature_flags() {
     for flag in enabled_features() {
         flag.set_enabled(true);
     }
+
+    // In local_only mode, forcefully disable all cloud-dependent feature flags.
+    // These features require server-side infrastructure that doesn't exist in a
+    // fully local build.
+    #[cfg(feature = "local_only")]
+    {
+        let disabled_flags: &[FeatureFlag] = &[
+            FeatureFlag::CloudMode,
+            FeatureFlag::CloudModeFromLocalSession,
+            FeatureFlag::CloudModeHostSelector,
+            FeatureFlag::CloudModeImageContext,
+            FeatureFlag::WarpManagedSecrets,
+            FeatureFlag::OrchestrationV2,
+            FeatureFlag::OrchestrationEventPush,
+            FeatureFlag::SyncAmbientPlans,
+            FeatureFlag::OzHandoff,
+            FeatureFlag::CloudConversations,
+            FeatureFlag::CloudModeSetupV2,
+            FeatureFlag::CloudModeInputV2,
+            FeatureFlag::CreateEnvironmentSlashCommand,
+            FeatureFlag::CloudEnvironments,
+            FeatureFlag::ForceLogin,
+        ];
+        for flag in disabled_flags {
+            flag.set_enabled(false);
+        }
+    }
+
     features::mark_initialized();
 }
 

@@ -23,7 +23,7 @@ use super::execution_profiles::profiles::AIExecutionProfilesModel;
 
 pub use ai::LLMId;
 
-/// Checks if a user's' API key is being used for the given provider.
+/// Checks if a user's API key is being used for the given provider.
 /// Returns `true` if BYO API key is enabled and a key exists for the provider.
 pub fn is_using_api_key_for_provider(provider: &LLMProvider, app: &AppContext) -> bool {
     use ai::api_keys::ApiKeyManager;
@@ -36,6 +36,7 @@ pub fn is_using_api_key_for_provider(provider: &LLMProvider, app: &AppContext) -
         LLMProvider::OpenAI => api_keys.is_some_and(|keys| keys.openai.is_some()),
         LLMProvider::Anthropic => api_keys.is_some_and(|keys| keys.anthropic.is_some()),
         LLMProvider::Google => api_keys.is_some_and(|keys| keys.google.is_some()),
+        LLMProvider::Custom(name) => api_keys.is_some_and(|keys| keys.custom.get(name).is_some()),
         _ => false,
     }
 }
@@ -83,12 +84,15 @@ pub struct LLMSpec {
     pub speed: f32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LLMProvider {
     OpenAI,
     Anthropic,
     Google,
     Xai,
+    /// A user-configured custom provider (BYOK). The string identifies the provider name.
+    Custom(String),
+    #[serde(other)]
     Unknown,
 }
 
@@ -100,6 +104,7 @@ impl LLMProvider {
             LLMProvider::Anthropic => Some(Icon::ClaudeLogo),
             LLMProvider::Google => Some(Icon::GeminiLogo),
             LLMProvider::Xai => None,
+            LLMProvider::Custom(_) => None,
             LLMProvider::Unknown => None,
         }
     }
@@ -888,11 +893,117 @@ impl LLMPreferences {
     }
 
     pub fn refresh_available_models(&self, ctx: &mut ModelContext<Self>) {
-        if AuthStateProvider::as_ref(ctx).get().is_logged_in() {
-            self.refresh_authed_models(ctx);
-        } else {
-            self.refresh_public_models(ctx);
+        #[cfg(feature = "local_only")]
+        {
+            self.refresh_custom_provider_models(ctx);
+            return;
         }
+
+        #[cfg(not(feature = "local_only"))]
+        {
+            if AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+                self.refresh_authed_models(ctx);
+            } else {
+                self.refresh_public_models(ctx);
+            }
+        }
+    }
+
+    /// In local_only mode, build the model list from custom provider configs
+    /// stored in AISettings instead of fetching from the server.
+    #[cfg(feature = "local_only")]
+    fn refresh_custom_provider_models(&self, ctx: &mut ModelContext<Self>) {
+        use crate::settings::AISettings;
+
+        let custom_providers = &AISettings::as_ref(ctx).custom_providers;
+
+        if custom_providers.is_empty() {
+            log::info!("local_only: no custom providers configured, using default models");
+            return;
+        }
+
+        let mut all_llms: Vec<LLMInfo> = Vec::new();
+
+        for provider_config in custom_providers.iter() {
+            let provider_name = provider_config.name.clone();
+            let provider = LLMProvider::Custom(provider_name.clone());
+
+            for model_id in &provider_config.models {
+                all_llms.push(LLMInfo {
+                    display_name: format!("{} / {}", provider_name, model_id),
+                    base_model_name: model_id.clone(),
+                    id: format!("custom/{}/{}", provider_name, model_id).into(),
+                    reasoning_level: None,
+                    usage_metadata: LLMUsageMetadata {
+                        request_multiplier: 1,
+                        credit_multiplier: None,
+                    },
+                    description: Some(format!(
+                        "Custom provider: {} ({})",
+                        provider_name, provider_config.base_url
+                    )),
+                    disable_reason: None,
+                    vision_supported: false,
+                    spec: None,
+                    provider: provider.clone(),
+                    host_configs: HashMap::new(),
+                    discount_percentage: None,
+                });
+            }
+        }
+
+        if all_llms.is_empty() {
+            log::info!("local_only: custom providers configured but no models defined");
+            return;
+        }
+
+        let default_id = all_llms.first().unwrap().id.clone();
+
+        let available = AvailableLLMs::new(default_id, all_llms, None).unwrap_or_else(|e| {
+            log::error!("local_only: failed to build AvailableLLMs: {e}");
+            AvailableLLMs {
+                default_id: "auto".to_owned().into(),
+                choices: vec![LLMInfo {
+                    display_name: "auto (cost-efficient)".to_owned(),
+                    base_model_name: "auto (cost-efficient)".to_owned(),
+                    id: "auto".to_owned().into(),
+                    reasoning_level: None,
+                    usage_metadata: LLMUsageMetadata {
+                        request_multiplier: 1,
+                        credit_multiplier: None,
+                    },
+                    description: None,
+                    disable_reason: None,
+                    vision_supported: true,
+                    spec: None,
+                    provider: LLMProvider::Unknown,
+                    host_configs: HashMap::new(),
+                    discount_percentage: None,
+                }],
+                preferred_codex_model_id: None,
+            }
+        });
+
+        let models_by_feature = ModelsByFeature {
+            agent_mode: available.clone(),
+            coding: available.clone(),
+            cli_agent: Some(available.clone()),
+            computer_use: Some(default_computer_use_llms()),
+        };
+
+        // Use ctx.spawn with an immediately-resolving future so we get
+        // &mut Self access in the callback, same pattern as refresh_authed_models.
+        let update = models_by_feature;
+        ctx.spawn(
+            async move { Ok::<_, anyhow::Error>(update) },
+            |me, result, ctx| {
+                if let Ok(update) = result {
+                    if update != me.models_by_feature {
+                        me.on_server_update(update, ctx);
+                    }
+                }
+            },
+        );
     }
 
     pub fn update_feature_model_choices(

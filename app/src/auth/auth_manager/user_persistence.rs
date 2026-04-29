@@ -63,19 +63,45 @@ pub enum UserPersistenceError {
 
 impl PersistedUser {
     pub fn from_secure_storage(ctx: &AppContext) -> Result<PersistedUser, UserPersistenceError> {
-        let value = ctx.secure_storage().read_value(USER_STORAGE_KEY)?;
-        Ok(serde_json::from_str::<PersistedUser>(&value)?)
+        #[cfg(feature = "local_only")]
+        {
+            let _ = ctx;
+            Err(UserPersistenceError::SecureStorageError(
+                secure_storage::Error::NotFound,
+            ))
+        }
+        #[cfg(not(feature = "local_only"))]
+        {
+            let value = ctx.secure_storage().read_value(USER_STORAGE_KEY)?;
+            Ok(serde_json::from_str::<PersistedUser>(&value)?)
+        }
     }
 
     pub fn write_to_secure_storage(&self, ctx: &AppContext) -> Result<(), UserPersistenceError> {
-        let serialized_user = serde_json::to_string(self)?;
-        Ok(ctx
-            .secure_storage()
-            .write_value(USER_STORAGE_KEY, &serialized_user)?)
+        #[cfg(feature = "local_only")]
+        {
+            let _ = ctx;
+            Ok(())
+        }
+        #[cfg(not(feature = "local_only"))]
+        {
+            let serialized_user = serde_json::to_string(self)?;
+            Ok(ctx
+                .secure_storage()
+                .write_value(USER_STORAGE_KEY, &serialized_user)?)
+        }
     }
 
     pub fn remove_from_secure_storage(ctx: &AppContext) -> Result<(), UserPersistenceError> {
-        Ok(ctx.secure_storage().remove_value(USER_STORAGE_KEY)?)
+        #[cfg(feature = "local_only")]
+        {
+            let _ = ctx;
+            Ok(())
+        }
+        #[cfg(not(feature = "local_only"))]
+        {
+            Ok(ctx.secure_storage().remove_value(USER_STORAGE_KEY)?)
+        }
     }
 }
 

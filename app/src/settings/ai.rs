@@ -32,6 +32,55 @@ use serde::{de::Deserializer, Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
+/// Configuration for a user-defined custom LLM provider (BYOK).
+/// Stored in the settings file and used to populate the model list
+/// when running in local_only mode.
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    Default,
+    schemars::JsonSchema,
+    settings_value::SettingsValue,
+)]
+#[schemars(description = "Configuration for a custom LLM provider (BYOK).")]
+pub struct CustomProviderConfig {
+    /// Display name for this provider (e.g. "My Local LLM")
+    #[schemars(description = "Display name for this provider.")]
+    pub name: String,
+    /// Base URL for the OpenAI-compatible API endpoint
+    #[schemars(description = "Base URL for the OpenAI-compatible API endpoint.")]
+    pub base_url: String,
+    /// List of model IDs available from this provider
+    #[schemars(description = "List of model IDs available from this provider.")]
+    pub models: Vec<String>,
+    /// The API type protocol to use (currently only OpenAI-compatible)
+    #[serde(default = "CustomApiType::default")]
+    #[schemars(description = "The API protocol type for this provider.")]
+    pub api_type: CustomApiType,
+}
+
+/// The API protocol type for a custom provider.
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    schemars::JsonSchema,
+    settings_value::SettingsValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomApiType {
+    /// OpenAI-compatible chat completions API (/v1/chat/completions)
+    #[default]
+    OpenAiCompatible,
+}
+
 pub enum FocusedTerminalInfoEvent {
     TerminalInfoUpdated,
 }
@@ -1459,6 +1508,19 @@ define_settings_group!(AISettings, settings: [
         private: false,
         toml_path: "agents.warp_agent.other.agent_attribution_enabled",
         description: "Whether the Warp Agent adds an attribution co-author line to commit messages and pull requests it creates.",
+    }
+
+    // Custom LLM provider configurations for BYOK (local_only mode).
+    // Each entry defines a provider with a name, base URL, and model list.
+    // API keys for custom providers are stored separately in ApiKeyManager.
+    custom_providers: CustomProviders {
+        type: Vec<CustomProviderConfig>,
+        default: vec![],
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Never,
+        private: false,
+        toml_path: "agents.custom_providers",
+        description: "Custom LLM provider configurations for BYOK mode.",
     }
 ]);
 

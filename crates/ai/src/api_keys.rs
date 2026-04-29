@@ -22,6 +22,9 @@ pub struct ApiKeys {
     pub anthropic: Option<String>,
     pub openai: Option<String>,
     pub open_router: Option<String>,
+    /// Custom provider API keys, keyed by provider name.
+    #[serde(default)]
+    pub custom: std::collections::HashMap<String, String>,
 }
 
 impl ApiKeys {
@@ -30,6 +33,7 @@ impl ApiKeys {
             || self.anthropic.is_some()
             || self.google.is_some()
             || self.open_router.is_some()
+            || !self.custom.is_empty()
     }
 }
 
@@ -89,6 +93,25 @@ impl ApiKeyManager {
 
     pub fn set_open_router_key(&mut self, key: Option<String>, ctx: &mut ModelContext<Self>) {
         self.keys.open_router = key;
+        ctx.emit(ApiKeyManagerEvent::KeysUpdated);
+        self.write_keys_to_secure_storage(ctx);
+    }
+
+    /// Sets or removes a custom provider API key.
+    pub fn set_custom_key(
+        &mut self,
+        provider_name: String,
+        key: Option<String>,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        match key {
+            Some(k) => {
+                self.keys.custom.insert(provider_name, k);
+            }
+            None => {
+                self.keys.custom.remove(&provider_name);
+            }
+        }
         ctx.emit(ApiKeyManagerEvent::KeysUpdated);
         self.write_keys_to_secure_storage(ctx);
     }
