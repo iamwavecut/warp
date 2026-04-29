@@ -86,7 +86,10 @@ impl AuthState {
             state.set_user(Some(User::test()));
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             state.set_credentials(Some(Credentials::Test));
-            #[cfg(all(feature = "local_only", not(any(test, feature = "integration_tests", feature = "skip_login"))))]
+            #[cfg(all(
+                feature = "local_only",
+                not(any(test, feature = "integration_tests", feature = "skip_login"))
+            ))]
             state.set_credentials(Some(Credentials::Local));
             return state;
         }

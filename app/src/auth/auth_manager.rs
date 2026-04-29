@@ -192,7 +192,9 @@ impl AuthManager {
                         .map(|current_user_uid| current_user_uid == incoming_user_uid)
                         .unwrap_or_default(),
                 };
-                if !incoming_user_matches_current_user && !deleted_anonymous_user.unwrap_or_default() {
+                if !incoming_user_matches_current_user
+                    && !deleted_anonymous_user.unwrap_or_default()
+                {
                     _ctx.emit(AuthManagerEvent::LoginOverrideDetected(_auth_payload));
                     return;
                 }
