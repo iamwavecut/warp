@@ -1,6 +1,8 @@
 pub(crate) mod convert_conversation;
 mod convert_from;
 mod convert_to;
+#[cfg(feature = "local_only")]
+mod direct_openai;
 mod r#impl;
 
 pub use ai::agent::convert::ConvertToAPITypeError;
@@ -115,6 +117,8 @@ pub struct RequestParams {
 
     /// User-provided API keys for AI providers (BYO API Key).
     pub api_keys: Option<warp_multi_agent_api::request::settings::ApiKeys>,
+    #[cfg(feature = "local_only")]
+    pub(crate) custom_provider_route: Option<direct_openai::CustomProviderRoute>,
     pub allow_use_of_warp_credits_with_byok: bool,
     pub autonomy_level: warp_multi_agent_api::AutonomyLevel,
     pub isolation_level: warp_multi_agent_api::IsolationLevel,
@@ -240,6 +244,31 @@ impl RequestParams {
         let allow_use_of_warp_credits_with_byok =
             *AISettings::as_ref(app).can_use_warp_credits_with_byok;
 
+        #[cfg(feature = "local_only")]
+        let custom_provider_route = direct_openai::parse_custom_model_id(
+            request_input.model_id.as_str(),
+        )
+        .and_then(|custom_model| {
+            let provider = ai_settings
+                .custom_providers
+                .iter()
+                .find(|provider| provider.name == custom_model.provider_name)?;
+            let secure_storage_key = ApiKeyManager::as_ref(app)
+                .keys()
+                .custom
+                .get(&custom_model.provider_name)
+                .cloned();
+            let env_key = provider
+                .api_key_env_var
+                .as_deref()
+                .and_then(|env_var| std::env::var(env_var).ok());
+            Some(direct_openai::CustomProviderRoute {
+                provider_name: custom_model.provider_name.clone(),
+                base_url: provider.base_url.clone(),
+                model: custom_model.model,
+                api_key: secure_storage_key.or(env_key),
+            })
+        });
         let app_execution_mode = AppExecutionMode::as_ref(app);
         let autonomy_level = if app_execution_mode.is_autonomous() {
             warp_multi_agent_api::AutonomyLevel::Unsupervised
@@ -273,11 +302,14 @@ impl RequestParams {
             .get_ask_user_question_setting(app, terminal_view_id)
             != crate::ai::execution_profiles::AskUserQuestionPermission::Never;
 
+        #[cfg(not(feature = "local_only"))]
         let orchestration_enabled = ai_settings.is_orchestration_enabled(app)
             && session_context
                 .session_type()
                 .as_ref()
                 .is_none_or(|t| matches!(t, crate::terminal::model::session::SessionType::Local));
+        #[cfg(feature = "local_only")]
+        let orchestration_enabled = false;
 
         Self {
             input: request_input.all_inputs().cloned().collect(),
@@ -298,6 +330,8 @@ impl RequestParams {
             planning_enabled: true,
             should_redact_secrets,
             api_keys,
+            #[cfg(feature = "local_only")]
+            custom_provider_route,
             allow_use_of_warp_credits_with_byok,
             autonomy_level,
             isolation_level,

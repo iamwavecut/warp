@@ -1894,10 +1894,9 @@ impl SettingsWidget for DataManagementWidget {
         "data management delete account"
     }
 
-    fn should_render(&self, app: &AppContext) -> bool {
+    fn should_render(&self, _app: &AppContext) -> bool {
         #[cfg(feature = "local_only")]
         {
-            let _ = app;
             false
         }
         #[cfg(not(feature = "local_only"))]

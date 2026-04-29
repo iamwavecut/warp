@@ -2352,6 +2352,8 @@ pub fn init_feature_flags() {
             FeatureFlag::SendTelemetryToFile,
             FeatureFlag::WithSandboxTelemetry,
             FeatureFlag::AgentModeAnalytics,
+            FeatureFlag::AgentManagementView,
+            FeatureFlag::AmbientAgentsRTC,
         ];
         for flag in disabled_flags {
             flag.set_enabled(false);

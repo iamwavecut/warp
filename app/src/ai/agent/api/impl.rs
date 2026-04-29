@@ -14,6 +14,22 @@ pub async fn generate_multi_agent_output(
     mut params: RequestParams,
     cancellation_rx: futures::channel::oneshot::Receiver<()>,
 ) -> Result<ResponseStream, ConvertToAPITypeError> {
+    #[cfg(feature = "local_only")]
+    {
+        if let Some(route) = params.custom_provider_route.clone() {
+            let response_stream = super::direct_openai::generate(route, params).await?;
+            return Ok(Box::pin(response_stream.take_until(cancellation_rx)));
+        }
+
+        if super::direct_openai::is_custom_model_id(&params.model) {
+            let response_stream = super::direct_openai::error_stream(format!(
+                "No custom provider configuration found for model `{}`",
+                params.model
+            ));
+            return Ok(Box::pin(response_stream.take_until(cancellation_rx)));
+        }
+    }
+
     let supported_tools = params
         .supported_tools_override
         .take()

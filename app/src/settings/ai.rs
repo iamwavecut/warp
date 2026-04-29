@@ -56,6 +56,12 @@ pub struct CustomProviderConfig {
     /// List of model IDs available from this provider
     #[schemars(description = "List of model IDs available from this provider.")]
     pub models: Vec<String>,
+    /// Optional environment variable containing the API key for this provider.
+    /// If omitted, Warp uses the custom key stored in secure storage when present;
+    /// if neither exists, the request is sent without an Authorization header.
+    #[serde(default)]
+    #[schemars(description = "Optional environment variable containing this provider's API key.")]
+    pub api_key_env_var: Option<String>,
     /// The API type protocol to use (currently only OpenAI-compatible)
     #[serde(default = "CustomApiType::default")]
     #[schemars(description = "The API protocol type for this provider.")]

@@ -2,99 +2,41 @@
 
 > Original upstream README: [warpdotdev/warp README.md](https://github.com/warpdotdev/warp/blob/master/README.md)
 
-This repository is a local-only experimental fork of [Warp](https://github.com/warpdotdev/warp). It keeps the open-source Warp client codebase, but changes the default product assumptions: no registration, no login flow, no Firebase-backed anonymous user, no telemetry/crash-reporting pipeline in local-only builds, no Warp Drive/cloud-gated product flow, and BYOK-oriented AI plumbing.
+Experimental local-only fork of [Warp](https://github.com/warpdotdev/warp) for evaluation and source-code research.
 
-## Notice
+This fork is **not** intended for production, commercial redistribution, or hosted/managed terminal use. Review the upstream licenses before using or distributing it:
 
-This fork is provided **only for evaluation, research, education, and source-code review**.
+- [AGPL v3](LICENSE-AGPL) — most of this repository.
+- [MIT](LICENSE-MIT) — Warp UI crates (`warpui_core`, `warpui`).
 
-In accordance with the licensing model of the original Warp project, this fork is **not intended for production use, commercial redistribution, or use as a hosted/managed terminal product**. Review the upstream licenses before using, modifying, or distributing this code:
+## What changed
 
-- [AGPL v3 license](LICENSE-AGPL) — applies to most of this repository.
-- [MIT license](LICENSE-MIT) — applies to Warp's UI framework crates (`warpui_core` and `warpui`).
+When built with `local_only`, this fork changes Warp from a cloud/account-oriented product into a local-first client:
 
-This notice is not legal advice. If you want to use this fork beyond local evaluation, review the upstream license obligations and consult qualified counsel.
+- No registration, login, browser auth, device auth, or Firebase anonymous user.
+- Starts directly in the terminal workspace.
+- Telemetry macros are no-ops.
+- Telemetry collector, app focus telemetry, shutdown telemetry flush, crash reporting, and Sentry are not initialized.
+- Cloud/account UI entry points are hidden or disabled, including Warp Drive, data-management/delete-account UI, Agent Management, Ambient Agents RTC, Cloud Mode, Cloud Conversations, cloud environments, managed secrets, orchestration cloud flags, and force-login behavior.
+- AI quotas are local/unlimited; server quota refresh is skipped.
+- AI model list is populated from local custom provider settings.
+- Agent requests for custom models go directly to OpenAI-compatible `/chat/completions` endpoints using a normal HTTP client. They do **not** use Warp's `/ai/multi-agent` cloud endpoint or try to pass custom provider data through Warp protobuf request settings.
 
-## What this fork changes
+Some upstream cloud/protobuf types remain in the source tree because existing UI/history code uses those internal Rust types for local event handling. The local-only custom-provider execution path does not send requests to Warp's cloud AI endpoint.
 
-### Local-only application mode
+## Branch
 
-- Extends the existing `local_only` Cargo feature.
-- Runs without login, registration, or browser/device auth.
-- Adds `Credentials::Local` for local-only builds.
-- Skips persisted server credentials.
-- Starts directly in the terminal workspace instead of the auth/onboarding UI.
+The maintained branch is:
 
-### No telemetry or crash-reporting pipeline in `local_only`
+```text
+master
+```
 
-When built with `local_only`:
+Older development branch names such as `local-byok` are no longer used for new work.
 
-- `send_telemetry_*` macros are no-ops.
-- The telemetry collector singleton is not initialized.
-- App blur/focus telemetry recording and shutdown telemetry flushing are skipped.
-- Crash reporting / Sentry initialization is skipped.
-- Telemetry/crash-related feature flags are forcibly disabled:
-  - `CrashReporting`
-  - `CocoaSentry`
-  - `LogExpensiveFramesInSentry`
-  - `RecordAppActiveEvents`
-  - `SendTelemetryToFile`
-  - `WithSandboxTelemetry`
-  - `AgentModeAnalytics`
-- Privacy settings force telemetry off.
-- The Privacy settings telemetry toggle is hidden.
+## Configure custom providers
 
-### No cloud-gated product flow
-
-When built with `local_only`, cloud-dependent feature flags are forcibly disabled after feature initialization, including:
-
-- Cloud Mode flags (`CloudMode`, `CloudModeFromLocalSession`, `CloudModeHostSelector`, `CloudModeImageContext`)
-- Cloud Conversations
-- Warp Managed Secrets
-- Warp Environments / environment slash command
-- Orchestration cloud event/push flags
-- Oz handoff / sync ambient plans
-- Warp Drive is disabled at the runtime/UI gate (`DriveSettings::is_warp_drive_enabled()` returns `false` under `local_only`)
-- Data management / delete-account UI
-- Force-login behavior
-
-Cloud-oriented code remains in the source tree where it is needed for type compatibility with the upstream architecture, but the local-only build disables the product entry points, feature flags, telemetry hooks, and visible account/cloud UI paths listed above.
-
-### BYOK-oriented AI groundwork
-
-- Adds `LLMProvider::Custom(String)`.
-- Adds custom API-key storage: `ApiKeys.custom: HashMap<String, String>`.
-- Adds `ApiKeyManager::set_custom_key()`.
-- Adds `CustomProviderConfig` to AI settings:
-  - provider name
-  - OpenAI-compatible base URL
-  - model ID list
-  - API type (`open_ai_compatible`)
-- Adds `agents.custom_providers` TOML settings support.
-- Builds local `ModelsByFeature` choices from `AISettings.custom_providers` instead of fetching model lists from Warp servers in `local_only` mode.
-
-### Unlimited local AI quota checks
-
-- Disables server quota refresh in `local_only`.
-- Initializes request limits as effectively unlimited.
-- Makes AI availability checks pass locally.
-
-### Current limitation
-
-The UI/settings/model-list groundwork for custom providers is present, but direct request routing to a custom OpenAI-compatible endpoint still needs a dedicated local HTTP path.
-
-Upstream Warp AI requests normally pass through `warp_multi_agent_api` / `warp-proto-apis`. That protobuf request settings type does not currently carry arbitrary custom provider base URLs. The remaining work is to bypass that cloud-oriented API path for `LLMProvider::Custom(_)` and route directly to the configured endpoint.
-
-## Repository and branch
-
-- Fork: `https://github.com/iamwavecut/warp`
-- Default branch: `master`
-- Development branch used for local-only work: `local-byok`
-- Primary feature flag: `local_only`
-
-## Custom provider configuration
-
-Example TOML shape for a local settings file:
+Add OpenAI-compatible providers to the Warp settings TOML:
 
 ```toml
 [[agents.custom_providers]]
@@ -102,188 +44,87 @@ name = "local-openai-compatible"
 base_url = "http://localhost:1234/v1"
 models = ["qwen3-coder", "llama-local"]
 api_type = "open_ai_compatible"
+
+# Optional. If omitted, Warp first tries a custom key stored in secure storage;
+# if neither exists, it sends the request without an Authorization header.
+api_key_env_var = "LOCAL_OPENAI_API_KEY"
 ```
 
-API keys for custom providers are stored separately by the API-key manager, keyed by provider name.
-
-## Build instructions
-
-The commands below build the local-only OSS binary with the GUI feature enabled:
-
-```bash
-cargo build --features gui,local_only -p warp --bin warp-oss
-```
-
-The resulting debug binary is usually:
+Model IDs are exposed internally as:
 
 ```text
-target/debug/warp-oss
+custom/<provider-name>/<model-id>
 ```
 
-For a faster compiler-only check without GUI bundling:
+For example:
 
-```bash
-cargo build --features local_only -p warp
+```text
+custom/local-openai-compatible/qwen3-coder
 ```
 
-### Common prerequisites
+The direct client sends:
 
-All platforms need:
+```http
+POST <base_url>/chat/completions
+Authorization: Bearer <api key>   # only when a key is configured
+```
 
-1. Git
-2. Git LFS
-3. Rust/Cargo via rustup
-4. A checked-out clone of this fork and branch
+with `stream = false` for the current implementation.
+
+## Build
+
+Common setup:
 
 ```bash
 git clone https://github.com/iamwavecut/warp.git
 cd warp
-# Default branch is master. Use local-byok only if you want the development branch explicitly.
-# git checkout local-byok
 git lfs install
 git lfs pull
 ```
 
-### macOS
-
-Prerequisites:
-
-- macOS with Xcode installed
-- Xcode command-line tools selected
-- Homebrew
-- Rust/Cargo
-- Git LFS
-
-Bootstrap using upstream scripts if needed:
-
-```bash
-./script/bootstrap
-```
-
-Build the local-only OSS binary:
-
-```bash
-cargo build --features gui,local_only -p warp --bin warp-oss
-```
-
-Run the built binary directly:
-
-```bash
-./target/debug/warp-oss
-```
-
-Optional: build a macOS `.app` bundle. This requires `cargo-bundle` and signing tooling installed by the bootstrap script.
-
-If `cargo-bundle` is missing, install the revision used by Warp's bootstrap script:
-
-```bash
-cargo install cargo-bundle --git=https://github.com/burtonageo/cargo-bundle --rev ae4c76e92c08774bf54ff077b1c52e3d1cd6c16d
-```
-
-When running in some non-interactive terminals, this `cargo-bundle` revision can panic with `Term(ColorOutOfRange)`. Use a 256-color TERM plus no-color env flags:
-
-```bash
-TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
-```
-
-The app bundle is created under:
-
-```text
-target/debug/bundle/osx/WarpOss.app
-```
-
-### Linux
-
-Prerequisites:
-
-- A recent Linux distribution with development packages
-- Rust/Cargo
-- Git LFS
-- System libraries required by the upstream Warp Linux build
-
-Bootstrap on Debian/Ubuntu-like systems:
-
-```bash
-./script/bootstrap
-```
-
-Build the local-only OSS binary:
-
-```bash
-cargo build --features gui,local_only -p warp --bin warp-oss
-```
-
-Run:
-
-```bash
-./target/debug/warp-oss
-```
-
-Optional packaging helpers exist under `script/linux/`:
-
-```bash
-./script/linux/bundle
-./script/linux/bundle_appimage
-./script/linux/bundle_deb
-./script/linux/bundle_rpm
-```
-
-Those package scripts may require additional platform packages and should be treated as upstream experimental tooling.
-
-### Windows
-
-Prerequisites:
-
-- Windows 10/11
-- Git for Windows
-- Rust/Cargo via rustup
-- Git LFS
-- CMake
-- Inno Setup if building an installer
-
-Bootstrap from PowerShell:
-
-```powershell
-.\script\windows\bootstrap.ps1
-```
-
-Build the local-only OSS binary:
-
-```powershell
-cargo build --features gui,local_only -p warp --bin warp-oss
-```
-
-Run:
-
-```powershell
-.\target\debug\warp-oss.exe
-```
-
-Optional installer build:
-
-```powershell
-cargo build --features gui,local_only -p warp --bin warp-oss --release
-iscc .\script\windows\windows-installer.iss /DMyAppExeName=warp-oss.exe /DTargetProfileDir=release
-```
-
-See `script/windows/README.md` for upstream Inno Setup details.
-
-## Verification performed for this fork
-
-On the current macOS development machine, the following checks were run successfully:
+Compiler/build checks:
 
 ```bash
 cargo fmt --check
 cargo build --features local_only --all-targets
 cargo build --features gui,local_only -p warp --bin warp-oss
+```
+
+Run the debug binary:
+
+```bash
+./target/debug/warp-oss
+```
+
+Build a macOS `.app` bundle:
+
+```bash
+cargo install cargo-bundle --git=https://github.com/burtonageo/cargo-bundle --rev ae4c76e92c08774bf54ff077b1c52e3d1cd6c16d
 TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
 ```
 
-The `local_only` Rust build is warning-free as of this revision. The macOS bundle flow also completes without Rust compiler warnings; the OSS channel may print informational messages when optional upstream/internal assets are unavailable.
+Bundle path:
 
-## Upstream documentation
+```text
+target/debug/bundle/osx/WarpOss.app
+```
 
-For the original product documentation and contribution guide, see:
+## Verification
+
+The current macOS development checkout is verified with:
+
+```bash
+cargo fmt --check
+cargo test -p warp --features local_only parses_custom_model_ids_into_provider_and_model
+cargo test -p warp --features local_only builds_chat_completions_url_from_base_url
+cargo build --features local_only --all-targets
+cargo build --features gui,local_only -p warp --bin warp-oss
+TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
+```
+
+`cargo build --features local_only --all-targets` is warning-free.
+
+## Upstream docs
 
 - [Original README](https://github.com/warpdotdev/warp/blob/master/README.md)
 - [Original repository](https://github.com/warpdotdev/warp)
