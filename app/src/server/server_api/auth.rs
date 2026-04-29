@@ -184,11 +184,13 @@ pub trait AuthClient: 'static + Send + Sync {
     async fn set_user_is_onboarded(&self) -> Result<bool>;
 
     /// Requests a device authorization code from the server. This is only used for headless CLI/SDK authentication.
+    #[cfg_attr(feature = "local_only", allow(dead_code))]
     async fn request_device_code(
         &self,
     ) -> StdResult<oauth2::StandardDeviceAuthorizationResponse, UserAuthenticationError>;
 
     /// Wait for the request to be approved or rejected and exchange it for a short-lived custom access token.
+    #[cfg_attr(feature = "local_only", allow(dead_code))]
     async fn exchange_device_access_token(
         &self,
         details: &oauth2::StandardDeviceAuthorizationResponse,
@@ -840,7 +842,9 @@ pub enum UserAuthenticationError {
     #[error("Firebase returned a user error when fetching an ID token")]
     UserAccountDisabled(FirebaseError),
     #[error("Invalid state parameter in auth redirect")]
+    #[cfg_attr(feature = "local_only", allow(dead_code))]
     InvalidStateParameter,
+    #[cfg_attr(feature = "local_only", allow(dead_code))]
     #[error("Missing state parameter in auth redirect")]
     MissingStateParameter,
     #[error("unexpected error occurred when fetching an ID token: {0:#}")]
@@ -894,6 +898,7 @@ impl From<FirebaseError> for UserAuthenticationError {
 
 #[derive(Error, Debug)]
 /// Error type when creating anonymous users
+#[cfg_attr(feature = "local_only", allow(dead_code))]
 pub enum AnonymousUserCreationError {
     #[error("The network request to create the anonymous user failed")]
     CreationFailed,

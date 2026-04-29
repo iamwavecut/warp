@@ -379,6 +379,7 @@ pub struct ServerApi {
     telemetry_api: TelemetryApi,
     last_server_time: Arc<Mutex<Option<ServerTime>>>,
     // We technically use OAuth2 for headless device authentication.
+    #[cfg_attr(feature = "local_only", allow(dead_code))]
     oauth_client: self::auth::OAuth2Client,
     /// Cached ambient workload token for requests from ambient agents.
     ambient_workload_token: Arc<Mutex<Option<warp_isolation_platform::WorkloadToken>>>,

@@ -20,6 +20,7 @@ use crate::{
 use super::clear_event_queue;
 
 // How often we send Active Usage signals.
+#[cfg_attr(feature = "local_only", allow(dead_code))]
 const ACTIVE_USAGE_DURATION: Duration = Duration::from_secs(60);
 
 /// Duration to wait before flushing the event queue to Rudderstack.

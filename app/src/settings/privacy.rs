@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use regex::Regex;
+#[cfg(not(feature = "local_only"))]
 use warp_core::features::FeatureFlag;
 use warp_core::report_if_error;
 use warp_core::user_preferences::GetUserPreferences as _;
@@ -201,10 +202,18 @@ impl PrivacySettingsSnapshot {
     }
 
     pub fn should_disable_telemetry(&self) -> bool {
-        // If a user has opted in to the agent mode analytics experiment, telemetry must be enabled.
-        !self.is_telemetry_enabled
-            && !self.is_telemetry_force_enabled
-            && !FeatureFlag::AgentModeAnalytics.is_enabled()
+        #[cfg(feature = "local_only")]
+        {
+            let _ = self;
+            true
+        }
+        #[cfg(not(feature = "local_only"))]
+        {
+            // If a user has opted in to the agent mode analytics experiment, telemetry must be enabled.
+            !self.is_telemetry_enabled
+                && !self.is_telemetry_force_enabled
+                && !FeatureFlag::AgentModeAnalytics.is_enabled()
+        }
     }
 
     pub fn should_collect_ai_ugc_telemetry(&self) -> bool {
@@ -248,6 +257,9 @@ impl PrivacySettings {
         let auth_state = AuthStateProvider::as_ref(ctx).get().clone();
         let auth_client = ServerApiProvider::as_ref(ctx).get_auth_client();
 
+        #[cfg(feature = "local_only")]
+        let is_telemetry_enabled = false;
+        #[cfg(not(feature = "local_only"))]
         let is_telemetry_enabled: bool = ctx
             .private_user_preferences()
             .read_value(TELEMETRY_ENABLED_DEFAULTS_KEY)
@@ -255,6 +267,9 @@ impl PrivacySettings {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or(true);
 
+        #[cfg(feature = "local_only")]
+        let is_crash_reporting_enabled = false;
+        #[cfg(not(feature = "local_only"))]
         let is_crash_reporting_enabled: bool = ctx
             .private_user_preferences()
             .read_value(CRASH_REPORTING_ENABLED_DEFAULTS_KEY)
@@ -262,6 +277,9 @@ impl PrivacySettings {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or(true);
 
+        #[cfg(feature = "local_only")]
+        let is_cloud_conversation_storage_enabled = false;
+        #[cfg(not(feature = "local_only"))]
         let is_cloud_conversation_storage_enabled: bool = ctx
             .private_user_preferences()
             .read_value(CLOUD_CONVERSATION_STORAGE_ENABLED_DEFAULTS_KEY)
