@@ -10,7 +10,6 @@ use crate::ai::agent::api::ServerConversationToken;
 use crate::drive::OpenWarpDriveObjectSettings;
 use crate::interaction_sources::LaunchConfigUiLocation;
 use crate::launch_configs::launch_config::LaunchConfig;
-use crate::linear::{LinearAction, LinearIssueWork};
 use crate::root_view::{open_new_window_get_handles, OpenLaunchConfigArg};
 use crate::server::ids::ServerId;
 use crate::util::openable_file_type::{is_file_openable_in_warp, is_markdown_file};
@@ -46,10 +45,6 @@ pub struct OpenMCPSettingsArgs {
     pub autoinstall: Option<String>,
 }
 
-/// Source query parameter value indicating auth was initiated from cloud agent setup.
-/// Used to skip opening settings page after GitHub auth completes.
-pub const CLOUD_SETUP_SOURCE: &str = "cloud_setup";
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum UriHost {
     Auth,
@@ -73,8 +68,6 @@ pub enum UriHost {
     Mcp,
     /// Opens a new tab with the Codex model and starts a conversation.
     Codex,
-    /// Actions triggered from Linear integrations (e.g. work on issue).
-    Linear,
 }
 
 impl FromStr for UriHost {
@@ -95,7 +88,6 @@ impl FromStr for UriHost {
             "home" => Ok(Self::Home),
             "mcp" => Ok(Self::Mcp),
             "codex" => Ok(Self::Codex),
-            "linear" => Ok(Self::Linear),
             _ => Err(anyhow!("Received url with unexpected host: {}", s)),
         }
     }
@@ -355,19 +347,13 @@ impl UriHost {
                                 notifier.notify_auth_completed(ctx);
                             });
 
-                            // Open settings page unless auth was initiated from cloud setup
-                            // (cloud setup users should stay on their current page)
-                            let source = query_string.get("source").map(|s| s.as_ref());
-                            let skip_settings = source == Some(CLOUD_SETUP_SOURCE);
-                            if !skip_settings {
-                                dispatch_action_in_new_or_existing_window(
-                                    primary_window_id,
-                                    "root_view:open_settings_page_in_existing_window",
-                                    "root_view:open_settings_page_in_new_window",
-                                    &SettingsSection::CloudEnvironments,
-                                    ctx,
-                                );
-                            }
+                            dispatch_action_in_new_or_existing_window(
+                                primary_window_id,
+                                "root_view:open_settings_page_in_existing_window",
+                                "root_view:open_settings_page_in_new_window",
+                                &SettingsSection::CloudEnvironments,
+                                ctx,
+                            );
                         }
                         "mcp" => {
                             // warp://settings/mcp?autoinstall=<name> auto-installs a gallery MCP server.
@@ -380,15 +366,6 @@ impl UriHost {
                                 "root_view:open_mcp_settings_in_existing_window",
                                 "root_view:open_mcp_settings_in_new_window",
                                 &args,
-                                ctx,
-                            );
-                        }
-                        "platform" => {
-                            dispatch_action_in_new_or_existing_window(
-                                primary_window_id,
-                                "root_view:open_settings_page_in_existing_window",
-                                "root_view:open_settings_page_in_new_window",
-                                &SettingsSection::OzCloudAPIKeys,
                                 ctx,
                             );
                         }
@@ -431,21 +408,6 @@ impl UriHost {
                     ctx,
                 );
             }
-            UriHost::Linear => match LinearAction::parse(url) {
-                Ok(LinearAction::WorkOnIssue) => {
-                    let args = LinearIssueWork::from_url(url);
-                    dispatch_action_in_new_or_existing_window(
-                        primary_window_id,
-                        "root_view:open_linear_issue_work_in_existing_window",
-                        "root_view:open_linear_issue_work_in_new_window",
-                        &args,
-                        ctx,
-                    );
-                }
-                Err(err) => {
-                    log::warn!("{err}");
-                }
-            },
         }
     }
 
@@ -466,8 +428,6 @@ impl UriHost {
             Self::Mcp => W::Nothing,
             // Codex opens a new tab with AI mode, use default behavior
             Self::Codex => W::default(),
-            // Linear deeplink opens a new tab with agent view
-            Self::Linear => W::default(),
         }
     }
 }
@@ -666,7 +626,6 @@ enum Action {
     NewWindow,
     Docker,
     OpenRepo,
-    CloudAgentSetup,
     NewCloudAgentConversation,
     NewAgentConversation,
     CreateEnvironment { repos: Vec<String> },
@@ -680,7 +639,6 @@ impl Action {
             "/new_window" => Ok(Self::NewWindow),
             "/docker/open_subshell" => Ok(Self::Docker),
             "/open-repo" => Ok(Self::OpenRepo),
-            "/cloud_agent_setup" => Ok(Self::CloudAgentSetup),
             "/new_cloud_agent_conversation" => Ok(Self::NewCloudAgentConversation),
             "/new_agent_conversation" => Ok(Self::NewAgentConversation),
             "/create_environment" => {
@@ -749,32 +707,6 @@ impl Action {
                     });
                 } else {
                     log::warn!("no workspace views in window {window_id} for open repo action");
-                }
-            }
-            Action::CloudAgentSetup => {
-                let window_id =
-                    primary_window_id.or_else(|| Some(open_new_window_get_handles(None, ctx).0));
-
-                let Some(window_id) = window_id else {
-                    log::warn!("unable to determine window for cloud agent setup action");
-                    return;
-                };
-
-                let Some(mut workspaces) = ctx.views_of_type::<Workspace>(window_id) else {
-                    log::warn!(
-                        "no workspace found in window {window_id} for cloud agent setup action"
-                    );
-                    return;
-                };
-
-                if let Some(workspace) = workspaces.pop() {
-                    workspace.update(ctx, |workspace, ctx| {
-                        workspace.handle_action(&WorkspaceAction::OpenCloudAgentSetupGuide, ctx);
-                    });
-                } else {
-                    log::warn!(
-                        "no workspace views in window {window_id} for cloud agent setup action"
-                    );
                 }
             }
             Action::NewCloudAgentConversation => {
@@ -913,7 +845,6 @@ impl Action {
             Self::Docker
             | Self::CreateEnvironment { .. }
             | Self::OpenRepo
-            | Self::CloudAgentSetup
             | Self::NewCloudAgentConversation
             | Self::NewAgentConversation
             | Self::FocusCloudMode => W::default(),
@@ -1296,8 +1227,7 @@ fn validate_custom_uri(url: &Url) -> Result<UriHost> {
         | UriHost::Team
         | UriHost::Settings
         | UriHost::Mcp
-        | UriHost::Codex
-        | UriHost::Linear => true,
+        | UriHost::Codex => true,
         // Auth and Home only allow the desktop redirect path
         UriHost::Auth | UriHost::Home => false,
     };

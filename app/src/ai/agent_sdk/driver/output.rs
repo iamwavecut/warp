@@ -515,7 +515,7 @@ pub mod text {
         Ok(())
     }
 
-    /// Report that the agent conversation has started. This debug ID can be reported to us for troubleshooting.
+    /// Report that the agent conversation has started.
     pub fn conversation_started<W: Write>(conversation_id: &str, w: &mut W) -> io::Result<()> {
         writeln!(
             w,
@@ -523,11 +523,9 @@ pub mod text {
         )
     }
 
-    /// Report the run ID with a link to the Oz dashboard.
+    /// Report the run ID.
     pub fn run_started<W: Write>(run_id: &str, w: &mut W) -> io::Result<()> {
-        let run_url = super::run_url(run_id);
-        writeln!(w, "Run ID: {run_id}")?;
-        writeln!(w, "Open in Oz: {run_url}\n")
+        writeln!(w, "Run ID: {run_id}\n")
     }
 
     /// Report that a shared session has been established.
@@ -1271,10 +1269,9 @@ pub mod json {
 
     /// Write a run_started system event to stdout.
     pub fn run_started<W: Write>(run_id: &str, w: &mut W) -> io::Result<()> {
-        let run_url = super::run_url(run_id);
         let message = JsonMessage::System(JsonSystemEvent::RunStarted {
             run_id,
-            run_url: &run_url,
+            run_url: "",
         });
         write_message(&message, w)
     }
@@ -1289,13 +1286,6 @@ pub mod json {
 use crate::ai::agent::{AIAgentText, AIAgentTextSection};
 use crate::code::editor_management::CodeSource;
 use std::io::{self, BufWriter, Write};
-use warp_core::channel::ChannelState;
-
-/// Constructs the Oz dashboard URL for a given run ID.
-fn run_url(run_id: &str) -> String {
-    let oz_root_url = ChannelState::oz_root_url();
-    format!("{oz_root_url}/runs/{run_id}")
-}
 
 /// Execute a closure with a buffered stdout writer and flush it afterwards.
 pub fn with_stdout_buffered<F>(f: F) -> io::Result<()>

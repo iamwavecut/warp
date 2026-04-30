@@ -319,7 +319,7 @@ static DEFAULT_TIPS: LazyLock<Vec<AgentTip>> = LazyLock::new(|| {
         },
         AgentTip {
             description: "Enable desktop notifications to get an alert when an agent needs your attention.".to_string(),
-            link: Some("https://docs.warp.dev/agent-platform/cloud-agents/managing-cloud-agents#in-app-agent-notifications".to_string()),
+            link: Some("https://docs.warp.dev/terminal/more-features/notifications".to_string()),
             binding_name: None,
             action: None,
             kind: AgentTipKind::General,
@@ -539,8 +539,7 @@ impl AITipModel<AgentTip> {
 
 impl SingletonEntity for AITipModel<AgentTip> {}
 
-// Specific implementation for CloudModeTip
-impl AITipModel<crate::terminal::view::ambient_agent::CloudModeTip> {
+impl AITipModel<crate::terminal::view::ambient_agent::AgentLoadingTip> {
     /// Refreshes the current tip with a new random selection.
     /// Only updates if not in cooldown period (60 seconds).
     pub fn maybe_refresh_tip(&mut self, ctx: &mut ModelContext<Self>) {

@@ -119,7 +119,7 @@ impl CrashRecoveryProcess {
     /// triggered the crash recovery process to be killed.
     fn handle_frame_drawn(&mut self, window_id: WindowId) {
         /// The number of successful frames of a given Window before we tear down the crash
-        /// reporting process. We don't tear down the crash recovery process on the first frame
+        /// recovery process. We don't tear down the crash recovery process on the first frame
         /// because there are cases where a call to render returns `Ok` even though the render
         /// wasn't actually successful. From the perspective of a user, we don't want to tear down
         /// the crash recovery process until we feel confident the app won't crash from the
@@ -217,7 +217,6 @@ impl CrashRecovery {
                 let user_preferences = ctx.private_user_preferences();
                 let launch_mode = crate::LaunchMode::App {
                     args: warp_cli::AppArgs::default(),
-                    api_key: None,
                 };
                 crate::crash_recovery::CrashRecovery::new(&launch_mode, user_preferences)
             })

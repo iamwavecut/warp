@@ -322,12 +322,6 @@ pub struct AIAutonomyPolicy {
     pub toggleable: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UgcDataCollectionPolicy {
-    pub default_setting: UgcCollectionEnablementSetting,
-    pub toggleable: bool,
-}
-
 #[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub struct UsageBasedPricingPolicy {
     pub toggleable: bool,
@@ -396,7 +390,6 @@ pub struct Tier {
     pub shared_workflows_policy: Option<SharedWorkflowsPolicy>,
     pub session_sharing_policy: Option<SessionSharingPolicy>,
     pub ai_autonomy_policy: Option<AIAutonomyPolicy>,
-    pub ugc_data_collection_policy: Option<UgcDataCollectionPolicy>,
     pub usage_based_pricing_policy: Option<UsageBasedPricingPolicy>,
     pub codebase_context_policy: Option<CodebaseContextPolicy>,
     pub byo_api_key_policy: Option<ByoApiKeyPolicy>,
@@ -615,19 +608,6 @@ pub struct LlmSettings {
     pub host_configs: std::collections::HashMap<LLMModelHost, LlmHostSettings>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub enum UgcCollectionEnablementSetting {
-    Disable,
-    Enable,
-    #[default]
-    RespectUserSetting,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct UgcCollectionSettings {
-    pub setting: UgcCollectionEnablementSetting,
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum AdminEnablementSetting {
     Disable,
@@ -749,7 +729,6 @@ pub struct SandboxedAgentSettings {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct WorkspaceSettings {
     pub llm_settings: LlmSettings,
-    pub ugc_collection_settings: UgcCollectionSettings,
     pub cloud_conversation_storage_settings: CloudConversationStorageSettings,
     pub link_sharing_settings: LinkSharingSettings,
     pub secret_redaction_settings: SecretRedactionSettings,

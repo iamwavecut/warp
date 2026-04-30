@@ -103,23 +103,6 @@ enum AICreditsUsageSource {
   LOCAL
 }
 
-type APIKeyProperties {
-  createdAt: Time!
-  expiresAt: Time
-  keySuffix: String!
-  lastUsedAt: Time
-  name: String!
-  ownerType: OwnerType!
-  uid: ID!
-}
-
-type APIKeyPropertiesOutput implements Response {
-  apiKeys: [APIKeyProperties!]!
-  responseContext: ResponseContext!
-}
-
-union APIKeyPropertiesResult = APIKeyPropertiesOutput | UserFacingError
-
 enum AccessLevel {
   Editor
   Full
@@ -303,18 +286,6 @@ type AgentTaskStatusMessage {
   invalid configuration) will not succeed.
   """
   retryable: Boolean
-}
-
-input AgentTaskStatusMessageInput {
-  """
-  Machine-readable error code from the platform error catalog.
-  Only set when the status message represents an error.
-  The server derives retryability from the error code.
-  """
-  errorCode: PlatformErrorCode
-
-  """The status message text."""
-  message: String!
 }
 
 type AiAutonomyPolicy {
@@ -722,7 +693,7 @@ union Container = FolderContainer | Space
 
 scalar ContentHash
 
-"""Represents usage data for a single multi-agent conversation."""
+"""Represents request accounting for a single multi-agent conversation."""
 type ConversationUsage {
   conversationId: String!
   lastUpdated: Time!
@@ -783,7 +754,6 @@ union CreateAgentTaskResult = CreateAgentTaskOutput | UserFacingError
 input CreateAnonymousUserInput {
   anonymousUserType: AnonymousUserType!
   expirationType: AnonymousUserExpirationType!
-  referralCode: String
 }
 
 type CreateAnonymousUserOutput implements Response {
@@ -1210,17 +1180,6 @@ enum Experiment {
   WINDOWS_LAUNCH_EXPERIMENT
 }
 
-input ExpireApiKeyInput {
-  keyUID: ID!
-}
-
-type ExpireApiKeyOutput implements Response {
-  responseContext: ResponseContext!
-  success: Boolean!
-}
-
-union ExpireApiKeyResult = ExpireApiKeyOutput | UserFacingError
-
 type FeatureModelChoice {
   agentMode: AvailableLlms!
   cliAgent: AvailableLlms!
@@ -1286,7 +1245,7 @@ input FragmentLocationInput {
 }
 
 input FreeAvailableModelsInput {
-  """The download referral source, if any (e.g. \"codex\")."""
+  """Optional download source label."""
   referrer: String
 }
 
@@ -1302,24 +1261,6 @@ type GcpProviderConfig {
   workloadIdentityFederationPoolId: String!
   workloadIdentityFederationProviderId: String!
 }
-
-input GenerateApiKeyInput {
-  expiresAt: Time
-  name: String!
-  teamId: ID
-}
-
-type GenerateApiKeyOutput implements Response {
-  apiKey: APIKeyProperties!
-
-  """
-  The raw API key - this is only returned once and should be saved by the client
-  """
-  rawApiKey: String!
-  responseContext: ResponseContext!
-}
-
-union GenerateApiKeyResult = GenerateApiKeyOutput | UserFacingError
 
 type GenerateCodeEmbeddingResult {
   """The hash of the code fragment that was embedded."""
@@ -2295,7 +2236,7 @@ enum PlatformErrorCode {
   ENVIRONMENT_SETUP_FAILED
 
   """
-  User hasn't authorized a required external service (e.g. GitHub, Linear).
+  User hasn't authorized a required external service.
   """
   EXTERNAL_AUTHENTICATION_REQUIRED
 
@@ -2365,11 +2306,6 @@ enum PrincipalType {
   USER
 }
 
-input ProvideNegativeFeedbackResponseForAiConversationInput {
-  conversationId: ID!
-  requestIds: [ID!]!
-}
-
 type ProvidersConfig {
   aws: AwsProviderConfig
   gcp: GcpProviderConfig
@@ -2427,16 +2363,6 @@ type RecordObjectActionOutput implements Response {
 }
 
 union RecordObjectActionResult = RecordObjectActionOutput | UserFacingError
-
-"""
-referrals.graphqls defines types and queries related to our referrals process.
-Note that we use the term "referrals" here and in our code, but the relevant db table is called "invites".
-"""
-type ReferralInfo {
-  isReferred: Boolean!
-  numberClaimed: Int!
-  referralCode: String!
-}
 
 input RemoveObjectGuestInput {
   email: String
@@ -2539,13 +2465,6 @@ enum RequestLimitRefreshDuration {
   WEEKLY
 }
 
-type RequestsRefundedOutput implements Response {
-  requestsRefunded: Int!
-  responseContext: ResponseContext!
-}
-
-union RequestsRefundedResult = RequestsRefundedOutput | UserFacingError
-
 type RerankFragment {
   content: String!
   contentHash: ContentHash!
@@ -2642,9 +2561,6 @@ type RootMutation {
   deleteObject(input: DeleteObjectInput!, requestContext: RequestContext!): DeleteObjectResult!
   deleteTeamInvite(input: DeleteTeamInviteInput!, requestContext: RequestContext!): DeleteTeamInviteResult!
   emptyTrash(input: EmptyTrashInput!, requestContext: RequestContext!): EmptyTrashResult!
-  expireApiKey(input: ExpireApiKeyInput!, requestContext: RequestContext!): ExpireApiKeyResult!
-  generateApiKey(input: GenerateApiKeyInput!, requestContext: RequestContext!): GenerateApiKeyResult!
-
   """Generates source code embeddings for the given set of code fragments."""
   generateCodeEmbeddings(input: GenerateCodeEmbeddingsInput!, requestContext: RequestContext!): GenerateCodeEmbeddingsResult!
   generateCommands(input: GenerateCommandsInput!, requestContext: RequestContext!): GenerateCommandsResult!
@@ -2661,7 +2577,6 @@ type RootMutation {
   mintCustomToken(requestContext: RequestContext!): MintCustomTokenResult!
   moveObject(input: MoveObjectInput!, requestContext: RequestContext!): MoveObjectResult!
   populateMerkleTreeCache(input: PopulateMerkleTreeCacheInput!, requestContext: RequestContext!): PopulateMerkleTreeCacheResult!
-  provideNegativeFeedbackResponseForAiConversation(input: ProvideNegativeFeedbackResponseForAiConversationInput!, requestContext: RequestContext!): RequestsRefundedResult!
   purchaseAddonCredits(input: PurchaseAddonCreditsInput!, requestContext: RequestContext!): PurchaseAddonCreditsResult!
 
   """
@@ -2679,7 +2594,6 @@ type RootMutation {
   renameTeam(input: RenameTeamInput!, requestContext: RequestContext!): RenameTeamResult!
   resetInviteLinks(input: ResetInviteLinksInput!, requestContext: RequestContext!): ResetInviteLinksResult!
   sendOnboardingSurveyResponses(input: SendOnboardingSurveyResponsesInput!, requestContext: RequestContext!): SendOnboardingSurveyResponsesResult!
-  sendReferralInviteEmails(input: SendReferralInviteEmailsInput!, requestContext: RequestContext!): SendReferralInviteEmailsResult!
   sendTeamInviteEmail(input: SendTeamInviteEmailInput!, requestContext: RequestContext!): SendTeamInviteEmailResult!
   setIsInviteLinkEnabled(input: SetIsInviteLinkEnabledInput!, requestContext: RequestContext!): SetIsInviteLinkEnabledResult!
   setObjectLinkPermissions(input: SetObjectLinkPermissionsInput!, requestContext: RequestContext!): SetObjectLinkPermissionsResult!
@@ -2696,8 +2610,6 @@ type RootMutation {
   unshareBlock(input: UnshareBlockInput!, requestContext: RequestContext!): UnshareBlockResult!
   untrashObject(input: UntrashObjectInput!, requestContext: RequestContext!): UntrashObjectResult!
 
-  """This is how the client updates the server with its progress on a task."""
-  updateAgentTask(input: UpdateAgentTaskInput!, requestContext: RequestContext!): UpdateAgentTaskResult!
   updateFolder(input: UpdateFolderInput!, requestContext: RequestContext!): UpdateFolderResult!
   updateGenericStringObject(input: UpdateGenericStringObjectInput!, requestContext: RequestContext!): UpdateGenericStringObjectResult!
   updateManagedSecret(input: UpdateManagedSecretInput!, requestContext: RequestContext!): UpdateManagedSecretResult!
@@ -2713,7 +2625,6 @@ type RootMutation {
 }
 
 type RootQuery {
-  apiKeys(requestContext: RequestContext!): APIKeyPropertiesResult!
   cloudObject(input: CloudObjectInput!, requestContext: RequestContext!): CloudObjectResult!
   codebaseContextConfig(requestContext: RequestContext!): CodebaseContextConfigResult!
 
@@ -2842,18 +2753,6 @@ type SendOnboardingSurveyResponsesOutput implements Response {
 }
 
 union SendOnboardingSurveyResponsesResult = SendOnboardingSurveyResponsesOutput | UserFacingError
-
-"""sendReferralInviteEmails is equivalent to sendInvite in v1."""
-input SendReferralInviteEmailsInput {
-  emails: [String!]!
-}
-
-type SendReferralInviteEmailsOutput implements Response {
-  responseContext: ResponseContext!
-  successfulEmails: [String!]!
-}
-
-union SendReferralInviteEmailsResult = SendReferralInviteEmailsOutput | UserFacingError
 
 input SendTeamInviteEmailInput {
   email: String!
@@ -3144,7 +3043,7 @@ type TaskAttachment {
   downloadUrl: String!
 
   """
-  Unique identifier for this file (UUID from GCS).
+  Unique identifier for this file.
   Can be used to distinguish files with duplicate names.
   """
   fileId: ID!
@@ -3264,7 +3163,6 @@ type Tier {
   sharedWorkflowsPolicy: SharedWorkflowsPolicy
   singleSignOnPolicy: SingleSignOnPolicy
   teamSizePolicy: TeamSizePolicy
-  ugcDataCollectionPolicy: UgcDataCollectionPolicy
   usageBasedPricingPolicy: UsageBasedPricingPolicy
   warpAiPolicy: WarpAiPolicy
   warpBasicPolicy: WarpBasicPolicy
@@ -3388,26 +3286,6 @@ type TrashObjectOutput implements Response {
 
 union TrashObjectResult = TrashObjectOutput | UserFacingError
 
-enum UgcCollectionEnablementSetting {
-  DISABLE
-  ENABLE
-  RESPECT_USER_SETTING
-}
-
-type UgcCollectionSettings {
-  setting: UgcCollectionEnablementSetting!
-}
-
-input UgcCollectionSettingsInput {
-  setting: UgcCollectionEnablementSetting
-}
-
-type UgcDataCollectionPolicy {
-  default: Boolean! @deprecated(reason: "Use defaultSetting instead")
-  defaultSetting: UgcCollectionEnablementSetting!
-  toggleable: Boolean!
-}
-
 """
 scalar Uint is an unsigned integer. Maps to uint/uint32/uint64 on the Go
 side and a non-negative number on the client side.
@@ -3440,33 +3318,6 @@ type UntrashObjectOutput implements Response {
 }
 
 union UntrashObjectResult = UntrashObjectOutput | UserFacingError
-
-input UpdateAgentTaskInput {
-  """
-  If set, the task is associated with this AI conversation UUID for follow-up messages.
-  """
-  conversationId: ID
-
-  """If set, the task is associated with this shared session."""
-  sessionId: ID
-
-  """
-  Optional status message about the task (e.g., progress update, error message, completion summary).
-  """
-  statusMessage: AgentTaskStatusMessageInput
-
-  """ID of the task to update."""
-  taskId: ID!
-
-  """If set, the task is changed into this state."""
-  taskState: AgentTaskState
-}
-
-type UpdateAgentTaskOutput implements Response {
-  responseContext: ResponseContext!
-}
-
-union UpdateAgentTaskResult = UpdateAgentTaskOutput | UserFacingError
 
 input UpdateFolderInput {
   name: String!
@@ -3641,7 +3492,6 @@ input UpdateWorkspaceSettingsInput {
   setLlmSettings: LlmSettingsInput
   setSandboxedAgentSettings: SandboxedAgentSettingsInput
   setSecretRedactionSettings: SecretRedactionSettingsInput
-  setUgcCollectionSettings: UgcCollectionSettingsInput
   setUsageBasedPricingSettings: UsageBasedPricingSettingsInput
   workspaceUid: String!
 }
@@ -3754,7 +3604,7 @@ type User {
   completedOzWebappFtue: Boolean!
 
   """
-  Returns a history of user's conversation usage data over the past N days
+  Returns a history of user's conversation request accounting over the past N days
   (defaulting to 30 days).
   Results can be paginated by providing a limit.
   If lastUpdatedEndTimestamp is provided, only conversations with lastUpdated
@@ -3777,7 +3627,6 @@ type User {
   managedSecrets: ManagedSecretConfig
   onboardingSurveyStatus: OnboardingSurveyStatus
   profile: FirebaseProfile!
-  referrals: ReferralInfo!
   requestLimitInfo: RequestLimitInfo!
 
   """
@@ -4011,7 +3860,6 @@ type WorkspaceSettings {
   llmSettings: LlmSettings!
   sandboxedAgentSettings: SandboxedAgentSettings
   secretRedactionSettings: SecretRedactionSettings!
-  ugcCollectionSettings: UgcCollectionSettings!
   usageBasedPricingSettings: UsageBasedPricingSettings!
 }
 

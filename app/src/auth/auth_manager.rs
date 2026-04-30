@@ -376,12 +376,8 @@ impl AuthManager {
         }
     }
 
-    pub fn create_anonymous_user(
-        &self,
-        referral_code: Option<String>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let _ = (referral_code, ctx);
+    pub fn create_anonymous_user(&self, ctx: &mut ModelContext<Self>) {
+        let _ = ctx;
         log::info!("Skipping Firebase anonymous user creation in local workflow");
     }
 

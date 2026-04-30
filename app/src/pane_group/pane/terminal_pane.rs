@@ -1304,8 +1304,8 @@ fn handle_terminal_view_event(
                                         request.parent_conversation_id,
                                         ctx,
                                     );
-                                    // Mark as remote so the parent's TaskStatusSyncModel
-                                    // skips status reporting — the remote worker handles it.
+                                    // Mark as remote so parent-side local state does not
+                                    // claim ownership of the remote worker session.
                                     if let Some(c) = history_model.conversation_mut(&id) {
                                         c.mark_as_remote_child();
                                     }

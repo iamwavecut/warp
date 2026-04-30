@@ -339,7 +339,7 @@
 
  # Note: this method diverges from the bash_preexec script in that
  # we don't call __bp_adjust_histcontrol because of
- # https://linear.app/warpdotdev/issue/WAR-2592.
+ # Internal issue WAR-2592.
  # End of difference 3/4 between Warp and bash-preexec's original source.
 
          # Issue #25. Setting debug trap for subshells causes sessions to exit for

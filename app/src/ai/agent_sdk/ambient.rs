@@ -150,8 +150,6 @@ fn run_source_from_arg(arg: RunSourceArg) -> AgentSource {
     match arg {
         RunSourceArg::Api => AgentSource::AgentWebhook,
         RunSourceArg::Cli => AgentSource::Cli,
-        RunSourceArg::Slack => AgentSource::Slack,
-        RunSourceArg::Linear => AgentSource::Linear,
         RunSourceArg::ScheduledAgent => AgentSource::ScheduledAgent,
         RunSourceArg::WebApp => AgentSource::WebApp,
         RunSourceArg::CloudMode => AgentSource::CloudMode,
@@ -489,7 +487,6 @@ impl AmbientAgentRunner {
             };
 
             let should_open = args.open;
-            let oz_root_url = ChannelState::oz_root_url();
             let ai_client_clone = ai_client.clone();
             let spawn_future = async move {
                 let mut stream = Box::pin(spawn_task(request, ai_client_clone, Some(TASK_STATUS_POLLING_DURATION)));
@@ -501,7 +498,6 @@ impl AmbientAgentRunner {
                         Ok(event) => match event {
                             AmbientAgentEvent::TaskSpawned { task_id, .. } => {
                                 println!("Spawned ambient agent with run ID: {task_id}");
-                                println!("View run: {oz_root_url}/runs/{task_id}");
                                 spawned_task_id = Some(task_id);
                             }
                             AmbientAgentEvent::AtCapacity => {
@@ -538,7 +534,7 @@ impl AmbientAgentRunner {
                             }
                             AmbientAgentEvent::TimedOut => {
                                 let task_id_str = spawned_task_id.as_ref().map_or_else(|| "unknown".to_string(), |id| id.to_string());
-                                println!("Agent session with run ID {task_id_str} is not ready after {}s. Check for a sharing link in the ambient agent management panel. See https://docs.warp.dev/agent-platform/cloud-agents/managing-cloud-agents for details.", TASK_STATUS_POLLING_DURATION.as_secs());
+                                println!("Agent session with run ID {task_id_str} is not ready after {}s. Check the ambient agent management panel for details.", TASK_STATUS_POLLING_DURATION.as_secs());
                             }
                         },
                         Err(err) => {
@@ -766,7 +762,6 @@ impl AmbientAgentRunner {
             println!("\nAgent Runs ({}):", tasks.len());
         }
 
-        let oz_root_url = ChannelState::oz_root_url();
         for task in tasks {
             let state_emoji = Self::get_state_emoji(&task.state);
 
@@ -776,9 +771,6 @@ impl AmbientAgentRunner {
             // Run header with emoji and ID
             let header = format!("{} {} ({:?})", state_emoji, task.task_id, task.state);
             table.add_row(vec![header]);
-
-            // Oz webapp link
-            table.add_row(vec![format!("Oz: {oz_root_url}/runs/{}", task.task_id)]);
 
             // Title (wrapped, single cell)
             if !task.title.is_empty() {

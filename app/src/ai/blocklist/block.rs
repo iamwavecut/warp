@@ -92,8 +92,6 @@ use crate::ai::blocklist::inline_action::search_codebase::{
 use crate::ai::blocklist::inline_action::web_fetch::WebFetchView;
 use crate::ai::blocklist::inline_action::web_search::WebSearchView;
 use crate::ai::facts::{AIFact, AIMemory, CloudAIFactModel};
-use crate::ai::AIRequestUsageModel;
-use crate::ai::AIRequestUsageModelEvent;
 use crate::cloud_object::model::generic_string_model::GenericStringObjectId;
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::interaction_sources::AgentModeRewindEntrypoint;
@@ -410,9 +408,6 @@ pub(super) struct AIBlockStateHandles {
 
     /// Mouse state handle for the debug ID copy button
     debug_copy_button_handle: MouseStateHandle,
-    /// Mouse state handle for the submit issue button
-    submit_issue_button_handle: MouseStateHandle,
-
     /// Mouse state handle for the invalid API key button
     invalid_api_key_button_handle: MouseStateHandle,
 
@@ -890,10 +885,6 @@ pub struct AIBlock {
     /// The thumbs up/down rating of the AI block response.
     response_rating: OnceCell<AIBlockResponseRating>,
 
-    /// The number of requests that have been refunded.
-    /// Right now, this happens when a user thumbs down a response.
-    request_refunded_count: Option<i32>,
-
     /// Requested commands that were auto-expanded,
     /// and should thus be auto-collapsed when the block is finished.
     requested_commands_to_auto_collapse: HashSet<AIAgentActionId>,
@@ -1093,33 +1084,6 @@ impl AIBlock {
         let manage_rules_button = ctx.add_typed_action_view(|_| {
             ActionButton::new("Manage rules", NakedTheme)
                 .on_click(|ctx| ctx.dispatch_typed_action(AIBlockAction::OpenAIFactCollection))
-        });
-
-        ctx.subscribe_to_model(&AIRequestUsageModel::handle(ctx), |me, _, event, ctx| {
-            if let AIRequestUsageModelEvent::RequestBonusRefunded {
-                requests_refunded,
-                server_conversation_id,
-                request_id,
-            } = event
-            {
-                let server_conversation_token = BlocklistAIHistoryModel::as_ref(ctx)
-                    .conversation(&me.client_ids.conversation_id)
-                    .and_then(|conversation| conversation.server_conversation_token())
-                    .cloned();
-
-                let server_output_id = me.model.server_output_id(ctx);
-
-                if let (Some(server_conversation_token), Some(server_output_id)) =
-                    (server_conversation_token, server_output_id)
-                {
-                    if request_id.eq(server_output_id.to_string().as_str())
-                        && server_conversation_id.eq(server_conversation_token.as_str())
-                    {
-                        me.request_refunded_count = Some(*requests_refunded);
-                        ctx.notify();
-                    }
-                }
-            }
         });
 
         // Note: UpdatedStreamingExchange is handled by the dedicated on_updated_output()
@@ -1328,7 +1292,6 @@ impl AIBlock {
             keyboard_navigable_buttons: None,
             response_rating: OnceCell::new(),
             terminal_view_id,
-            request_refunded_count: None,
             action_buttons: Default::default(),
             search_codebase_view: Default::default(),
             web_search_views: Default::default(),
@@ -5596,8 +5559,6 @@ pub enum AIBlockAction {
     DisableRuleSuggestions,
     /// Copy the debug ID to clipboard
     CopyDebugId(String),
-    /// Open Warp feedback documentation
-    OpenFeedbackDocs,
     /// Toggle the usage summary footer expansion state
     ToggleIsUsageFooterExpanded,
     CommentExpanded {
@@ -5712,9 +5673,6 @@ impl TypedActionView for AIBlock {
             AIBlockAction::CopyDebugId(debug_id) => {
                 ctx.clipboard()
                     .write(ClipboardContent::plain_text(debug_id.clone()));
-            }
-            AIBlockAction::OpenFeedbackDocs => {
-                ctx.open_url("https://docs.warp.dev/support-and-community/troubleshooting-and-support/sending-us-feedback");
             }
             AIBlockAction::CancelRequestedAction { action_id } => {
                 self.cancel_action(action_id, ctx);
@@ -5917,7 +5875,6 @@ impl TypedActionView for AIBlock {
                 });
             }
             AIBlockAction::Rated { is_positive } => {
-                let output_id = self.model.server_output_id(ctx);
                 let rating = if *is_positive {
                     AIBlockResponseRating::Positive
                 } else {
@@ -5928,25 +5885,9 @@ impl TypedActionView for AIBlock {
                     return;
                 }
 
-                if matches!(rating, AIBlockResponseRating::Negative) {
-                    if let Some(output_id) = output_id.clone() {
-                        let request_usage_model = AIRequestUsageModel::handle(ctx);
-                        request_usage_model.update(ctx, |request_usage_model, ctx| {
-                            request_usage_model
-                                .provide_negative_feedback_response_for_ai_conversation(
-                                    self.client_ids.conversation_id,
-                                    output_id.to_string(),
-                                    self.client_ids.client_exchange_id,
-                                    ctx,
-                                );
-                        });
-                    }
-                }
-
                 let window_id = ctx.window_id();
                 ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                    let toast =
-                        DismissibleToast::default(String::from("Thank you for the feedback!"));
+                    let toast = DismissibleToast::default(String::from("Rating saved locally"));
                     toast_stack.add_ephemeral_toast(toast, window_id, ctx);
                 });
             }

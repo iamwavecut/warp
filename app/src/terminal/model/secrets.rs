@@ -503,9 +503,6 @@ pub mod regexes {
     pub const AWS_ACCESS_ID: &str =
         r"\b(AKIA|A3T|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{12,}\b";
 
-    /// Identifies a Slack app token.
-    pub const SLACK_APP_TOKEN: &str = r"\bxapp-[0-9]+-[A-Za-z0-9_]+-[0-9]+-[a-f0-9]+\b";
-
     /// The following identify github tokens. Source: <https://github.com/odomojuli/RegExAPI>
     /// and source of `[A-Za-z0-9_]` character set is <https://github.blog/changelog/2021-03-31-authentication-token-format-updates-are-generally-available/>
     pub const GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN: &str = r"\bghp_[A-Za-z0-9_]{36}\b";
@@ -525,9 +522,6 @@ pub mod regexes {
     /// echo -n '{"' | base64
     /// We know those sections are JSON and should begin with '{"'.
     pub const JWT: &str = r"\b(ey[a-zA-z0-9_\-=]{10,}\.){2}[a-zA-z0-9_\-=]{10,}\b";
-
-    /// Identifies a Warp API Key. Format: wk- followed by a version number and any combination of hex digits, hyphens, or periods.
-    pub const WARP_API_KEY: &str = r"\bwk-[0-9]+\.[A-Fa-f0-9.\-]+\b";
 
     /// Returns a slice of regex strings that can be used to identify secrets.
     // NOTE: All regexes added here must also be added server-side in logic/ai/util.go.
@@ -555,10 +549,6 @@ pub mod regexes {
         DefaultRegex {
             pattern: AWS_ACCESS_ID,
             name: "AWS Access ID",
-        },
-        DefaultRegex {
-            pattern: SLACK_APP_TOKEN,
-            name: "Slack App Token",
         },
         DefaultRegex {
             pattern: GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN,
@@ -607,10 +597,6 @@ pub mod regexes {
         DefaultRegex {
             pattern: FIREWORKS_API_KEY,
             name: "Fireworks API Key",
-        },
-        DefaultRegex {
-            pattern: WARP_API_KEY,
-            name: "Warp API Key",
         },
     ];
 }

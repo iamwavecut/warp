@@ -54,7 +54,7 @@ use crate::ai::blocklist::block::{
     CollapsibleElementState, CollapsibleExpansionState, FinishReason, ImportedCommentGroup,
 };
 use indexmap::IndexMap;
-use std::{cell::OnceCell, cmp::Ordering, collections::HashMap, rc::Rc, sync::Arc};
+use std::{cell::OnceCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use crate::util::link_detection::{add_link_detection_mouse_interactions, DetectedLinksState};
 use crate::{
@@ -174,7 +174,6 @@ pub(crate) struct Props<'a> {
     pub(super) manage_rules_button: &'a ViewHandle<ActionButton>,
     pub(super) keyboard_navigable_buttons: Option<&'a ViewHandle<KeyboardNavigableButtons>>,
     pub(super) response_rating: &'a OnceCell<AIBlockResponseRating>,
-    pub(super) request_refunded_count: Option<i32>,
     pub(super) search_codebase_view: &'a HashMap<AIAgentActionId, ViewHandle<SearchCodebaseView>>,
     pub(super) web_search_views: &'a HashMap<MessageId, ViewHandle<WebSearchView>>,
     pub(super) web_fetch_views: &'a HashMap<MessageId, ViewHandle<WebFetchView>>,
@@ -1030,34 +1029,6 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                 {
                     output_items.add_child(footer);
                 }
-
-                if let Some(request_refunded_count) = props.request_refunded_count {
-                    match request_refunded_count.cmp(&1) {
-                        Ordering::Equal | Ordering::Less => {
-                            output_items.add_child(
-                                render_informational_footer(
-                                    app,
-                                    "Sorry you had a bad experience with this interaction. We've refunded you 1 credit. We appreciate your feedback!"
-                                        .to_string(),
-                                )
-                                .with_agent_output_item_spacing(app)
-                                .finish(),
-                            );
-                        }
-                        Ordering::Greater => {
-                            output_items.add_child(
-                                render_informational_footer(
-                                    app,
-                                    format!(
-                                        "Sorry you had a bad experience with this interaction. We've refunded you {request_refunded_count} credits. We appreciate your feedback!"
-                                    ),
-                                )
-                                .with_agent_output_item_spacing(app)
-                                .finish(),
-                            );
-                        }
-                    }
-                }
             }
         }
     }
@@ -1104,16 +1075,10 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                                 .state_handles
                                 .debug_copy_button_handle
                                 .clone(),
-                            submit_issue_button_handle: props
-                                .state_handles
-                                .submit_issue_button_handle
-                                .clone(),
-                            should_render_feedback_below: false,
                         },
                         |debug_id, ctx| {
                             ctx.dispatch_typed_action(AIBlockAction::CopyDebugId(debug_id))
                         },
-                        |ctx| ctx.dispatch_typed_action(AIBlockAction::OpenFeedbackDocs),
                         app,
                     )
                     .with_agent_output_item_spacing(app)

@@ -634,12 +634,6 @@ impl Input {
                 }
                 ctx.dispatch_typed_action(&WorkspaceAction::ViewLatestChangelog);
             }
-            _ if command.name == commands::FEEDBACK.name => {
-                if true {
-                    return false;
-                }
-                ctx.dispatch_typed_action(&WorkspaceAction::SendFeedback);
-            }
             _ if command.name == commands::OPEN_CODE_REVIEW.name => {
                 ctx.dispatch_typed_action(&TerminalAction::ToggleCodeReviewPane {
                     entrypoint: CodeReviewPaneEntrypoint::SlashCommand,

@@ -417,7 +417,7 @@ pub fn render_item(props: ItemProps<'_>, app: &AppContext) -> Box<dyn Element> {
 
 /// Returns the secondary label for a conversation list item:
 /// - For local conversations: the working directory.
-/// - For tasks: the source (Linear, Slack, CLI, etc.)
+/// - For tasks: the source label.
 fn format_item_subtext(conversation: &ConversationOrTask, app: &AppContext) -> Option<String> {
     match conversation {
         ConversationOrTask::Task(task) => {

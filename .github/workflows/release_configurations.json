@@ -8,7 +8,6 @@
             "is_autopush": true,
             "release_base_name": "Dev Release",
             "release_body_text": "Nightly Warp Dev release",
-            "changelog_slack_channel": "#dev-beta-changelogs",
             "gcs_cache_control_value": "private, max-age=604800, immutable",
             "web_gcs_bucket_prefix": "warp-server-staging"
         },
@@ -19,7 +18,6 @@
             "is_autopush": false,
             "release_base_name": "Preview Release",
             "release_body_text": "Warp Preview release",
-            "changelog_slack_channel": "#dev-beta-changelogs",
             "gcs_cache_control_value": "public, max-age=604800, immutable",
             "web_gcs_bucket_prefix": "warp"
         },
@@ -30,7 +28,6 @@
             "is_autopush": false,
             "release_base_name": "Stable Release",
             "release_body_text": "Warp Stable release",
-            "changelog_slack_channel": "#release",
             "gcs_cache_control_value": "public, max-age=604800, immutable",
             "web_gcs_bucket_prefix": "warp"
         }

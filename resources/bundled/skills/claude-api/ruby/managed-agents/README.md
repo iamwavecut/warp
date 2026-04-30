@@ -299,17 +299,17 @@ puts vault.id # "vlt_01ABC..."
 # Add an OAuth credential
 credential = client.beta.vaults.credentials.create(
   vault.id,
-  display_name: "Alice's Slack",
+  display_name: "Alice's Local Tools",
   auth: {
     type: "mcp_oauth",
-    mcp_server_url: "https://mcp.slack.com/mcp",
-    access_token: "xoxp-...",
+    mcp_server_url: "http://localhost:8765/mcp",
+    access_token: "local-access-token",
     expires_at: "2026-04-15T00:00:00Z",
     refresh: {
-      token_endpoint: "https://slack.com/api/oauth.v2.access",
-      client_id: "1234567890.0987654321",
-      scope: "channels:read chat:write",
-      refresh_token: "xoxe-1-...",
+      token_endpoint: "http://localhost:8765/oauth/token",
+      client_id: "local-tools",
+      scope: "tools:read tools:write",
+      refresh_token: "local-refresh-token",
       token_endpoint_auth: {
         type: "client_secret_post",
         client_secret: "abc123..."

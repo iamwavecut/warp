@@ -2700,9 +2700,6 @@ pub struct TerminalView {
     /// Mouse state handle for the ambient agent cancel button in the pane header.
     ambient_agent_cancel_mouse_state: warpui::elements::MouseStateHandle,
 
-    /// First-time cloud agent setup view (full-screen overlay for creating initial environment).
-    first_time_cloud_agent_setup_view: ViewHandle<ambient_agent::FirstTimeCloudAgentSetupView>,
-
     /// Environment setup mode selector modal for /create-environment command.
     environment_setup_mode_selector: ViewHandle<EnvironmentSetupModeSelector>,
 
@@ -3710,7 +3707,7 @@ impl TerminalView {
                 ]),
                 // Here, we use DismissalType::Temporary and DismissalType::Permanent variants
                 // as stand-ins for changing bindings vs. leaving them as-is.
-                // TODO(Linear PLAT-512): update Banner to support generic event type.
+                // TODO(PLAT-512): update Banner to support generic event type.
                 vec![
                     BannerTextButton::new(
                         String::from("Yes, use Emacs-style bindings"),
@@ -3872,13 +3869,6 @@ impl TerminalView {
                     terminal_model.remove_image_id_to_metadata_entry(image_id);
                 }
             }
-        });
-
-        let first_time_cloud_agent_setup_view =
-            ctx.add_typed_action_view(ambient_agent::FirstTimeCloudAgentSetupView::new);
-
-        ctx.subscribe_to_view(&first_time_cloud_agent_setup_view, |me, _, event, ctx| {
-            me.handle_first_time_cloud_agent_setup_event(event, ctx);
         });
 
         let environment_setup_mode_selector =
@@ -4110,7 +4100,6 @@ impl TerminalView {
             active_init_project_model: None,
             is_pending_aws_login: false,
             manual_pty_shutdown_requested: false,
-            first_time_cloud_agent_setup_view,
             environment_setup_mode_selector,
             is_environment_setup_mode_selector_open: false,
             pane_stack: None,
@@ -10331,11 +10320,6 @@ impl TerminalView {
                             },
                         );
                     }
-
-                    #[cfg(not(target_family = "wasm"))]
-                    crate::system::SystemInfo::handle(ctx).update(ctx, |system_info, _ctx| {
-                        system_info.handle_block_created();
-                    });
 
                     // Emit the event to the parent view. This will save the block to sqlite if
                     // session restoration is enabled.
@@ -18553,7 +18537,7 @@ impl TerminalView {
     /// WARNING: this method takes a lock on the TerminalModel.
     /// Caller must ensure the model is not already locked!
     ///
-    /// TODO: https://linear.app/warpdotdev/issue/CORE-277
+    /// TODO(CORE-277)
     pub fn redetermine_global_focus(&mut self, ctx: &mut ViewContext<Self>) {
         if self.context_menu_state.is_some() {
             // This is a hack to avoid focusing on the terminal which
@@ -25053,15 +25037,6 @@ impl View for TerminalView {
             if sharer.is_inactivity_warning_modal_open() {
                 stack.add_child(ChildView::new(sharer.inactivity_modal()).finish())
             }
-        }
-
-        // Render first-time cloud agent setup view when in Setup status
-        if self
-            .ambient_agent_view_model
-            .as_ref()
-            .is_some_and(|model| model.as_ref(app).is_in_setup())
-        {
-            stack.add_child(ChildView::new(&self.first_time_cloud_agent_setup_view).finish());
         }
 
         if self.ssh_file_upload.as_ref(app).has_upload() {

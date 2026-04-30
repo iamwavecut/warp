@@ -8,7 +8,6 @@
 //!   When using Firebase, this is an OAuth2 refresh token.
 //! * [`AuthToken`], which is a short-lived token that's included in all other server requests.
 //!   When using Firebase, this is an OAuth2 access token.
-use warp_graphql::object_permissions::OwnerType;
 
 use super::user::FirebaseAuthTokens;
 
@@ -17,12 +16,6 @@ use super::user::FirebaseAuthTokens;
 pub enum Credentials {
     /// Firebase authentication with ID token and refresh token.
     Firebase(FirebaseAuthTokens),
-    /// API key for direct server authentication.
-    ApiKey {
-        key: String,
-        /// The owner type for this API key. Only set after user info is fetched from the server.
-        owner_type: Option<OwnerType>,
-    },
     /// Authentication derived from an ambient browser session cookie.
     SessionCookie,
     /// Test credentials used in unit tests, integration tests, and skip_login builds.
@@ -37,31 +30,6 @@ impl Credentials {
     pub fn as_firebase(&self) -> Option<&FirebaseAuthTokens> {
         match self {
             Credentials::Firebase(tokens) => Some(tokens),
-            Credentials::ApiKey { .. } => None,
-            Credentials::SessionCookie => None,
-            #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
-            Credentials::Test => None,
-            Credentials::Local => None,
-        }
-    }
-
-    /// Returns the API key string if this is an API key credential.
-    pub fn as_api_key(&self) -> Option<&str> {
-        match self {
-            Credentials::ApiKey { key, .. } => Some(key),
-            Credentials::Firebase(_) => None,
-            Credentials::SessionCookie => None,
-            #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
-            Credentials::Test => None,
-            Credentials::Local => None,
-        }
-    }
-
-    /// Returns the owner type if this is an API key credential.
-    pub fn api_key_owner_type(&self) -> Option<OwnerType> {
-        match self {
-            Credentials::ApiKey { owner_type, .. } => *owner_type,
-            Credentials::Firebase(_) => None,
             Credentials::SessionCookie => None,
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             Credentials::Test => None,
@@ -73,7 +41,6 @@ impl Credentials {
     pub fn refresh_token(&self) -> Option<&str> {
         match self {
             Credentials::Firebase(tokens) => Some(&tokens.refresh_token),
-            Credentials::ApiKey { .. } => None,
             Credentials::SessionCookie => None,
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             Credentials::Test => None,
@@ -85,7 +52,6 @@ impl Credentials {
     pub fn bearer_token(&self) -> AuthToken {
         match self {
             Credentials::Firebase(tokens) => AuthToken::Firebase(tokens.id_token.clone()),
-            Credentials::ApiKey { key, .. } => AuthToken::ApiKey(key.clone()),
             Credentials::SessionCookie => AuthToken::NoAuth,
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             Credentials::Test => AuthToken::NoAuth,
@@ -99,7 +65,6 @@ impl Credentials {
             Credentials::Firebase(tokens) => Some(LoginToken::Firebase(FirebaseToken::Refresh(
                 RefreshToken::new(&tokens.refresh_token),
             ))),
-            Credentials::ApiKey { key, .. } => Some(LoginToken::ApiKey(key.clone())),
             Credentials::SessionCookie => Some(LoginToken::SessionCookie),
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             Credentials::Test => None,
@@ -113,8 +78,6 @@ impl Credentials {
 pub enum AuthToken {
     /// Firebase short-lived access token.
     Firebase(String),
-    /// API key for direct server authentication.
-    ApiKey(String),
     /// No authentication token available (e.g. session cookie auth or test credentials).
     #[cfg_attr(
         not(any(test, feature = "integration_tests", feature = "skip_login")),
@@ -129,7 +92,6 @@ impl AuthToken {
     pub fn as_bearer_token(&self) -> Option<&str> {
         match self {
             AuthToken::Firebase(token) => Some(token),
-            AuthToken::ApiKey(key) => Some(key),
             AuthToken::NoAuth => None,
         }
     }
@@ -138,7 +100,6 @@ impl AuthToken {
     pub fn bearer_token(&self) -> Option<String> {
         match self {
             AuthToken::Firebase(token) => Some(token.clone()),
-            AuthToken::ApiKey(key) => Some(key.clone()),
             AuthToken::NoAuth => None,
         }
     }
@@ -149,8 +110,6 @@ impl AuthToken {
 pub enum LoginToken {
     /// A Firebase token to be exchanged for auth tokens.
     Firebase(FirebaseToken),
-    /// An API key for direct server authentication.
-    ApiKey(String),
     /// Authentication derived from an ambient browser session cookie.
     SessionCookie,
 }

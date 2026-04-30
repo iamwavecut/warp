@@ -150,9 +150,7 @@ impl AgentConfigSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentSource {
-    Linear,
     AgentWebhook,
-    Slack,
     Cli,
     ScheduledAgent,
     Interactive,
@@ -164,9 +162,7 @@ pub enum AgentSource {
 impl AgentSource {
     pub fn as_str(&self) -> &str {
         match self {
-            AgentSource::Linear => "LINEAR",
             AgentSource::AgentWebhook => "API",
-            AgentSource::Slack => "SLACK",
             AgentSource::Cli => "CLI",
             AgentSource::ScheduledAgent => "SCHEDULED_AGENT",
             // The public API's run source for local interactive tasks is named
@@ -180,9 +176,7 @@ impl AgentSource {
 
     pub fn display_name(&self) -> &str {
         match self {
-            AgentSource::Linear => "Linear",
             AgentSource::AgentWebhook => "API",
-            AgentSource::Slack => "Slack",
             AgentSource::Cli => "CLI",
             AgentSource::ScheduledAgent => "Scheduled",
             AgentSource::Interactive => "Warp (local agent)",
@@ -196,11 +190,7 @@ impl AgentSource {
     /// (as opposed to automated/programmatic sources like CLI or scheduled runs).
     pub fn is_user_initiated(&self) -> bool {
         match self {
-            AgentSource::Linear
-            | AgentSource::Slack
-            | AgentSource::Interactive
-            | AgentSource::WebApp
-            | AgentSource::CloudMode => true,
+            AgentSource::Interactive | AgentSource::WebApp | AgentSource::CloudMode => true,
             AgentSource::Cli
             | AgentSource::ScheduledAgent
             | AgentSource::AgentWebhook
@@ -218,9 +208,7 @@ where
     let s: Option<String> = serde::Deserialize::deserialize(deserializer)?;
     Ok(match s {
         Some(s) => match s.as_str() {
-            "LINEAR" => Some(AgentSource::Linear),
             "AGENT_WEBHOOK" | "API" => Some(AgentSource::AgentWebhook),
-            "SLACK" => Some(AgentSource::Slack),
             "LOCAL" => Some(AgentSource::Interactive),
             "CLI" => Some(AgentSource::Cli),
             "SCHEDULED_AGENT" => Some(AgentSource::ScheduledAgent),

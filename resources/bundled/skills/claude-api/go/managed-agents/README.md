@@ -441,18 +441,18 @@ if err != nil {
 
 // Add an OAuth credential
 credential, err := client.Beta.Vaults.Credentials.New(ctx, vault.ID, anthropic.BetaVaultCredentialNewParams{
-    DisplayName: anthropic.String("Alice's Slack"),
+    DisplayName: anthropic.String("Alice's Local Tools"),
     Auth: anthropic.BetaVaultCredentialNewParamsAuthUnion{
         OfMCPOAuth: &anthropic.BetaManagedAgentsMCPOAuthCreateParams{
             Type:         anthropic.BetaManagedAgentsMCPOAuthCreateParamsTypeMCPOAuth,
-            MCPServerURL: "https://mcp.slack.com/mcp",
-            AccessToken:  "xoxp-...",
+            MCPServerURL: "http://localhost:8765/mcp",
+            AccessToken:  "local-access-token",
             ExpiresAt:    anthropic.Time(time.Date(2026, time.April, 15, 0, 0, 0, 0, time.UTC)),
             Refresh: anthropic.BetaManagedAgentsMCPOAuthRefreshParams{
-                TokenEndpoint: "https://slack.com/api/oauth.v2.access",
-                ClientID:      "1234567890.0987654321",
-                Scope:         anthropic.String("channels:read chat:write"),
-                RefreshToken:  "xoxe-1-...",
+                TokenEndpoint: "http://localhost:8765/oauth/token",
+                ClientID:      "local-tools",
+                Scope:         anthropic.String("tools:read tools:write"),
+                RefreshToken:  "local-refresh-token",
                 TokenEndpointAuth: anthropic.BetaManagedAgentsMCPOAuthRefreshParamsTokenEndpointAuthUnion{
                     OfClientSecretPost: &anthropic.BetaManagedAgentsTokenEndpointAuthPostParam{
                         Type:         anthropic.BetaManagedAgentsTokenEndpointAuthPostParamTypeClientSecretPost,

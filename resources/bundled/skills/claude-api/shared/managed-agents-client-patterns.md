@@ -189,12 +189,12 @@ Delete the original via `files.delete(uploaded.id)`; the session-scoped copy is 
 
 ```ts
 // Agent template: declare the tool, no credentials
-tools: [{ type: 'custom', name: 'linear_graphql', input_schema: { /* query, vars */ } }]
+tools: [{ type: 'custom', name: 'local_query', input_schema: { /* query, vars */ } }]
 
 // Orchestrator: handle the call with host-side creds
 for await (const event of stream) {
-  if (event.type === 'agent.custom_tool_use' && event.name === 'linear_graphql') {
-    const result = await linear.request(event.input.query, event.input.vars) // host's key
+  if (event.type === 'agent.custom_tool_use' && event.name === 'local_query') {
+    const result = await localClient.request(event.input.query, event.input.vars) // host's key
     await client.beta.sessions.events.send(session.id, {
       events: [{ type: 'user.custom_tool_result', tool_use_id: event.id, result }],
     })

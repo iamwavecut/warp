@@ -16,9 +16,9 @@ impl AdminActions {
         ctx.open_url(&url);
     }
 
-    /// Open the support email link
+    /// Hosted support links are disabled in the local-first build.
     pub fn contact_support(ctx: &mut AppContext) {
-        ctx.open_url("mailto:support@warp.dev");
+        let _ = ctx;
     }
 }
 

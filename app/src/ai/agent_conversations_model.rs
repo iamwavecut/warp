@@ -78,7 +78,7 @@ enum TaskFetchState {
 
 /// Protected eviction: we'll always keep at least 200 personal tasks in the model.
 /// This is so that whenever we evict stale tasks, we do not evict relevant, recent personal tasks
-/// (e.g. if I load in 500 team Slack tasks from today, we should _not_ evict my personal conversation
+/// (e.g. if I load in 500 team tasks from today, we should _not_ evict my personal conversation
 /// from yesterday).
 const MAX_PERSONAL_TASKS: usize = 200;
 const MAX_TEAM_TASKS: usize = 300;
@@ -675,8 +675,8 @@ impl ConversationOrTask<'_> {
     }
 
     pub fn get_session_status(&self) -> Option<SessionStatus> {
-        // With cloud conversations, as long as the session link is populated, it is available
-        // If it's not, it's unavailable (no live session link and no conversation data in GCS)
+        // With cloud conversations, as long as the session link is populated, it is available.
+        // If it is not, there is no live session link or remotely stored conversation data.
         if FeatureFlag::CloudConversations.is_enabled() {
             return match self {
                 ConversationOrTask::Task(task) => {

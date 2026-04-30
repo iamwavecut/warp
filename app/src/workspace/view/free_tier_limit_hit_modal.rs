@@ -68,7 +68,6 @@ impl FreeTierLimitHitModal {
                 AIRequestUsageModelEvent::RequestUsageUpdated => {
                     ctx.emit(FreeTierLimitHitModalEvent::MaybeOpen);
                 }
-                AIRequestUsageModelEvent::RequestBonusRefunded { .. } => {}
             },
         );
 

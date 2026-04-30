@@ -2,7 +2,7 @@ use super::{
     team::{DiscoverableTeam, MembershipRole, Team},
     workspace::{
         AdminEnablementSetting, CustomerType, EnterpriseSecretRegex, HostEnablementSetting,
-        UgcCollectionEnablementSetting, Workspace, WorkspaceUid,
+        Workspace, WorkspaceUid,
     },
 };
 use crate::{
@@ -1393,17 +1393,6 @@ impl UserWorkspaces {
                 team.organization_settings
                     .secret_redaction_settings
                     .regexes
-                    .clone()
-            })
-            .unwrap_or_default()
-    }
-
-    pub fn get_ugc_collection_enablement_setting(&self) -> UgcCollectionEnablementSetting {
-        self.current_team()
-            .map(|team| {
-                team.organization_settings
-                    .ugc_collection_settings
-                    .setting
                     .clone()
             })
             .unwrap_or_default()

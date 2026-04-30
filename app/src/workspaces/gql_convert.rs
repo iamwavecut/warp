@@ -9,8 +9,7 @@ use super::{
         EmailInvite, EnterpriseSecretRegex, HostEnablementSetting, InstanceShape,
         InviteLinkDomainRestriction, LinkSharingSettings, LlmSettings, SandboxedAgentSettings,
         SecretRedactionSettings, SessionSharingPolicy, SharedNotebooksPolicy,
-        SharedWorkflowsPolicy, Tier, UgcCollectionEnablementSetting, UgcCollectionSettings,
-        UgcDataCollectionPolicy, UsageBasedPricingPolicy, WarpAiPolicy, Workspace,
+        SharedWorkflowsPolicy, Tier, UsageBasedPricingPolicy, WarpAiPolicy, Workspace,
         WorkspaceInviteCode, WorkspaceMember, WorkspaceMemberUsageInfo, WorkspaceSettings,
         WorkspaceSizePolicy,
     },
@@ -59,7 +58,6 @@ use warp_graphql::{
         SharedNotebooksPolicy as GqlSharedNotebooksPolicy,
         SharedWorkflowsPolicy as GqlSharedWorkflowsPolicy, StripeSubscriptionPlan,
         TeamSizePolicy as GqlTeamSizePolicy, Tier as GqlTier,
-        UgcDataCollectionPolicy as GqlUgcDataCollectionPolicy,
         UsageBasedPricingPolicy as GqlUsageBasedPricingPolicy, WarpAiPolicy as GqlWarpAiPolicy,
     },
     object::CloudObjectWithDescendants,
@@ -75,7 +73,6 @@ use warp_graphql::{
         HostEnablementSetting as GqlHostEnablementSetting,
         InviteLinkDomainRestriction as GqlInviteLinkDomainRestriction,
         MembershipRole as GqlMembershipRole, Team as GqlTeam, TeamMember as GqlTeamMember,
-        UgcCollectionEnablementSetting as GqlUgcCollectionEnablementSetting,
         Workspace as GqlWorkspace, WorkspaceMember as GqlWorkspaceMember,
         WorkspaceMemberUsageInfo as GqlWorkspaceMemberUsageInfo,
         WorkspaceSettings as GqlWorkspaceSettings,
@@ -224,26 +221,6 @@ impl From<GqlAiAutonomyPolicy> for AIAutonomyPolicy {
     }
 }
 
-impl From<GqlUgcCollectionEnablementSetting> for UgcCollectionEnablementSetting {
-    fn from(
-        gql_ugc_collection_enablement_setting: GqlUgcCollectionEnablementSetting,
-    ) -> UgcCollectionEnablementSetting {
-        match gql_ugc_collection_enablement_setting {
-            GqlUgcCollectionEnablementSetting::Disable => UgcCollectionEnablementSetting::Disable,
-            GqlUgcCollectionEnablementSetting::Enable => UgcCollectionEnablementSetting::Enable,
-            GqlUgcCollectionEnablementSetting::RespectUserSetting => {
-                UgcCollectionEnablementSetting::RespectUserSetting
-            }
-            GqlUgcCollectionEnablementSetting::Other(value) => {
-                report_error!(anyhow!(
-                    "Invalid UgcCollectionEnablementSetting '{value}'. Make sure to update client GraphQL types!"
-                ));
-                UgcCollectionEnablementSetting::RespectUserSetting
-            }
-        }
-    }
-}
-
 impl From<&gql_usage::ConversationUsage> for ConversationUsageInfo {
     fn from(gql: &gql_usage::ConversationUsage) -> Self {
         let persistence::model::ConversationUsageMetadata {
@@ -319,17 +296,6 @@ impl From<&GqlAiPermissionsSettings> for AiPermissionsSettings {
                     }
                 })
                 .collect(),
-        }
-    }
-}
-
-impl From<GqlUgcDataCollectionPolicy> for UgcDataCollectionPolicy {
-    fn from(gql_ugc_data_collection_policy: GqlUgcDataCollectionPolicy) -> UgcDataCollectionPolicy {
-        Self {
-            default_setting: UgcCollectionEnablementSetting::from(
-                gql_ugc_data_collection_policy.default_setting,
-            ),
-            toggleable: gql_ugc_data_collection_policy.toggleable,
         }
     }
 }
@@ -438,7 +404,6 @@ impl From<GqlTier> for Tier {
             shared_workflows_policy: gql_tier.shared_workflows_policy.map(From::from),
             session_sharing_policy: gql_tier.session_sharing_policy.map(From::from),
             ai_autonomy_policy: gql_tier.ai_autonomy_policy.map(From::from),
-            ugc_data_collection_policy: gql_tier.ugc_data_collection_policy.map(From::from),
             usage_based_pricing_policy: gql_tier.usage_based_pricing_policy.map(From::from),
             codebase_context_policy: gql_tier.codebase_context_policy.map(From::from),
             byo_api_key_policy: gql_tier.byo_api_key_policy.map(From::from),
@@ -689,11 +654,6 @@ impl From<GqlWorkspaceSettings> for WorkspaceSettings {
     fn from(gql_workspace_settings: GqlWorkspaceSettings) -> WorkspaceSettings {
         Self {
             llm_settings: gql_workspace_settings.llm_settings.into(),
-            ugc_collection_settings: UgcCollectionSettings {
-                setting: UgcCollectionEnablementSetting::from(
-                    gql_workspace_settings.ugc_collection_settings.setting,
-                ),
-            },
             cloud_conversation_storage_settings: CloudConversationStorageSettings {
                 setting: gql_workspace_settings
                     .cloud_conversation_storage_settings

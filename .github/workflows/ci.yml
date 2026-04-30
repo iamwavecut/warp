@@ -44,12 +44,7 @@ jobs:
     timeout-minutes: 3
     runs-on: ubuntu-latest
     # Don't automatically run CI for draft PRs, to reduce GitHub Actions costs.
-    #
-    # Also, don't run CI for repo-sync PRs _unless_ there is a merge conflict - for those,
-    # we'll want to make sure that the conflict resolution doesn't introduce any issues.
-    if: >-
-      github.event.pull_request.draft == false &&
-      (!startsWith(github.event.pull_request.head.ref, 'repo-sync/') || contains(github.event.pull_request.labels.*.name, 'repo-sync:conflict'))
+    if: github.event.pull_request.draft == false
     outputs:
       affects-database-schema: ${{ github.ref == 'master' || steps.filter.outputs.affects-database-schema }}
       affects-rust-sources: ${{ github.ref == 'master' || steps.filter.outputs.affects-rust-sources }}
@@ -487,9 +482,6 @@ jobs:
       - name: Run PSScriptAnalyzer (PowerShell Lint)
         run: ./script/lint_powershell -ci
         shell: pwsh
-
-      - name: Validate repo-sync markers
-        uses: warpdotdev/repo-sync/actions/validate-markers@main
 
   wasm-lint:
     name: Formatting + Clippy (wasm)

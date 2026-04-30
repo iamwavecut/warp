@@ -29,11 +29,8 @@ use warp_cli::{
     artifact::ArtifactCommand,
     environment::{EnvironmentCommand, ImageCommand},
     federate::FederateCommand,
-    harness_support::{HarnessSupportCommand, ReportArtifactCommand, TaskStatus},
-    integration::IntegrationCommand,
     mcp::MCPCommand,
     model::ModelCommand,
-    provider::ProviderCommand,
     schedule::ScheduleSubcommand,
     secret::SecretCommand,
     share::ShareRequest,
@@ -59,7 +56,6 @@ use crate::{
     terminal::view::ConversationRestorationInNewPaneType,
 };
 use driver::AgentDriverError;
-use warp_graphql::object_permissions::OwnerType;
 
 use crate::ai::attachment_utils::attachments_download_dir;
 use crate::ai::skills::{
@@ -83,38 +79,18 @@ mod config_file;
 pub(crate) mod driver;
 mod environment;
 mod federate;
-mod harness_support;
-#[cfg(not(target_family = "wasm"))]
-mod integration;
-#[cfg(not(target_family = "wasm"))]
-mod integration_output;
 mod mcp;
 mod mcp_config;
 mod model;
 mod oauth_flow;
 pub mod output;
 mod profiles;
-mod provider;
 pub(crate) mod retry;
 mod schedule;
 mod secret;
 #[cfg(test)]
 mod test_support;
 mod text_layout;
-
-/// Prints a non-blocking warning to stderr when the CLI is invoked with a team-scoped API key.
-fn maybe_warn_team_api_key(ctx: &AppContext) {
-    let auth_state = AuthStateProvider::handle(ctx).as_ref(ctx).get();
-    let owner_type = auth_state.api_key_owner_type();
-    if !matches!(owner_type, Some(OwnerType::Team)) {
-        return;
-    }
-
-    eprintln!(
-        "\x1b[33mWarning: Free cloud credits apply to personal runs only but this run uses \
-         a team API key. If you want to use free cloud credits, consider using a personal API key instead.\x1b[0m"
-    );
-}
 
 /// Run a Warp CLI command.
 pub fn run(
@@ -145,23 +121,6 @@ fn dispatch_command(
         CliCommand::Login => admin::login(ctx),
         CliCommand::Logout => admin::logout(ctx),
         CliCommand::Whoami => admin::whoami(ctx, global_options.output_format),
-        CliCommand::Provider(provider_cmd) => {
-            if !FeatureFlag::ProviderCommand.is_enabled() {
-                return Err(anyhow::anyhow!("invalid value 'provider'"));
-            }
-            provider::run(ctx, global_options, provider_cmd)
-        }
-        #[cfg(not(target_family = "wasm"))]
-        CliCommand::Integration(integration_cmd) => {
-            if !FeatureFlag::IntegrationCommand.is_enabled() {
-                return Err(anyhow::anyhow!("invalid value 'integration'"));
-            }
-            integration::run(ctx, global_options, integration_cmd)
-        }
-        #[cfg(target_family = "wasm")]
-        CliCommand::Integration(_) => {
-            return Err(anyhow::anyhow!("invalid value 'integration'"));
-        }
         CliCommand::Schedule(schedule_cmd) => {
             if !FeatureFlag::ScheduledAmbientAgents.is_enabled() {
                 return Err(anyhow::anyhow!("invalid value 'schedule'"));
@@ -179,12 +138,6 @@ fn dispatch_command(
                 return Err(anyhow::anyhow!("invalid value 'federate'"));
             }
             federate::run(ctx, global_options, federate_cmd)
-        }
-        CliCommand::HarnessSupport(args) => {
-            if !FeatureFlag::AgentHarness.is_enabled() {
-                return Err(anyhow::anyhow!("invalid value 'harness-support'"));
-            }
-            harness_support::run(ctx, global_options, args)
         }
         CliCommand::Artifact(artifact_cmd) => {
             if !FeatureFlag::ArtifactCommand.is_enabled() {
@@ -568,10 +521,8 @@ impl AgentDriverRunner {
 
             // `--conversation` path (user-invoked local resume): validate before any task side
             // effects so mismatches fail fast. The `--task-id` path derives its conversation id
-            // from the server-side task metadata inside `build_driver_options_and_task`. Both
-            // can currently be passed together (the worker server-side appends `--conversation`
-            // alongside `--task-id` for Slack/Linear followups); when both are set, the explicit
-            // `--conversation` value wins via the merge below.
+            // from the server-side task metadata inside `build_driver_options_and_task`. When both
+            // are set, the explicit `--conversation` value wins via the merge below.
             if let Some(conversation_id) = args.conversation.as_deref() {
                 common::fetch_and_validate_conversation_harness(
                     server_api.clone(),
@@ -673,11 +624,6 @@ impl AgentDriverRunner {
         }
         .await;
 
-        if let Err(ref err) = result {
-            if let Some(task_id) = task_id {
-                driver::report_driver_error(task_id, err, &server_api).await;
-            }
-        }
         result
     }
 
@@ -789,15 +735,6 @@ impl AgentDriverRunner {
                     cloud_providers: Vec::new(),
                     environment: None,
                     selected_harness: args.harness,
-                    snapshot_disabled: args.snapshot.no_snapshot.then_some(true),
-                    snapshot_upload_timeout: args
-                        .snapshot
-                        .snapshot_upload_timeout
-                        .map(|duration| duration.into()),
-                    snapshot_script_timeout: args
-                        .snapshot
-                        .snapshot_script_timeout
-                        .map(|duration| duration.into()),
                 };
 
                 Ok((merged_config, task, driver_options))
@@ -1137,16 +1074,11 @@ impl AgentDriverRunner {
                 ))))
             }
             HarnessKind::ThirdParty(h) => {
-                let harness_support_client = foreground
-                    .spawn(|_, ctx| ServerApiProvider::as_ref(ctx).get_harness_support_client())
-                    .await?;
                 let resume_conversation_id = AIConversationId::try_from(conversation_id.clone())
                     .map_err(|err| AgentDriverError::ConversationLoadFailed(format!("{err:#}")))?;
-                Ok(
-                    h.fetch_resume_payload(&resume_conversation_id, harness_support_client)
-                        .await?
-                        .map(|payload| driver::ResumeOptions::ThirdParty(Box::new(payload))),
-                )
+                Ok(h.fetch_resume_payload(&resume_conversation_id)
+                    .await?
+                    .map(|payload| driver::ResumeOptions::ThirdParty(Box::new(payload))))
             }
             HarnessKind::Unsupported(harness) => Err(AgentDriverError::HarnessSetupFailed {
                 harness: harness.to_string(),
@@ -1208,8 +1140,6 @@ impl AgentDriverRunner {
         share_requests: Option<Vec<ShareRequest>>,
         task: driver::Task,
     ) {
-        maybe_warn_team_api_key(ctx);
-
         // Initializing the driver will fail if not logged in. Since we check that above, panic here - it's difficult to
         // fallibly instantiate a UI framework model.
         let driver = ctx.add_singleton_model(|ctx| {
@@ -1269,12 +1199,9 @@ fn command_requires_auth(command: &CliCommand) -> bool {
         CliCommand::Login => false,
         CliCommand::Logout => false,
         CliCommand::Whoami => true,
-        CliCommand::Provider(_) => true,
-        CliCommand::Integration(_) => true,
         CliCommand::Schedule(_) => true,
         CliCommand::Secret(_) => true,
         CliCommand::Federate(_) => true,
-        CliCommand::HarnessSupport(_) => true,
         CliCommand::Artifact(_) => true,
     }
 }
@@ -1320,12 +1247,9 @@ fn launch_command(
             }
             AuthManagerEvent::NeedsReauth => {
                 dispatched = true;
-                let auth_state = AuthStateProvider::handle(ctx).as_ref(ctx).get();
-                let message = if auth_state.is_api_key_authenticated() {
-                    "Your API key is invalid. Please provide a valid key via '--api-key' or the WARP_API_KEY environment variable.".to_string()
-                } else {
-                    format!("Your credentials are invalid. Please log in again with `{cli_name} login`.")
-                };
+                let message = format!(
+                    "Your credentials are invalid. Please log in again with `{cli_name} login`."
+                );
                 report_fatal_error(anyhow::anyhow!(message), ctx);
             }
             AuthManagerEvent::AuthFailed(err) => {

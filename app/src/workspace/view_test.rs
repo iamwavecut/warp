@@ -202,9 +202,8 @@ fn initialize_app(app: &mut App) {
     app.add_singleton_model(AIDocumentModel::new);
     app.add_singleton_model(|_| History::new(vec![]));
 
-    // SkillManager must be registered because the command palette materializes
-    // binding descriptions eagerly, and `workspace:send_feedback`'s dynamic
-    // label calls `is_feedback_skill_available`, which reads `SkillManager`.
+    // SkillManager must be registered before tests that materialize bundled-skill
+    // state through the command palette.
     // Registered after `HomeDirectoryWatcher`, `DirectoryWatcher`,
     // `WarpManagedPathsWatcher`, `DetectedRepositories`, and `RepoMetadataModel`
     // because `SkillWatcher::new` subscribes to all of them.
@@ -691,44 +690,6 @@ fn reopen_closed_session_menu_item(
         Some(MenuItem::Item(fields)) if fields.label() == "Reopen closed session" => fields,
         _ => panic!("expected Reopen closed session to be the last new-session menu item"),
     }
-}
-
-#[test]
-fn test_reward_modal_no_overlap() {
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-
-        let workspace = mock_workspace(&mut app);
-
-        // Trigger the referral reward response
-        workspace.update(&mut app, |view, ctx| {
-            view.handle_referral_theme_status_event(
-                &ReferralThemeEvent::SentReferralThemeActivated,
-                ctx,
-            );
-
-            // This _should_ show the reward modal, since the changelog modal is _not_ active
-            assert!(view.current_workspace_state.is_reward_modal_open);
-        });
-    });
-}
-
-#[test]
-fn test_reward_modal_shows_for_received_referral() {
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-
-        let workspace = mock_workspace(&mut app);
-
-        workspace.update(&mut app, |view, ctx| {
-            view.handle_referral_theme_status_event(
-                &ReferralThemeEvent::ReceivedReferralThemeActivated,
-                ctx,
-            );
-
-            assert!(view.current_workspace_state.is_reward_modal_open);
-        });
-    });
 }
 
 #[test]
@@ -2967,47 +2928,6 @@ fn test_standard_tab_context_menu_shows_hover_only_tab_bar() {
                 Some((0, TabContextMenuAnchor::Pointer(Vector2F::zero())));
 
             assert_eq!(workspace.tab_bar_mode(ctx), ShowTabBar::Stacked);
-        });
-    });
-}
-
-#[test]
-fn test_open_cloud_agent_setup_guide_action_opens_management_view_and_is_idempotent() {
-    let _agent_management_guard = FeatureFlag::AgentManagementView.override_enabled(true);
-
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-
-        let workspace = mock_workspace(&mut app);
-
-        workspace.update(&mut app, |workspace, ctx| {
-            assert!(
-                !workspace
-                    .current_workspace_state
-                    .is_agent_management_view_open
-            );
-
-            workspace.handle_action(&WorkspaceAction::OpenCloudAgentSetupGuide, ctx);
-            assert!(
-                workspace
-                    .current_workspace_state
-                    .is_agent_management_view_open
-            );
-            assert!(workspace
-                .agent_management_view
-                .as_ref(ctx)
-                .is_showing_setup_guide());
-
-            workspace.handle_action(&WorkspaceAction::OpenCloudAgentSetupGuide, ctx);
-            assert!(
-                workspace
-                    .current_workspace_state
-                    .is_agent_management_view_open
-            );
-            assert!(workspace
-                .agent_management_view
-                .as_ref(ctx)
-                .is_showing_setup_guide());
         });
     });
 }

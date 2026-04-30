@@ -123,11 +123,11 @@ const OFFLINE_TEXT: &str = "You are offline.";
 
 const LIMIT_HIT_ADMIN_TEXT: &str =
     "You've reached the team member limit for your plan. Upgrade to add more teammates.";
-const LIMIT_HIT_ADMIN_NOT_AUTO_UPGRADEABLE_TEXT: &str = "You've reached the team member limit for your plan. Contact support@warp.dev to add more teammates.";
+const LIMIT_HIT_ADMIN_NOT_AUTO_UPGRADEABLE_TEXT: &str = "You've reached the team member limit for your plan. This hosted billing flow is unavailable in the local-first build.";
 const LIMIT_HIT_NON_ADMIN_TEXT: &str =
     "You've reached the team member limit for your plan. Contact a team admin to add more teammates.";
 
-const DELINQUENT_ADMIN_NON_SELF_SERVE_TEXT: &str = "Team invites have been restricted due to a payment issue. Please contact support@warp.dev to restore access.";
+const DELINQUENT_ADMIN_NON_SELF_SERVE_TEXT: &str = "Team invites have been restricted due to a payment issue. This hosted billing flow is unavailable in the local-first build.";
 const DELINQUENT_NON_ADMIN_TEXT: &str = "Team invites have been restricted due to a payment issue. Please contact a team admin to restore access.";
 const DELINQUENT_ADMIN_SELF_SERVE_LINE_1_TEXT: &str =
     "Team invites have been restricted due to a subscription payment issue.";
@@ -135,7 +135,7 @@ const DELINQUENT_ADMIN_SELF_SERVE_LINE_2_PREFIX_TEXT: &str = "Please ";
 const DELINQUENT_ADMIN_SELF_SERVE_LINE_2_LINK_TEXT: &str = "update your payment information";
 const DELINQUENT_ADMIN_SELF_SERVE_LINE_2_SUFFIX_TEXT: &str = " to restore access.";
 
-const TEAM_LIMIT_EXCEEDED_ADMIN_NOT_AUTO_UPGRADEABLE_TEXT: &str = "You've exceeded the team member limit for your plan. Please contact support@warp.dev to upgrade your team.";
+const TEAM_LIMIT_EXCEEDED_ADMIN_NOT_AUTO_UPGRADEABLE_TEXT: &str = "You've exceeded the team member limit for your plan. This hosted billing flow is unavailable in the local-first build.";
 const TEAM_LIMIT_EXCEEDED_NON_ADMIN_TEXT: &str =
     "You've exceeded the team member limit for your plan. Contact a team admin to upgrade your team.";
 const TEAM_LIMIT_EXCEEDED_ADMIN_UPGRADEABLE: &str =
@@ -904,19 +904,15 @@ impl TeamsPageView {
             UserWorkspacesEvent::GenerateUpgradeLink(upgrade_link) => {
                 ctx.open_url(upgrade_link);
             }
-            UserWorkspacesEvent::GenerateUpgradeLinkRejected(err) => self.show_error(
-                "Failed to generate upgrade link. Please contact us at feedback@warp.dev",
-                Some(err),
-                ctx,
-            ),
+            UserWorkspacesEvent::GenerateUpgradeLinkRejected(err) => {
+                self.show_error("Failed to generate upgrade link.", Some(err), ctx)
+            }
             UserWorkspacesEvent::GenerateStripeBillingPortalLink(billing_session_link) => {
                 ctx.open_url(billing_session_link);
             }
-            UserWorkspacesEvent::GenerateStripeBillingPortalLinkRejected(err) => self.show_error(
-                "Failed to generate billing link. Please contact us at feedback@warp.dev",
-                Some(err),
-                ctx,
-            ),
+            UserWorkspacesEvent::GenerateStripeBillingPortalLinkRejected(err) => {
+                self.show_error("Failed to generate billing link.", Some(err), ctx)
+            }
             UserWorkspacesEvent::ToggleTeamDiscoverabilitySuccess => {
                 self.show_success("Toggled team discoverability", ctx);
                 ctx.notify();
@@ -2027,7 +2023,10 @@ impl TeamsWidget {
         team_name_header.finish()
     }
 
-    fn render_contact_support_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+    fn render_hosted_billing_unavailable_button(
+        &self,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
         appearance
             .ui_builder()
             .button(
@@ -2037,7 +2036,7 @@ impl TeamsWidget {
             .with_text_and_icon_label(
                 TextAndIcon::new(
                     TextAndIconAlignment::IconFirst,
-                    "Contact support",
+                    "Unavailable",
                     Icon::Phone.to_warpui_icon(appearance.theme().accent()),
                     MainAxisSize::Min,
                     MainAxisAlignment::Center,
@@ -2120,10 +2119,10 @@ impl TeamsWidget {
 
         let team_uid = team.uid;
 
-        // For enterprise we actually hide both upgrade/billing links and have a contact support link instead
+        // Hosted enterprise billing links are disabled in the local-first build.
         if team.billing_metadata.customer_type == CustomerType::Enterprise {
             billing_links.add_child(
-                Container::new(self.render_contact_support_button(appearance))
+                Container::new(self.render_hosted_billing_unavailable_button(appearance))
                     .with_margin_left(12.)
                     .finish(),
             );

@@ -44,7 +44,6 @@ mod gpu_state;
 mod input_classifier;
 pub mod interaction_sources;
 mod interval_timer;
-mod linear;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod login_item;
 mod menu;
@@ -65,11 +64,9 @@ mod profiling;
 mod projects;
 mod prompt;
 mod quit_warning;
-mod referral_theme_status;
 #[allow(dead_code)]
 mod remote_server;
 mod resource_limits;
-mod reward_view;
 mod safe_triangle;
 mod search_bar;
 mod server;
@@ -256,7 +253,6 @@ use appearance::{Appearance, AppearanceManager};
 use channel::ChannelState;
 use interval_timer::IntervalTimer;
 use itertools::Itertools;
-use referral_theme_status::ReferralThemeStatus;
 use rust_embed::RustEmbed;
 pub use server::server_api::ServerApiProvider;
 use settings::{ExtraMetaKeys, PrivacySettings};
@@ -338,12 +334,7 @@ fn determine_agent_source(
 #[allow(clippy::large_enum_variant)]
 pub enum LaunchMode {
     /// Run the regular GUI application.
-    App {
-        args: warp_cli::AppArgs,
-        /// API key for server authentication, if provided via `--api-key` or `WARP_API_KEY`.
-        /// Only used on dogfood channels.
-        api_key: Option<String>,
-    },
+    App { args: warp_cli::AppArgs },
 
     /// Run the Warp command-line SDK.
     CommandLine {
@@ -603,11 +594,6 @@ pub fn run() -> Result<()> {
             warp_cli::Command::Worker(warp_cli::WorkerCommand::PluginHost { .. }) => {
                 return crate::run_plugin_host();
             }
-            #[cfg(feature = "local_tty")]
-            warp_cli::Command::Worker(warp_cli::WorkerCommand::MinidumpServer { socket_name }) => {
-                let _ = socket_name;
-                panic!("The minidump server is not supported on this platform");
-            }
             #[cfg(not(target_family = "wasm"))]
             warp_cli::Command::Worker(warp_cli::WorkerCommand::RemoteServerProxy(args)) => {
                 init_common(&LaunchMode::RemoteServerProxy, None)?;
@@ -665,7 +651,6 @@ pub fn run() -> Result<()> {
                     command: cmd.as_ref().clone(),
                     global_options: GlobalOptions {
                         output_format: args.output_format(),
-                        api_key: args.api_key().cloned(),
                     },
                     debug: args.debug(),
                     is_sandboxed,
@@ -688,10 +673,8 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
 
-    let api_key = args.api_key().cloned();
     run_internal(LaunchMode::App {
         args: args.into_app_args(),
-        api_key,
     })
 }
 
@@ -1042,19 +1025,7 @@ fn initialize_app(
         ctx.set_zoom_factor(WindowSettings::as_ref(ctx).zoom_level.as_zoom_factor());
     }
 
-    // Extract API key from command line options, if applicable.
-    let api_key = match launch_mode {
-        LaunchMode::CommandLine { global_options, .. } => global_options.api_key.clone(),
-        LaunchMode::App { api_key, .. } if ChannelState::channel().is_dogfood() => api_key.clone(),
-        _ => None,
-    };
-    let api_key = if FeatureFlag::APIKeyAuthentication.is_enabled() {
-        api_key
-    } else {
-        None
-    };
-
-    let auth_state = Arc::new(AuthState::initialize(ctx, api_key));
+    let auth_state = Arc::new(AuthState::initialize(ctx));
     timer.mark_interval_end("AUTH_MANAGER_SET_USER");
 
     let agent_source = determine_agent_source(launch_mode);
@@ -1093,7 +1064,6 @@ fn initialize_app(
 
     let model_event_sender = persistence_writer.sender();
 
-    let referral_theme_status = ctx.add_model(ReferralThemeStatus::new);
     let tips_handle = ctx.add_model(|_| user_defaults_on_startup.tips_data);
     let user_default_shell_unsupported_banner_model_handle =
         ctx.add_model(|_| user_defaults_on_startup.user_default_shell_unsupported_banner_state);
@@ -1114,7 +1084,6 @@ fn initialize_app(
         GlobalResourceHandlesProvider::new(GlobalResourceHandles {
             model_event_sender,
             tips_completed: tips_handle,
-            referral_theme_status,
             user_default_shell_unsupported_banner_model_handle,
             settings_file_error,
         })
@@ -1441,7 +1410,6 @@ fn initialize_app(
     root_view::init(ctx);
     voltron::init(ctx);
     auth::init(ctx);
-    reward_view::init(ctx);
     crate::view_components::find::init(ctx);
     prompt::editor_modal::init(ctx);
     ai::blocklist::agent_view::editor::init(ctx);
@@ -1563,7 +1531,6 @@ fn initialize_app(
     ctx.add_singleton_model(AgentNotificationsModel::new);
     ctx.add_singleton_model(BlocklistAIPermissions::new);
     ctx.add_singleton_model(ai::blocklist::orchestration_events::OrchestrationEventService::new);
-    ctx.add_singleton_model(ai::blocklist::task_status_sync_model::TaskStatusSyncModel::new);
     if warp_core::features::FeatureFlag::OrchestrationV2.is_enabled() {
         ctx.add_singleton_model(
             ai::blocklist::orchestration_event_streamer::OrchestrationEventStreamer::new,
@@ -2271,12 +2238,17 @@ pub fn init_feature_flags() {
         FeatureFlag::CloudModeHostSelector,
         FeatureFlag::CloudModeImageContext,
         FeatureFlag::WarpManagedSecrets,
+        FeatureFlag::OzPlatformSkills,
+        FeatureFlag::OzChangelogUpdates,
+        FeatureFlag::TeamApiKeys,
+        FeatureFlag::AgentHarness,
         FeatureFlag::OrchestrationV2,
         FeatureFlag::Orchestration,
         FeatureFlag::SyncAmbientPlans,
         FeatureFlag::OzHandoff,
         FeatureFlag::OzIdentityFederation,
         FeatureFlag::OzLaunchModal,
+        FeatureFlag::OpenWarpLaunchModal,
         FeatureFlag::ConversationApi,
         FeatureFlag::CloudConversations,
         FeatureFlag::CloudModeSetupV2,
@@ -2291,8 +2263,6 @@ pub fn init_feature_flags() {
         FeatureFlag::ViewingSharedSessions,
         FeatureFlag::AgentSharedSessions,
         FeatureFlag::ForceLogin,
-        FeatureFlag::APIKeyAuthentication,
-        FeatureFlag::APIKeyManagement,
         FeatureFlag::UsageBasedPricing,
     ];
     for flag in disabled_flags {
@@ -2367,8 +2337,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::ShellSelector,
         #[cfg(feature = "block_toolbelt_save_as_workflow")]
         FeatureFlag::BlockToolbeltSaveAsWorkflow,
-        #[cfg(feature = "integration_command")]
-        FeatureFlag::IntegrationCommand,
         #[cfg(feature = "artifact_command")]
         FeatureFlag::ArtifactCommand,
         #[cfg(feature = "cloud_environments")]
@@ -2565,10 +2533,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::ScheduledAmbientAgents,
         #[cfg(feature = "code_launch_modal")]
         FeatureFlag::CodeLaunchModal,
-        #[cfg(feature = "api_key_authentication")]
-        FeatureFlag::APIKeyAuthentication,
-        #[cfg(feature = "api_key_management")]
-        FeatureFlag::APIKeyManagement,
         #[cfg(feature = "mcp_oauth")]
         FeatureFlag::McpOauth,
         #[cfg(feature = "file_based_mcp")]

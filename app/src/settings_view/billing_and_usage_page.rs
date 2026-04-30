@@ -3205,10 +3205,9 @@ impl UsageWidget {
                     FormattedTextFragment::plain_text(" for custom limits and dedicated support."),
                 ]
             } else if !team.billing_metadata.is_usage_based_pricing_toggleable() {
-                vec![
-                    FormattedTextFragment::hyperlink("Contact support", "mailto:support@warp.dev"),
-                    FormattedTextFragment::plain_text(" for more AI usage."),
-                ]
+                vec![FormattedTextFragment::plain_text(
+                    "Hosted plan support is unavailable in the local-first build.",
+                )]
             } else {
                 vec![]
             }

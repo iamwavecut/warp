@@ -22,12 +22,9 @@ pub mod completions;
 pub mod config_file;
 pub mod environment;
 pub mod federate;
-pub mod harness_support;
-pub mod integration;
 pub mod json_filter;
 pub mod mcp;
 pub mod model;
-pub mod provider;
 pub mod schedule;
 pub mod secret;
 pub mod share;
@@ -73,10 +70,6 @@ pub struct RemoteServerIdentityArgs {
 /// Global options that apply to all CLI commands.
 #[derive(Debug, Default, Clone, clap::Args)]
 pub struct GlobalOptions {
-    /// API key for server authentication.
-    #[arg(long = "api-key", global = true, env = "WARP_API_KEY")]
-    pub api_key: Option<String>,
-
     /// Set the output format.
     #[arg(
         long = "output-format",
@@ -189,24 +182,6 @@ impl Args {
                     }
                 }
 
-                if !FeatureFlag::ProviderCommand.is_enabled() {
-                    let args: Vec<String> = env::args().collect();
-                    if args.len() > 1 && args[1] == "provider" {
-                        eprintln!("error: unrecognized subcommand 'provider'\n");
-                        eprintln!("For more information, try '--help'");
-                        std::process::exit(2);
-                    }
-                }
-
-                if !FeatureFlag::IntegrationCommand.is_enabled() {
-                    let args: Vec<String> = env::args().collect();
-                    if args.len() > 1 && args[1] == "integration" {
-                        eprintln!("error: unrecognized subcommand 'integration'\n");
-                        eprintln!("For more information, try '--help'");
-                        std::process::exit(2);
-                    }
-                }
-
                 if !FeatureFlag::ScheduledAmbientAgents.is_enabled() {
                     let args: Vec<String> = env::args().collect();
                     if args.len() > 1 && args[1] == "schedule" {
@@ -297,16 +272,6 @@ impl Args {
             });
         }
 
-        // Hide the provider subcommand from help text
-        if !FeatureFlag::ProviderCommand.is_enabled() {
-            command = command.mut_subcommand("provider", |c| c.hide(true));
-        }
-
-        // Hide the integration subcommand from help text
-        if !FeatureFlag::IntegrationCommand.is_enabled() {
-            command = command.mut_subcommand("integration", |c| c.hide(true));
-        }
-
         // Hide the schedule subcommand from help text.
         if !FeatureFlag::ScheduledAmbientAgents.is_enabled() {
             command = command.mut_subcommand("schedule", |c| c.hide(true));
@@ -320,11 +285,6 @@ impl Args {
         // Hide the federate subcommand from help text.
         if !FeatureFlag::OzIdentityFederation.is_enabled() {
             command = command.mut_subcommand("federate", |c| c.hide(true));
-        }
-
-        // Hide the harness-support subcommand from help text.
-        if !FeatureFlag::AgentHarness.is_enabled() {
-            command = command.mut_subcommand("harness-support", |c| c.hide(true));
         }
 
         // Hide the conversation subcommand and --conversation flag from help text.
@@ -388,11 +348,6 @@ impl Args {
         &self.global_options
     }
 
-    /// Returns the API key if provided.
-    pub fn api_key(&self) -> Option<&String> {
-        self.global_options.api_key.as_ref()
-    }
-
     /// Returns the output format.
     pub fn output_format(&self) -> OutputFormat {
         self.global_options.output_format
@@ -432,13 +387,6 @@ pub enum WorkerCommand {
     PluginHost {
         #[clap(flatten)]
         parent: ParentOpts,
-    },
-
-    /// Run the minidump server.
-    #[clap(hide = true)]
-    MinidumpServer {
-        /// Socket name for the minidump server.
-        socket_name: std::path::PathBuf,
     },
 
     /// Run the remote development server proxy over SSH stdio.
@@ -503,14 +451,6 @@ pub enum CliCommand {
     /// Print information about the logged-in user.
     Whoami,
 
-    /// Manage providers.
-    #[command(subcommand)]
-    Provider(crate::provider::ProviderCommand),
-
-    /// Manage integrations.
-    #[command(subcommand)]
-    Integration(crate::integration::IntegrationCommand),
-
     /// Create and manage scheduled Oz agents. Scheduled agents run a user-defined task periodically, according to a cron schedule.
     ///
     /// As a shorthand, the `schedule` command behaves identically to `schedule create`.
@@ -523,10 +463,6 @@ pub enum CliCommand {
     /// Issue and manage federated identity tokens.
     #[command(subcommand)]
     Federate(crate::federate::FederateCommand),
-
-    /// Support commands for agent harnesses to integrate with Oz.
-    #[command(hide = true)]
-    HarnessSupport(crate::harness_support::HarnessSupportArgs),
 
     /// Manage artifacts.
     #[command(subcommand)]

@@ -350,7 +350,7 @@ if [ -z "$WARP_BOOTSTRAPPED" ]; then
       fi
       # Set the title. Be sure to make the title a %s argument to prevent title content from ending up
       # in the block output, see:
-      # https://linear.app/warpdotdev/issue/WAR-6064/bash-commands-having-esc-write-the-command-to-the-block-output
+      # Internal issue WAR-6064.
       printf "\033]0;%s\a" "$title"
     }
 

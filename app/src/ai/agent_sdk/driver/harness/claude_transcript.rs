@@ -1,7 +1,7 @@
 //! Claude Code transcript layout + rehydration helpers.
 //!
 //! This module owns:
-//! - [`ClaudeTranscriptEnvelope`] — the on-wire/on-GCS shape of a saved Claude session
+//! - [`ClaudeTranscriptEnvelope`] — the serialized shape of a saved Claude session
 //!   (main jsonl entries + subagent jsonl files + per-agent todo JSONs), plus reader/writer
 //!   functions that interoperate with Claude's own `~/.claude` layout.
 //! - [`ClaudeResumeInfo`] — everything the harness runner needs to resume an existing
@@ -12,8 +12,8 @@
 //!   versions vary in how they use this index (claude-code#33912, #39667, #5768); we write
 //!   a conservative entry and log on failure.
 //!
-//! Split out from `claude_code.rs` so the `AIClient` transcript-fetch impl can deserialize
-//! envelopes without pulling in the rest of the harness runner.
+//! Split out from `claude_code.rs` so transcript helpers stay independent from the
+//! rest of the harness runner.
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -26,7 +26,7 @@ use warp_core::safe_warn;
 
 use crate::ai::agent::conversation::AIConversationId;
 
-/// JSON envelope sent to the server representing a complete Claude Code session.
+/// JSON envelope representing a complete Claude Code session.
 ///
 /// Bundles the main session transcript, any subagent transcripts, and
 /// per-agent TODO lists assembled from the Claude state directory.
@@ -49,14 +49,11 @@ pub(crate) struct ClaudeTranscriptEnvelope {
 
 /// Everything needed to resume an existing Claude conversation.
 ///
-/// Populated from a `--conversation` id after the client fetches the stored envelope from
-/// the server. Passed into `ClaudeHarnessRunner::new` so the runner reuses the existing
-/// session and server conversation ids instead of minting fresh ones.
+/// Passed into `ClaudeHarnessRunner::new` so the runner can rehydrate the existing
+/// session before launching `claude --resume`.
 #[derive(Debug)]
 pub(crate) struct ClaudeResumeInfo {
-    /// The Warp server-side conversation id. The runner stores this instead of calling
-    /// `create_external_conversation` so subsequent transcript/block-snapshot uploads overwrite
-    /// the same GCS objects.
+    /// Conversation id associated with the local resumed session.
     pub(crate) conversation_id: AIConversationId,
     /// The Claude session uuid to pass to `claude --resume`. Matches `envelope.uuid`.
     pub(crate) session_id: Uuid,

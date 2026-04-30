@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fs;
 
 use futures::executor::block_on;
@@ -26,32 +25,6 @@ fn shared_checksum_state_finalize_returns_error_when_called_twice() {
         encode_crc32c_base64(CRC32C.checksum(b"artifact payload"))
     );
     assert!(err.to_string().contains("checksum already finalized"));
-}
-
-#[test]
-fn upload_to_target_replays_headers_for_byte_uploads() {
-    block_on(async {
-        let mut server = Server::new();
-        let mock = server
-            .mock("POST", "/upload")
-            .match_header("x-test-header", "expected-header")
-            .match_body("serialized body")
-            .with_status(200)
-            .create();
-
-        let client = http_client::Client::new_for_test();
-        let target = UploadTarget {
-            url: format!("{}/upload", server.url()),
-            method: "POST".to_string(),
-            headers: HashMap::from([("x-test-header".to_string(), "expected-header".to_string())]),
-        };
-
-        upload_to_target(&client, &target, "serialized body".to_string())
-            .await
-            .unwrap();
-
-        mock.assert();
-    });
 }
 
 #[test]

@@ -4,10 +4,8 @@ use warpui::elements::Icon as WarpUiIcon;
 pub enum ExternalProductIcon {
     Heroku,
     Notion,
-    Linear,
     Figma,
     Github,
-    Slack,
 }
 
 impl ExternalProductIcon {
@@ -16,10 +14,8 @@ impl ExternalProductIcon {
         match s_lower.as_str() {
             "heroku" => Some(ExternalProductIcon::Heroku),
             "notion" => Some(ExternalProductIcon::Notion),
-            "linear" => Some(ExternalProductIcon::Linear),
             "figma" => Some(ExternalProductIcon::Figma),
             "github" => Some(ExternalProductIcon::Github),
-            "slack" => Some(ExternalProductIcon::Slack),
             _other => None,
         }
     }
@@ -28,10 +24,8 @@ impl ExternalProductIcon {
         match self {
             ExternalProductIcon::Heroku => "bundled/svg/heroku.svg",
             ExternalProductIcon::Notion => "bundled/svg/notion.svg",
-            ExternalProductIcon::Linear => "bundled/svg/linear.svg",
             ExternalProductIcon::Figma => "bundled/svg/figma.svg",
             ExternalProductIcon::Github => "bundled/svg/github.svg",
-            ExternalProductIcon::Slack => "bundled/svg/slack-logo.svg",
         }
     }
 

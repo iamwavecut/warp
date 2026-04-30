@@ -1503,8 +1503,8 @@ pub struct Input {
     /// Whether the most recent intelligent autosuggestion was accepted or not.
     /// Cleared once a command is run.
     was_intelligent_autosuggestion_accepted: bool,
-    /// We store info about the last intelligent autosuggestion because we need it for
-    /// data collection when the command completes, but state is cleared when the command is executed.
+    /// We store info about the last intelligent autosuggestion because the command
+    /// completion path consumes it after state is cleared.
     last_intelligent_autosuggestion_result: Option<IntelligentAutosuggestionResult>,
     next_command_model: ModelHandle<NextCommandModel>,
 
@@ -6647,7 +6647,7 @@ impl Input {
     /// This is a short-term fix and should be addressed in a more comprehensive way that does
     /// not rely on the styling of the input.
     ///
-    /// See [CLD-997](https://linear.app/warpdotdev/issue/CLD-997)
+    /// See internal issue CLD-997.
     fn build_text_run_ranges_for_workflows(
         &self,
         text_style_runs: &[TextRun],
@@ -12261,7 +12261,7 @@ impl Input {
         true
     }
 
-    /// Uploads image and file attachments to GCS via presigned URLs, then emits `SendAgentPrompt`
+    /// Uploads image and file attachments via presigned URLs, then emits `SendAgentPrompt`
     /// with the resulting `FileReference` attachments appended.
     fn upload_files_then_send_prompt(
         task_id: crate::ai::ambient_agents::AmbientAgentTaskId,

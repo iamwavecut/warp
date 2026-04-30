@@ -12,9 +12,6 @@ use oauth2::TokenResponse;
 use thiserror::Error;
 use warp_core::errors::{AnyhowErrorExt, ErrorExt};
 use warp_graphql::client::Operation;
-use warp_graphql::mutations::expire_api_key::{
-    ExpireApiKey, ExpireApiKeyResult, ExpireApiKeyVariables,
-};
 use warp_graphql::queries::get_conversation_usage::{
     ConversationUsage, GetConversationUsage, GetConversationUsageVariables, UserResult,
 };
@@ -31,22 +28,15 @@ use warp_graphql::mutations::{
         AnonymousUserType, CreateAnonymousUser, CreateAnonymousUserResult,
         CreateAnonymousUserVariables,
     },
-    generate_api_key::{
-        GenerateApiKey, GenerateApiKeyInput, GenerateApiKeyResult, GenerateApiKeyVariables,
-    },
     mint_custom_token::{MintCustomTokenResult, MintCustomTokenVariables},
 };
 use warp_graphql::object_permissions::OwnerType;
-use warp_graphql::queries::api_keys::{
-    ApiKeyProperties, ApiKeyPropertiesResult, ApiKeys, ApiKeysVariables,
-};
 use warp_graphql::queries::get_user::{GetUser, GetUserVariables, UserOutput as GqlUserOutput};
 use warp_graphql::queries::get_user_settings::{GetUserSettings, GetUserSettingsVariables};
 use warpui::r#async::BoxFuture;
 
 use crate::auth::UserUid;
 use crate::server::graphql::{default_request_options, get_user_facing_error_message};
-use crate::server::ids::ApiKeyUid;
 use crate::server::server_api::register_error;
 use crate::server::server_api::EXPERIMENT_ID_HEADER;
 use crate::settings::PrivacySettingsSnapshot;
@@ -120,7 +110,6 @@ pub trait AuthClient: 'static + Send + Sync {
     /// to interact with particular features.
     async fn create_anonymous_user(
         &self,
-        referral_code: Option<String>,
         anonymous_user_type: AnonymousUserType,
     ) -> Result<CreateAnonymousUserResult>;
 
@@ -167,17 +156,6 @@ pub trait AuthClient: 'static + Send + Sync {
         last_updated_end_timestamp: Option<warp_graphql::scalars::Time>,
     ) -> Result<Vec<ConversationUsage>>;
 
-    async fn list_api_keys(&self) -> Result<Vec<ApiKeyProperties>>;
-
-    async fn create_api_key(
-        &self,
-        name: String,
-        team_id: Option<cynic::Id>,
-        expires_at: Option<warp_graphql::scalars::Time>,
-    ) -> Result<GenerateApiKeyResult>;
-
-    async fn expire_api_key(&self, key_uid: &ApiKeyUid) -> Result<ExpireApiKeyResult>;
-
     async fn get_or_create_ambient_workload_token(&self) -> Result<Option<String>>;
 }
 
@@ -186,7 +164,6 @@ pub trait AuthClient: 'static + Send + Sync {
 impl AuthClient for ServerApi {
     async fn create_anonymous_user(
         &self,
-        _referral_code: Option<String>,
         _anonymous_user_type: AnonymousUserType,
     ) -> Result<CreateAnonymousUserResult> {
         anyhow::bail!("anonymous user creation is disabled in the local-first build")
@@ -237,23 +214,6 @@ impl AuthClient for ServerApi {
         Ok(Vec::new())
     }
 
-    async fn list_api_keys(&self) -> Result<Vec<ApiKeyProperties>> {
-        Ok(Vec::new())
-    }
-
-    async fn create_api_key(
-        &self,
-        _name: String,
-        _team_id: Option<cynic::Id>,
-        _expires_at: Option<warp_graphql::scalars::Time>,
-    ) -> Result<GenerateApiKeyResult> {
-        anyhow::bail!("server API key creation is disabled in the local-first build")
-    }
-
-    async fn expire_api_key(&self, _key_uid: &ApiKeyUid) -> Result<ExpireApiKeyResult> {
-        anyhow::bail!("server API key expiration is disabled in the local-first build")
-    }
-
     async fn get_or_create_ambient_workload_token(&self) -> Result<Option<String>> {
         Ok(None)
     }
@@ -269,10 +229,6 @@ async fn exchange_credentials(
             let tokens = fetch_auth_tokens(client, firebase_token).await?;
             Ok(Credentials::Firebase(tokens))
         }
-        LoginToken::ApiKey(key) => Ok(Credentials::ApiKey {
-            key,
-            owner_type: None,
-        }),
         LoginToken::SessionCookie => Ok(Credentials::SessionCookie),
     }
 }

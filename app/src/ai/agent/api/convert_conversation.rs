@@ -59,7 +59,7 @@ pub enum RestorationMode {
 }
 
 /// Converts a cloud ConversationData to an AIConversation.
-/// The `metadata` contains all server-side information about the conversation, including usage data.
+/// The `metadata` contains server-side information about the conversation.
 /// `restoration_mode` controls how the server metadata is handled - we should only keep the metadata when continuing, not forking
 pub fn convert_conversation_data_to_ai_conversation(
     conversation_id: AIConversationId,

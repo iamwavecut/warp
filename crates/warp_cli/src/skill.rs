@@ -100,7 +100,7 @@ impl SkillSpec {
     /// Extracts the displayable skill name from this spec.
     ///
     /// # Returns
-    /// - For path-style identifiers (e.g., `.agents/skills/slack-triage/SKILL.md`): returns the parent directory name
+    /// - For path-style identifiers (e.g., `.agents/skills/local-triage/SKILL.md`): returns the parent directory name
     /// - For simple names: returns the name as-is
     /// - For invalid paths: falls back to file stem or the identifier itself
     pub fn skill_name(&self) -> String {

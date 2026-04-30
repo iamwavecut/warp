@@ -32,7 +32,6 @@ use crate::ai::request_usage_model::RequestLimitInfo;
 #[cfg(not(feature = "agent_mode_evals"))]
 use crate::ai::BonusGrant;
 use crate::persistence::model::ConversationUsageMetadata;
-use crate::terminal::model::block::SerializedBlock;
 #[cfg(not(feature = "agent_mode_evals"))]
 use crate::{
     ai::request_usage_model::BonusGrantScope,
@@ -67,7 +66,6 @@ use warp_graphql::queries::get_request_limit_info::{
     GetRequestLimitInfo, GetRequestLimitInfoVariables,
 };
 use warp_graphql::{
-    ai::{AgentTaskState, PlatformErrorCode},
     mutations::{
         confirm_file_artifact_upload::{
             ConfirmFileArtifactUpload, ConfirmFileArtifactUploadInput,
@@ -106,15 +104,6 @@ use warp_graphql::{
             PopulateMerkleTreeCache, PopulateMerkleTreeCacheResult,
             PopulateMerkleTreeCacheVariables,
         },
-        request_bonus::{
-            ProvideNegativeFeedbackResponseForAiConversation,
-            ProvideNegativeFeedbackResponseForAiConversationInput,
-            ProvideNegativeFeedbackResponseForAiConversationVariables, RequestsRefundedResult,
-        },
-        update_agent_task::{
-            AgentTaskStatusMessageInput, UpdateAgentTask, UpdateAgentTaskInput,
-            UpdateAgentTaskResult, UpdateAgentTaskVariables,
-        },
         update_merkle_tree::{
             MerkleTreeNode, UpdateMerkleTree, UpdateMerkleTreeInput, UpdateMerkleTreeResult,
             UpdateMerkleTreeVariables,
@@ -151,30 +140,6 @@ pub use crate::ai::ambient_agents::{
 };
 
 const AI_ASSISTANT_REQUEST_TIMEOUT_SECONDS: u64 = 30;
-
-/// A status update for a task, optionally including a platform error code.
-pub struct TaskStatusUpdate {
-    pub message: String,
-    pub error_code: Option<PlatformErrorCode>,
-}
-
-impl TaskStatusUpdate {
-    /// Create a status update with just a message (no error code).
-    pub fn message(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            error_code: None,
-        }
-    }
-
-    /// Create a status update with a message and error code.
-    pub fn with_error_code(message: impl Into<String>, error_code: PlatformErrorCode) -> Self {
-        Self {
-            message: message.into(),
-            error_code: Some(error_code),
-        }
-    }
-}
 
 /// JSON payload sent to the public `POST /agent/run` API.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -773,12 +738,6 @@ pub trait AIClient: 'static + Send + Sync {
         repo_metadata: RepoMetadata,
     ) -> anyhow::Result<HashMap<ContentHash, bool>>;
 
-    async fn provide_negative_feedback_response_for_ai_conversation(
-        &self,
-        conversation_id: String,
-        request_ids: Vec<String>,
-    ) -> anyhow::Result<i32, anyhow::Error>;
-
     async fn create_agent_task(
         &self,
         prompt: String,
@@ -786,15 +745,6 @@ pub trait AIClient: 'static + Send + Sync {
         parent_run_id: Option<String>,
         config: Option<AgentConfigSnapshot>,
     ) -> anyhow::Result<AmbientAgentTaskId, anyhow::Error>;
-
-    async fn update_agent_task(
-        &self,
-        task_id: AmbientAgentTaskId,
-        task_state: Option<AgentTaskState>,
-        session_id: Option<session_sharing_protocol::common::SessionId>,
-        conversation_id: Option<String>,
-        status_message: Option<TaskStatusUpdate>,
-    ) -> anyhow::Result<(), anyhow::Error>;
 
     async fn spawn_agent(
         &self,
@@ -844,11 +794,6 @@ pub trait AIClient: 'static + Send + Sync {
         &self,
         server_conversation_token: ServerConversationToken,
     ) -> anyhow::Result<AIAgentConversationFormat, anyhow::Error>;
-
-    async fn get_block_snapshot(
-        &self,
-        server_conversation_token: ServerConversationToken,
-    ) -> anyhow::Result<SerializedBlock, anyhow::Error>;
 
     async fn delete_ai_conversation(
         &self,
@@ -1306,33 +1251,6 @@ impl AIClient for ServerApi {
         }
     }
 
-    async fn provide_negative_feedback_response_for_ai_conversation(
-        &self,
-        conversation_id: String,
-        request_ids: Vec<String>,
-    ) -> anyhow::Result<i32, anyhow::Error> {
-        let variables = ProvideNegativeFeedbackResponseForAiConversationVariables {
-            input: ProvideNegativeFeedbackResponseForAiConversationInput {
-                conversation_id: conversation_id.into(),
-                request_ids: request_ids.into_iter().map(Into::into).collect(),
-            },
-            request_context: get_request_context(),
-        };
-
-        let operation = ProvideNegativeFeedbackResponseForAiConversation::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
-
-        match response.provide_negative_feedback_response_for_ai_conversation {
-            RequestsRefundedResult::RequestsRefundedOutput(output) => Ok(output.requests_refunded),
-            RequestsRefundedResult::UserFacingError(e) => {
-                Err(anyhow!(get_user_facing_error_message(e)))
-            }
-            RequestsRefundedResult::Unknown => Err(anyhow!(
-                "failed to provide negative feedback response for ai conversation"
-            )),
-        }
-    }
-
     async fn create_agent_task(
         &self,
         prompt: String,
@@ -1369,40 +1287,6 @@ impl AIClient for ServerApi {
                 Err(anyhow!(get_user_facing_error_message(e)))
             }
             CreateAgentTaskResult::Unknown => Err(anyhow!("failed to create agent task")),
-        }
-    }
-
-    async fn update_agent_task(
-        &self,
-        task_id: AmbientAgentTaskId,
-        task_state: Option<AgentTaskState>,
-        session_id: Option<session_sharing_protocol::common::SessionId>,
-        conversation_id: Option<String>,
-        status_message: Option<TaskStatusUpdate>,
-    ) -> anyhow::Result<(), anyhow::Error> {
-        let variables = UpdateAgentTaskVariables {
-            input: UpdateAgentTaskInput {
-                task_id: task_id.into(),
-                task_state,
-                session_id: session_id.map(|id| id.to_string().into()),
-                conversation_id: conversation_id.map(|id| id.into()),
-                status_message: status_message.map(|update| AgentTaskStatusMessageInput {
-                    message: update.message,
-                    error_code: update.error_code,
-                }),
-            },
-            request_context: get_request_context(),
-        };
-
-        let operation = UpdateAgentTask::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
-
-        match response.update_agent_task {
-            UpdateAgentTaskResult::UpdateAgentTaskOutput(_) => Ok(()),
-            UpdateAgentTaskResult::UserFacingError(e) => {
-                Err(anyhow!(get_user_facing_error_message(e)))
-            }
-            UpdateAgentTaskResult::Unknown => Err(anyhow!("failed to update agent task")),
         }
     }
 
@@ -1602,25 +1486,6 @@ impl AIClient for ServerApi {
                 Err(anyhow!("Failed to get AI conversation format"))
             }
         }
-    }
-
-    async fn get_block_snapshot(
-        &self,
-        server_conversation_token: ServerConversationToken,
-    ) -> anyhow::Result<SerializedBlock, anyhow::Error> {
-        let conversation_id = server_conversation_token.as_str();
-        // Make sure to use `SerializedBlock::from_json` to correctly handle the serialized
-        // command and output grid contents.
-        let response = self
-            .get_public_api_response(&format!(
-                "agent/conversations/{conversation_id}/block-snapshot"
-            ))
-            .await?;
-        let json_bytes = response
-            .bytes()
-            .await
-            .map_err(|e| anyhow!("Failed to read block snapshot for {conversation_id}: {e}"))?;
-        SerializedBlock::from_json(&json_bytes)
     }
 
     async fn delete_ai_conversation(

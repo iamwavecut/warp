@@ -238,10 +238,6 @@ pub enum RunSourceArg {
     Api,
     #[value(name = "cli")]
     Cli,
-    #[value(name = "slack")]
-    Slack,
-    #[value(name = "linear")]
-    Linear,
     #[value(name = "scheduled-agent")]
     ScheduledAgent,
     #[value(name = "web-app")]

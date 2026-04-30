@@ -139,7 +139,6 @@ pub struct WorkspaceSettings {
     pub is_discoverable: bool,
     pub is_invite_link_enabled: bool,
     pub llm_settings: LlmSettings,
-    pub ugc_collection_settings: UgcCollectionSettings,
     pub cloud_conversation_storage_settings: CloudConversationStorageSettings,
     pub ai_permissions_settings: AiPermissionsSettings,
     pub link_sharing_settings: LinkSharingSettings,
@@ -153,22 +152,8 @@ pub struct WorkspaceSettings {
 }
 
 #[derive(cynic::QueryFragment, Debug, Clone)]
-pub struct UgcCollectionSettings {
-    pub setting: UgcCollectionEnablementSetting,
-}
-
-#[derive(cynic::QueryFragment, Debug, Clone)]
 pub struct CloudConversationStorageSettings {
     pub setting: AdminEnablementSetting,
-}
-
-#[derive(cynic::Enum, Clone, Debug)]
-pub enum UgcCollectionEnablementSetting {
-    Disable,
-    Enable,
-    RespectUserSetting,
-    #[cynic(fallback)]
-    Other(String),
 }
 
 #[derive(cynic::QueryFragment, Debug, Clone)]

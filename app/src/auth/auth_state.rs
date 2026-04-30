@@ -10,7 +10,6 @@ use anyhow::anyhow;
 use chrono::{DateTime, Duration, Utc};
 use parking_lot::RwLock;
 use uuid::Uuid;
-use warp_graphql::object_permissions::OwnerType;
 use warpui::{AppContext, Entity, SingletonEntity};
 
 use crate::{
@@ -80,7 +79,7 @@ impl AuthState {
     /// There is no remote account branch in this build: every app session runs
     /// as the local system user with local unauthenticated credentials.
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
-    pub fn initialize(ctx: &AppContext, _api_key: Option<String>) -> Self {
+    pub fn initialize(ctx: &AppContext) -> Self {
         let state = Self::new(ctx);
         state.set_user(Some(User::local()));
         state.set_credentials(Some(Credentials::Local));
@@ -116,7 +115,6 @@ impl AuthState {
             // Remove persisted auth state if it is unset in-memory.
             (None, None) => PersistAction::Remove,
             // Do not persist if using API keys, session cookies, or test credentials.
-            (Some(_), Some(Credentials::ApiKey { .. })) => PersistAction::DoNothing,
             (Some(_), Some(Credentials::SessionCookie)) => PersistAction::DoNothing,
             #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
             (Some(_), Some(Credentials::Test)) => PersistAction::DoNothing,
@@ -394,20 +392,6 @@ impl AuthState {
         self.user.read().as_ref().map(|user| user.is_on_work_domain)
     }
 
-    /// Returns whether the current user is authenticated via API key.
-    pub fn is_api_key_authenticated(&self) -> bool {
-        matches!(
-            self.credentials.read().as_ref(),
-            Some(Credentials::ApiKey { .. })
-        )
-    }
-
-    /// Returns the API key if using API key authentication.
-    pub fn api_key(&self) -> Option<String> {
-        let credentials = self.credentials.read();
-        credentials.as_ref()?.as_api_key().map(|s| s.to_owned())
-    }
-
     /// Returns the type of principal (user or service account).
     pub fn principal_type(&self) -> Option<PrincipalType> {
         self.user.read().as_ref().map(|user| user.principal_type)
@@ -416,11 +400,6 @@ impl AuthState {
     /// Returns whether the authenticated principal is a service account.
     pub fn is_service_account(&self) -> bool {
         matches!(self.principal_type(), Some(PrincipalType::ServiceAccount))
-    }
-
-    /// Returns the owner type of the currently-authenticated API key.
-    pub fn api_key_owner_type(&self) -> Option<OwnerType> {
-        self.credentials.read().as_ref()?.api_key_owner_type()
     }
 }
 

@@ -12,7 +12,7 @@ use warpui::async_assert;
 use super::new_builder;
 
 /// Checks if the Ask Warp AI keybinding works correctly when a block is selected.
-/// This is a regression test: https://linear.app/warpdotdev/issue/WAR-6758/warp-ai-ask-from-block-keybinding-doesnt-work-as-expected.
+/// This is a regression test for internal issue WAR-6758.
 pub fn test_ask_warp_ai_keybinding_for_selected_block() -> Builder {
     new_builder()
         .with_step(wait_until_bootstrapped_single_pane_for_tab(0))

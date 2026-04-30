@@ -237,18 +237,6 @@ pub const CHANGELOG: StaticCommand = StaticCommand {
     argument: None,
 };
 
-// Accepts an optional argument so that buffers like `/feedback some text` still parse to
-// this command (the trailing text is ignored on execution). Without this, typing any
-// argument after `/feedback` would fall through and be treated as plain input.
-pub static FEEDBACK: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand {
-    name: "/feedback",
-    description: "Send feedback",
-    icon_path: "bundled/svg/feedback.svg",
-    availability: Availability::ALWAYS,
-    auto_enter_ai_mode: false,
-    argument: Some(Argument::optional().with_execute_on_selection()),
-});
-
 pub const OPEN_REPO: StaticCommand = StaticCommand {
     name: "/open-repo",
     description: "Switch to another indexed repository",
@@ -552,7 +540,6 @@ fn all_commands() -> Vec<StaticCommand> {
 
     if false {
         commands.extend([COST, USAGE]);
-        commands.push(FEEDBACK.clone());
     }
 
     if FeatureFlag::LocalDockerSandbox.is_enabled() {

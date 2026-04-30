@@ -42,7 +42,7 @@ const BYTE_ORDER_MARK: &str = "\u{FEFF}";
 /// itself).
 ///
 /// We use RC-file based bootstrap for PowerShell because chars written to the PTY get randomly
-/// ignored. See PLAT-757 in Linear.
+/// ignored. See internal issue PLAT-757.
 ///
 /// We use RC-file based bootstrap for `poetry shell` subshells because the underlying library used
 /// to spawn a subshell by `poetry shell` uses blocking PTY reads and writes, which results in a

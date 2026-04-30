@@ -228,23 +228,3 @@ fn test_persist_skips_when_refresh_token_is_empty() {
         });
     });
 }
-
-#[test]
-fn test_persist_skips_when_api_key_authenticated() {
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-
-        app.update(|ctx| {
-            AuthStateProvider::as_ref(ctx)
-                .get()
-                .set_credentials(Some(Credentials::ApiKey {
-                    key: "wk-test-key".to_owned(),
-                    owner_type: None,
-                }));
-        });
-
-        AuthManager::handle(&app).update(&mut app, |auth_manager, ctx| {
-            auth_manager.persist(ctx);
-        });
-    });
-}

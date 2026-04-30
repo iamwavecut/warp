@@ -421,12 +421,6 @@ pub enum FeatureFlag {
     /// Enables the one-time modal on app startup for existing users for the Code launch.
     CodeLaunchModal,
 
-    /// Enables API key authentication for Agent SDK
-    APIKeyAuthentication,
-
-    /// Enables API key management UI in settings
-    APIKeyManagement,
-
     /// Enables OAuth support for MCP.
     McpOauth,
 
@@ -475,12 +469,6 @@ pub enum FeatureFlag {
 
     /// Enables the /compact slash command.
     SummarizationConversationCommand,
-
-    /// Enables the provider command for linking third-party services.
-    ProviderCommand,
-
-    /// Enables the integration command for managing agent integrations.
-    IntegrationCommand,
 
     /// Enables the artifact command for uploading and downloading CLI artifacts.
     ArtifactCommand,
@@ -734,14 +722,9 @@ pub enum FeatureFlag {
     /// CLIs (e.g. `claude`) to execute prompts instead of Warp's agent harness.
     AgentHarness,
 
-    /// Enables workspace- and block-snapshot handoff between cloud agent runs
-    /// and the local Warp client.
+    /// Enables workspace handoff between agent runs and the local Warp client.
     /// When enabled:
-    /// - The `AgentDriver` uploads a workspace snapshot (repo diffs + files) at the end of every
-    ///   cloud agent run, regardless of harness.
     /// - Subsequent executions download the prior execution's handoff snapshot attachments.
-    /// - Third-party harness conversations hydrate their terminal output inline by fetching a
-    ///   block snapshot from the server.
     OzHandoff,
 
     /// Enables the upgraded CLI agent session tracking and notifications infrastructure.
@@ -854,7 +837,6 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::RunGeneratorsWithCmdExe,
     FeatureFlag::NLDClassifierModelEnabled,
     FeatureFlag::Projects,
-    FeatureFlag::ProviderCommand,
     FeatureFlag::ArtifactCommand,
     FeatureFlag::MarkdownImages,
     FeatureFlag::FileAndDiffSetComments,

@@ -18,7 +18,6 @@ use thiserror::Error;
 
 #[cfg(not(target_family = "wasm"))]
 use super::ai::FileArtifactUploadTargetInfo;
-use super::harness_support::UploadTarget;
 
 /// Typed error for HTTP-backed operations so downstream classifiers (e.g. the agent-SDK
 /// retry helper) can decide transient vs permanent failures without string-parsing the
@@ -43,20 +42,6 @@ struct NormalizedUploadTarget<'a> {
     url: &'a str,
     method: &'a str,
     headers: Vec<(&'a str, &'a str)>,
-}
-
-impl<'a> From<&'a UploadTarget> for NormalizedUploadTarget<'a> {
-    fn from(target: &'a UploadTarget) -> Self {
-        Self {
-            url: &target.url,
-            method: &target.method,
-            headers: target
-                .headers
-                .iter()
-                .map(|(name, value)| (name.as_str(), value.as_str()))
-                .collect(),
-        }
-    }
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -177,24 +162,6 @@ async fn send_upload_request(
         .context(error_context.transport)?;
 
     ensure_upload_succeeded(response, error_context).await
-}
-
-pub(crate) async fn upload_to_target(
-    http_client: &http_client::Client,
-    target: &UploadTarget,
-    body: impl Into<reqwest::Body>,
-) -> Result<()> {
-    send_upload_request(
-        http_client,
-        target.into(),
-        body,
-        None,
-        UploadErrorContext {
-            transport: "Failed to upload to presigned URL",
-            failure: "Upload",
-        },
-    )
-    .await
 }
 
 #[cfg(not(target_family = "wasm"))]

@@ -1,4 +1,4 @@
-use crate::{scalars::Time, schema, workspace::UgcCollectionEnablementSetting};
+use crate::{scalars::Time, schema};
 
 #[derive(cynic::QueryFragment, Debug, Clone)]
 pub struct BillingMetadata {
@@ -99,7 +99,6 @@ pub struct Tier {
     pub shared_workflows_policy: Option<SharedWorkflowsPolicy>,
     pub session_sharing_policy: Option<SessionSharingPolicy>,
     pub ai_autonomy_policy: Option<AiAutonomyPolicy>,
-    pub ugc_data_collection_policy: Option<UgcDataCollectionPolicy>,
     pub usage_based_pricing_policy: Option<UsageBasedPricingPolicy>,
     pub codebase_context_policy: Option<CodebaseContextPolicy>,
     pub byo_api_key_policy: Option<ByoApiKeyPolicy>,
@@ -147,12 +146,6 @@ pub struct WarpAiPolicy {
     pub is_prompt_suggestions_toggleable: bool,
     pub is_next_command_enabled: bool,
     pub is_voice_enabled: bool,
-}
-
-#[derive(cynic::QueryFragment, Debug, Clone)]
-pub struct UgcDataCollectionPolicy {
-    pub default_setting: UgcCollectionEnablementSetting,
-    pub toggleable: bool,
 }
 
 #[derive(cynic::QueryFragment, Debug, Clone)]

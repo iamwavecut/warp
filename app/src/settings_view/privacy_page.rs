@@ -1318,7 +1318,7 @@ impl SettingsWidget for NetworkLogWidget {
     type View = PrivacyPageView;
 
     fn search_terms(&self) -> &str {
-        "network log audit console data collection"
+        "network log audit console"
     }
 
     fn render(

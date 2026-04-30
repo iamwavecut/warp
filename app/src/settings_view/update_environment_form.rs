@@ -256,14 +256,10 @@ enum SuggestImageState {
 }
 
 /// Indicates where the GitHub authorization flow was initiated from.
-/// This affects the redirect URL used after auth completes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AuthSource {
-    /// Auth initiated from the settings page (default behavior: redirect to settings)
     #[default]
     Settings,
-    /// Auth initiated from cloud agent setup (skip redirect, just refresh in place)
-    CloudSetup,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -720,8 +716,6 @@ impl UpdateEnvironmentForm {
     }
 
     /// Sets the auth source, which affects the redirect URL used after GitHub auth completes.
-    /// When set to `CloudSetup`, the redirect URL will include a source parameter that tells
-    /// the URI handler to skip opening the settings page.
     pub fn set_auth_source(&mut self, source: AuthSource) {
         self.auth_source = source;
     }
@@ -2763,14 +2757,8 @@ impl UpdateEnvironmentForm {
         match platform {
             OAuthNextPlatform::Native => {
                 let base = format!("{scheme_for_next}://{}", target.next_path());
-                let mut url = Url::parse(&base).ok()?;
-
-                if matches!(auth_source, AuthSource::CloudSetup) {
-                    url.query_pairs_mut()
-                        .append_pair("source", crate::uri::CLOUD_SETUP_SOURCE);
-                }
-
-                Some(url.to_string())
+                let _ = auth_source;
+                Some(Url::parse(&base).ok()?.to_string())
             }
             OAuthNextPlatform::Web => {
                 let mut url = Url::parse(&ChannelState::server_root_url()).ok()?;
@@ -2782,9 +2770,6 @@ impl UpdateEnvironmentForm {
                         {
                             let mut pairs = url.query_pairs_mut();
                             pairs.append_pair("oauth", "github");
-                            if matches!(auth_source, AuthSource::CloudSetup) {
-                                pairs.append_pair("source", crate::uri::CLOUD_SETUP_SOURCE);
-                            }
                         }
                     }
                     GithubAuthRedirectTarget::FocusCloudMode => {

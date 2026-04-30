@@ -8,7 +8,6 @@ use parking_lot::RwLock;
 use pathfinder_color::ColorU;
 use warp_cli::agent::Harness;
 use warp_cli::skill::SkillSpec;
-use warp_core::channel::ChannelState;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::color::coloru_with_opacity;
 use warpui::{
@@ -56,7 +55,7 @@ use crate::util::bindings::CustomAction;
 use crate::util::time_format::{format_approx_duration_from_now, human_readable_precise_duration};
 #[cfg(not(target_family = "wasm"))]
 use crate::view_components::action_button::PrimaryTheme;
-use crate::view_components::action_button::{ActionButton, ButtonSize, SecondaryTheme};
+use crate::view_components::action_button::{ActionButton, ButtonSize};
 use crate::view_components::copyable_text_field::{
     render_copyable_text_field, CopyableTextFieldConfig, COPY_FEEDBACK_DURATION,
 };
@@ -124,7 +123,6 @@ struct PanelMouseStates {
     copy_setup_commands: MouseStateHandle,
     inference_info_tooltip: MouseStateHandle,
     compute_info_tooltip: MouseStateHandle,
-    skill_link: MouseStateHandle,
     skill_source_link: MouseStateHandle,
 }
 
@@ -457,7 +455,6 @@ pub enum ConversationDetailsPanelAction {
     CopySelectedText,
     #[cfg(not(target_family = "wasm"))]
     ContinueLocally,
-    OpenInOz,
 }
 
 pub fn init(app: &mut AppContext) {
@@ -484,8 +481,6 @@ pub struct ConversationDetailsPanel {
     show_open_button: bool,
     #[cfg(not(target_family = "wasm"))]
     continue_locally_button: ViewHandle<ActionButton>,
-    /// Text button "View in Oz" shown next to "Continue locally".
-    open_in_oz_button: ViewHandle<ActionButton>,
     /// Tracks when each copy button was last clicked (for checkmark feedback).
     copy_feedback_times: HashMap<CopyButtonKind, Instant>,
     /// Selection state for cmd+C copy.
@@ -516,14 +511,6 @@ impl ConversationDetailsPanel {
                     ctx.dispatch_typed_action(ConversationDetailsPanelAction::ContinueLocally);
                 })
         });
-        let open_in_oz_button = ctx.add_typed_action_view(|_| {
-            ActionButton::new("View in Oz", SecondaryTheme)
-                .with_tooltip("View this run in the Oz web app")
-                .with_size(ButtonSize::Small)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(ConversationDetailsPanelAction::OpenInOz);
-                })
-        });
         #[cfg(not(target_family = "wasm"))]
         ctx.subscribe_to_model(&AISettings::handle(ctx), |_, _, event, ctx| {
             if matches!(event, AISettingsChangedEvent::IsAnyAIEnabled { .. }) {
@@ -539,7 +526,6 @@ impl ConversationDetailsPanel {
             show_open_button,
             #[cfg(not(target_family = "wasm"))]
             continue_locally_button,
-            open_in_oz_button,
             resizable_state_handle: resizable_state_handle(initial_width),
             scroll_state: ClippedScrollStateHandle::default(),
             copy_feedback_times: HashMap::new(),
@@ -635,20 +621,6 @@ impl ConversationDetailsPanel {
             ArtifactButtonsRowEvent::DownloadFile { artifact_uid } => {
                 crate::ai::artifacts::download_file_artifact(artifact_uid, ctx);
             }
-        }
-    }
-
-    /// Builds the Oz web UI URL for a task, if a task_id is available.
-    fn oz_run_url(data: &ConversationDetailsData) -> Option<String> {
-        if let PanelMode::Task {
-            task_id: Some(task_id),
-            ..
-        } = &data.mode
-        {
-            let oz_root_url = ChannelState::oz_root_url();
-            Some(format!("{oz_root_url}/runs/{task_id}"))
-        } else {
-            None
         }
     }
 
@@ -1006,21 +978,6 @@ impl ConversationDetailsPanel {
         .with_selectable(true)
         .finish();
 
-        let oz_root_url = ChannelState::oz_root_url();
-        let encoded_skill_name = urlencoding::encode(&skill_name);
-        let skill_url = format!("{oz_root_url}/agents/{encoded_skill_name}");
-
-        let oz_link = appearance
-            .ui_builder()
-            .link(
-                "Open in Oz".to_string(),
-                Some(skill_url),
-                None,
-                self.mouse_states.skill_link.clone(),
-            )
-            .build()
-            .finish();
-
         let separator = || {
             Container::new(
                 Text::new("•".to_string(), appearance.ui_font_family(), ui_font_size)
@@ -1035,9 +992,7 @@ impl ConversationDetailsPanel {
         let mut row = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_child(Container::new(icon).with_margin_right(4.).finish())
-            .with_child(Shrinkable::new(1., skill_name_text).finish())
-            .with_child(separator())
-            .with_child(Shrinkable::new(1., oz_link).finish());
+            .with_child(Shrinkable::new(1., skill_name_text).finish());
 
         // Add GitHub source link if we have enough info to construct it.
         if let (Some(org), Some(repo)) = (&skill_spec.org, &skill_spec.repo) {
@@ -1493,17 +1448,12 @@ impl View for ConversationDetailsPanel {
         let has_continue_locally = self.continue_locally_conversation_id(app).is_some();
         #[cfg(target_family = "wasm")]
         let has_continue_locally = false;
-        let has_oz_url = Self::oz_run_url(&self.data).is_some();
-
-        if has_continue_locally || has_oz_url {
+        if has_continue_locally {
             let mut buttons_wrap = Wrap::row().with_spacing(8.).with_run_spacing(8.);
 
             #[cfg(not(target_family = "wasm"))]
             if has_continue_locally {
                 buttons_wrap.add_child(ChildView::new(&self.continue_locally_button).finish());
-            }
-            if has_oz_url {
-                buttons_wrap.add_child(ChildView::new(&self.open_in_oz_button).finish());
             }
 
             header_row.add_child(
@@ -1936,11 +1886,6 @@ impl TypedActionView for ConversationDetailsPanel {
                     ctx.dispatch_typed_action(&WorkspaceAction::ContinueConversationLocally {
                         conversation_id,
                     });
-                }
-            }
-            ConversationDetailsPanelAction::OpenInOz => {
-                if let Some(url) = Self::oz_run_url(&self.data) {
-                    ctx.open_url(&url);
                 }
             }
         }

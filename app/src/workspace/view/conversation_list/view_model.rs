@@ -89,7 +89,7 @@ impl ConversationListViewModel {
                 item.get_session_status()
                     .is_none_or(|status| status == SessionStatus::Available)
             })
-            // Only show user-initiated sources (Slack, Linear, Interactive) or tasks that have
+            // Only show user-initiated sources or tasks that have
             // been manually opened from the management page.
             .filter(|item| {
                 let is_user_initiated = item.source().is_some_and(|s| s.is_user_initiated());

@@ -1,10 +1,7 @@
-use crate::ai::agent::conversation::AIConversationId;
-use crate::ai::agent::AIAgentExchangeId;
 use crate::server::server_api::ai::AIClient;
 use crate::settings::AISettings;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::workspaces::workspace::WorkspaceUid;
-use crate::BlocklistAIHistoryModel;
 use chrono::{DateTime, Utc};
 use instant::Instant;
 use serde::{Deserialize, Serialize};
@@ -179,8 +176,6 @@ fn local_request_limit_info() -> RequestLimitInfo {
 }
 
 pub struct AIRequestUsageModel {
-    ai_client: Arc<dyn AIClient>,
-
     /// The last time at which `request_limit_info` was updated.
     last_update_time: Option<Instant>,
 
@@ -198,20 +193,14 @@ impl Entity for AIRequestUsageModel {
 
 pub enum AIRequestUsageModelEvent {
     RequestUsageUpdated,
-    RequestBonusRefunded {
-        requests_refunded: i32,
-        server_conversation_id: String,
-        request_id: String,
-    },
 }
 
 impl AIRequestUsageModel {
-    pub fn new(ai_client: Arc<dyn AIClient>, ctx: &mut ModelContext<Self>) -> Self {
+    pub fn new(_ai_client: Arc<dyn AIClient>, ctx: &mut ModelContext<Self>) -> Self {
         let _ = get_cached_request_limit_info(ctx);
         let request_limit_info = local_request_limit_info();
 
         Self {
-            ai_client,
             request_limit_info,
             last_update_time: None,
             bonus_grants: vec![],
@@ -220,9 +209,8 @@ impl AIRequestUsageModel {
     }
 
     #[cfg(test)]
-    pub fn new_for_test(ai_client: Arc<dyn AIClient>, _ctx: &mut ModelContext<Self>) -> Self {
+    pub fn new_for_test(_ai_client: Arc<dyn AIClient>, _ctx: &mut ModelContext<Self>) -> Self {
         Self {
-            ai_client,
             last_update_time: None,
             request_limit_info: RequestLimitInfo::default(),
             bonus_grants: vec![],
@@ -254,96 +242,6 @@ impl AIRequestUsageModel {
         });
 
         ctx.emit(AIRequestUsageModelEvent::RequestUsageUpdated);
-    }
-
-    pub fn provide_negative_feedback_response_for_ai_conversation(
-        &mut self,
-        client_conversation_id: AIConversationId,
-        request_id: String,
-        client_exchange_id: AIAgentExchangeId,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let server_conversation_id = BlocklistAIHistoryModel::as_ref(ctx)
-            .conversation(&client_conversation_id)
-            .and_then(|conversation| conversation.server_conversation_token());
-
-        let Some(server_conversation_id) = server_conversation_id else {
-            return;
-        };
-        let server_conversation_id_string = server_conversation_id.as_str().to_string();
-        let server_conversation_id_string_clone = server_conversation_id_string.clone();
-
-        let request_ids = BlocklistAIHistoryModel::as_ref(ctx)
-            .conversation(&client_conversation_id)
-            .map(|conversation| {
-                let mut request_ids = vec![];
-
-                let target_exchange = conversation
-                    .root_task_exchanges()
-                    .find(|exchange| exchange.id == client_exchange_id);
-
-                let mut found_target = false;
-
-                for exchange in conversation.exchanges_reversed() {
-                    if let Some(target_exchange) = target_exchange {
-                        if exchange.id == target_exchange.id {
-                            found_target = true;
-                        }
-                    } else {
-                        break;
-                    }
-
-                    if found_target {
-                        if let Some(server_output_id) = exchange.output_status.server_output_id() {
-                            request_ids.push(server_output_id.to_string());
-                        }
-
-                        if exchange
-                            .input
-                            .iter()
-                            .any(|input| input.user_query().is_some())
-                        {
-                            break;
-                        }
-                    }
-                }
-
-                request_ids
-            })
-            .unwrap_or_default();
-
-        // No reason to refund if there are no request ids.
-        if request_ids.is_empty() {
-            return;
-        }
-
-        let ai_client = self.ai_client.clone();
-        ctx.spawn(
-            async move {
-                ai_client
-                    .provide_negative_feedback_response_for_ai_conversation(
-                        server_conversation_id_string_clone,
-                        request_ids,
-                    )
-                    .await
-            },
-            |_, result, ctx| match result {
-                Ok(requests_refunded) => {
-                    if requests_refunded > 0 {
-                        ctx.emit(AIRequestUsageModelEvent::RequestBonusRefunded {
-                            requests_refunded,
-                            server_conversation_id: server_conversation_id_string,
-                            request_id,
-                        });
-                    }
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to provide negative feedback response for ai conversation: {e:?}"
-                    );
-                }
-            },
-        );
     }
 
     /// Returns the number of remaining requests the user has based on their latest rate limit info.

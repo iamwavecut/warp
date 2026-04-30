@@ -68,7 +68,7 @@ pub trait IntegrationsClient: 'static + IntegrationsClientBounds {
     /// Creates or updates a simple integration on the server.
     ///
     /// # Arguments
-    /// * `integration_type` - The type of integration (e.g. "github", "linear", "slack")
+    /// * `integration_type` - The type of integration.
     /// * `is_update` - Whether this is an update to an existing integration
     /// * `environment_uid` - The UID of the environment to associate with this integration
     /// * `base_prompt` - Optional base prompt for the integration
@@ -116,7 +116,7 @@ pub trait IntegrationsClient: 'static + IntegrationsClientBounds {
     /// * `environment_id` - The ID of the environment to check
     ///
     /// # Returns
-    /// * `Ok(Vec<String>)` - List of provider names (e.g., ["linear", "slack"]) using this environment
+    /// * `Ok(Vec<String>)` - List of provider names using this environment
     /// * `Err` - If the query fails
     async fn get_integrations_using_environment(
         &self,

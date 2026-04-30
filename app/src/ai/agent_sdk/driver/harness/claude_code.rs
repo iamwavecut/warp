@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -15,17 +15,13 @@ use warpui::{ModelHandle, ModelSpawner};
 
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::ambient_agents::AmbientAgentTaskId;
-use crate::server::server_api::harness_support::{upload_to_target, HarnessSupportClient};
 use crate::server::server_api::ServerApi;
-use crate::terminal::model::block::BlockId;
-use crate::terminal::model::session::ExecuteCommandOptions;
 use crate::terminal::CLIAgent;
 
 use super::super::terminal::{CommandHandle, TerminalDriver};
 use super::super::{AgentDriver, AgentDriverError};
 use super::claude_transcript::{
-    claude_config_dir, read_envelope, write_envelope, write_session_index_entry, ClaudeResumeInfo,
-    ClaudeTranscriptEnvelope,
+    claude_config_dir, write_envelope, write_session_index_entry, ClaudeResumeInfo,
 };
 use super::json_utils::{read_json_file_or_default, write_json_file};
 use super::{
@@ -77,45 +73,6 @@ impl ThirdPartyHarness for ClaudeHarness {
         })
     }
 
-    /// Fetch the Claude Code transcript for the current task's conversation and wrap it
-    /// into a [`ResumePayload::Claude`]. Maps a server 404 to
-    /// [`AgentDriverError::ConversationResumeStateMissing`] tagged as the `claude` harness
-    /// so the user sees a resume-specific error rather than a generic load failure.
-    async fn fetch_resume_payload(
-        &self,
-        conversation_id: &AIConversationId,
-        harness_support_client: Arc<dyn HarnessSupportClient>,
-    ) -> Result<Option<ResumePayload>, AgentDriverError> {
-        let conversation_id_str = conversation_id.to_string();
-        let bytes = harness_support_client
-            .fetch_transcript()
-            .await
-            .map_err(|err| {
-                // A 404 from the server maps to "no stored transcript" so the CLI can tell
-                // the user the prior run never saved state.
-                let message = format!("{err:#}").to_lowercase();
-                if message.contains("status 404") {
-                    AgentDriverError::ConversationResumeStateMissing {
-                        harness: "claude".to_string(),
-                        conversation_id: conversation_id_str.clone(),
-                    }
-                } else {
-                    AgentDriverError::ConversationLoadFailed(format!("{err:#}"))
-                }
-            })?;
-        let envelope: ClaudeTranscriptEnvelope = serde_json::from_slice(&bytes).map_err(|err| {
-            AgentDriverError::ConversationLoadFailed(format!(
-                "Failed to deserialize Claude transcript for {conversation_id_str}: {err:#}"
-            ))
-        })?;
-        let session_id = envelope.uuid;
-        Ok(Some(ResumePayload::Claude(ClaudeResumeInfo {
-            conversation_id: *conversation_id,
-            session_id,
-            envelope,
-        })))
-    }
-
     fn build_runner(
         &self,
         prompt: &str,
@@ -152,8 +109,6 @@ impl ThirdPartyHarness for ClaudeHarness {
     }
 }
 
-/// Format slug sent to the server when creating a Claude Code conversation.
-const CLAUDE_CODE_FORMAT: &str = "claude_code_cli";
 /// Command used to exit claude.
 const CLAUDE_EXIT_COMMAND: &str = "/exit";
 
@@ -184,32 +139,20 @@ enum ClaudeRunnerState {
     /// Runner is built but [`HarnessRunner::start`] has not been called yet.
     Preexec,
     /// The harness command is running (or has finished).
-    Running {
-        conversation_id: AIConversationId,
-        block_id: BlockId,
-    },
+    Running,
 }
 
 struct ClaudeHarnessRunner {
     command: String,
-    /// The CLI name used to invoke Claude Code.
-    cli_name: String,
     /// Held so the temp file is cleaned up when the runner is dropped.
     _temp_prompt_file: NamedTempFile,
     /// Held so the system prompt temp file is cleaned up when the runner is dropped.
     _temp_system_prompt_file: Option<NamedTempFile>,
-    client: Arc<dyn HarnessSupportClient>,
     server_api: Arc<ServerApi>,
     terminal_driver: ModelHandle<TerminalDriver>,
     state: Mutex<ClaudeRunnerState>,
-    session_id: Uuid,
-    working_dir: PathBuf,
     parent_bridge: Option<MessageBridge>,
-    /// Lazily cached output of `claude --version`.
-    claude_version: Mutex<Option<String>>,
-    /// When resuming an existing conversation, we pin the runner's server conversation id
-    /// up front instead of calling `create_external_conversation` in [`HarnessRunner::start`].
-    /// Subsequent saves overwrite the same GCS objects keyed by this id.
+    /// When resuming an existing conversation, keep using the same conversation id locally.
     preexisting_conversation_id: Option<AIConversationId>,
 }
 
@@ -271,8 +214,6 @@ impl ClaudeHarnessRunner {
             .map(|task_id| MessageBridge::new(task_id.to_string(), session_id))
             .transpose()
             .map_err(AgentDriverError::ConfigBuildFailed)?;
-        let client: Arc<dyn HarnessSupportClient> = server_api.clone();
-
         Ok(Self {
             command: claude_command(
                 cli_command,
@@ -281,17 +222,12 @@ impl ClaudeHarnessRunner {
                 system_prompt_path.as_deref(),
                 resuming,
             ),
-            cli_name: cli_command.to_string(),
             _temp_prompt_file: temp_file,
             _temp_system_prompt_file: temp_system_prompt_file,
-            client,
             server_api,
             terminal_driver,
             state: Mutex::new(ClaudeRunnerState::Preexec),
-            session_id,
-            working_dir: working_dir.to_path_buf(),
             parent_bridge,
-            claude_version: Mutex::new(None),
             preexisting_conversation_id,
         })
     }
@@ -313,46 +249,6 @@ impl ClaudeHarnessRunner {
         };
         parent_bridge.flush_acks(self.server_api.clone()).await
     }
-    /// Return the cached Claude Code version, or resolve it by running
-    /// `<cli_name> --version`.
-    async fn resolve_claude_version(
-        &self,
-        foreground: &ModelSpawner<AgentDriver>,
-    ) -> Option<String> {
-        if let Some(cached) = self.claude_version.lock().clone() {
-            return Some(cached);
-        }
-
-        let terminal_driver = self.terminal_driver.clone();
-        let session = foreground
-            .spawn(move |_, ctx| {
-                let tv = terminal_driver.as_ref(ctx).terminal_view().as_ref(ctx);
-                tv.active_session().as_ref(ctx).session(ctx)
-            })
-            .await
-            .ok()?;
-        let session = session?;
-
-        let cli_name = &self.cli_name;
-        let output = session
-            .execute_command(
-                &format!("{cli_name} --version"),
-                None,
-                None,
-                ExecuteCommandOptions::default(),
-            )
-            .await
-            .ok()?;
-
-        let version = output.to_string().ok()?.trim().to_string();
-        if version.is_empty() {
-            return None;
-        }
-
-        *self.claude_version.lock() = Some(version.clone());
-        Some(version)
-    }
-
     async fn start_parent_bridge(&self, foreground: &ModelSpawner<AgentDriver>) -> Result<()> {
         let Some(parent_bridge) = self.parent_bridge.as_ref() else {
             return Ok(());
@@ -377,28 +273,9 @@ impl HarnessRunner for ClaudeHarnessRunner {
         &self,
         foreground: &ModelSpawner<AgentDriver>,
     ) -> Result<CommandHandle, AgentDriverError> {
-        // When resuming, we already have a server conversation id from the prior run.
-        // Otherwise create a fresh external conversation record for this run.
-        // TODO(REMOTE-1149): `create_external_conversation` currently won't work for local CLI
-        // runs. We should either support it or have a fallback.
-        let conversation_id = match self.preexisting_conversation_id {
-            Some(id) => {
-                log::info!("Resuming external conversation {id}");
-                id
-            }
-            None => {
-                let id = self
-                    .client
-                    .create_external_conversation(CLAUDE_CODE_FORMAT)
-                    .await
-                    .map_err(|e| {
-                        log::error!("Failed to create external conversation: {e}");
-                        AgentDriverError::ConfigBuildFailed(e)
-                    })?;
-                log::info!("Created external conversation {id}");
-                id
-            }
-        };
+        if let Some(id) = self.preexisting_conversation_id {
+            log::info!("Resuming external conversation {id}");
+        }
         self.start_parent_bridge(foreground)
             .await
             .map_err(AgentDriverError::ConfigBuildFailed)?;
@@ -421,10 +298,7 @@ impl HarnessRunner for ClaudeHarnessRunner {
         };
 
         // Only store conversation info once the CLI command has started.
-        *self.state.lock() = ClaudeRunnerState::Running {
-            conversation_id,
-            block_id: command_handle.block_id().clone(),
-        };
+        *self.state.lock() = ClaudeRunnerState::Running;
 
         Ok(command_handle)
     }
@@ -458,39 +332,13 @@ impl HarnessRunner for ClaudeHarnessRunner {
             return Ok(());
         }
 
-        let (conversation_id, block_id) = match &*self.state.lock() {
+        match &*self.state.lock() {
             ClaudeRunnerState::Preexec => {
                 log::warn!("save_conversation called before start");
                 return Ok(());
             }
-            ClaudeRunnerState::Running {
-                conversation_id,
-                block_id,
-            } => (*conversation_id, block_id.clone()),
-        };
-
-        let claude_version = self.resolve_claude_version(foreground).await;
-
-        let client = self.client.as_ref();
-        let session_id = self.session_id;
-        let working_dir = &self.working_dir;
-
-        futures::try_join!(
-            super::upload_current_block_snapshot(
-                foreground,
-                &self.terminal_driver,
-                client,
-                conversation_id,
-                block_id,
-            ),
-            upload_transcript(
-                client,
-                conversation_id,
-                session_id,
-                working_dir,
-                claude_version
-            ),
-        )?;
+            ClaudeRunnerState::Running => {}
+        }
 
         Ok(())
     }
@@ -498,33 +346,6 @@ impl HarnessRunner for ClaudeHarnessRunner {
         self.flush_parent_bridge_acks().await?;
         self.cleanup_parent_bridge()
     }
-}
-
-/// Upload the Claude Code session transcript to the server.
-async fn upload_transcript(
-    client: &dyn HarnessSupportClient,
-    conversation_id: AIConversationId,
-    session_id: Uuid,
-    working_dir: &Path,
-    claude_version: Option<String>,
-) -> Result<()> {
-    log::info!("Uploading Claude Code transcript to conversation {conversation_id}");
-
-    let config_dir = claude_config_dir().context("Failed to resolve Claude config dir")?;
-    let working_dir = working_dir.to_path_buf();
-    let body = tokio::task::spawn_blocking(move || {
-        let mut envelope = read_envelope(session_id, &working_dir, &config_dir)
-            .with_context(|| format!("Failed to read transcript for session {session_id}"))?;
-        envelope.claude_version = claude_version;
-        serde_json::to_vec(&envelope).context("Failed to serialize transcript envelope")
-    })
-    .await
-    .context("read_envelope task panicked")??;
-    let target = client
-        .get_transcript_upload_target(&conversation_id)
-        .await
-        .with_context(|| format!("Failed to get transcript upload target for {conversation_id}"))?;
-    upload_to_target(client.http_client(), &target, body).await
 }
 
 fn prepare_claude_environment_config(

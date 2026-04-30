@@ -18,7 +18,6 @@ use crate::drive::{CloudObjectTypeAndId, OpenWarpDriveObjectArgs, OpenWarpDriveO
 use crate::experiments::{BlockOnboarding, Experiment};
 use crate::interval_timer::IntervalTimer;
 use crate::launch_configs::launch_config;
-use crate::linear::LinearIssueWork;
 use crate::notebooks::manager::NotebookSource;
 use crate::settings::apply_onboarding_settings;
 use crate::settings::cloud_preferences_syncer::{
@@ -308,7 +307,6 @@ pub fn init(app: &mut AppContext) {
         open_new_tab_insert_subshell_command_and_bootstrap_if_supported,
     );
     app.add_global_action("root_view:open_launch_config", open_launch_config);
-    app.add_global_action("root_view:send_feedback", send_feedback);
     app.add_global_action("root_view:detach_tab_immediate", |arg, ctx| {
         let _ = detach_tab_with_transfer(arg, ctx);
     });
@@ -441,15 +439,6 @@ pub fn init(app: &mut AppContext) {
     app.add_action(
         "root_view:open_codex_in_existing_window",
         RootView::open_codex_in_existing_window,
-    );
-
-    app.add_global_action(
-        "root_view:open_linear_issue_work_in_new_window",
-        open_linear_issue_work_in_new_window,
-    );
-    app.add_action(
-        "root_view:open_linear_issue_work_in_existing_window",
-        RootView::open_linear_issue_work_in_existing_window,
     );
 
     app.add_action("root_view:add_file_pane", RootView::add_file_pane);
@@ -599,16 +588,6 @@ fn open_launch_config(arg: &OpenLaunchConfigArg, ctx: &mut AppContext) {
                 ctx,
             );
         }
-    }
-}
-
-fn send_feedback(_: &(), ctx: &mut AppContext) {
-    if let Some(workspace) = active_workspace(ctx) {
-        workspace.update(ctx, |workspace, ctx| {
-            workspace.handle_action(&WorkspaceAction::SendFeedback, ctx);
-        });
-    } else {
-        ctx.open_url(&crate::util::links::feedback_form_url());
     }
 }
 
@@ -1092,21 +1071,6 @@ fn open_codex_in_new_window(_: &(), ctx: &mut AppContext) {
                 let _ = ctx.spawn(initial_load_complete, move |workspace, _, ctx| {
                     workspace.open_codex_modal(ctx)
                 });
-            });
-        }
-    });
-}
-
-/// Opens a new window and enters agent view with the Linear issue work prompt.
-fn open_linear_issue_work_in_new_window(args: &LinearIssueWork, ctx: &mut AppContext) {
-    let (_, root_handle) = open_new_window_get_handles(None, ctx);
-    let args = args.clone();
-    root_handle.update(ctx, |root_view, ctx| {
-        if let AuthOnboardingState::Terminal(workspace_view_handle) =
-            &root_view.auth_onboarding_state
-        {
-            workspace_view_handle.update(ctx, |workspace, ctx| {
-                workspace.open_linear_issue_work(&args, ctx);
             });
         }
     });
@@ -2804,25 +2768,6 @@ impl RootView {
             ctx.windows().show_window_and_focus_app(window_id);
         } else {
             log::error!("Auth not complete before trying to open Codex modal");
-        }
-        true
-    }
-
-    /// Opens a new tab with agent view for a Linear issue work deeplink.
-    pub fn open_linear_issue_work_in_existing_window(
-        &mut self,
-        args: &LinearIssueWork,
-        ctx: &mut ViewContext<Self>,
-    ) -> bool {
-        let window_id = ctx.window_id();
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
-            let args = args.clone();
-            handle.update(ctx, |workspace, ctx| {
-                workspace.open_linear_issue_work(&args, ctx);
-            });
-            ctx.windows().show_window_and_focus_app(window_id);
-        } else {
-            log::error!("Auth not complete before trying to open Linear issue work");
         }
         true
     }

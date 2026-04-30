@@ -4013,7 +4013,7 @@ pub fn test_ctrl_r_multi_cursor() -> Builder {
 }
 
 /// This test ensures that the HISTCONTROL env var is not clobbered by our bootstrap process for bash.
-/// See https://linear.app/warpdotdev/issue/WAR-2592 for more details
+/// Regression coverage for internal issue WAR-2592.
 pub fn test_histcontrol_env_var() -> Builder {
     let histcontrol_val = "ignorespace";
     new_builder()
@@ -5700,7 +5700,7 @@ pub fn test_custom_open_completions_menu_binding() -> Builder {
 }
 
 /// This is a regression test for:
-/// https://linear.app/warpdotdev/issue/WAR-6095/panic-internal-error-entered-unreachable-code-handled-at-model-layer
+/// Regression coverage for internal issue WAR-6095.
 pub fn test_color_overrides_in_prompt_dont_crash() -> Builder {
     new_builder()
         .set_should_run_test(|| {

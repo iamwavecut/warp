@@ -34,7 +34,6 @@ const OVERAGES_TOGGLEABLE_BUT_NOT_ENABLED_ACTION_TEXT: &str = "Enable premium ov
 const MONTHLY_OVERAGES_SPEND_LIMIT_REACHED_ACTION_TEXT: &str = "Increase monthly spend limit";
 const UPGRADE_TEXT: &str = "Upgrade";
 const COMPARE_PLANS_TEXT: &str = "Compare plans";
-const CONTACT_SUPPORT_TEXT: &str = "Contact support";
 const NON_ADMIN_CONTACT_ADMIN_TEXT: &str = ", contact a team admin";
 const NON_ADMIN_ASK_ADMIN_TO_ENABLE_OVERAGES_TEXT: &str = ", ask a team admin to enable overages";
 const NON_ADMIN_ASK_ADMIN_TO_INCREASE_OVERAGES_TEXT: &str =
@@ -308,9 +307,8 @@ impl PromptAlertView {
                         text_fragments
                             .push(FormattedTextFragment::hyperlink(upgrade_text, upgrade_url));
                     } else {
-                        text_fragments.push(FormattedTextFragment::hyperlink(
-                            CONTACT_SUPPORT_TEXT,
-                            "mailto:support@warp.dev".to_owned(),
+                        text_fragments.push(FormattedTextFragment::plain_text(
+                            "Hosted plan support is unavailable in the local-first build.",
                         ));
                     }
                 } else {

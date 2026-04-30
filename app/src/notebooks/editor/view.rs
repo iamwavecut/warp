@@ -673,7 +673,7 @@ pub fn init(app: &mut AppContext) {
 
     // Rich-text editable keybindings
     app.register_editable_bindings([
-        // Most apps use cmd-k / ctrl-k to edit links, but not all (notably, Slack). The binding is
+        // Most apps use cmd-k / ctrl-k to edit links, but not all. The binding is
         // editable for users who are used to something else.
         EditableBinding::new(
             "editor:edit_link",
@@ -688,7 +688,7 @@ pub fn init(app: &mut AppContext) {
             EditorViewAction::InlineCode,
         )
         .with_context_predicate(text_entry.clone())
-        // Slack and other apps use cmd-shift-C on Mac and ctrl-shift-C on Linux/Windows.
+        // Some apps use cmd-shift-C on Mac and ctrl-shift-C on Linux/Windows.
         // However, we use ctrl-shift-C for copying, to not conflict with ctrl-c in the
         // terminal. For consistency with the rest of the app, ctrl-shift-C still copies in a
         // notebook, and we leave code styling unbound.

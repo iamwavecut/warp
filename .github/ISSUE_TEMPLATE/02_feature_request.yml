@@ -57,12 +57,3 @@ body:
         - "5 (Can't work without it!)"
     validations:
       required: true
-  - type: dropdown
-    id: "linear-label-feature"
-    attributes:
-      label: "Warp Internal (ignore) - linear-label:39cc6478-1249-4ee7-950b-c428edfeecd1"
-      multiple: false
-      options:
-        - Ignore
-    validations:
-      required: false

@@ -3,8 +3,7 @@
 # Maps source-code paths to subject-matter experts for issue and PR triage.
 # Format follows CODEOWNERS: <pattern> @owner1 @owner2 ...
 #
-# Used by the triage-new-issues workflow to assign SMEs.
-# Source of truth: warpdotdev/feedback-triage-bot ownership-areas.md
+# Used by local triage workflows to assign SMEs.
 
 # Default fallback: FA leads are tagged when no more specific path matches
 / @vorporeal @alokedesai @zachbai @bnavetta @szgupta @jefflloyd
@@ -174,9 +173,8 @@
 /app/src/settings_view/environments_page.rs @liliwilson
 /app/src/settings_view/update_environment_form.rs @liliwilson
 
-# OAuth, Slack, Linear, and GitHub integrations
+# Auth and MCP OAuth
 /app/src/auth/ @Legoben @jefflloyd @vorporeal @bnavetta
-/app/src/linear.rs @Legoben @jefflloyd @vorporeal @bnavetta
 /app/src/server/server_api/integrations.rs @Legoben @jefflloyd @vorporeal @bnavetta
 /app/src/ai/agent_sdk/oauth_flow.rs @Legoben @jefflloyd @vorporeal @bnavetta
 /app/src/ai/mcp/manager/oauth.rs @Legoben @jefflloyd @vorporeal @bnavetta

@@ -22,8 +22,6 @@ pub mod util;
 pub mod view;
 
 use crate::ai::blocklist::NEW_AGENT_PANE_LABEL;
-use crate::ai::skills::SkillManager;
-use crate::ai::AIRequestUsageModel;
 use crate::channel::Channel;
 use crate::code;
 use crate::features::FeatureFlag;
@@ -32,7 +30,6 @@ use crate::interaction_sources::PaletteSource;
 use crate::modal;
 use crate::notebooks;
 use crate::pane_group::TabBarHoverIndex;
-use crate::settings::AISettings;
 use crate::settings_view::{self, flags, SettingsSection};
 use crate::tab::uses_vertical_tabs;
 use crate::tab_configs;
@@ -68,20 +65,6 @@ pub use view::{
 // Helper function to access panel header corner radius from other modules
 pub fn panel_header_corner_radius() -> warpui::elements::CornerRadius {
     warpui::elements::CornerRadius::with_top(warpui::elements::Radius::Pixels(8.))
-}
-
-/// Returns `true` when `WorkspaceAction::SendFeedback` will launch the guided
-/// feedback skill in a new agent pane. When `false`, the action falls back to
-/// opening the GitHub issue form in the browser.
-///
-/// Kept in sync with the availability check in `Workspace::send_feedback` so
-/// the command palette label and the menu item behavior never diverge.
-pub fn is_feedback_skill_available(ctx: &AppContext) -> bool {
-    AISettings::as_ref(ctx).is_any_ai_enabled(ctx)
-        && AIRequestUsageModel::as_ref(ctx).has_any_ai_remaining(ctx)
-        && SkillManager::as_ref(ctx)
-            .active_bundled_skill("feedback", ctx)
-            .is_some()
 }
 
 fn cloud_account_ui_enabled() -> bool {
@@ -1461,14 +1444,6 @@ fn add_open_setting_pages_as_editable_binding(app: &mut AppContext) {
         .with_group(bindings::BindingGroup::Settings.as_str())
         .with_context_predicate(id!("Workspace")),
         EditableBinding::new(
-            "workspace:show_settings_referrals_page",
-            BindingDescription::new("Open Settings: Referrals"),
-            WorkspaceAction::ShowSettingsPage(SettingsSection::Referrals),
-        )
-        .with_group(bindings::BindingGroup::Settings.as_str())
-        .with_context_predicate(id!("Workspace"))
-        .with_enabled(cloud_account_ui_enabled),
-        EditableBinding::new(
             "workspace:show_settings_environments_page",
             BindingDescription::new("Open Settings: Environments"),
             WorkspaceAction::ShowSettingsPage(SettingsSection::CloudEnvironments),
@@ -1500,35 +1475,11 @@ fn add_overflow_menu_items_as_editable_binding(app: &mut AppContext) {
     // Add the ability to open all overflow menu items to the command palette.
     app.register_editable_bindings([
         EditableBinding::new(
-            "workspace:show_invite_modal",
-            "Invite People...",
-            WorkspaceAction::ShowReferralSettingsPage,
-        )
-        .with_context_predicate(id!("Workspace"))
-        .with_enabled(cloud_account_ui_enabled)
-        .with_custom_action(CustomAction::ReferAFriend),
-        EditableBinding::new(
-            "workspace:link_to_slack",
-            "Join our Slack community (opens external link)",
-            WorkspaceAction::JoinSlack,
-        )
-        .with_context_predicate(id!("Workspace"))
-        .with_enabled(cloud_account_ui_enabled),
-        EditableBinding::new(
             "workspace:link_to_user_docs",
             "View user docs (opens external link)",
             WorkspaceAction::ViewUserDocs,
         )
         .with_context_predicate(id!("Workspace")),
-        EditableBinding::new(
-            "workspace:send_feedback",
-            BindingDescription::new("Send feedback (opens external link)").with_dynamic_override(
-                |ctx| is_feedback_skill_available(ctx).then(|| "Send feedback with Oz".into()),
-            ),
-            WorkspaceAction::SendFeedback,
-        )
-        .with_context_predicate(id!("Workspace"))
-        .with_enabled(cloud_account_ui_enabled),
         #[cfg(not(target_family = "wasm"))]
         EditableBinding::new(
             "workspace:view_logs",

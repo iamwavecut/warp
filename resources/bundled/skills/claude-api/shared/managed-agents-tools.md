@@ -144,7 +144,7 @@ No permission policy needed — you're the one executing.
 
 ### MCP Servers
 
-MCP (Model Context Protocol) servers expose standardized third-party capabilities (e.g. Asana, GitHub, Linear). **Configuration is split across agent and vault:**
+MCP (Model Context Protocol) servers expose standardized external capabilities. **Configuration is split across agent and vault:**
 
 1. **Agent creation** declares which servers to connect to (`type`, `name`, `url` — no auth). The agent's `mcp_servers` array has no auth field.
 2. **Vault** stores the OAuth credentials. Attach via `vault_ids` on session create.
@@ -162,10 +162,10 @@ This keeps secrets out of reusable agent definitions. Each vault credential is t
 ```json
 {
   "mcp_servers": [
-    { "type": "url", "name": "linear", "url": "https://mcp.linear.app/mcp" }
+    { "type": "url", "name": "local-tools", "url": "http://localhost:8765/mcp" }
   ],
   "tools": [
-    { "type": "mcp_toolset", "mcp_server_name": "linear" }
+    { "type": "mcp_toolset", "mcp_server_name": "local-tools" }
   ]
 }
 ```
@@ -182,7 +182,7 @@ This keeps secrets out of reusable agent definitions. Each vault credential is t
 
 > 💡 **Per-tool enablement (empirical):** `mcp_toolset` has been observed accepting `default_config: {enabled: false}` + `configs: [{name, enabled: true}]` for an allowlist pattern. The API ref shows only the minimal `{type, mcp_server_name}` form.
 
-> ⚠️ **MCP auth tokens ≠ REST API tokens.** Hosted MCP servers (`mcp.notion.com`, `mcp.linear.app`, etc.) typically require **OAuth bearer tokens**, not the service's native API keys. A Notion `ntn_` integration token authenticates against Notion's REST API but will **not** work as a vault credential for the Notion MCP server. These are different auth systems.
+> ⚠️ **MCP auth tokens ≠ REST API tokens.** Hosted MCP servers typically require **OAuth bearer tokens**, not the service's native API keys. Those are different auth systems.
 
 ### Vaults — the MCP credential store
 
@@ -224,7 +224,7 @@ Vaults store credentials; those credentials **never enter the sandbox**. This is
     "refresh": {
       "refresh_token": "<refresh token>",
       "client_id": "<your OAuth client_id>",
-      "token_endpoint": "https://api.notion.com/v1/oauth/token",
+      "token_endpoint": "https://example.invalid/oauth/token",
       "token_endpoint_auth": { "type": "none" }
     }
   }
@@ -312,4 +312,3 @@ agent = client.beta.agents.create(
 | List Versions         | `GET`    | `/v1/skills/{id}/versions`                      |
 | Get Version           | `GET`    | `/v1/skills/{id}/versions/{version}`            |
 | Delete Version        | `DELETE` | `/v1/skills/{id}/versions/{version}`            |
-

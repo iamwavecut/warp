@@ -29,7 +29,6 @@ fn code_subpages_are_identified() {
 #[test]
 fn cloud_platform_subpages_are_identified() {
     assert!(SettingsSection::CloudEnvironments.is_cloud_platform_subpage());
-    assert!(SettingsSection::OzCloudAPIKeys.is_cloud_platform_subpage());
 
     assert!(!SettingsSection::Account.is_cloud_platform_subpage());
     assert!(!SettingsSection::WarpAgent.is_cloud_platform_subpage());
@@ -44,7 +43,6 @@ fn is_subpage_covers_all_umbrella_types() {
     assert!(SettingsSection::CodeIndexing.is_subpage());
     assert!(SettingsSection::EditorAndCodeReview.is_subpage());
     assert!(SettingsSection::CloudEnvironments.is_subpage());
-    assert!(SettingsSection::OzCloudAPIKeys.is_subpage());
 
     // Top-level pages should not be subpages.
     assert!(!SettingsSection::Account.is_subpage());
@@ -106,10 +104,6 @@ fn cloud_platform_subpages_map_to_their_backing_pages() {
     assert_eq!(
         SettingsSection::CloudEnvironments.parent_page_section(),
         SettingsSection::CloudEnvironments
-    );
-    assert_eq!(
-        SettingsSection::OzCloudAPIKeys.parent_page_section(),
-        SettingsSection::OzCloudAPIKeys
     );
 }
 
@@ -198,10 +192,6 @@ fn subpage_display_names_are_correct() {
         SettingsSection::CloudEnvironments.to_string(),
         "Environments"
     );
-    assert_eq!(
-        SettingsSection::OzCloudAPIKeys.to_string(),
-        "Oz Cloud API Keys"
-    );
 }
 
 #[test]
@@ -238,10 +228,6 @@ fn subpage_from_str_parses_display_names() {
         SettingsSection::from_str("Editor and Code Review"),
         Ok(SettingsSection::EditorAndCodeReview)
     );
-    assert_eq!(
-        SettingsSection::from_str("Oz Cloud API Keys"),
-        Ok(SettingsSection::OzCloudAPIKeys)
-    );
 }
 
 #[test]
@@ -254,12 +240,10 @@ fn local_only_account_section_is_user_and_cloud_sections_are_hidden() {
 
     for section in [
         SettingsSection::BillingAndUsage,
-        SettingsSection::Referrals,
         SettingsSection::SharedBlocks,
         SettingsSection::Teams,
         SettingsSection::WarpDrive,
         SettingsSection::CloudEnvironments,
-        SettingsSection::OzCloudAPIKeys,
     ] {
         assert!(
             section.is_hidden_in_local_only(),
@@ -739,7 +723,7 @@ fn collapsed_umbrella_is_a_single_nav_stop() {
         NavStop::CollapsedUmbrella {
             nav_index: 4,
             first_subpage: SettingsSection::CloudEnvironments,
-            last_subpage: SettingsSection::OzCloudAPIKeys,
+            last_subpage: SettingsSection::CloudEnvironments,
         }
     ));
     assert!(matches!(stops[5], NavStop::Section(SettingsSection::Teams)));

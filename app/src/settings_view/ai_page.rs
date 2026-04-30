@@ -1332,7 +1332,6 @@ impl AISettingsPageView {
         ctx.subscribe_to_model(&ai_request_model, |me, _, event, ctx| {
             match event {
                 AIRequestUsageModelEvent::RequestUsageUpdated => ctx.notify(),
-                AIRequestUsageModelEvent::RequestBonusRefunded { .. } => ctx.notify(),
             }
             Self::refresh_base_model_menu(&me.base_model_dropdown, ctx);
             Self::refresh_coding_model_menu(&me.coding_model_dropdown, ctx);
@@ -3500,39 +3499,37 @@ impl SettingsWidget for UsageWidget {
         );
 
         let auth_state = AuthStateProvider::as_ref(app).get();
-        let upgrade_cta_text_fragments = if let Some(team) =
-            UserWorkspaces::as_ref(app).current_team()
-        {
-            let current_user_email = auth_state.user_email().unwrap_or_default();
-            let has_admin_permissions = team.has_admin_permissions(&current_user_email);
-            if team.billing_metadata.can_upgrade_to_higher_tier_plan() {
-                let upgrade_url = UserWorkspaces::upgrade_link_for_team(team.uid);
-                if has_admin_permissions {
-                    vec![
-                        FormattedTextFragment::hyperlink("Upgrade", upgrade_url),
-                        FormattedTextFragment::plain_text(" to get more AI usage."),
-                    ]
+        let upgrade_cta_text_fragments =
+            if let Some(team) = UserWorkspaces::as_ref(app).current_team() {
+                let current_user_email = auth_state.user_email().unwrap_or_default();
+                let has_admin_permissions = team.has_admin_permissions(&current_user_email);
+                if team.billing_metadata.can_upgrade_to_higher_tier_plan() {
+                    let upgrade_url = UserWorkspaces::upgrade_link_for_team(team.uid);
+                    if has_admin_permissions {
+                        vec![
+                            FormattedTextFragment::hyperlink("Upgrade", upgrade_url),
+                            FormattedTextFragment::plain_text(" to get more AI usage."),
+                        ]
+                    } else {
+                        // The /upgrade page says to contact their administrator.
+                        vec![
+                            FormattedTextFragment::hyperlink("Compare plans", upgrade_url),
+                            FormattedTextFragment::plain_text(" for more AI usage."),
+                        ]
+                    }
                 } else {
-                    // The /upgrade page says to contact their administrator.
-                    vec![
-                        FormattedTextFragment::hyperlink("Compare plans", upgrade_url),
-                        FormattedTextFragment::plain_text(" for more AI usage."),
-                    ]
+                    vec![FormattedTextFragment::plain_text(
+                        "Hosted plan support is unavailable in the local-first build.",
+                    )]
                 }
             } else {
+                let user_id = auth_state.user_id().unwrap_or_default();
+                let upgrade_url = UserWorkspaces::upgrade_link(user_id);
                 vec![
-                    FormattedTextFragment::hyperlink("Contact support", "mailto:support@warp.dev"),
-                    FormattedTextFragment::plain_text(" for more AI usage."),
+                    FormattedTextFragment::hyperlink("Upgrade", upgrade_url),
+                    FormattedTextFragment::plain_text(" to get more AI usage."),
                 ]
-            }
-        } else {
-            let user_id = auth_state.user_id().unwrap_or_default();
-            let upgrade_url = UserWorkspaces::upgrade_link(user_id);
-            vec![
-                FormattedTextFragment::hyperlink("Upgrade", upgrade_url),
-                FormattedTextFragment::plain_text(" to get more AI usage."),
-            ]
-        };
+            };
 
         let mut upgrade_cta = FormattedTextElement::new(
             FormattedText::new([FormattedTextLine::Line(upgrade_cta_text_fragments)]),

@@ -40,7 +40,7 @@ struct TombstoneDisplayData {
     is_error: bool,
     error_message: Option<String>,
     conversation_is_transcript: bool,
-    /// Source of the task (Linear, Slack, etc.) - only for ambient agent tasks
+    /// Source of the task - only for ambient agent tasks
     source: Option<String>,
     /// Skill/config name - only for ambient agent tasks
     skill_name: Option<String>,

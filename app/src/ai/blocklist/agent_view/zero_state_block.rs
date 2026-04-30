@@ -53,7 +53,6 @@ use crate::{
     util::time_format::format_approx_duration_from_now_utc,
 };
 
-const CLOUD_AGENT_DOCS_URL: &str = "https://docs.warp.dev/agent-platform/cloud-agents/overview";
 const OZ_UPDATES_SECTION_HEADER: &str = "What's new in Oz";
 
 // The maximum number of Oz updates from the changelog rendered in-line in the 'What's new in Oz section'.
@@ -633,11 +632,10 @@ fn render_title_and_description(props: HeaderProps, app: &AppContext) -> Vec<Box
             }));
         }
         AgentViewDescription::CloudModeWithDocsLink => {
-            // First line: plain text.
             items.push(
                 Container::new(
                     Text::new(
-                        "Run your agent task in an isolated cloud environment.",
+                        "Run your agent task through local providers and tools.",
                         appearance.ui_font_family(),
                         appearance.monospace_font_size(),
                     )
@@ -648,28 +646,14 @@ fn render_title_and_description(props: HeaderProps, app: &AppContext) -> Vec<Box
                 .finish(),
             );
 
-            // Second line: text with "Visit docs" hyperlink.
-            let description_with_link = FormattedText::new([FormattedTextLine::Line(vec![
-                FormattedTextFragment::plain_text(
-                    "Use cloud agents to run parallel agents, build agents that run autonomously, and check in on your agents from anywhere. ",
-                ),
-                FormattedTextFragment::hyperlink("Visit docs", CLOUD_AGENT_DOCS_URL),
-            ])]);
-
             items.push(
                 Container::new(
-                    FormattedTextElement::new(
-                        description_with_link,
-                        appearance.monospace_font_size(),
+                    Text::new(
+                        "Use MCP, project rules, and BYOK models for local agent workflows.",
                         appearance.ui_font_family(),
-                        appearance.monospace_font_family(),
-                        sub_text_color,
-                        HighlightedHyperlink::default(),
+                        appearance.monospace_font_size(),
                     )
-                    .with_hyperlink_font_color(theme.accent().into_solid())
-                    .register_default_click_handlers(|url, _, ctx| {
-                        ctx.open_url(&url.url);
-                    })
+                    .with_color(sub_text_color)
                     .finish(),
                 )
                 .with_margin_bottom(-12.)

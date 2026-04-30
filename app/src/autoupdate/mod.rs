@@ -696,7 +696,7 @@ pub enum RequestType {
 }
 
 // We only want to announce autoupdates when there's manual check. Otherwise, the autoupdate check
-// may clash with other announcements, such as log in form or referral form.
+// may clash with other announcements, such as the log in form.
 // Users will still get the autoupdate on the next relaunch anyways, so for now it's ok.
 pub fn accessibility_content(
     update_available: &Result<UpdateReady>,

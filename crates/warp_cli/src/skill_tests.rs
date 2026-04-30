@@ -121,22 +121,22 @@ fn test_parse_empty_path_fails() {
 
 #[test]
 fn test_skill_name_simple_name() {
-    let spec: SkillSpec = "feedback-triage-bot".parse().unwrap();
-    assert_eq!(spec.skill_name(), "feedback-triage-bot");
+    let spec: SkillSpec = "local-triage-bot".parse().unwrap();
+    assert_eq!(spec.skill_name(), "local-triage-bot");
 }
 
 #[test]
 fn test_skill_name_repo_qualified_name() {
-    let spec: SkillSpec = "warpdotdev/feedback-triage-bot:feedback-triage-bot"
+    let spec: SkillSpec = "warpdotdev/local-triage-bot:local-triage-bot"
         .parse()
         .unwrap();
-    assert_eq!(spec.skill_name(), "feedback-triage-bot");
+    assert_eq!(spec.skill_name(), "local-triage-bot");
 }
 
 #[test]
 fn test_skill_name_repo_qualified_path() {
-    let spec: SkillSpec = "warpdotdev/feedback-triage-bot:.agents/skills/slack-triage/SKILL.md"
+    let spec: SkillSpec = "warpdotdev/local-triage-bot:.agents/skills/local-triage/SKILL.md"
         .parse()
         .unwrap();
-    assert_eq!(spec.skill_name(), "slack-triage");
+    assert_eq!(spec.skill_name(), "local-triage");
 }

@@ -275,8 +275,6 @@ pub struct RunAgentArgs {
     )]
     pub idle_on_complete: Option<humantime::Duration>,
 
-    #[command(flatten)]
-    pub snapshot: SnapshotArgs,
     /// Identifier for the task that spawned this agent, used to report progress.
     #[arg(long = "task-id", hide = true, conflicts_with_all = ["prompt", "saved_prompt", "file"])]
     pub task_id: Option<String>,
@@ -314,21 +312,6 @@ impl RunAgentArgs {
         specs.extend(self.mcp_servers.iter().cloned().map(MCPSpec::Uuid));
         specs
     }
-}
-
-#[derive(Debug, Clone, Args)]
-pub struct SnapshotArgs {
-    /// Disable the end-of-run workspace snapshot upload.
-    #[arg(long = "no-snapshot")]
-    pub no_snapshot: bool,
-
-    /// Maximum time to wait for the end-of-run snapshot upload.
-    #[arg(long = "snapshot-upload-timeout", value_name = "DURATION")]
-    pub snapshot_upload_timeout: Option<humantime::Duration>,
-
-    /// Maximum time to wait for the declarations script before uploading the snapshot.
-    #[arg(long = "snapshot-script-timeout", value_name = "DURATION")]
-    pub snapshot_script_timeout: Option<humantime::Duration>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -417,9 +400,6 @@ pub struct RunCloudArgs {
 
     #[command(flatten)]
     pub computer_use: ComputerUseArgs,
-    #[command(flatten)]
-    pub snapshot: SnapshotArgs,
-
     /// Execution harness for the agent run.
     ///
     /// "oz" (default) uses Warp's built-in agent infrastructure.

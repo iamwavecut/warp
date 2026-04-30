@@ -176,7 +176,7 @@ pub fn output_conversation_debug_info(
             .map(|token| {
                 // The debug link within the container will be using host.docker.internal, but we're opening
                 // from outside the container.
-                // The server is configured to always write debug data to GCS instead of locally when run for evals, so we replace
+                // Eval servers write debug data remotely, so replace the in-container host
                 // with staging.warp.dev instead of localhost:8080.
                 token
                     .debug_link()

@@ -19,9 +19,6 @@ use crate::ai::agent_conversations_model::{
 use crate::ai::agent_management::agent_type_selector::{
     AgentType, AgentTypeSelector, AgentTypeSelectorEvent,
 };
-use crate::ai::agent_management::cloud_setup_guide_view::{
-    CloudSetupGuideEvent, CloudSetupGuideView,
-};
 use crate::ai::agent_management::details_action_buttons::{
     ActionButtonsConfig, AgentDetailsButtonEvent, ConversationActionButtonsRow,
 };
@@ -44,7 +41,6 @@ use crate::editor::{
 use crate::interaction_sources::AgentModeEntrypoint;
 use crate::menu::{MenuItem, MenuItemFields};
 use crate::notebooks::NotebookId;
-use crate::settings::ai::AISettings;
 use crate::ui_components::avatar::{Avatar, AvatarContent};
 use crate::util::time_format::format_approx_duration_from_now_utc;
 use crate::view_components::action_button::{
@@ -56,12 +52,10 @@ use crate::view_components::compactible_action_button::{
 use crate::view_components::dropdown::{Dropdown, DropdownAction, DropdownStyle};
 use crate::view_components::DismissibleToast;
 use crate::view_components::FilterableDropdown;
-use crate::workflows::WorkflowType;
 use crate::workspace::{ForkedConversationDestination, ToastStack};
 use crate::workspace::{RestoreConversationLayout, WorkspaceAction};
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use pathfinder_geometry::vector::vec2f;
-use settings::Setting;
 use warp_cli::agent::Harness;
 use warp_core::ui::icons::Icon;
 use warp_core::ui::theme::color::internal_colors;
@@ -165,19 +159,11 @@ pub struct AgentManagementView {
     search_query: String,
     search_editor: ViewHandle<EditorView>,
 
-    /// Whether the user has dismissed the setup guide
-    has_dismissed_setup_guide: bool,
-    /// Whether the user is viewing the setup guide (toggled via button)
-    is_viewing_setup_guide: bool,
-    setup_guide_button: CompactibleActionButton,
     new_agent_button: CompactibleActionButton,
-    view_agents_button: ViewHandle<ActionButton>,
 
     /// Agent type selector modal
     agent_type_selector: ViewHandle<AgentTypeSelector>,
     is_agent_type_selector_open: bool,
-
-    cloud_setup_guide_view: ViewHandle<CloudSetupGuideView>,
 
     all_filter_button: ViewHandle<ActionButton>,
     personal_filter_button: ViewHandle<ActionButton>,
@@ -201,8 +187,6 @@ pub struct AgentManagementView {
 enum ViewState {
     /// The model is still loading in data
     Loading,
-    /// Showing the setup guide (this is the zero state when has_tasks is false)
-    SetupGuide { has_items: bool },
     /// We have tasks, but currently have a filter applied that matches none of them
     NoFilterMatches,
     /// We have tasks that should be shown to the user
@@ -243,25 +227,6 @@ impl AgentManagementView {
                 })
         });
 
-        let setup_guide_button = CompactibleActionButton::new(
-            "Get started".to_string(),
-            None,
-            ButtonSize::Small,
-            AgentManagementViewAction::ToggleSetupGuide,
-            Icon::HelpCircle,
-            Arc::new(SecondaryTheme),
-            ctx,
-        );
-
-        let view_agents_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("View Agents", NakedTheme)
-                .with_size(ButtonSize::Small)
-                .with_icon(Icon::ArrowLeft)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(AgentManagementViewAction::ToggleSetupGuide)
-                })
-        });
-
         // Set up dropdowns
         let status_dropdown = ctx.add_typed_action_view(Self::create_status_dropdown);
         let source_dropdown = ctx.add_typed_action_view(Self::create_source_dropdown);
@@ -286,15 +251,6 @@ impl AgentManagementView {
                 .on_click(move |ctx| {
                     ctx.dispatch_typed_action(AgentManagementViewAction::ClearFilters)
                 })
-        });
-
-        let cloud_setup_guide_view = ctx.add_typed_action_view(CloudSetupGuideView::new);
-        ctx.subscribe_to_view(&cloud_setup_guide_view, |_, _, event, ctx| match event {
-            CloudSetupGuideEvent::OpenNewTabAndInsertWorkflow(workflow) => {
-                ctx.emit(AgentManagementViewEvent::OpenNewTabAndRunWorkflow(
-                    Box::new(workflow.clone()),
-                ));
-            }
         });
 
         let search_editor = ctx.add_typed_action_view(|ctx| {
@@ -331,8 +287,6 @@ impl AgentManagementView {
         let agent_type_selector = ctx.add_typed_action_view(AgentTypeSelector::new);
         ctx.subscribe_to_view(&agent_type_selector, Self::handle_agent_type_selector_event);
 
-        let has_dismissed_setup_guide = *AISettings::as_ref(ctx).did_dismiss_cloud_setup_guide;
-
         let filters = persisted_filters.map(|p| p.filters).unwrap_or_default();
 
         let details_panel: ViewHandle<ConversationDetailsPanel> =
@@ -349,11 +303,6 @@ impl AgentManagementView {
             filters,
             search_query: String::new(),
             search_editor,
-            has_dismissed_setup_guide,
-            is_viewing_setup_guide: false,
-            setup_guide_button,
-            view_agents_button,
-            cloud_setup_guide_view,
             loading_icon_mouse_state: MouseStateHandle::default(),
             all_filter_button,
             personal_filter_button,
@@ -396,11 +345,6 @@ impl AgentManagementView {
         // If loading with items, show list of interactive conversations (with loading indicator in header)
         if model.is_loading() && !has_items {
             return ViewState::Loading;
-        }
-
-        // Show setup guide if: no items (zero state) or user clicked button to toggle on the guide
-        if !has_items || self.is_viewing_setup_guide {
-            return ViewState::SetupGuide { has_items };
         }
 
         if self.items.is_empty() {
@@ -554,8 +498,6 @@ impl AgentManagementView {
         if FeatureFlag::InteractiveConversationManagementView.is_enabled() {
             sources.push(AgentSource::Interactive)
         }
-        sources.push(AgentSource::Linear);
-        sources.push(AgentSource::Slack);
         if FeatureFlag::ScheduledAmbientAgents.is_enabled() {
             sources.push(AgentSource::ScheduledAgent);
         }
@@ -867,18 +809,6 @@ impl AgentManagementView {
                 model.fetch_tasks_for_filters(&filters, &uid, ctx);
             });
         }
-    }
-
-    /// Shows the setup guide from a deep-link/action without toggling it off on repeated calls.
-    pub(crate) fn show_setup_guide_from_link(&mut self, ctx: &mut ViewContext<Self>) {
-        if !self.is_viewing_setup_guide {}
-        self.is_viewing_setup_guide = true;
-        ctx.notify();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn is_showing_setup_guide(&self) -> bool {
-        self.is_viewing_setup_guide
     }
 
     pub(crate) fn apply_environment_filter_from_link(
@@ -1760,48 +1690,8 @@ impl AgentManagementView {
     fn render_header(&self, app: &AppContext) -> Box<dyn Element> {
         match self.get_view_state(app) {
             ViewState::Loading => self.render_loading_header(app),
-            ViewState::SetupGuide {
-                has_items: has_tasks,
-            } => self.render_setup_guide_header(has_tasks, app),
             ViewState::NoFilterMatches | ViewState::HasTasks => self.render_task_list_header(app),
         }
-    }
-
-    fn render_setup_guide_header(&self, has_tasks: bool, app: &AppContext) -> Box<dyn Element> {
-        let appearance = Appearance::as_ref(app);
-        let size_switch_threshold = MEDIUM_SIZE_SWITCH_THRESHOLD * appearance.monospace_ui_scalar();
-
-        let build_header = |use_expanded: bool| {
-            let mut header_row = Flex::row()
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_main_axis_size(MainAxisSize::Max);
-
-            if has_tasks {
-                header_row.add_child(ChildView::new(&self.view_agents_button).finish());
-            }
-
-            header_row.add_child(Expanded::new(1., Empty::new().finish()).finish());
-
-            if !has_tasks && !cfg!(target_family = "wasm") {
-                let button = if use_expanded {
-                    self.new_agent_button.expanded_button()
-                } else {
-                    self.new_agent_button.compact_button()
-                };
-                header_row.add_child(ChildView::new(button).finish());
-            }
-
-            header_row.finish()
-        };
-
-        SizeConstraintSwitch::new(
-            build_header(true),
-            vec![(
-                SizeConstraintCondition::WidthLessThan(size_switch_threshold),
-                build_header(false),
-            )],
-        )
-        .finish()
     }
 
     fn render_task_list_header(&self, app: &AppContext) -> Box<dyn Element> {
@@ -1826,12 +1716,6 @@ impl AgentManagementView {
             .with_color(theme.active_ui_text_color().into())
             .finish();
 
-            let setup_guide_button = if use_expanded {
-                self.setup_guide_button.expanded_button()
-            } else {
-                self.setup_guide_button.compact_button()
-            };
-
             let new_agent_button = if use_expanded {
                 self.new_agent_button.expanded_button()
             } else {
@@ -1854,7 +1738,6 @@ impl AgentManagementView {
             }
 
             header_top.add_child(Expanded::new(1., Empty::new().finish()).finish());
-            header_top.add_child(ChildView::new(setup_guide_button).finish());
 
             if !cfg!(target_family = "wasm") {
                 header_top.add_child(ChildView::new(new_agent_button).finish());
@@ -2086,7 +1969,6 @@ impl View for AgentManagementView {
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
         let main_content = match self.get_view_state(app) {
             ViewState::Loading => self.render_loading_state(app),
-            ViewState::SetupGuide { .. } => ChildView::new(&self.cloud_setup_guide_view).finish(),
             ViewState::NoFilterMatches => self.render_no_results_view(app),
             ViewState::HasTasks => self.render_default_scroll_view(app),
         };
@@ -2142,14 +2024,12 @@ pub enum AgentManagementViewAction {
     SetCreatorFilter(CreatorFilter),
     SetHarnessFilter(HarnessFilter),
     ClearFilters,
-    ToggleSetupGuide,
     ShowAgentTypeSelector,
     OpenSession { item_id: ManagementCardItemId },
     FocusSearch,
 }
 
 pub enum AgentManagementViewEvent {
-    OpenNewTabAndRunWorkflow(Box<WorkflowType>),
     OpenPlanNotebook { notebook_uid: NotebookId },
 }
 
@@ -2214,22 +2094,6 @@ impl TypedActionView for AgentManagementView {
                 self.update_environment_dropdown(ctx);
                 self.update_creator_dropdown(ctx);
                 self.on_filter_changed(ctx);
-            }
-            AgentManagementViewAction::ToggleSetupGuide => {
-                if self.is_viewing_setup_guide {
-                    // User is leaving the guide - persist dismissal
-
-                    if !self.has_dismissed_setup_guide {
-                        AISettings::handle(ctx).update(ctx, |settings, ctx| {
-                            let _ = settings.did_dismiss_cloud_setup_guide.set_value(true, ctx);
-                        });
-                        self.has_dismissed_setup_guide = true;
-                    }
-                    self.is_viewing_setup_guide = false;
-                } else {
-                    self.show_setup_guide_from_link(ctx);
-                }
-                ctx.notify();
             }
             AgentManagementViewAction::ShowAgentTypeSelector => {
                 self.is_agent_type_selector_open = true;

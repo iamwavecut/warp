@@ -26,7 +26,6 @@ const HERO_HEIGHT: f32 = 92.;
 const HERO_IMAGE_PATH: &str = "async/png/onboarding/openwarp_launch_banner.png";
 const REPO_URL: &str = "https://github.com/warpdotdev/warp";
 const CONTRIBUTING_URL: &str = "https://github.com/warpdotdev/warp/blob/master/CONTRIBUTING.md";
-const OZ_URL: &str = "https://oz.warp.dev";
 
 struct InlineLink {
     text: &'static str,
@@ -45,7 +44,7 @@ const FEATURE_ITEMS: &[FeatureItem] = &[
     FeatureItem {
         icon: Icon::HeartHand,
         title: "Contribute",
-        description: "Warp's client code is now open source. Get started by using the /feedback skill to open an issue, and follow the contribution guidelines here.",
+        description: "Warp's client code is now open source. Get started by reading the contribution guidelines here.",
         inline_link: Some(InlineLink {
             text: "here",
             url: CONTRIBUTING_URL,
@@ -53,12 +52,9 @@ const FEATURE_ITEMS: &[FeatureItem] = &[
     },
     FeatureItem {
         icon: Icon::Oz,
-        title: "Open Automated Development",
-        description: "The Warp repo is managed by an agent-first workflow powered by Oz, our cloud agent orchestration platform.",
-        inline_link: Some(InlineLink {
-            text: "Oz",
-            url: OZ_URL,
-        }),
+        title: "Local AI workflows",
+        description: "This fork keeps AI workflows local-first with BYOK providers, MCP, and local tooling.",
+        inline_link: None,
     },
     FeatureItem {
         icon: Icon::MessageChatSquare,
@@ -219,31 +215,6 @@ impl OpenWarpLaunchModal {
         .finish()
     }
 
-    /// Splits a plain text string on occurrences of `/feedback`, emitting
-    /// `inline_code` fragments for each match and plain fragments for the rest.
-    fn split_inline_code_fragments(text: &str) -> Vec<FormattedTextFragment> {
-        const CODE_TOKEN: &str = "/feedback";
-        let mut fragments = Vec::new();
-        let mut remaining = text;
-        while let Some(pos) = remaining.find(CODE_TOKEN) {
-            if pos > 0 {
-                fragments.push(FormattedTextFragment::plain_text(&remaining[..pos]));
-            }
-            fragments.push(FormattedTextFragment {
-                text: CODE_TOKEN.into(),
-                styles: FormattedTextStyles {
-                    inline_code: true,
-                    ..Default::default()
-                },
-            });
-            remaining = &remaining[pos + CODE_TOKEN.len()..];
-        }
-        if !remaining.is_empty() {
-            fragments.push(FormattedTextFragment::plain_text(remaining));
-        }
-        fragments
-    }
-
     fn render_feature_description(item: &FeatureItem, appearance: &Appearance) -> Box<dyn Element> {
         let Some(link) = &item.inline_link else {
             return Text::new(item.description, appearance.ui_font_family(), 14.)
@@ -251,7 +222,7 @@ impl OpenWarpLaunchModal {
                 .finish();
         };
 
-        // Build a formatted description with an inline hyperlink and inline code.
+        // Build a formatted description with an inline hyperlink.
         let (before, after) = item
             .description
             .split_once(link.text)
@@ -266,10 +237,10 @@ impl OpenWarpLaunchModal {
             },
         };
 
-        let mut fragments = Self::split_inline_code_fragments(before);
+        let mut fragments = vec![FormattedTextFragment::plain_text(before)];
         fragments.push(link_fragment);
         if !after.is_empty() {
-            fragments.extend(Self::split_inline_code_fragments(after));
+            fragments.push(FormattedTextFragment::plain_text(after));
         }
 
         let formatted = FormattedText::new([FormattedTextLine::Line(fragments)]);

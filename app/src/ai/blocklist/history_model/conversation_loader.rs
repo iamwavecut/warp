@@ -38,7 +38,7 @@ pub struct CLIAgentConversation {
     pub block: SerializedBlock,
 }
 
-/// Representation of the conversation data that can be fetched from cloud storage.
+/// Representation of conversation data loaded from persisted sources.
 ///
 /// The exact format depends on the agent harness that produced the conversation.
 pub enum CloudConversationData {
@@ -136,31 +136,10 @@ pub async fn load_conversation_from_server(
                     }
                 }
                 AIAgentHarness::ClaudeCode | AIAgentHarness::Gemini => {
-                    if !FeatureFlag::AgentHarness.is_enabled() {
-                        log::warn!("Ignoring non-Oz conversation {conversation_id}: AgentHarness flag is disabled");
-                        return None;
-                    }
-                    // Fetch snapshot data for third-party harness conversations.
-                    match server_api
-                        .get_block_snapshot(server_conversation_token)
-                        .await
-                    {
-                        Ok(block) => {
-                            log::info!("Loaded CLI agent block snapshot for {conversation_id}");
-                            Some(CloudConversationData::CLIAgent(Box::new(
-                                CLIAgentConversation {
-                                    metadata: server_metadata,
-                                    block,
-                                },
-                            )))
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "Failed to fetch block snapshot for {conversation_id}: {e:#}"
-                            );
-                            None
-                        }
-                    }
+                    log::warn!(
+                        "Ignoring remote CLI agent conversation {conversation_id}: remote block snapshots are disabled in this local-first build"
+                    );
+                    None
                 }
                 AIAgentHarness::Unknown => {
                     log::warn!(

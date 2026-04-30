@@ -170,9 +170,6 @@ pub enum AgentViewEntryOrigin {
     /// Entered agent view after opening project from OS directory picker.
     ProjectEntry,
 
-    /// Entered agent view via a Linear "work on issue" deeplink.
-    LinearDeepLink,
-
     /// Entered agent view by clearing the buffer (Cmd+K) while already in agent view.
     ClearBuffer,
 
@@ -214,7 +211,6 @@ impl AgentViewEntryOrigin {
             }
             AgentViewEntryOrigin::Cli => AutoTriggerBehavior::Always,
             AgentViewEntryOrigin::AcceptedPromptSuggestion => AutoTriggerBehavior::Always,
-            AgentViewEntryOrigin::LinearDeepLink => AutoTriggerBehavior::Never,
             _ => AutoTriggerBehavior::InAgentView,
         }
     }
