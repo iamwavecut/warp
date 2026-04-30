@@ -952,7 +952,7 @@ impl EventLoop {
                 // On non-web platforms, immediately terminate the process instead of returning
                 // from the event loop.  This matches the behavior of
                 // `[NSApp terminate]` on macOS, and may avoid some at-exit
-                // crashes that produce noise in our crash reporting data.
+                // crashes that produce noise in our local crash handling data.
                 // On web, it's not possible to exit cleanly, so just return from the event loop
                 // instead.
                 #[cfg(not(target_family = "wasm"))]

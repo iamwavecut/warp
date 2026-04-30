@@ -13,8 +13,6 @@ The server is adding `POST /harness-support/notify-user` and `POST /harness-supp
 - `crates/warp_cli/src/harness_support.rs` — CLI arg definitions (`HarnessSupportCommand` enum)
 - `app/src/ai/agent_sdk/harness_support.rs` — command dispatch + async runners
 - `app/src/server/server_api/harness_support.rs` — `HarnessSupportClient` trait + `ServerApi` impl
-- `app/src/ai/agent_sdk/telemetry.rs` — `CliTelemetryEvent` enum
-- `app/src/ai/agent_sdk/mod.rs (1193-1202)` — telemetry mapping for harness-support commands
 - `../claude-code-warp-internal/plugins/oz-harness-support/` — existing plugin (skills, hooks)
 
 ## Current State
@@ -23,7 +21,6 @@ The server is adding `POST /harness-support/notify-user` and `POST /harness-supp
 1. **CLI layer** (`warp_cli`): clap `Args`/`Subcommand` structs define the command shape.
 2. **Handler layer** (`agent_sdk/harness_support.rs`): match on the command, get the `HarnessSupportClient`, spawn an async task, print result / terminate.
 3. **API client layer** (`server_api/harness_support.rs`): `HarnessSupportClient` trait method + `ServerApi` impl calling `self.post_public_api(path, body)`.
-4. **Telemetry**: each command has a `CliTelemetryEvent` variant.
 
 The Claude Code plugin currently has three skills (`oz-report-pr`, `oz-report-artifact`, `oz-report-plan`) and a hook that auto-reports plans. Skills are either shell scripts calling `$OZ_CLI harness-support ...` or SKILL.md instructions.
 
@@ -80,7 +77,6 @@ Add two match arms in `run()` dispatching to new `notify_user()` and `finish_tas
 - On success: print confirmation (pretty) or `{}` (JSON), terminate
 - On error: `report_fatal_error`
 
-### 4. Telemetry (`app/src/ai/agent_sdk/telemetry.rs`)
 
 Add variants:
 
@@ -89,7 +85,6 @@ HarnessSupportNotifyUser,
 HarnessSupportFinishTask { success: bool },
 ```
 
-Wire into `command_to_telemetry_event` in `mod.rs` and the `TelemetryEventDesc` impl.
 
 ### 5. Claude Code plugin (`../claude-code-warp-internal/plugins/oz-harness-support/`)
 

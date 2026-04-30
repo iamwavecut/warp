@@ -1,4 +1,4 @@
-use warp_core::{features::FeatureFlag, send_telemetry_from_ctx, ui::appearance::Appearance};
+use warp_core::{features::FeatureFlag, ui::appearance::Appearance};
 use warpui::{keymap::Keystroke, EntityId, SingletonEntity, ViewContext};
 
 use crate::{
@@ -16,7 +16,6 @@ use crate::{
     },
     global_resource_handles::GlobalResourceHandlesProvider,
     persistence::ModelEvent,
-    server::telemetry::TelemetryAgentViewEntryOrigin,
     terminal::{
         input::message_bar::{Message, MessageItem},
         model::rich_content::RichContentType,
@@ -25,7 +24,6 @@ use crate::{
     },
     view_components::DismissibleToast,
     workspace::ToastStack,
-    TelemetryEvent,
 };
 
 pub const ENTER_AGAIN_TO_SEND_MESSAGE_ID: &str = "enter_again_to_send";
@@ -270,14 +268,6 @@ impl TerminalView {
                 });
             }
         }
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AgentViewEntered {
-                origin: TelemetryAgentViewEntryOrigin::from(origin),
-                did_auto_trigger_request,
-            },
-            ctx
-        );
 
         // Mark all AgentViewEntry rich content as dirty so their heights get
         // re-measured. When the agent view is active, AgentViewEntryBlock renders

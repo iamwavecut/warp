@@ -6,7 +6,6 @@ pub mod link;
 pub mod manager;
 pub mod notebook;
 mod styles;
-pub mod telemetry;
 
 use std::sync::Arc;
 
@@ -36,7 +35,41 @@ use crate::{
         server_api::object::ObjectClient,
         sync_queue::{QueueItem, SerializedModel},
     },
+    workflows::WorkflowId,
 };
+
+/// Generic entrypoint information for actions that might be keyboard or mouse driven.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActionEntrypoint {
+    /// A keyboard shortcut.
+    Keyboard,
+    /// A button in the UI.
+    Button,
+    /// A menu item.
+    Menu,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(tag = "object_type")]
+pub enum EmbeddedObjectInfo {
+    Workflow {
+        workflow_id: Option<WorkflowId>,
+        team_uid: Option<ServerId>,
+    },
+}
+
+/// Information about a block in the notebook.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "block_type")]
+pub enum BlockInfo {
+    /// A workflow embedded in the notebook.
+    EmbeddedWorkflow {
+        workflow_id: Option<WorkflowId>,
+        team_uid: Option<ServerId>,
+    },
+    /// A code or command block within the notebook.
+    CodeBlock,
+}
 
 /// Serialized representation of a notebook for sync queue
 /// The AIDocumentID and ConversationID are stored here to avoid polluting the
@@ -238,7 +271,6 @@ pub enum NotebookLocation {
 
 impl From<Owner> for NotebookLocation {
     fn from(owner: Owner) -> Self {
-        // TODO(ben): Account for shared objects in notebook telemetry.
         match owner {
             Owner::User { .. } => NotebookLocation::PersonalCloud,
             Owner::Team { .. } => NotebookLocation::Team,

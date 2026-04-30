@@ -647,7 +647,7 @@ fn test_sync_local_pref_to_cloud_updates_existing_pref() {
         // Give the initial load time to complete
         warpui::r#async::Timer::after(Duration::from_secs(1)).await;
 
-        // complete the create request for the cloud settings and the telemetry/crash reporting settings
+        // complete the create request for the cloud settings and the diagnostics/local crash handling settings
         await_spawned_futures(
             &mut app,
             3,
@@ -739,7 +739,7 @@ fn test_sync_cloud_pref_to_local_on_initial_load_or_collab_update() {
         // Spend time waiting for the initial load to finish etc.
         warpui::r#async::Timer::after(Duration::from_secs(1)).await;
 
-        // complete the create request for the cloud settings and the telemetry/crash reporting settings
+        // complete the create request for the cloud settings and the diagnostics/local crash handling settings
         await_spawned_futures(
             &mut app,
             3,
@@ -898,7 +898,7 @@ fn test_cloud_preferences_setting_initial_load_skipped_when_setting_is_off() {
         // Spend time waiting for the initial load to finish etc.
         warpui::r#async::Timer::after(Duration::from_secs(1)).await;
 
-        // complete the create request for the cloud settings and the telemetry/crash reporting settings
+        // complete the create request for the cloud settings and the diagnostics/local crash handling settings
         await_spawned_futures(
             &mut app,
             3,
@@ -1202,7 +1202,7 @@ fn test_ensure_no_duplicate_cloud_prefs() {
         // Give time for the initial load and deduplication to complete
         warpui::r#async::Timer::after(Duration::from_secs(1)).await;
 
-        // Wait for the initial creation of cloud settings and telemetry settings
+        // Wait for the initial creation of cloud settings and diagnostics settings
         await_spawned_futures(
             &mut app,
             3,

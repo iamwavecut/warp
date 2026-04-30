@@ -17,7 +17,7 @@ pub struct Matcher {
     /// all of the bindings that match the [`Context`] it is paired with.
     binding_validators: Vec<(Context, BindingValidatorFn)>,
     /// Function to convert bindings that have a [`CustomTag`] trigger to one that has a
-    /// [`Keystroke`]-based trigger instead. If `None`, bindings are not converted.  
+    /// [`Keystroke`]-based trigger instead. If `None`, bindings are not converted.
     custom_trigger_to_keystroke_fn: Option<Box<dyn Fn(CustomTag) -> Option<Keystroke> + 'static>>,
     /// Function to lookup the default keystroke for a given custom action. Used when converting
     /// custom actions to key events during keybinding editing.
@@ -199,7 +199,7 @@ impl Matcher {
     }
 
     /// Overrides any registered binding that has a [`Trigger::Custom`] to one that is keystroke
-    /// based ([`Trigger::Keystrokes`]) using the provided `custom_to_keystroke` fn.  
+    /// based ([`Trigger::Keystrokes`]) using the provided `custom_to_keystroke` fn.
     pub(crate) fn convert_custom_triggers_to_keystroke_triggers(
         &mut self,
         custom_to_keystroke: impl Fn(CustomTag) -> Option<Keystroke> + 'static,

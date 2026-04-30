@@ -8,15 +8,12 @@ use crate::cloud_object::model::view::CloudViewModel;
 use crate::cloud_object::Owner;
 use crate::cloud_object::{CloudObject, ServerGuestSubject};
 use crate::editor::PropagateAndNoOpNavigationKeys;
+use crate::interaction_sources::SharingDialogSource;
 use crate::menu::{self, Menu, MenuItem, MenuItemFields};
-use crate::send_telemetry_from_ctx;
 use crate::server::cloud_objects::update_manager::{
     ObjectOperation, UpdateManager, UpdateManagerEvent,
 };
 use crate::server::ids::ServerId;
-use crate::server::telemetry::CloudObjectTelemetryMetadata;
-use crate::server::telemetry::OpenedSharingDialogEvent;
-use crate::server::telemetry::SharingDialogSource;
 use crate::terminal::shared_session::permissions_manager::{
     SessionPermissionsEvent, SessionPermissionsManager,
 };
@@ -30,7 +27,6 @@ use crate::word_block_editor::{
 };
 use crate::workspace::ToastStack;
 use crate::workspaces::user_workspaces::UserWorkspaces;
-use crate::TelemetryEvent;
 use email_address::EmailAddress;
 use inheritance::{InheritanceDetails, InheritanceState};
 use itertools::Itertools;
@@ -575,44 +571,11 @@ impl SharingDialog {
         }
     }
 
-    /// Report a telemetry event for opening this sharing dialog.
+    /// Report a diagnostics event for opening this sharing dialog.
     ///
     /// This should be called by views that contain a sharing dialog whenever they open it (i.e.
     /// panes and the Warp Drive index).
-    pub fn report_open(&self, source: SharingDialogSource, ctx: &mut ViewContext<Self>) {
-        let event = match self.target.as_ref() {
-            Some(ShareableObject::WarpDriveObject(id)) => {
-                match CloudModel::as_ref(ctx).get_by_uid(&id.uid()) {
-                    Some(object) => TelemetryEvent::OpenedSharingDialog(OpenedSharingDialogEvent {
-                        source,
-                        object_metadata: Some(CloudObjectTelemetryMetadata {
-                            object_type: (&object.cloud_object_type_and_id()).into(),
-                            object_uid: object.sync_id().into_server(),
-                            space: Some(object.space(ctx).into()),
-                            team_uid: match object.permissions().owner {
-                                Owner::Team { team_uid, .. } => Some(team_uid),
-                                Owner::User { .. } => None,
-                            },
-                        }),
-                        session_id: None,
-                    }),
-                    None => return,
-                }
-            }
-            Some(ShareableObject::Session { session_id, .. }) => {
-                TelemetryEvent::OpenedSharingDialog(OpenedSharingDialogEvent {
-                    source,
-                    object_metadata: None,
-                    session_id: Some(*session_id),
-                })
-            }
-            // Skip telemetry for AI conversations
-            Some(ShareableObject::AIConversation(_)) => return,
-            None => return,
-        };
-
-        send_telemetry_from_ctx!(event, ctx);
-    }
+    pub fn report_open(&self, source: SharingDialogSource, ctx: &mut ViewContext<Self>) {}
 
     fn reset_editable_state(&mut self, ctx: &mut ViewContext<Self>) {
         self.reset_invite_form(ctx);
@@ -904,22 +867,6 @@ impl SharingDialog {
     /// Copy the object's URL to the clipboard.
     pub fn copy_link(&self, ctx: &mut ViewContext<Self>) {
         if let Some(url) = self.target.as_ref().and_then(|target| target.link(ctx)) {
-            let event = match self.target {
-                Some(ShareableObject::Session { .. }) => {
-                    Some(TelemetryEvent::CopiedSharedSessionLink {
-                        source: SharedSessionActionSource::SharingDialog,
-                    })
-                }
-                Some(ShareableObject::WarpDriveObject(_))
-                | Some(ShareableObject::AIConversation(_)) => {
-                    Some(TelemetryEvent::ObjectLinkCopied { link: url.clone() })
-                }
-                None => None,
-            };
-            if let Some(event) = event {
-                send_telemetry_from_ctx!(event, ctx);
-            }
-
             ctx.clipboard().write(ClipboardContent::plain_text(url));
 
             let window_id = ctx.window_id();

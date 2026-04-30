@@ -49,6 +49,10 @@ pub(super) fn chat_completions_url(base_url: &str) -> String {
     format!("{}/chat/completions", base_url.trim_end_matches('/'))
 }
 
+pub(crate) fn models_url(base_url: &str) -> String {
+    format!("{}/models", base_url.trim_end_matches('/'))
+}
+
 #[derive(Debug, Serialize)]
 struct ChatCompletionRequest {
     model: String,
@@ -75,6 +79,53 @@ struct ChatChoice {
 #[derive(Debug, Deserialize)]
 struct ChatChoiceMessage {
     content: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelEntry {
+    id: Option<String>,
+}
+
+pub(crate) async fn fetch_models(
+    base_url: &str,
+    api_key: Option<&str>,
+) -> Result<Vec<String>, AIApiError> {
+    let client = reqwest::Client::new();
+    let mut request = client.get(models_url(base_url));
+    if let Some(api_key) = api_key.filter(|key| !key.trim().is_empty()) {
+        request = request.bearer_auth(api_key);
+    }
+
+    let response = request.send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|e| format!("(failed to read response body: {e:#})"));
+        return Err(AIApiError::ErrorStatus(status, body));
+    }
+
+    let response: ModelsResponse = response
+        .json()
+        .await
+        .context("failed to decode OpenAI-compatible models response")?;
+    let mut seen = std::collections::HashSet::new();
+    let models = response
+        .data
+        .into_iter()
+        .filter_map(|entry| entry.id)
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .filter(|id| seen.insert(id.clone()))
+        .collect();
+
+    Ok(models)
 }
 
 pub(super) async fn generate(
@@ -264,6 +315,47 @@ mod tests {
         assert_eq!(
             chat_completions_url("http://localhost:1234/v1/"),
             "http://localhost:1234/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn builds_models_url_from_base_url() {
+        assert_eq!(
+            models_url("http://localhost:1234/v1"),
+            "http://localhost:1234/v1/models"
+        );
+        assert_eq!(
+            models_url("http://localhost:1234/v1/"),
+            "http://localhost:1234/v1/models"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetches_openai_compatible_model_ids() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/v1/models")
+            .match_header("authorization", "Bearer test-key")
+            .with_status(200)
+            .with_body(
+                r#"{
+                    "object": "list",
+                    "data": [
+                        { "id": "qwen3-coder", "object": "model" },
+                        { "id": "llama-local", "object": "model" },
+                        { "id": "qwen3-coder", "object": "model" },
+                        { "object": "model" }
+                    ]
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let models = fetch_models(&format!("{}/v1", server.url()), Some("test-key")).await;
+
+        assert_eq!(
+            models.unwrap(),
+            vec!["qwen3-coder".to_string(), "llama-local".to_string()]
         );
     }
 }

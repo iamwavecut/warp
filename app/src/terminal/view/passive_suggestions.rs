@@ -1,6 +1,6 @@
 use warpui::ViewContext;
 
-use crate::{server::telemetry::InteractionSource, terminal::view::CodeDiffAction};
+use crate::{interaction_sources::InteractionSource, terminal::view::CodeDiffAction};
 
 use super::TerminalView;
 

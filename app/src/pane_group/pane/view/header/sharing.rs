@@ -19,8 +19,8 @@ use crate::{
         dialog::{SharingDialog, SharingDialogEvent},
         ContentEditability, ShareableObject,
     },
+    interaction_sources::SharingDialogSource,
     pane_group::BackingView,
-    server::telemetry::SharingDialogSource,
     ui_components::buttons::{icon_button, icon_button_with_color},
     ui_components::icons::Icon,
 };

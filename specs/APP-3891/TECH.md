@@ -115,5 +115,4 @@ sequenceDiagram
 - Save and restore clipboard contents after image paste submission.
 - Per-agent paste delay tuning (some agents may need more or less than 500ms).
 - Fallback strategy for CLI agents that don't support Ctrl+V image paste (e.g. file path references).
-- Telemetry for CLI agent image paste (number of images, success rate).
 - Drag-and-drop image files into CLI agent rich input (likely works already but needs explicit testing).

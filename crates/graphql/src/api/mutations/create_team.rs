@@ -81,9 +81,6 @@ mutation CreateTeam($input: CreateTeamInput!, $request_context: RequestContext!)
           llmSettings {
             enabled
           }
-          telemetrySettings {
-            forceEnabled
-          }
           linkSharingSettings {
             anyoneWithLinkSharingEnabled
             directLinkSharingEnabled

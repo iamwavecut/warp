@@ -344,18 +344,14 @@ The sidecar should use generated detail content. To avoid accidental leakage:
 
 This is the main reason not to mutate `PaneConfiguration.title()` or `PaneProps.title` with the custom pane name.
 
-### 10. Telemetry
 
-If product wants rename-pane usage tracked, add a telemetry event using the `add-telemetry` skill before implementation.
 
-If telemetry is added, track:
 
 - rename editor opened
 - custom pane name committed
 - custom pane name cleared
 - entry point (`right_click`, `double_click`)
 
-Do not block implementation on telemetry unless PM/review requests it.
 
 ## End-to-end flow
 
@@ -483,6 +479,5 @@ Before opening or updating a PR, follow repository rules for full validation wit
 ## Follow-ups
 
 - Add a reset pane name menu item if users need parity with `Reset tab name`.
-- Add telemetry for pane rename usage if product analytics needs it.
 - Consider keyboard-accessible pane rename entry points if a keyboard navigation audit identifies a gap.
 - Consider whether tab configs should encode custom pane names separately from session restoration. This spec only requires persisted workspace restoration.

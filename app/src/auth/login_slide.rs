@@ -1,16 +1,10 @@
 use crate::appearance::Appearance;
 use crate::auth::auth_manager::{AuthManager, AuthManagerEvent};
 use crate::auth::auth_view_modal::AuthRedirectPayload;
-use crate::auth::auth_view_shared_helpers::{
-    render_privacy_settings_toggles, PrivacySettingsActions, PrivacySettingsHandles,
-};
 use crate::auth::login_failure_notification::{self, LoginFailureReason};
 use crate::editor::{EditorView, SingleLineEditorOptions, TextColors, TextOptions};
-use crate::server::telemetry::{LoginEventSource, TelemetryEvent};
-use crate::settings::PrivacySettings;
 use crate::themes::theme::Fill as ThemeFill;
 use crate::util::bindings::CustomAction;
-use crate::{send_telemetry_from_ctx, send_telemetry_sync_from_ctx};
 
 use onboarding::slides::{layout, slide_content};
 use onboarding::{OnboardingIntention, AI_FEATURES, WARP_DRIVE_FEATURES};
@@ -32,7 +26,7 @@ use warpui::text_layout::TextAlignment;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{
     actions::StandardAction, AppContext, Element, Entity, FocusContext, SingletonEntity,
-    TypedActionView, UpdateModel, View, ViewContext, ViewHandle,
+    TypedActionView, View, ViewContext, ViewHandle,
 };
 
 use std::cell::Cell;
@@ -101,11 +95,7 @@ pub enum LoginSlideAction {
     BackToSelectAuthPathway,
     CopyLoginUrl,
     EnterToken,
-    ShowPrivacySettings,
     HideOverlay,
-    ToggleTelemetry,
-    ToggleCrashReporting,
-    ToggleCloudConversationStorage,
     DismissNotification,
     PasteAuthUrl,
 }
@@ -117,16 +107,13 @@ pub enum LoginSlideEvent {
 }
 
 /// How the user arrived at the login slide. Controls which step is shown first
-/// and how "Back" is routed when the user backs out of the privacy-settings step.
+/// and how "Back" is routed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoginSlideSource {
     /// Reached via the normal onboarding flow (e.g. agent intention requires an account).
     OnboardingFlow,
     /// Reached via the "Log in" link on the intro / welcome slide.
     LoginExistingUserFromWelcome,
-    /// Reached via the "Privacy Settings" link on the terminal-intention theme slide.
-    /// Starts directly in the privacy settings step and routes Back to onboarding.
-    PrivacySettingsFromTerminalIntentionTheme,
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +123,6 @@ pub enum LoginSlideSource {
 enum LoginStep {
     SelectAuthPathway,
     BrowserOpen,
-    PrivacySettings,
 }
 
 // ---------------------------------------------------------------------------
@@ -155,13 +141,6 @@ enum LoginSlideOverlay {
 const AUTH_TOKEN_INPUT_BORDER_RADIUS: Radius = Radius::Pixels(4.);
 
 pub struct LoginSlideView {
-    /// Whether AI will be enabled once onboarding is applied. Used to hide the
-    /// cloud-conversation-storage toggle in the privacy settings step when the
-    /// user has disabled Warp Agent during onboarding (or is on the terminal
-    /// intention path, which disables AI). The actual `AISettings` value may
-    /// not have been written yet at this point, since onboarding settings are
-    /// applied after login.
-    ai_enabled: bool,
     /// Onboarding intention selected by the user, used to render Drive-focused
     /// copy on the Terminal+Drive path. On the login slide, `intention ==
     /// OnboardingIntention::Terminal` is equivalent to "Terminal+Drive":
@@ -183,19 +162,14 @@ pub struct LoginSlideView {
     skip_button: button::Button,
     login_button: button::Button,
     browser_back_button: button::Button,
-    done_button: button::Button,
     dialog_login_button: button::Button,
     dialog_skip_button: button::Button,
     dialog_close_button: button::Button,
 
     // Mouse states for links
     tos_mouse_state: MouseStateHandle,
-    privacy_settings_mouse_state: MouseStateHandle,
     copy_url_mouse_state: MouseStateHandle,
     enter_token_mouse_state: MouseStateHandle,
-
-    // Privacy settings overlay (shared with AuthViewBody)
-    privacy_settings_handles: PrivacySettingsHandles,
 
     scroll_state: ClippedScrollStateHandle,
     close_login_notification_mouse_state: MouseStateHandle,
@@ -261,7 +235,7 @@ impl LoginSlideView {
     }
 
     pub fn new(
-        ai_enabled: bool,
+        _ai_enabled: bool,
         theme_name: &str,
         use_vertical_tabs: bool,
         intention: OnboardingIntention,
@@ -310,15 +284,11 @@ impl LoginSlideView {
         });
 
         Self {
-            ai_enabled,
             intention,
             theme_visual_path: resolve_visual_path(intention, theme_name, use_vertical_tabs),
             step: match source {
                 LoginSlideSource::OnboardingFlow => LoginStep::SelectAuthPathway,
                 LoginSlideSource::LoginExistingUserFromWelcome => LoginStep::BrowserOpen,
-                LoginSlideSource::PrivacySettingsFromTerminalIntentionTheme => {
-                    LoginStep::PrivacySettings
-                }
             },
             active_overlay: None,
             last_login_failure_reason: None,
@@ -329,15 +299,12 @@ impl LoginSlideView {
             skip_button: button::Button::default(),
             login_button: button::Button::default(),
             browser_back_button: button::Button::default(),
-            done_button: button::Button::default(),
             dialog_login_button: button::Button::default(),
             dialog_skip_button: button::Button::default(),
             dialog_close_button: button::Button::default(),
             tos_mouse_state: MouseStateHandle::default(),
-            privacy_settings_mouse_state: MouseStateHandle::default(),
             copy_url_mouse_state: MouseStateHandle::default(),
             enter_token_mouse_state: MouseStateHandle::default(),
-            privacy_settings_handles: PrivacySettingsHandles::default(),
             scroll_state: ClippedScrollStateHandle::new(),
             close_login_notification_mouse_state: MouseStateHandle::default(),
             highlighted_hyperlink_state: HighlightedHyperlink::default(),
@@ -393,12 +360,7 @@ impl LoginSlideView {
     fn handle_login_later(&mut self, ctx: &mut ViewContext<Self>) {
         // Send synchronously since this is an important event in the sign up funnel and we
         // don't want to lose events if the user quits before the event queue is flushed.
-        send_telemetry_sync_from_ctx!(
-            TelemetryEvent::LoginLaterConfirmationButtonClicked {
-                source: LoginEventSource::OnboardingSlide,
-            },
-            ctx
-        );
+
         if FeatureFlag::SkipFirebaseAnonymousUser.is_enabled() {
             AuthManager::handle(ctx).update(ctx, |_, ctx| {
                 ctx.emit(AuthManagerEvent::SkippedLogin);
@@ -442,33 +404,12 @@ impl LoginSlideView {
                     appearance,
                 )
             }
-            LoginStep::PrivacySettings => {
-                let children = self.render_privacy_settings_content(appearance, app);
-                let bottom_nav = self.render_privacy_settings_bottom_nav(appearance);
-                slide_content::onboarding_slide_content(
-                    children,
-                    bottom_nav,
-                    self.scroll_state.clone(),
-                    appearance,
-                )
-            }
         }
     }
 
     // ------------------------------------------------------------------
     // Step 1: Select auth pathway
     // ------------------------------------------------------------------
-
-    /// Disclaimer prefix shown before the "Privacy Settings" link. AI is
-    /// dropped from the wording on paths that don't enable AI (e.g.
-    /// Terminal+Drive), since there are no AI features to opt out of there.
-    fn privacy_disclaimer_prefix(&self) -> &'static str {
-        if self.ai_enabled {
-            "If you'd like to opt out of analytics and AI features, you can adjust your "
-        } else {
-            "If you'd like to opt out of analytics, you can adjust your "
-        }
-    }
 
     fn render_select_auth_content(&self, appearance: &Appearance) -> Vec<Box<dyn Element>> {
         let theme = appearance.theme();
@@ -503,7 +444,7 @@ impl LoginSlideView {
                 .with_line_height_ratio(1.0)
                 .finish();
 
-        // TOS and Privacy links
+        // Terms of Service link.
         let disclaimer_styles = UiComponentStyles {
             font_color: Some(sub_text_color),
             font_size: Some(12.),
@@ -536,42 +477,7 @@ impl LoginSlideView {
             )
             .finish();
 
-        let privacy_line = Flex::row()
-            .with_child(
-                ui_builder
-                    .span(self.privacy_disclaimer_prefix())
-                    .with_style(disclaimer_styles)
-                    .build()
-                    .finish(),
-            )
-            .with_child(
-                ui_builder
-                    .link(
-                        "Privacy Settings".into(),
-                        None,
-                        Some(Box::new(|ctx| {
-                            ctx.dispatch_typed_action(LoginSlideAction::ShowPrivacySettings);
-                        })),
-                        self.privacy_settings_mouse_state.clone(),
-                    )
-                    .soft_wrap(false)
-                    .with_style(UiComponentStyles {
-                        font_size: Some(12.),
-                        ..Default::default()
-                    })
-                    .build()
-                    .finish(),
-            )
-            .finish();
-
-        let disclaimers = Container::new(
-            Flex::column()
-                .with_child(privacy_line)
-                .with_child(Container::new(tos_line).with_margin_top(8.).finish())
-                .finish(),
-        )
-        .with_margin_top(24.)
-        .finish();
+        let disclaimers = Container::new(tos_line).with_margin_top(24.).finish();
 
         let header = Flex::column()
             .with_main_axis_size(MainAxisSize::Min)
@@ -805,66 +711,6 @@ impl LoginSlideView {
                 options: button::Options {
                     on_click: Some(Box::new(|ctx, _app, _pos| {
                         ctx.dispatch_typed_action(LoginSlideAction::BackToSelectAuthPathway);
-                    })),
-                    ..button::Options::default(appearance)
-                },
-            },
-        );
-
-        Flex::row()
-            .with_main_axis_size(MainAxisSize::Max)
-            .with_child(back_button)
-            .finish()
-    }
-
-    // ------------------------------------------------------------------
-    // Step 3: Privacy settings (inline in left column)
-    // ------------------------------------------------------------------
-
-    fn render_privacy_settings_content(
-        &self,
-        appearance: &Appearance,
-        app: &AppContext,
-    ) -> Vec<Box<dyn Element>> {
-        let theme = appearance.theme();
-
-        let title =
-            FormattedTextElement::from_str("Privacy Settings", appearance.ui_font_family(), 36.)
-                .with_color(internal_colors::text_main(
-                    theme,
-                    theme.background().into_solid(),
-                ))
-                .with_weight(Weight::Medium)
-                .with_alignment(TextAlignment::Left)
-                .finish();
-
-        let actions = PrivacySettingsActions {
-            toggle_telemetry: LoginSlideAction::ToggleTelemetry,
-            toggle_crash_reporting: LoginSlideAction::ToggleCrashReporting,
-            toggle_cloud_conversation_storage: LoginSlideAction::ToggleCloudConversationStorage,
-            hide_overlay: LoginSlideAction::HideOverlay,
-        };
-
-        let toggles = render_privacy_settings_toggles(
-            appearance,
-            app,
-            &self.privacy_settings_handles,
-            &actions,
-            self.ai_enabled,
-        );
-
-        vec![title, Container::new(toggles).with_margin_top(24.).finish()]
-    }
-
-    fn render_privacy_settings_bottom_nav(&self, appearance: &Appearance) -> Box<dyn Element> {
-        let back_button = self.done_button.render(
-            appearance,
-            button::Params {
-                content: button::Content::Label("Back".into()),
-                theme: &button::themes::Naked,
-                options: button::Options {
-                    on_click: Some(Box::new(|ctx, _app, _pos| {
-                        ctx.dispatch_typed_action(LoginSlideAction::HideOverlay);
                     })),
                     ..button::Options::default(appearance)
                 },
@@ -1181,12 +1027,7 @@ impl TypedActionView for LoginSlideView {
                     return;
                 }
                 // Otherwise Enter is log in
-                send_telemetry_from_ctx!(
-                    TelemetryEvent::LoginButtonClicked {
-                        source: LoginEventSource::OnboardingSlide,
-                    },
-                    ctx
-                );
+
                 self.last_login_failure_reason = None;
                 self.step = LoginStep::BrowserOpen;
                 AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
@@ -1196,12 +1037,6 @@ impl TypedActionView for LoginSlideView {
                 ctx.notify();
             }
             LoginSlideAction::ShowSkipDialog => {
-                send_telemetry_from_ctx!(
-                    TelemetryEvent::LoginLaterButtonClicked {
-                        source: LoginEventSource::OnboardingSlide,
-                    },
-                    ctx
-                );
                 self.active_overlay = Some(LoginSlideOverlay::SkipDialog);
                 ctx.notify();
             }
@@ -1217,26 +1052,9 @@ impl TypedActionView for LoginSlideView {
                 if self.active_overlay.is_some() {
                     self.active_overlay = None;
                     ctx.notify();
-                } else if matches!(self.step, LoginStep::PrivacySettings) {
-                    match self.source {
-                        LoginSlideSource::PrivacySettingsFromTerminalIntentionTheme => {
-                            ctx.emit(LoginSlideEvent::BackToOnboarding);
-                        }
-                        LoginSlideSource::OnboardingFlow
-                        | LoginSlideSource::LoginExistingUserFromWelcome => {
-                            self.step = LoginStep::SelectAuthPathway;
-                            ctx.focus_self();
-                            ctx.notify();
-                        }
-                    }
                 } else if matches!(self.step, LoginStep::BrowserOpen) {
-                    // PrivacySettingsFromTerminalIntentionTheme starts on the
-                    // privacy-settings step and should never transition into the
-                    // select-auth-pathway step. If this branch is ever reached
-                    // for that source, route back to onboarding instead.
                     match self.source {
-                        LoginSlideSource::LoginExistingUserFromWelcome
-                        | LoginSlideSource::PrivacySettingsFromTerminalIntentionTheme => {
+                        LoginSlideSource::LoginExistingUserFromWelcome => {
                             ctx.emit(LoginSlideEvent::BackToOnboarding);
                         }
                         LoginSlideSource::OnboardingFlow => {
@@ -1253,12 +1071,7 @@ impl TypedActionView for LoginSlideView {
                 ctx.emit(LoginSlideEvent::BackToOnboarding);
             }
             LoginSlideAction::BackToSelectAuthPathway => match self.source {
-                // PrivacySettingsFromTerminalIntentionTheme only ever shows the
-                // privacy-settings step; treat "back" the same as login-from-
-                // welcome and return to onboarding rather than falling through
-                // to a step this source was designed to skip.
-                LoginSlideSource::LoginExistingUserFromWelcome
-                | LoginSlideSource::PrivacySettingsFromTerminalIntentionTheme => {
+                LoginSlideSource::LoginExistingUserFromWelcome => {
                     ctx.emit(LoginSlideEvent::BackToOnboarding);
                 }
                 LoginSlideSource::OnboardingFlow => {
@@ -1283,56 +1096,8 @@ impl TypedActionView for LoginSlideView {
                 self.show_auth_token_input = true;
                 ctx.notify();
             }
-            LoginSlideAction::ShowPrivacySettings => {
-                send_telemetry_sync_from_ctx!(
-                    TelemetryEvent::OpenAuthPrivacySettings {
-                        source: LoginEventSource::OnboardingSlide,
-                    },
-                    ctx
-                );
-                self.step = LoginStep::PrivacySettings;
-                ctx.notify();
-            }
             LoginSlideAction::HideOverlay => {
-                // "Done" button in privacy settings returns to the auth pathway step,
-                // except when the user entered the slide via the terminal-intention theme slide's
-                // Privacy Settings link — in that case Back returns to the onboarding view.
                 self.active_overlay = None;
-                match self.source {
-                    LoginSlideSource::PrivacySettingsFromTerminalIntentionTheme => {
-                        ctx.emit(LoginSlideEvent::BackToOnboarding);
-                    }
-                    LoginSlideSource::OnboardingFlow
-                    | LoginSlideSource::LoginExistingUserFromWelcome => {
-                        self.step = LoginStep::SelectAuthPathway;
-                        ctx.focus_self();
-                        ctx.notify();
-                    }
-                }
-            }
-            LoginSlideAction::ToggleTelemetry => {
-                let handle = PrivacySettings::handle(ctx);
-                ctx.update_model(&handle, |settings, ctx| {
-                    settings.set_is_telemetry_enabled(!settings.is_telemetry_enabled, ctx);
-                });
-                ctx.notify();
-            }
-            LoginSlideAction::ToggleCrashReporting => {
-                let handle = PrivacySettings::handle(ctx);
-                ctx.update_model(&handle, |settings, ctx| {
-                    settings
-                        .set_is_crash_reporting_enabled(!settings.is_crash_reporting_enabled, ctx);
-                });
-                ctx.notify();
-            }
-            LoginSlideAction::ToggleCloudConversationStorage => {
-                let handle = PrivacySettings::handle(ctx);
-                ctx.update_model(&handle, |settings, ctx| {
-                    settings.set_is_cloud_conversation_storage_enabled(
-                        !settings.is_cloud_conversation_storage_enabled,
-                        ctx,
-                    );
-                });
                 ctx.notify();
             }
             LoginSlideAction::DismissNotification => {

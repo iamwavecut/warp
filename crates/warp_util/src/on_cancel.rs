@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 /// Trait allowing you to attach a function to a [`Future`] that will be called if the future is
-/// cancelled.  
+/// cancelled.
 pub trait OnCancelFutureExt
 where
     Self: Future + Sized,

@@ -35,7 +35,6 @@ The `RemoteTransport` trait (`crates/remote_server/src/transport.rs:63`) now ret
 
 New `RemoteServerExitStatus` type (`manager.rs:67`) records `code: Option<i32>` and `signal_killed: bool`.
 
-`capture_exit_status()` (`manager.rs:982`) reads `child.try_status()` before the `Child` is dropped on disconnect. The result is carried on `SessionDisconnected.exit_status` for diagnostics and telemetry.
 
 ### 3. Reconnection state machine
 
@@ -115,5 +114,4 @@ Edge cases verified manually:
 ## Follow-ups
 
 - **User-visible reconnecting indicator**: surface the `Reconnecting` state in the terminal UI so the user knows a retry is in progress.
-- **Telemetry**: emit a structured event with `exit_status`, `attempt`, and `reconnect_succeeded` for reconnect outcomes.
 - **Exponential backoff**: the current fixed 2s delay works for the proxy-restart case; longer backoffs may be warranted for network-level failures.

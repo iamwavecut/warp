@@ -100,6 +100,105 @@ pub fn parse_custom_provider_models(input: &str) -> Vec<String> {
         })
 }
 
+pub fn ranked_custom_provider_model_suggestions(
+    query: &str,
+    available_models: &[String],
+    selected_models: &[String],
+) -> Vec<String> {
+    let query = query.trim().to_lowercase();
+    let query_tokens = query
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let selected = selected_models
+        .iter()
+        .map(|model| model.to_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+    let mut seen = std::collections::HashSet::new();
+
+    let mut matches = available_models
+        .iter()
+        .filter_map(|model| {
+            let normalized = model.trim();
+            if normalized.is_empty() {
+                return None;
+            }
+
+            let model_lower = normalized.to_lowercase();
+            if selected.contains(&model_lower) || !seen.insert(model_lower.clone()) {
+                return None;
+            }
+
+            let score = custom_provider_model_match_score(&model_lower, &query, &query_tokens)?;
+            Some((score, model_lower, normalized.to_string()))
+        })
+        .collect::<Vec<_>>();
+
+    matches.sort_by(
+        |(left_score, left_model, _), (right_score, right_model, _)| {
+            left_score
+                .cmp(right_score)
+                .then_with(|| left_model.cmp(right_model))
+        },
+    );
+
+    matches.into_iter().map(|(_, _, model)| model).collect()
+}
+
+fn custom_provider_model_match_score(
+    model: &str,
+    query: &str,
+    query_tokens: &[String],
+) -> Option<(usize, usize)> {
+    if query.is_empty() {
+        return Some((0, 0));
+    }
+
+    let first_token = query_tokens.first().map(String::as_str).unwrap_or(query);
+    let token_match = query_tokens
+        .iter()
+        .all(|token| model.contains(token) || fuzzy_subsequence_match(model, token));
+    if !token_match {
+        return None;
+    }
+
+    let rank = if model.starts_with(query) || model.starts_with(first_token) {
+        0
+    } else if model.contains(query) {
+        1
+    } else if query_tokens.iter().all(|token| model.contains(token)) {
+        2
+    } else {
+        3
+    };
+    let first_position = model.find(first_token).unwrap_or(usize::MAX);
+
+    Some((rank, first_position))
+}
+
+fn fuzzy_subsequence_match(candidate: &str, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+
+    let mut query_chars = query.chars();
+    let Some(mut current) = query_chars.next() else {
+        return true;
+    };
+
+    for candidate_char in candidate.chars() {
+        if candidate_char == current {
+            let Some(next) = query_chars.next() else {
+                return true;
+            };
+            current = next;
+        }
+    }
+
+    false
+}
+
 pub fn normalize_custom_provider_env_var(input: &str) -> Option<String> {
     let trimmed = input.trim().trim_start_matches('$').trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())

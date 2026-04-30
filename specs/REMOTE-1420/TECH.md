@@ -4,7 +4,6 @@
 
 Opening a shared-session link beachballs the desktop app and crashes Warp-on-Web. Main thread stalls inside `ConversationListViewModel::refresh_cached_items` → `AgentConversationsModel::conversation_ids_shadowed_by_tasks` → `BlocklistAIHistoryModel::find_conversation_id_by_server_token`.
 
-Each lookup is O(conversations + metadata) (two linear scans), the miss path emits `log::info!`, and INFO is captured as a synchronous Sentry breadcrumb (JSON-encoded on main).
 
 - **N** = ambient agent tasks in `AgentConversationsModel.tasks`.
 - **M** = `conversations_by_id.len() + all_conversations_metadata.len()` scanned per task.
@@ -60,11 +59,8 @@ Resolve an invariant question while implementing: all callers currently treat "c
 
 ### 2. Demote miss-log to `debug`
 
-Change `log::info!` at `history_model.rs:1860` to `log::debug!`. INFO is forwarded to Sentry breadcrumbs and JSON-encoded synchronously on the main thread (visible in the desktop sample as `SentryCrashJSONCodec` frames). DEBUG is not captured.
 
-INFO level isn't warranted here: a token miss is the expected outcome whenever a task references a conversation the local client hasn't loaded (shared-session tasks from other users, server-only tasks, pre-sync state). It's not an error, not actionable for production telemetry, and repeats identically per-task per-refresh so it provides zero new information after the first occurrence. DEBUG is the right level for local diagnostic use; if we ever need to investigate a specific lookup miss, developers can opt in.
 
-Keep the log for diagnostics; just stop sending it to Sentry. Acts as a safety net if the index ever misses a site.
 
 ### 3. Stop rebuilding the list cache on `ConversationUpdated`
 

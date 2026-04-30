@@ -12,8 +12,6 @@ use crate::{
         },
         BackingView, Direction, PaneDragDropLocation, PaneId, TabBarHoverIndex,
     },
-    send_telemetry_from_ctx,
-    server::telemetry::{SharingDialogSource, TelemetryEvent},
     settings::CodeSettings,
     tab::tab_position_id,
     terminal::view::TerminalAction,
@@ -891,9 +889,7 @@ impl<P: BackingView> TypedActionView for PaneHeader<P> {
             PaneHeaderAction::ShareContents => {
                 self.share_pane_contents(SharingDialogSource::PaneHeader, ctx)
             }
-            PaneHeaderAction::PaneHeaderDragStarted => {
-                send_telemetry_from_ctx!(TelemetryEvent::PaneDragInitiated, ctx);
-            }
+            PaneHeaderAction::PaneHeaderDragStarted => {}
             PaneHeaderAction::PaneHeaderDragged {
                 origin,
                 drag_location,
@@ -945,26 +941,16 @@ impl<P: BackingView> TypedActionView for PaneHeader<P> {
             PaneHeaderAction::PaneHeaderDropped {
                 origin,
                 drop_location,
-            } => {
-                match drop_location {
-                    PaneDragDropLocation::TabBar(_) => {
-                        self.is_visible_in_pane_group = true;
-                        ctx.emit(Event::DroppedOnTabBar { origin: *origin })
-                    }
-                    PaneDragDropLocation::PaneGroup(_) => {
-                        ctx.emit(Event::PaneDroppedWithinPaneGroup)
-                    }
-                    PaneDragDropLocation::Other => {
-                        ctx.emit(Event::PaneDroppedOutsideofTabBarOrPaneGroup)
-                    }
+            } => match drop_location {
+                PaneDragDropLocation::TabBar(_) => {
+                    self.is_visible_in_pane_group = true;
+                    ctx.emit(Event::DroppedOnTabBar { origin: *origin })
                 }
-                send_telemetry_from_ctx!(
-                    TelemetryEvent::PaneDropped {
-                        drop_location: *drop_location
-                    },
-                    ctx
-                );
-            }
+                PaneDragDropLocation::PaneGroup(_) => ctx.emit(Event::PaneDroppedWithinPaneGroup),
+                PaneDragDropLocation::Other => {
+                    ctx.emit(Event::PaneDroppedOutsideofTabBarOrPaneGroup)
+                }
+            },
             PaneHeaderAction::PaneHeaderClicked => ctx.emit(Event::PaneHeaderClicked),
         }
     }
@@ -1196,3 +1182,4 @@ fn render_draggable_placeholder_element(
 #[cfg(test)]
 #[path = "mod_test.rs"]
 mod tests;
+use crate::interaction_sources::SharingDialogSource;

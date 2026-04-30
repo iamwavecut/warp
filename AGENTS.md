@@ -22,6 +22,11 @@ split the work into future phases. Continue within the current session until the
 requested end state is reached or a concrete blocker is found. Keep the build
 green as the boundary for safe progress.
 
+Do not run verification commands such as tests, `cargo fmt`, `cargo fmt --check`,
+`cargo check`, builds, or linting until all requested business/code changes for
+the current work item are complete. Verification is the final phase, not an
+interleaved step, unless the user explicitly asks for an early diagnostic run.
+
 At the end of every work iteration on this fork, include a copyable launch
 command relative to the repository root:
 
@@ -39,8 +44,7 @@ The app must work:
 
 - without mandatory login or registration;
 - without Firebase anonymous user creation;
-- without telemetry collection or telemetry events;
-- without Sentry, CocoaSentry, or crash reporting;
+- without manufacturer data collection, event upload, or remote incident upload;
 - without Warp cloud/protobuf endpoints for custom AI providers;
 - without Warp account, cloud, billing, subscription, quota, paywall, referral,
   Teams, Shared Blocks, or Warp Drive UI;
@@ -51,14 +55,13 @@ The app must work:
 
 ## Core Local-First Policy
 
-Keep these surfaces disabled, hidden, or no-op:
+Keep these surfaces disabled, hidden, or removed as appropriate:
 
 - login, account registration, browser auth, and device auth;
 - Firebase anonymous user creation;
 - Warp cloud and Warp Drive cloud sync;
-- telemetry collection, telemetry events, telemetry persistence, and telemetry
-  upload;
-- crash reporting, CocoaSentry, and Sentry;
+- manufacturer/product data collection, event persistence, event upload, remote
+  incident upload, and related placeholders must be removed, not stubbed;
 - billing, subscription, Stripe, upgrade, usage pricing, quotas, and paywalls;
 - cloud conversation storage;
 - hosted/proprietary Warp agent server auth flows;
@@ -137,7 +140,8 @@ fork, make it unconditional. If compatibility commands still use
 File: `app/src/lib.rs`
 
 `init_feature_flags()` should force cloud, hosted, account, billing, auth,
-telemetry, and crash flags off unconditionally for this fork.
+manufacturer data collection, and remote incident upload flags off
+unconditionally for this fork.
 
 Keep local agent-management and vertical-tab/sidebar surfaces available when
 they are backed by local state. Do not disable MCP wholesale.
@@ -156,9 +160,8 @@ Cloud/hosted/account flags that should stay off include:
 - `APIKeyAuthentication`
 - `APIKeyManagement`
 - `UsageBasedPricing`
-- `CrashReporting`
-- `CocoaSentry`
-- telemetry-related flags
+- remote incident upload flags
+- manufacturer data collection flags
 
 ## Custom Provider Path
 
@@ -224,25 +227,26 @@ Policy:
 - avoid global paid-plan spoofing that brings billing UI back;
 - keep local provider and MCP workflows usable.
 
-## Privacy, Telemetry, And Crash Reporting
+## Privacy And Local Diagnostics
 
 Relevant files:
 
 - `app/src/settings/privacy.rs`
 - `app/src/settings_view/privacy_page.rs`
-- `app/src/server/telemetry/*`
 - `app/src/lib.rs`
 
 Policy:
 
-- telemetry is disabled;
-- telemetry macros are no-op;
-- crash reporting is disabled;
+- manufacturer/product data collection is not acceptable in this fork;
+- event collection code, collectors, persistence, uploads, settings, UI, and
+  imports should be removed when encountered rather than merely hidden;
+- remote incident upload code and placeholders are removed when encountered;
 - cloud conversation storage is disabled;
-- server privacy fetch/update is no-op;
-- setters for telemetry, crash reporting, and cloud conversation storage force
-  `false`;
-- app startup should not register telemetry collectors or crash reporters.
+- server privacy fetch/update code for these removed surfaces should not be
+  kept as placeholders;
+- setters for cloud conversation storage force `false`;
+- app startup should not register manufacturer event collectors or remote
+  incident uploaders.
 
 ## Startup And Auth
 
@@ -288,8 +292,9 @@ Conflict policy:
 1. Prefer upstream names, renames, fields, modules, and API terminology when
    upstream changed them.
 2. Preserve this fork's local-first behavior.
-3. Do not restore login, account, billing, telemetry, Sentry, Firebase anonymous
-   user, Warp cloud, Warp Drive, or hosted server auth flows.
+3. Do not restore login, account, billing, manufacturer data collection,
+   remote incident upload, Firebase anonymous user, Warp cloud, Warp Drive, or
+   hosted server auth flows.
 4. Do not disable MCP wholesale.
 5. Do not disable local custom providers or BYOK/custom-provider key config.
 6. Do not route custom providers through Warp protobuf/cloud endpoints.
@@ -298,6 +303,14 @@ When upstream adds features, classify whether they depend on Warp's proprietary
 backend. Hide or no-op clearly cloud-backed features. Preserve or localize
 features that can reasonably run through local inference, local storage, local
 tools, MCP, or BYOK/custom providers.
+
+After every upstream merge, inspect the incoming commits for new cloud-backed,
+hosted, account, billing, manufacturer data collection, remote incident upload,
+Warp Drive, or proprietary auth behavior before continuing feature work. Keep
+features only when they are already local-first or can be adapted to local
+inference, local storage, local tools, MCP, or BYOK/custom providers. Remove,
+hide, or no-op features that require proprietary Warp services and cannot be
+made local-first.
 
 ## Verification Commands
 
@@ -326,10 +339,9 @@ cargo build --features local_only --all-targets
 TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
 ```
 
-Warnings from disabled hosted auth/cloud/telemetry paths may appear while those
-upstream modules still exist. Treat build failures as blockers; evaluate
-warnings case by case and remove them when deleting the underlying hosted code
-is safe.
+Warnings from disabled hosted auth/cloud paths may appear while those upstream
+modules still exist. Treat build failures as blockers; evaluate warnings case
+by case and remove them when deleting the underlying hosted code is safe.
 
 ## macOS Bundle
 
@@ -423,8 +435,8 @@ Do not:
 - re-enable login;
 - re-enable Firebase anonymous user creation;
 - re-enable Warp cloud or Warp Drive cloud sync;
-- re-enable telemetry or telemetry events;
-- re-enable crash reporting or Sentry;
+- re-enable manufacturer data collection or event upload;
+- re-enable remote incident upload;
 - re-enable billing, subscription, Stripe, upgrade, quotas, or paywall surfaces;
 - re-enable proprietary hosted agent/server auth flows;
 - pass custom providers through the Warp protobuf/cloud endpoint;

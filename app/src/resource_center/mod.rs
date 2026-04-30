@@ -252,7 +252,7 @@ pub fn mark_feature_used_and_write_to_user_defaults(
     }
 }
 
-/// Updates the model to reflect welcome tips are skipped, writes to user defaults, and sends telemetry.
+/// Updates the model to reflect welcome tips are skipped, writes to user defaults, and sends diagnostics.
 pub fn skip_tips_and_write_to_user_defaults(
     tips_completed: &mut TipsCompleted,
     ctx: &mut AppContext,
@@ -265,7 +265,7 @@ pub fn skip_tips_and_write_to_user_defaults(
     });
 }
 
-/// Updates the model to reflect welcome tips are skipped, writes to user defaults, and sends telemetry.
+/// Updates the model to reflect welcome tips are skipped, writes to user defaults, and sends diagnostics.
 pub fn complete_tips_and_write_to_user_defaults(
     tips_completed: &mut TipsCompleted,
     ctx: &mut AppContext,

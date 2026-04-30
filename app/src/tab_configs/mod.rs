@@ -8,7 +8,6 @@ pub mod session_config;
 pub mod session_config_modal;
 pub mod session_config_rendering;
 pub mod tab_config;
-pub mod telemetry;
 
 use warp_core::ui::theme::Fill;
 
@@ -19,6 +18,12 @@ pub(crate) use tab_config::build_worktree_config_toml;
 pub use tab_config::{
     render_tab_config, TabConfig, TabConfigError, TabConfigParam, TabConfigParamType,
 };
+
+#[derive(Clone, Copy, Debug)]
+pub enum WorktreeBranchNamingMode {
+    Auto,
+    Manual,
+}
 
 /// Optional visual overrides for BranchPicker / RepoPicker dropdowns.
 pub struct PickerStyle {

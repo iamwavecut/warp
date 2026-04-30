@@ -98,8 +98,6 @@ const AMBIENT_WORKLOAD_TOKEN_DURATION: Duration = Duration::from_secs(3 * 60 * 6
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SyncedUserSettings {
     pub is_cloud_conversation_storage_enabled: bool,
-    pub is_crash_reporting_enabled: bool,
-    pub is_telemetry_enabled: bool,
 }
 
 /// Results of an attempt to fetch the current user.
@@ -155,10 +153,8 @@ pub trait AuthClient: 'static + Send + Sync {
         -> Result<GqlUserOutput>;
 
     /// Upon success, returns an `Option` containing the user's settings retrieved from the server,
-    /// if any. The user may not have server-side settings if they onboarded prior to the launch
-    /// of telemetry opt-out, have not logged in since the launch, and have never changed defaults
-    /// for any of the settings in [`SyncedUserSettings`]. If the fetched settings object exists
-    /// but is missing required fields, or if the request itself failed, returns an error.
+    /// if any. If the fetched settings object exists but is missing required fields, or if the
+    /// request itself failed, returns an error.
     async fn get_user_settings(&self) -> Result<Option<SyncedUserSettings>>;
 
     /// Returns conversation usage history for the current user over the past n days.
@@ -171,30 +167,6 @@ pub trait AuthClient: 'static + Send + Sync {
         last_updated_end_timestamp: Option<warp_graphql::scalars::Time>,
     ) -> Result<Vec<ConversationUsage>>;
 
-    async fn set_is_telemetry_enabled(&self, value: bool) -> Result<()>;
-
-    async fn set_is_crash_reporting_enabled(&self, value: bool) -> Result<()>;
-
-    async fn set_is_cloud_conversation_storage_enabled(&self, value: bool) -> Result<()>;
-
-    /// Sends a request to update the user's settings on the server with values contained in the
-    /// given `settings_snapshot`.
-    async fn update_user_settings(&self, settings_snapshot: PrivacySettingsSnapshot) -> Result<()>;
-
-    async fn set_user_is_onboarded(&self) -> Result<bool>;
-
-    /// Requests a device authorization code from the server. This is only used for headless CLI/SDK authentication.
-    async fn request_device_code(
-        &self,
-    ) -> StdResult<oauth2::StandardDeviceAuthorizationResponse, UserAuthenticationError>;
-
-    /// Wait for the request to be approved or rejected and exchange it for a short-lived custom access token.
-    async fn exchange_device_access_token(
-        &self,
-        details: &oauth2::StandardDeviceAuthorizationResponse,
-        timeout: Duration,
-    ) -> StdResult<FirebaseToken, UserAuthenticationError>;
-    // API Keys
     async fn list_api_keys(&self) -> Result<Vec<ApiKeyProperties>>;
 
     async fn create_api_key(
@@ -206,9 +178,6 @@ pub trait AuthClient: 'static + Send + Sync {
 
     async fn expire_api_key(&self, key_uid: &ApiKeyUid) -> Result<ExpireApiKeyResult>;
 
-    /// Returns a cached ambient workload token, or issues a new one if not present or expired.
-    ///
-    /// Returns `Ok(None)` if not running in an isolation platform (e.g., Namespace) or on WASM.
     async fn get_or_create_ambient_workload_token(&self) -> Result<Option<String>>;
 }
 
@@ -217,456 +186,76 @@ pub trait AuthClient: 'static + Send + Sync {
 impl AuthClient for ServerApi {
     async fn create_anonymous_user(
         &self,
-        referral_code: Option<String>,
-        anonymous_user_type: AnonymousUserType,
+        _referral_code: Option<String>,
+        _anonymous_user_type: AnonymousUserType,
     ) -> Result<CreateAnonymousUserResult> {
-        let variables = CreateAnonymousUserVariables {
-            input: warp_graphql::mutations::create_anonymous_user::CreateAnonymousUserInput {
-                anonymous_user_type,
-                expiration_type: warp_graphql::mutations::create_anonymous_user::AnonymousUserExpirationType::NoExpiration,
-                referral_code,
-            },
-            request_context: get_request_context(),
-        };
-
-        let operation = CreateAnonymousUser::build(variables);
-        let response = operation
-            .send_request(self.client.clone(), default_request_options())
-            .await?;
-
-        Ok(response
-            .data
-            .ok_or_else(|| anyhow!("missing data in response"))?
-            .create_anonymous_user)
+        anyhow::bail!("anonymous user creation is disabled in the local-first build")
     }
 
     async fn get_or_refresh_access_token(&self) -> Result<AuthToken> {
-        let Some(credentials) = self.auth_state.credentials() else {
-            return Ok(AuthToken::NoAuth);
-        };
-
-        match credentials {
-            Credentials::ApiKey { key, .. } => Ok(AuthToken::ApiKey(key)),
-            Credentials::Firebase(auth_tokens) => {
-                let expiration_time = auth_tokens.expiration_time;
-
-                // Generate a new ID token if the token has expired or will expire in the
-                // next five minutes. This matches the behavior of the Firebase Auth SDK.
-                if chrono::DateTime::now() + chrono::Duration::minutes(5) >= expiration_time {
-                    let refresh_token = auth_tokens.refresh_token.clone();
-                    let firebase_token = FirebaseToken::Refresh(RefreshToken::new(refresh_token));
-
-                    let result = fetch_auth_tokens(self.client.clone(), firebase_token).await;
-
-                    if let Err(UserAuthenticationError::DeniedAccessToken(_)) = result {
-                        let _ = self.event_sender.send(ServerApiEvent::NeedsReauth).await;
-                    }
-                    let new_firebase_token_info = result?;
-                    self.auth_state
-                        .update_firebase_tokens(new_firebase_token_info.clone());
-                    let _ = self
-                        .event_sender
-                        .send(ServerApiEvent::AccessTokenRefreshed {
-                            token: new_firebase_token_info.id_token.clone(),
-                        })
-                        .await;
-                    return Ok(AuthToken::Firebase(new_firebase_token_info.id_token));
-                }
-
-                Ok(AuthToken::Firebase(auth_tokens.id_token))
-            }
-            Credentials::SessionCookie => Ok(AuthToken::NoAuth),
-            #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
-            Credentials::Test => Ok(AuthToken::NoAuth),
-            Credentials::Local => Ok(AuthToken::NoAuth),
-        }
+        anyhow::bail!("hosted authentication is disabled in the local-first build")
     }
 
     async fn fetch_user(
         &self,
-        token: LoginToken,
-        for_refresh: bool,
+        _token: LoginToken,
+        _for_refresh: bool,
     ) -> StdResult<FetchUserResult, UserAuthenticationError> {
-        let new_credentials = exchange_credentials(self.client.clone(), token).await?;
-        let auth_token = new_credentials.bearer_token();
-        let user_output = self
-            .fetch_user_properties(auth_token.as_bearer_token())
-            .await
-            .context("Failed to fetch user response data")
-            .map_err(UserAuthenticationError::Unexpected)?;
-
-        let UserProperties {
-            user,
-            server_experiments,
-            llms,
-            api_key_owner_type,
-        } = user_output.into();
-
-        // Store the owner type if using an API key.
-        let new_credentials = match new_credentials {
-            Credentials::ApiKey { key, .. } => Credentials::ApiKey {
-                key,
-                owner_type: api_key_owner_type,
-            },
-            other => other,
-        };
-
-        Ok(FetchUserResult {
-            user,
-            credentials: new_credentials,
-            server_experiments,
-            from_refresh: for_refresh,
-            llms,
-        })
+        Err(UserAuthenticationError::Unexpected(anyhow!(
+            "hosted authentication is disabled in the local-first build"
+        )))
     }
 
     async fn fetch_new_custom_token(&self) -> Result<MintCustomTokenResult> {
-        let variables = MintCustomTokenVariables {
-            request_context: get_request_context(),
-        };
-
-        let operation =
-            warp_graphql::mutations::mint_custom_token::MintCustomToken::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
-        Ok(response.mint_custom_token)
+        anyhow::bail!("custom token minting is disabled in the local-first build")
     }
 
     fn on_custom_token_fetched(
         &self,
-        response: Result<MintCustomTokenResult>,
+        _response: Result<MintCustomTokenResult>,
     ) -> Result<String, MintCustomTokenError> {
-        match response {
-            Ok(response_data) => match response_data {
-                MintCustomTokenResult::MintCustomTokenOutput(output) => Ok(output.custom_token),
-                MintCustomTokenResult::UserFacingError(user_facing_error) => {
-                    Err(MintCustomTokenError::UserFacingError(
-                        get_user_facing_error_message(user_facing_error),
-                    ))
-                }
-                MintCustomTokenResult::Unknown => Err(MintCustomTokenError::Unknown),
-            },
-            Err(_) => Err(MintCustomTokenError::Unknown),
-        }
+        Err(MintCustomTokenError::Unknown)
     }
 
     async fn fetch_user_properties<'a>(
         &self,
-        auth_token: Option<&'a str>,
+        _auth_token: Option<&'a str>,
     ) -> Result<GqlUserOutput> {
-        let variables = GetUserVariables {
-            request_context: get_request_context(),
-        };
-        let operation = GetUser::build(variables);
-        let response = operation
-            .send_request(
-                self.client.clone(),
-                warp_graphql::client::RequestOptions {
-                    auth_token: auth_token.map(ToOwned::to_owned),
-                    headers: std::collections::HashMap::from([(
-                        EXPERIMENT_ID_HEADER.to_string(),
-                        self.auth_state.anonymous_id(),
-                    )]),
-                    ..default_request_options()
-                },
-            )
-            .await?
-            .data
-            .ok_or_else(|| anyhow!("Expected valid response.data"))?;
-
-        match response.user {
-            warp_graphql::queries::get_user::UserResult::UserOutput(user_output) => Ok(user_output),
-            warp_graphql::queries::get_user::UserResult::Unknown => {
-                Err(anyhow!("Unable to fetch user"))
-            }
-        }
+        anyhow::bail!("hosted user lookup is disabled in the local-first build")
     }
 
     async fn get_user_settings(&self) -> Result<Option<SyncedUserSettings>> {
-        let variables = GetUserSettingsVariables {
-            request_context: get_request_context(),
-        };
-        let operation = GetUserSettings::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
-
-        match response.user {
-            warp_graphql::queries::get_user_settings::UserResult::UserOutput(user_output) => {
-                match user_output.user.settings {
-                    Some(user_settings) => Ok(Some(SyncedUserSettings {
-                        is_cloud_conversation_storage_enabled: user_settings
-                            .is_cloud_conversation_storage_enabled,
-                        is_crash_reporting_enabled: user_settings.is_crash_reporting_enabled,
-                        is_telemetry_enabled: user_settings.is_telemetry_enabled,
-                    })),
-                    None => Ok(None),
-                }
-            }
-            warp_graphql::queries::get_user_settings::UserResult::Unknown => {
-                Err(anyhow!("Unable to fetch user settings"))
-            }
-        }
+        Ok(None)
     }
 
-    // Returns a history of the current user's conversation usage over the past n days.
     async fn get_conversation_usage_history(
         &self,
-        days: Option<i32>,
-        limit: Option<i32>,
-        last_updated_end_timestamp: Option<warp_graphql::scalars::Time>,
+        _days: Option<i32>,
+        _limit: Option<i32>,
+        _last_updated_end_timestamp: Option<warp_graphql::scalars::Time>,
     ) -> Result<Vec<ConversationUsage>> {
-        let operation = GetConversationUsage::build(GetConversationUsageVariables {
-            request_context: get_request_context(),
-            days,
-            limit,
-            last_updated_end_timestamp,
-        });
-        let response = self.send_graphql_request(operation, None).await?;
-        match response.user {
-            UserResult::UserOutput(out) => Ok(out.user.conversation_usage),
-            UserResult::Unknown => Err(anyhow!("Unable to fetch conversation usage")),
-        }
+        Ok(Vec::new())
     }
 
-    async fn set_is_telemetry_enabled(&self, value: bool) -> Result<()> {
-        let variables = UpdateUserSettingsVariables {
-            input: UpdateUserSettingsInput {
-                telemetry_enabled: Some(value),
-                ..Default::default()
-            },
-            request_context: get_request_context(),
-        };
-
-        let operation = UpdateUserSettings::build(variables);
-        let result = self
-            .send_graphql_request(operation, None)
-            .await?
-            .update_user_settings;
-
-        match result {
-            UpdateUserSettingsResult::UpdateUserSettingsOutput(_) => Ok(()),
-            UpdateUserSettingsResult::UserFacingError(user_facing_error) => {
-                Err(anyhow!(get_user_facing_error_message(user_facing_error)))
-            }
-            UpdateUserSettingsResult::Unknown => Err(anyhow!("failed to set telemetry enabled")),
-        }
-    }
-
-    async fn set_is_crash_reporting_enabled(&self, value: bool) -> Result<()> {
-        let variables = UpdateUserSettingsVariables {
-            input: UpdateUserSettingsInput {
-                crash_reporting_enabled: Some(value),
-                ..Default::default()
-            },
-            request_context: get_request_context(),
-        };
-
-        let operation = UpdateUserSettings::build(variables);
-        let result = self
-            .send_graphql_request(operation, None)
-            .await?
-            .update_user_settings;
-
-        match result {
-            UpdateUserSettingsResult::UpdateUserSettingsOutput(_) => Ok(()),
-            UpdateUserSettingsResult::UserFacingError(user_facing_error) => {
-                Err(anyhow!(get_user_facing_error_message(user_facing_error)))
-            }
-            UpdateUserSettingsResult::Unknown => {
-                Err(anyhow!("failed to set crash reporting enabled"))
-            }
-        }
-    }
-
-    async fn set_is_cloud_conversation_storage_enabled(&self, value: bool) -> Result<()> {
-        let variables = UpdateUserSettingsVariables {
-            input: UpdateUserSettingsInput {
-                cloud_conversation_storage_enabled: Some(value),
-                ..Default::default()
-            },
-            request_context: get_request_context(),
-        };
-
-        let operation = UpdateUserSettings::build(variables);
-        let result = self
-            .send_graphql_request(operation, None)
-            .await?
-            .update_user_settings;
-
-        match result {
-            UpdateUserSettingsResult::UpdateUserSettingsOutput(_) => Ok(()),
-            UpdateUserSettingsResult::UserFacingError(user_facing_error) => {
-                Err(anyhow!(get_user_facing_error_message(user_facing_error)))
-            }
-            UpdateUserSettingsResult::Unknown => {
-                Err(anyhow!("failed to set cloud conversation storage enabled"))
-            }
-        }
-    }
-
-    async fn update_user_settings(&self, settings_snapshot: PrivacySettingsSnapshot) -> Result<()> {
-        let variables = UpdateUserSettingsVariables {
-            input: UpdateUserSettingsInput {
-                telemetry_enabled: Some(settings_snapshot.is_telemetry_enabled()),
-                crash_reporting_enabled: Some(settings_snapshot.is_crash_reporting_enabled()),
-                cloud_conversation_storage_enabled: settings_snapshot
-                    .cloud_conversation_storage_enabled(),
-            },
-            request_context: get_request_context(),
-        };
-
-        let operation = UpdateUserSettings::build(variables);
-        let result = self
-            .send_graphql_request(operation, None)
-            .await?
-            .update_user_settings;
-
-        match result {
-            UpdateUserSettingsResult::UpdateUserSettingsOutput(_) => Ok(()),
-            UpdateUserSettingsResult::UserFacingError(user_facing_error) => {
-                Err(anyhow!(get_user_facing_error_message(user_facing_error)))
-            }
-            UpdateUserSettingsResult::Unknown => Err(anyhow!("failed to update user settings")),
-        }
-    }
-
-    async fn set_user_is_onboarded(&self) -> Result<bool> {
-        let variables = SetUserIsOnboardedVariables {
-            request_context: get_request_context(),
-        };
-
-        let operation = SetUserIsOnboarded::build(variables);
-        let result = self
-            .send_graphql_request(operation, None)
-            .await?
-            .set_user_is_onboarded;
-
-        match result {
-            SetUserIsOnboardedResult::SetUserIsOnboardedOutput(_) => Ok(true),
-            SetUserIsOnboardedResult::UserFacingError(user_facing_error) => {
-                Err(anyhow!(get_user_facing_error_message(user_facing_error)))
-            }
-            SetUserIsOnboardedResult::Unknown => Err(anyhow!("failed to set user is onboarded")),
-        }
-    }
-
-    async fn request_device_code(
-        &self,
-    ) -> StdResult<oauth2::StandardDeviceAuthorizationResponse, UserAuthenticationError> {
-        self.oauth_client
-            .exchange_device_code()
-            .request_async(self.client.as_ref())
-            .await
-            .context("Failed to generate device code")
-            .map_err(UserAuthenticationError::Unexpected)
-    }
-
-    async fn exchange_device_access_token(
-        &self,
-        details: &oauth2::StandardDeviceAuthorizationResponse,
-        timeout: Duration,
-    ) -> StdResult<FirebaseToken, UserAuthenticationError> {
-        let result = self
-            .oauth_client
-            .exchange_device_access_token(details)
-            .request_async(
-                self.client.as_ref(),
-                |delay| warpui::r#async::Timer::after(delay).map(|_| ()),
-                Some(timeout),
-            )
-            .await
-            .context("Unable to obtain access token")
-            .map_err(UserAuthenticationError::Unexpected)?;
-
-        // Firebase doesn't directly support the device flow. Instead, the server mints a short-lived
-        // custom access token, which we can then exchange for a refresh token.
-        Ok(FirebaseToken::Custom(
-            result.access_token().secret().to_string(),
-        ))
-    }
-
-    // API Keys
     async fn list_api_keys(&self) -> Result<Vec<ApiKeyProperties>> {
-        let variables = ApiKeysVariables {
-            request_context: get_request_context(),
-        };
-        let operation = ApiKeys::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
-        match response.api_keys {
-            ApiKeyPropertiesResult::ApiKeyPropertiesOutput(output) => Ok(output.api_keys),
-            ApiKeyPropertiesResult::UserFacingError(e) => {
-                Err(anyhow!(get_user_facing_error_message(e)))
-            }
-            ApiKeyPropertiesResult::Unknown => Err(anyhow!("failed to fetch API keys")),
-        }
+        Ok(Vec::new())
     }
 
     async fn create_api_key(
         &self,
-        name: String,
-        team_id: Option<cynic::Id>,
-        expires_at: Option<warp_graphql::scalars::Time>,
+        _name: String,
+        _team_id: Option<cynic::Id>,
+        _expires_at: Option<warp_graphql::scalars::Time>,
     ) -> Result<GenerateApiKeyResult> {
-        let variables = GenerateApiKeyVariables {
-            input: GenerateApiKeyInput {
-                name,
-                team_id,
-                expires_at,
-            },
-            request_context: get_request_context(),
-        };
-        let operation = GenerateApiKey::build(variables);
-        let response = self.send_graphql_request(operation, None).await?;
-        Ok(response.generate_api_key)
+        anyhow::bail!("server API key creation is disabled in the local-first build")
     }
-    async fn expire_api_key(&self, key_uid: &ApiKeyUid) -> Result<ExpireApiKeyResult> {
-        let variables = ExpireApiKeyVariables {
-            key_uid: key_uid.into(),
-            request_context: get_request_context(),
-        };
-        let op = ExpireApiKey::build(variables);
-        let res = self.send_graphql_request(op, None).await?;
-        Ok(res.expire_api_key)
+
+    async fn expire_api_key(&self, _key_uid: &ApiKeyUid) -> Result<ExpireApiKeyResult> {
+        anyhow::bail!("server API key expiration is disabled in the local-first build")
     }
 
     async fn get_or_create_ambient_workload_token(&self) -> Result<Option<String>> {
-        if cfg!(target_family = "wasm") {
-            return Ok(None);
-        }
-
-        // Check if we have a cached token that's still valid (with 5 minute buffer).
-        // Tokens without an expiration time are always considered valid.
-        {
-            let cached = self.ambient_workload_token.lock();
-            if let Some(ref token) = *cached {
-                let is_valid = token.expires_at.is_none_or(|expires_at| {
-                    chrono::Utc::now() + chrono::Duration::minutes(5) < expires_at
-                });
-                if is_valid {
-                    return Ok(Some(token.token.clone()));
-                }
-            }
-        }
-
-        // Issue a new token.
-        let workload_token = match warp_isolation_platform::issue_workload_token(Some(
-            AMBIENT_WORKLOAD_TOKEN_DURATION,
-        ))
-        .await
-        {
-            Ok(token) => token,
-            Err(warp_isolation_platform::IsolationPlatformError::NoIsolationPlatformDetected) => {
-                return Ok(None);
-            }
-            Err(e) => return Err(e.into()),
-        };
-
-        let token_str = workload_token.token.clone();
-
-        {
-            let mut cached = self.ambient_workload_token.lock();
-            *cached = Some(workload_token);
-        }
-
-        Ok(Some(token_str))
+        Ok(None)
     }
 }
 

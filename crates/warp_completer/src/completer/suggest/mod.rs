@@ -391,7 +391,7 @@ impl SuggestionResults {
                     .map(|(match_type, matched_suggestion, _)| (match_type, matched_suggestion)),
             )
             .map(move |(match_type, suggestion)| {
-                let telemetry_match_type = match_type.clone().into();
+                let result_match_type = match_type.clone().into();
                 match match_type {
                     Match::Prefix { .. } | Match::Exact { .. } => {
                         // Similar to above, we should use the appropriate length
@@ -406,13 +406,13 @@ impl SuggestionResults {
                         FilteredSuggestion {
                             suggestion,
                             matching_indices,
-                            match_type: telemetry_match_type,
+                            match_type: result_match_type,
                         }
                     }
                     Match::Fuzzy { match_result } => FilteredSuggestion {
                         suggestion,
                         matching_indices: match_result.matched_indices,
-                        match_type: telemetry_match_type,
+                        match_type: result_match_type,
                     },
                 }
             })

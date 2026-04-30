@@ -21,6 +21,7 @@ use warpui::{
 
 use crate::{
     ai::blocklist::block::secret_redaction::find_secrets_in_text_with_levels,
+    appearance::Appearance,
     cloud_object::{
         breadcrumbs::ContainingObject,
         model::persistence::{CloudModel, CloudModelEvent},
@@ -29,6 +30,7 @@ use crate::{
     drive::{
         items::WarpDriveItemId,
         sharing::{ContentEditability, ShareableObject},
+        CloudObjectTypeAndId,
     },
     editor::EditorView,
     env_vars::{
@@ -46,7 +48,6 @@ use crate::{
         focus_state::PaneFocusHandle, pane::view, BackingView, PaneConfiguration, PaneEvent,
     },
     search::external_secrets::view::ExternalSecretsMenu,
-    send_telemetry_from_ctx,
     server::{
         cloud_objects::update_manager::{FetchSingleObjectOption, UpdateManager},
         ids::{ServerId, SyncId},
@@ -63,7 +64,6 @@ use crate::{
     util::bindings::CustomAction,
     view_components::{alert::AlertConfig, Alert, DismissibleToast, ToastType},
     workspace::ToastStack,
-    Appearance, CloudObjectTypeAndId, TelemetryEvent,
 };
 
 use super::{command_dialog::EnvVarCommandDialog, menus::Menus};
@@ -1500,10 +1500,6 @@ impl TypedActionView for EnvVarCollectionView {
             }
             EnvVarCollectionAction::Untrash => self.untrash_env_var_collection(ctx),
             EnvVarCollectionAction::CopyLink(link) => {
-                send_telemetry_from_ctx!(
-                    TelemetryEvent::ObjectLinkCopied { link: link.clone() },
-                    ctx
-                );
                 ctx.clipboard()
                     .write(ClipboardContent::plain_text(link.to_owned()));
             }

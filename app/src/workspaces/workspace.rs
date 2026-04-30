@@ -322,12 +322,6 @@ pub struct AIAutonomyPolicy {
     pub toggleable: bool,
 }
 
-#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
-pub struct TelemetryDataCollectionPolicy {
-    pub default: bool,
-    pub toggleable: bool,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UgcDataCollectionPolicy {
     pub default_setting: UgcCollectionEnablementSetting,
@@ -402,7 +396,6 @@ pub struct Tier {
     pub shared_workflows_policy: Option<SharedWorkflowsPolicy>,
     pub session_sharing_policy: Option<SessionSharingPolicy>,
     pub ai_autonomy_policy: Option<AIAutonomyPolicy>,
-    pub telemetry_data_collection_policy: Option<TelemetryDataCollectionPolicy>,
     pub ugc_data_collection_policy: Option<UgcDataCollectionPolicy>,
     pub usage_based_pricing_policy: Option<UsageBasedPricingPolicy>,
     pub codebase_context_policy: Option<CodebaseContextPolicy>,
@@ -623,11 +616,6 @@ pub struct LlmSettings {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct TelemetrySettings {
-    pub force_enabled: bool,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub enum UgcCollectionEnablementSetting {
     Disable,
     Enable,
@@ -761,7 +749,6 @@ pub struct SandboxedAgentSettings {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct WorkspaceSettings {
     pub llm_settings: LlmSettings,
-    pub telemetry_settings: TelemetrySettings,
     pub ugc_collection_settings: UgcCollectionSettings,
     pub cloud_conversation_storage_settings: CloudConversationStorageSettings,
     pub link_sharing_settings: LinkSharingSettings,

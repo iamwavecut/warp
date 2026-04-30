@@ -1,8 +1,6 @@
 use super::data_source::{Query, QueryResult};
 use crate::debounce::debounce;
 use crate::search::QueryFilter;
-use crate::send_telemetry_from_ctx;
-use crate::server::telemetry::TelemetryEvent;
 use async_channel::Sender;
 use async_trait::async_trait;
 use futures_util::stream::AbortHandle;
@@ -22,6 +20,9 @@ use warpui::{Action, AppContext, Entity, ModelContext};
 /// sources (e.g. command palette file search), but we still want to show something quickly
 /// if an async source is slow.
 const INITIAL_RESULTS_TIMEOUT: Duration = Duration::from_millis(500);
+
+#[derive(Clone, Copy, Debug)]
+struct DataSourceDebounceArg;
 
 #[cfg(not(target_family = "wasm"))]
 pub(crate) type BoxFuture<'a, T> =
@@ -427,15 +428,6 @@ impl<T: Action + Clone> SearchMixer<T> {
                             source.on_query_finished(ctx);
                             return;
                         }
-                        let error_payload =
-                            new_results.as_ref().err().map(|e| e.telemetry_payload());
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::CommandSearchAsyncQueryCompleted {
-                                filters,
-                                error_payload,
-                            },
-                            ctx
-                        );
                         mixer.add_new_results(data_source_id, new_results, ctx);
                         source.on_query_finished(ctx);
                     },
@@ -600,11 +592,9 @@ pub type DataSourceRunErrorWrapper = Box<dyn DataSourceRunError>;
 
 pub trait DataSourceRunError: 'static + Send + Sync + std::fmt::Debug {
     fn user_facing_error(&self) -> String;
-    fn telemetry_payload(&self) -> serde_json::Value;
+
     fn as_any(&self) -> &dyn Any;
 }
-
-struct DataSourceDebounceArg {}
 
 enum DataSource<T: Action + Clone> {
     SyncDataSource {

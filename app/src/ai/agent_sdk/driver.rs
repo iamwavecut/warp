@@ -2233,7 +2233,7 @@ impl AgentDriver {
         snapshot::run_declarations_script(&working_dir, &task_id, script_timeout).await;
 
         // Cap the upload so a pathological slow upload cannot wedge cleanup.
-        // On timeout we surface via report_error! so Sentry captures the incident and on-call
+        // On timeout we surface via report_error! so local logs capture the incident
         // alerting can fire, then let cloud-provider teardown continue.
         if let Err(TimeoutError) = snapshot::upload_snapshot_from_declarations(client, &task_id)
             .with_timeout(upload_timeout)

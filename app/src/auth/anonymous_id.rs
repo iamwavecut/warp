@@ -2,8 +2,7 @@ use uuid::Uuid;
 use warp_core::user_preferences::GetUserPreferences;
 
 /// Key used to persist the anonymous id to user defaults. We use "ExperimentId" as the key
-/// since we use the persisted id to determine experiment groups, and we want to avoid
-/// associating it with telemetry.
+/// since we use the persisted id to determine experiment groups.
 const ANONYMOUS_ID_KEY: &str = "ExperimentId";
 
 /// Reads the persisted anonymous id from user defaults, if it exists and is a

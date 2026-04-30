@@ -183,7 +183,7 @@ pub enum SyncToCloud {
 
 /// Whether for this setting we respect the user toggle for settings sync.
 /// There are some cases we want to sync settings regardless of the user setting,
-/// such as for the value of whether cloud syncing is enabled, whether telemetry is enabled, etc.
+/// such as for the value of whether cloud syncing is enabled, whether diagnostics is enabled, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RespectUserSyncSetting {
     /// Only sync if the user has settings sync enabled

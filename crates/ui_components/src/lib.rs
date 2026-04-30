@@ -99,7 +99,7 @@ use warpui::Element;
 ///
 /// impl Component for MyComponent {
 ///     type Params<'a> = Params;
-///     
+///
 ///     fn render<'a>(&self, appearance: &Appearance, params: Self::Params<'a>) -> Box<dyn Element> {
 ///         // Render implementation.
 /// #       Empty::new().finish()

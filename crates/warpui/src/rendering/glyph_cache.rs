@@ -33,7 +33,7 @@ pub(crate) type RasterizeGlyphFn<'a> = dyn Fn(
     ) -> Result<RasterizedGlyph>
     + 'a;
 
-/// A cache that caches glyphs in a texture atlas.  
+/// A cache that caches glyphs in a texture atlas.
 pub struct GlyphCache<Texture> {
     textures: Vec<Texture>,
     cache: HashMap<GlyphCacheKey, GlyphTextureOffset>,

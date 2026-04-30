@@ -42,7 +42,6 @@ A self-contained overlay menu sized for the code-review diff picker. Responsibil
 - `CodeReviewView::build_diff_targets(&self, ctx) -> Vec<DiffTarget>` produces the rows in the same order as today's `setup_dropdown` (`Uncommitted changes` first, then the current `OtherBranch` if not already in the list, then main, then other branches). Pure — does not touch the selector view. Exposed at `pub(crate)` so unit tests can assert ordering without reading back through `CodeReviewDiffMenu` internals.
 - `update_diff_selector_selection(&mut self, ctx)` calls `build_diff_targets` and pushes the result into the selector with `DiffSelector::set_targets`. Called from `fetch_branches_and_setup_dropdown`, `DiffStateModelEvent::CurrentBranchChanged`, and `DiffStateModelEvent::DiffModeChanged`.
 - On selection the `DiffSelector` emits `DiffSelectorEvent::SelectMode(DiffMode)`. `CodeReviewView` subscribes and calls its shared `apply_diff_mode` helper (which also backs `CodeReviewAction::SetDiffMode` from the legacy action path).
-- `apply_diff_mode` short-circuits when the requested `DiffMode` equals `DiffStateModel::diff_mode()`, so re-selecting the already-selected row triggers no telemetry and no model update (PRODUCT.md §17).
 - The header label comes from the currently selected `DiffTarget`; if none are selected (e.g. during first load) it falls back to "Uncommitted changes".
 ### Per-target stats
 Out of scope (PRODUCT.md Non-goals). No new stats computation, caching, or `right_side_element` plumbing is introduced by this change.
@@ -62,7 +61,6 @@ Reference PRODUCT.md invariants by number.
 ### Unit tests (Rust, alongside `code_review_view_tests.rs`)
 - `diff_selector_items_preserve_legacy_order` — asserts `CodeReviewView::build_diff_targets` produces the same `DiffMode` sequence as today's selector for the same `available_branches` + `current_mode`. Covers §9, §26.
 - `diff_selector_marks_selected` — after `update_diff_selector_selection`, exactly one `DiffTarget` has `is_selected = true`, matching `DiffStateModel::diff_mode()`. Covers §25.
-- `apply_diff_mode_no_op_on_same_mode` — re-invoking `apply_diff_mode` with the currently-active mode does not call `DiffStateModel::set_diff_mode` and does not emit `BaseChanged` telemetry. Covers §17.
 ### Integration tests (`crates/integration`, follow `warp-integration-test` skill)
 - `code_review_diff_selector_opens_below` — open code review with prepared fixture, click the trigger, assert the menu is rendered below the trigger and the search input has focus. Covers §7, §11.
 - `code_review_diff_selector_filters_and_selects` — type a substring, assert only matching rows remain in order; click a row, assert the button label updates and `DiffMode` changes via `DiffStateModel`. Covers §11, §12, §16.

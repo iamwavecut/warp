@@ -9,10 +9,10 @@ use super::{
         EmailInvite, EnterpriseSecretRegex, HostEnablementSetting, InstanceShape,
         InviteLinkDomainRestriction, LinkSharingSettings, LlmSettings, SandboxedAgentSettings,
         SecretRedactionSettings, SessionSharingPolicy, SharedNotebooksPolicy,
-        SharedWorkflowsPolicy, TelemetryDataCollectionPolicy, TelemetrySettings, Tier,
-        UgcCollectionEnablementSetting, UgcCollectionSettings, UgcDataCollectionPolicy,
-        UsageBasedPricingPolicy, WarpAiPolicy, Workspace, WorkspaceInviteCode, WorkspaceMember,
-        WorkspaceMemberUsageInfo, WorkspaceSettings, WorkspaceSizePolicy,
+        SharedWorkflowsPolicy, Tier, UgcCollectionEnablementSetting, UgcCollectionSettings,
+        UgcDataCollectionPolicy, UsageBasedPricingPolicy, WarpAiPolicy, Workspace,
+        WorkspaceInviteCode, WorkspaceMember, WorkspaceMemberUsageInfo, WorkspaceSettings,
+        WorkspaceSizePolicy,
     },
 };
 use crate::{
@@ -58,8 +58,7 @@ use warp_graphql::{
         SessionSharingPolicy as GqlSessionSharingPolicy,
         SharedNotebooksPolicy as GqlSharedNotebooksPolicy,
         SharedWorkflowsPolicy as GqlSharedWorkflowsPolicy, StripeSubscriptionPlan,
-        TeamSizePolicy as GqlTeamSizePolicy,
-        TelemetryDataCollectionPolicy as GqlTelemetryDataCollectionPolicy, Tier as GqlTier,
+        TeamSizePolicy as GqlTeamSizePolicy, Tier as GqlTier,
         UgcDataCollectionPolicy as GqlUgcDataCollectionPolicy,
         UsageBasedPricingPolicy as GqlUsageBasedPricingPolicy, WarpAiPolicy as GqlWarpAiPolicy,
     },
@@ -335,17 +334,6 @@ impl From<GqlUgcDataCollectionPolicy> for UgcDataCollectionPolicy {
     }
 }
 
-impl From<GqlTelemetryDataCollectionPolicy> for TelemetryDataCollectionPolicy {
-    fn from(
-        gql_telemetry_data_collection_policy: GqlTelemetryDataCollectionPolicy,
-    ) -> TelemetryDataCollectionPolicy {
-        Self {
-            default: gql_telemetry_data_collection_policy.default,
-            toggleable: gql_telemetry_data_collection_policy.toggleable,
-        }
-    }
-}
-
 impl From<GqlUsageBasedPricingPolicy> for UsageBasedPricingPolicy {
     fn from(gql_usage_based_pricing_policy: GqlUsageBasedPricingPolicy) -> UsageBasedPricingPolicy {
         Self {
@@ -450,9 +438,6 @@ impl From<GqlTier> for Tier {
             shared_workflows_policy: gql_tier.shared_workflows_policy.map(From::from),
             session_sharing_policy: gql_tier.session_sharing_policy.map(From::from),
             ai_autonomy_policy: gql_tier.ai_autonomy_policy.map(From::from),
-            telemetry_data_collection_policy: gql_tier
-                .telemetry_data_collection_policy
-                .map(From::from),
             ugc_data_collection_policy: gql_tier.ugc_data_collection_policy.map(From::from),
             usage_based_pricing_policy: gql_tier.usage_based_pricing_policy.map(From::from),
             codebase_context_policy: gql_tier.codebase_context_policy.map(From::from),
@@ -704,9 +689,6 @@ impl From<GqlWorkspaceSettings> for WorkspaceSettings {
     fn from(gql_workspace_settings: GqlWorkspaceSettings) -> WorkspaceSettings {
         Self {
             llm_settings: gql_workspace_settings.llm_settings.into(),
-            telemetry_settings: TelemetrySettings {
-                force_enabled: gql_workspace_settings.telemetry_settings.force_enabled,
-            },
             ugc_collection_settings: UgcCollectionSettings {
                 setting: UgcCollectionEnablementSetting::from(
                     gql_workspace_settings.ugc_collection_settings.setting,

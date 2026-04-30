@@ -89,7 +89,7 @@ struct QueuedTask<T: SyncQueueTaskTrait> {
     task: T,
     retry_options: RetryOption,
     result_sender: Option<Sender<Result<T::Result, T::Error>>>,
-    /// Context of the task used in logging / telemetry.
+    /// Context of the task used in logging / diagnostics.
     context: String,
 }
 

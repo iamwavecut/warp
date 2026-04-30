@@ -12,16 +12,16 @@ use super::{
 fn test_parse_cobalt2() {
     let cobalt2_config = "# From the famous Cobalt2 sublime theme
     # Source  https//github.com/wesbos/cobalt2/tree/master/Cobalt2
-    
+
     # Default colors
     [colors.primary]
     background = '#122637'
     foreground = '#ffffff'
-    
+
     [colors.cursor]
     text = '#122637'
     cursor = '#f0cb09'
-    
+
     # Normal colors
     [colors.normal]
     black   = '#000000'
@@ -32,7 +32,7 @@ fn test_parse_cobalt2() {
     magenta = '#ff005d'
     cyan    = '#00bbbb'
     white   = '#bbbbbb'
-    
+
     # Bright colors
     [colors.bright]
     black   = '#545454'
@@ -107,16 +107,16 @@ fn test_parse_cobalt2() {
 fn test_parse_cobalt2_missing_color() {
     let cobalt2_config = "# From the famous Cobalt2 sublime theme
     # Source  https//github.com/wesbos/cobalt2/tree/master/Cobalt2
-    
+
     # Default colors
     [colors.primary]
     background = '#122637'
     foreground = '#ffffff'
-    
+
     [colors.cursor]
     text = '#122637'
     cursor = '#f0cb09'
-    
+
     # Normal colors
     [colors.normal]
     red     = '#ff0000'
@@ -126,7 +126,7 @@ fn test_parse_cobalt2_missing_color() {
     magenta = '#ff005d'
     cyan    = '#00bbbb'
     white   = '#bbbbbb'
-    
+
     # Bright colors
     [colors.bright]
     black   = '#545454'
@@ -209,12 +209,12 @@ fn test_parse_cobalt2_missing_color() {
 fn test_parse_cobalt2_missing_section() {
     let cobalt2_config = "# From the famous Cobalt2 sublime theme
     # Source  https//github.com/wesbos/cobalt2/tree/master/Cobalt2
-    
+
     # Default colors
     [colors.primary]
     background = '#122637'
     foreground = '#ffffff'
-    
+
     [colors.cursor]
     text = '#122637'
     cursor = '#f0cb09'";
@@ -248,16 +248,16 @@ fn test_parse_cobalt2_missing_section() {
 fn test_parse_cobalt2_bad_terminal_color() {
     let cobalt2_config = "# From the famous Cobalt2 sublime theme
     # Source  https//github.com/wesbos/cobalt2/tree/master/Cobalt2
-    
+
     # Default colors
     [colors.primary]
     background = '#122637'
     foreground = '#ffffff'
-    
+
     [colors.cursor]
     text = '#122637'
     cursor = '#f0cb09'
-    
+
     # Normal colors
     [colors.normal]
     red     = '#ff000'
@@ -267,7 +267,7 @@ fn test_parse_cobalt2_bad_terminal_color() {
     magenta = '#ff005d'
     cyan    = '#00bbbb'
     white   = '#bbbbbb'
-    
+
     # Bright colors
     [colors.bright]
     black   = '#545454'
@@ -291,12 +291,12 @@ fn test_parse_cobalt2_bad_terminal_color() {
 fn test_parse_cobalt2_no_colors() {
     let cobalt2_config = "# From the famous Cobalt2 sublime theme
     # Source  https//github.com/wesbos/cobalt2/tree/master/Cobalt2
-    
+
     # Default colors
     [colors.primary]
     background = ''
     foreground = ''
-    
+
     [colors.cursor]
     text = ''
     cursor = ''";
@@ -376,16 +376,16 @@ fn test_parse_cobalt2_from_import() {
                 "config/Cobalt2.toml",
                 "# From the famous Cobalt2 sublime theme
                 # Source  https//github.com/wesbos/cobalt2/tree/master/Cobalt2
-                
+
                 # Default colors
                 [colors.primary]
                 background = '#122637'
                 foreground = '#ffffff'
-                
+
                 [colors.cursor]
                 text = '#122637'
                 cursor = '#f0cb09'
-                
+
                 # Normal colors
                 [colors.normal]
                 black   = '#000000'
@@ -396,7 +396,7 @@ fn test_parse_cobalt2_from_import() {
                 magenta = '#ff005d'
                 cyan    = '#00bbbb'
                 white   = '#bbbbbb'
-                
+
                 # Bright colors
                 [colors.bright]
                 black   = '#545454'

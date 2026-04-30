@@ -110,5 +110,4 @@ The existing log line `"Failed to autogenerate commit message"` at `commit.rs:31
 - **Per-feature setting drift**: new `git_operations_autogen_enabled_internal` setting needs to be exposed in the AI settings page alongside the other per-feature toggles — easy to forget. Covered under §1.
 ## Follow-ups
 - Consider adding the same enterprise check to `code_review_view.rs:7104`'s `"Add diff set as context"` gate if product wants a uniform enterprise AI posture across code review (Invariant 15 explicitly scopes this out for now).
-- If telemetry ever needs to distinguish "AI skipped because disabled" from "AI attempted and failed", add an event in the gate's `false` branch — not required by this spec.
 - If other code-review AI call sites (e.g. future review-comment summarization) land, reuse `should_send_git_ops_ai_request` or a sibling helper rather than inlining the enterprise-plus-Warp-plan-plus-dogfood clause again.

@@ -11,8 +11,6 @@ Tab configs can declare how to open a tab, including pane layout, startup comman
 - `app/src/tab_configs/tab_config_tests.rs` — parser and template-rendering coverage for `[on_close]`
 ## Current State
 `TabConfig` already supports templated titles, pane `directory`, pane startup commands, and params. Rendering uses two template contexts: unquoted values for paths/titles and shell-quoted values for commands.
-`TabData` is the in-memory state container for each tab. Before this change, it tracked pane group state, colors, mouse state, and telemetry flags, but not any tab-config-specific close behavior.
-Tab close flows already funnel through `Workspace::close_tabs`, which optionally shows an unsaved-state confirmation dialog, cancels tab renaming, removes tabs in reverse index order, and emits telemetry once tabs are actually closed.
 ## Changes
 ### 1. Tab-config schema and resolved close behavior
 `TabConfig` now has an optional top-level `on_close: Option<TabConfigOnClose>`.

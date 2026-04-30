@@ -131,7 +131,7 @@ impl DiffType {
 pub struct AIRequestedCodeDiff {
     pub file_name: String,
     pub diff_type: DiffType,
-    /// Types of failures to create the diff that we want to capture via telemetry.
+    /// Types of failures to create the diff that we want to capture via diagnostics.
     #[derivative(PartialEq = "ignore")]
     pub failures: Option<DiffMatchFailures>,
     /// Original file content read during diff matching.
@@ -310,7 +310,7 @@ pub struct DiffMatchFailures {
 /// Omitting line numbers from the search section of a diff.
 /// Using the wrong line number, often off-by-one.
 ///
-/// Also returns the number of fuzzy matches that failed for telemetry.
+/// Also returns the number of fuzzy matches that failed for diagnostics.
 ///
 /// Method
 /// For each search block of n lines:

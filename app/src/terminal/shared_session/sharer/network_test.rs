@@ -18,9 +18,7 @@ use websocket::{Message, WebsocketMessage as _};
 use crate::{
     auth::{auth_manager::AuthManager, AuthStateProvider},
     editor::ReplicaId,
-    server::{
-        server_api::ServerApiProvider, telemetry::context_provider::AppTelemetryContextProvider,
-    },
+    server::server_api::ServerApiProvider,
     terminal::{
         shared_session::{SharedSessionScrollbackType, MAX_BYTES_SHAREABLE},
         TerminalModel,
@@ -535,7 +533,6 @@ fn test_messages_are_buffered_while_reconnecting() {
     App::test((), |mut app| async move {
         app.add_singleton_model(|_| ServerApiProvider::new_for_test());
         app.add_singleton_model(|_| AuthStateProvider::new_for_test());
-        app.add_singleton_model(AppTelemetryContextProvider::new_context_provider);
         app.add_singleton_model(AuthManager::new_for_test);
         let (network, _) = create_network(&mut app, false);
         let ws_proxy_rx = network.read(&app, |network, _ctx| network.ws_proxy_rx.clone());

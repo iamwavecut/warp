@@ -35,7 +35,6 @@ use crate::server::cloud_objects::{listener::Listener, update_manager::UpdateMan
 use crate::server::server_api::ServerApiProvider;
 use crate::server::sync_queue::SyncQueue;
 
-use crate::server::telemetry::context_provider::AppTelemetryContextProvider;
 use crate::settings::{AliasExpansionSettings, AppEditorSettings, InputBoxType, PrivacySettings};
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 #[cfg(windows)]
@@ -137,7 +136,6 @@ pub fn initialize_app(app: &mut App) {
     app.add_singleton_model(AgentNotificationsModel::new);
     app.add_singleton_model(BlocklistAIPermissions::new);
     app.add_singleton_model(|_| AuthStateProvider::new_for_test());
-    app.add_singleton_model(AppTelemetryContextProvider::new_context_provider);
     app.add_singleton_model(AuthManager::new_for_test);
     app.add_singleton_model(LLMPreferences::new);
     app.add_singleton_model(SessionPermissionsManager::new);

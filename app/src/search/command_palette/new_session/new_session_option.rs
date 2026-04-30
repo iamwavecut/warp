@@ -1,4 +1,4 @@
-use crate::server::telemetry::AddTabWithShellSource;
+use crate::interaction_sources::AddTabWithShellSource;
 use crate::terminal::available_shells::AvailableShell;
 use crate::terminal::view::TerminalAction;
 use crate::WorkspaceAction;

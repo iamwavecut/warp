@@ -15,9 +15,6 @@ mutation UpdateWorkspaceSettings($input: UpdateWorkspaceSettingsInput!, $request
         llmSettings {
           enabled
         }
-        telemetrySettings {
-          forceEnabled
-        }
         ugcCollectionSettings {
           setting
         }

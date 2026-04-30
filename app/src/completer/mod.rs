@@ -468,7 +468,7 @@ fn ls_script_for_dir(directory: &TypedPath) -> Option<String> {
     // Then do the same for anything that is not a directory, and call it a 'File'.
     let command = format!(
         r#"
-cd {escaped_dir} && 
+cd {escaped_dir} &&
 find . -maxdepth 1 -type d -print0 &&
 printf '%b' '\0' &&
 find . -maxdepth 1 -not -type d -print0

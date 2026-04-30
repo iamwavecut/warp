@@ -41,7 +41,6 @@ Distinct from `CloudAgent`: `CloudAgent` is emitted when *starting* a new cloud-
 
 `enter_agent_view_for_new_conversation` bypasses its "can start new conversation" check for `ThirdPartyCloudAgent` because the vehicle conversation is not a new conversation in the user-visible sense.
 
-Telemetry: `TelemetryAgentViewEntryOrigin::ThirdPartyCloudAgent` is added and `From<AgentViewEntryOrigin>` maps the new variant (`app/src/server/telemetry/events.rs`).
 
 ### 2. Transcript viewer entry — direct call from `load_data_into_transcript_viewer`
 

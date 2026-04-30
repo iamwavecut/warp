@@ -6,8 +6,6 @@ use warpui::{Entity, EntityId, ModelContext, SingletonEntity};
 
 use crate::ai::agent::{AIAgentActionId, AIAgentActionType};
 use crate::ai::ambient_agents::AmbientAgentTaskId;
-use crate::send_telemetry_from_ctx;
-use crate::server::telemetry::TelemetryEvent;
 
 use super::{ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput};
 
@@ -15,7 +13,7 @@ pub struct RequestComputerUseExecutor {
     terminal_view_id: EntityId,
     ambient_agent_task_id: Option<AmbientAgentTaskId>,
     /// Actions that were determined to be auto-executed in should_autoexecute().
-    /// Used to determine is_autoexecuted when emitting telemetry in execute().
+    /// Used to determine is_autoexecuted when emitting diagnostics in execute().
     autoexecuted_actions: HashSet<AIAgentActionId>,
 }
 
@@ -46,7 +44,7 @@ impl RequestComputerUseExecutor {
         let permission = crate::ai::blocklist::BlocklistAIPermissions::as_ref(ctx)
             .get_computer_use_setting(ctx, Some(self.terminal_view_id));
         if permission.is_always_allow() {
-            // Track that this action was auto-executed for telemetry in execute()
+            // Track that this action was auto-executed for diagnostics in execute()
             self.autoexecuted_actions.insert(action.id.clone());
             return true;
         }
@@ -70,14 +68,6 @@ impl RequestComputerUseExecutor {
 
         // If we're executing, that implies that computer use has been approved.
         let is_autoexecuted = self.autoexecuted_actions.remove(&action.id);
-        send_telemetry_from_ctx!(
-            TelemetryEvent::ComputerUseApproved {
-                conversation_id,
-                is_autoexecuted,
-                ambient_agent_task_id: self.ambient_agent_task_id,
-            },
-            ctx
-        );
 
         let screenshot_params = request.screenshot_params;
         let mut actor = computer_use::create_actor();

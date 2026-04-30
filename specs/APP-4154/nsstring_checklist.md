@@ -21,19 +21,8 @@ Audited even though it's a definition, not a call:
 - [ ] path:line — function — disposition (retained|autoreleased|?) — thread-origin (appkit-event|gcd-block|rust-thread|unknown|?) — hot/cold — strategy (ambient|local-pool|autorelease-helper|explicit-release|?) — action
 ```
 
-## Batch 1.A — `sentry-nsstring`
 
-Files: `app/src/crash_reporting/mac.rs`. Reference pattern (`forward_breadcrumb`, already pooled) kept for consistency.
 
-- [x] app/src/crash_reporting/mac.rs:28 — `init_cocoa_sentry` — autoreleased — rust-thread (early init from `init_sentry` before AppKit loop) — cold (once per session) — local-pool — wrapped body in `NSAutoreleasePool::new(nil)` / `pool.drain()`
-- [x] app/src/crash_reporting/mac.rs:30 — `init_cocoa_sentry` — autoreleased — rust-thread — cold — local-pool — covered by the same pool
-- [x] app/src/crash_reporting/mac.rs:31 — `init_cocoa_sentry` — autoreleased — rust-thread — cold — local-pool — covered by the same pool
-- [x] app/src/crash_reporting/mac.rs:55 — `set_user_id` — autoreleased — rust-thread (invoked from `set_optional_user_information` on auth state changes and init) — cold — local-pool — wrapped body in `NSAutoreleasePool::new(nil)` / `pool.drain()`
-- [x] app/src/crash_reporting/mac.rs:71 — `forward_breadcrumb` — autoreleased — rust-thread (Sentry `before_breadcrumb`) — hot — local-pool — already pooled (post-#560), confirmed no-op
-- [x] app/src/crash_reporting/mac.rs:72 — `forward_breadcrumb` — autoreleased — rust-thread — hot — local-pool — already pooled, confirmed no-op
-- [x] app/src/crash_reporting/mac.rs:73 — `forward_breadcrumb` — autoreleased — rust-thread — hot — local-pool — already pooled, confirmed no-op
-- [x] app/src/crash_reporting/mac.rs:82 — `set_tag` (key) — autoreleased — rust-thread (called from `init_cocoa_sentry` loop and `set_tag` wrapper in `mod.rs`) — cold — local-pool — wrapped body in `NSAutoreleasePool::new(nil)` / `pool.drain()`
-- [x] app/src/crash_reporting/mac.rs:82 — `set_tag` (value) — autoreleased — rust-thread — cold — local-pool — covered by the same pool
 
 ## Batch 1.B — `app-ffi-nsstring`
 

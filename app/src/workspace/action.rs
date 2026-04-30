@@ -12,14 +12,14 @@ use crate::ai::document::ai_document_model::{AIDocumentId, AIDocumentVersion};
 use crate::auth::auth_manager::LoginGatedFeature;
 use crate::drive::items::WarpDriveItemId;
 use crate::drive::CloudObjectTypeAndId;
+use crate::interaction_sources::{
+    AddTabWithShellSource, AgentModeEntrypoint, PaletteSource, SharingDialogSource,
+};
 use crate::palette::PaletteMode;
 use crate::pane_group::PaneGroup;
 use crate::prompt::editor_modal::OpenSource as PromptEditorOpenSource;
 use crate::search;
 use crate::server::ids::SyncId;
-use crate::server::telemetry::{
-    AddTabWithShellSource, AgentModeEntrypoint, PaletteSource, SharingDialogSource,
-};
 use crate::settings_view::{SettingsAction as SettingsTabAction, SettingsSection};
 use crate::tab::{NewSessionMenuItem, SelectedTabColor};
 use crate::tab_configs::TabConfig;
@@ -288,8 +288,8 @@ pub enum WorkspaceAction {
     /// token to the system clipboard to aid debugging and development.
     CopyAccessTokenToClipboard,
     DismissWorkspaceBanner(WorkspaceBanner),
-    /// An action only registered in dev and local builds, which crashes the
-    /// app (via a Sentry helper method) immediately when called.
+    /// An action only registered in dev and local builds, which crashes the app
+    /// immediately when called.
     Crash,
     /// An action only registered in dev and local builds, which triggers a
     /// panic immediately when called.

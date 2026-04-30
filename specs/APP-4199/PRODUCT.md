@@ -39,7 +39,6 @@ Figma: none provided. A single annotated screenshot is the only visual reference
 15. The list is scrollable when it exceeds the picker's max height. Scrolling the list does not close the picker. The search input remains pinned at the top while the list scrolls.
 ### Selecting a target
 16. Clicking a row, or pressing `Enter` with a row focused, selects that target: the picker closes, the header button's label updates to the new target, and the code review view begins diffing the current branch against that target. Selection behavior downstream of this choice (loading, error handling, stats in the header, file list refresh) is unchanged from today.
-17. Selecting the row that is already selected is a no-op beyond closing the picker — no redundant reload is triggered and no telemetry is emitted for the "change".
 18. While a new selection is loading, the header button shows the newly selected label immediately (optimistic); the diff body follows its existing loading behavior.
 ### Dismissal
 19. The picker closes when any of the following happens: the user selects a row, presses `Escape`, clicks the header button again, clicks outside the picker, or the code review view loses focus (e.g. pane closes, tab switch).

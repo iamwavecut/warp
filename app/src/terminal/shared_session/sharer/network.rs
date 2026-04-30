@@ -52,8 +52,8 @@ use crate::throttle::throttle;
 
 #[cfg(not(any(test, feature = "integration_tests")))]
 use {
-    crate::{report_error, server::telemetry::telemetry_context},
-    session_sharing_protocol::common::{Scrollback, TelemetryContext},
+    crate::report_error,
+    session_sharing_protocol::common::Scrollback,
     session_sharing_protocol::sharer::SessionSourceType,
     session_sharing_protocol::sharer::{InitPayload, Lifetime},
 };
@@ -626,27 +626,32 @@ impl Network {
 
                     use session_sharing_protocol::common::SelectedAgentModel;
 
-                    let message = UpstreamMessage::Initialize(InitPayload {
-                        scrollback,
-                        active_prompt,
-                        window_size,
-                        user_id,
-                        selection,
-                        init_block_id: init_block_id.into(),
-                        input_replica_id: input_replica_id.into(),
-                        telemetry_context: Some(TelemetryContext(telemetry_context().as_value())),
-                        universal_developer_input_context: Some(UniversalDeveloperInputContext {
+                    let protocol_init_block_id: session_sharing_protocol::common::BlockId =
+                        init_block_id.into();
+                    let protocol_input_replica_id: session_sharing_protocol::common::InputReplicaId =
+                        input_replica_id.into();
+                    let init_payload = serde_json::from_value::<InitPayload>(serde_json::json!({
+                        "scrollback": scrollback,
+                        "active_prompt": active_prompt,
+                        "window_size": window_size,
+                        "user_id": user_id,
+                        "selection": selection,
+                        "init_block_id": protocol_init_block_id,
+                        "input_replica_id": protocol_input_replica_id,
+                        "universal_developer_input_context": UniversalDeveloperInputContext {
                             selected_model: Some(SelectedAgentModel::new(selected_model_id)),
                             ..universal_developer_input_context
-                        }),
-                        lifetime,
-                        source_type,
-                        feature_support: FeatureSupport {
+                        },
+                        "lifetime": lifetime,
+                        "source_type": source_type,
+                        "feature_support": FeatureSupport {
                             supports_agent_view: FeatureFlag::AgentView.is_enabled(),
                             supports_full_role: true,
                             supports_full_role_for_real: true,
                         },
-                    });
+                    }))
+                    .expect("shared session init payload should serialize");
+                    let message = UpstreamMessage::Initialize(init_payload);
                     if let Err(e) = network.ws_proxy_tx.try_send(message) {
                         log::error!("Sharer failed to send initialization message: {e}");
                         return;
@@ -818,7 +823,7 @@ impl Network {
                 match serialized {
                     Ok(serialized) => {
                         if let Err(e) = sink.send(Message::new(serialized)).await {
-                            // Errors are not typically retryable. For a case like no network connection, 
+                            // Errors are not typically retryable. For a case like no network connection,
                             // sink.send will succeed and the message will actually be sent when connection is restored.
                             log::warn!("Failed to send message over shared session websocket as sharer: {e}. Terminating connection.");
                             break;

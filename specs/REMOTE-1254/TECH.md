@@ -50,7 +50,6 @@ New reverse lookup on `CLIAgent` that iterates `enum_iterator::all::<CLIAgent>()
 
 ### 4.3 New `CLIAgentInputEntrypoint::SharedSessionSync`
 
-Distinguishes protocol-driven composer opens from user-initiated ones (Ctrl-G, footer button, auto-show) for telemetry and future behaviour gating.
 
 ### 4.4 Sharer-side broadcasting
 

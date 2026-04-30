@@ -1,7 +1,7 @@
 pub(crate) mod convert_conversation;
 mod convert_from;
 mod convert_to;
-mod direct_openai;
+pub(crate) mod direct_openai;
 mod r#impl;
 
 pub use ai::agent::convert::ConvertToAPITypeError;

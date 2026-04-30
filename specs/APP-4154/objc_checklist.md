@@ -20,12 +20,8 @@ Ignore (not leaks):
 - [ ] path:line — function — disposition (released|autoreleased|leaked|stored|?) — thread-origin — hot/cold — strategy — action
 ```
 
-## Batch 2.A — `sentry-objc`
 
-Files: `app/src/platform/mac/objc/crash_reporting.m`.
 
-- [x] app/src/platform/mac/objc/crash_reporting.m:21 — `setUser` — leaked (`[[SentryUser alloc] init]` never released) — appkit-main (called via `set_optional_user_information` on `AppContext`) — cold (auth login/logout) — explicit-release — added `[user release]` after `[SentrySDK setUser:user]`
-- [x] app/src/platform/mac/objc/crash_reporting.m:76 — `recordBreadcrumb` — released (post-#560 `[crumb release]` on line 82) — rust-thread (`forward_breadcrumb`, any Rust thread; caller wraps in `NSAutoreleasePool`) — hot — explicit-release — no-op (already correct)
 
 ## Batch 2.B — `app-objc-misc`
 

@@ -19,7 +19,7 @@ use warp::{
 
 /// Tests the basic pane restoration workflow:
 /// 1. Split off a pane
-/// 2. Run a simple command in it  
+/// 2. Run a simple command in it
 /// 3. Close the pane
 /// 4. Restore the pane with cmd+shift+t
 /// 5. Assert the pane is restored in the correct location with previous state

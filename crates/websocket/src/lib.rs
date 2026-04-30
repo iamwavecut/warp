@@ -85,7 +85,7 @@ impl WebsocketMessage for Message {
 /// for websockets on the web.
 ///
 /// In either case, the caller will have a [`Websocket`] returned.
-/// To write or read from the resulting socket, use [`WebSocket::split`].  
+/// To write or read from the resulting socket, use [`WebSocket::split`].
 pub struct WebSocket(imp::WebSocket);
 
 impl WebSocket {

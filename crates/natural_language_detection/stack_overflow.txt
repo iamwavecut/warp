@@ -2481,7 +2481,6 @@ smack
 direct3d
 gsm
 codeception
-sentry
 pypdf
 superclass
 mosquitto

@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use instant::Instant;
 
+use crate::interaction_sources::ImageProtocol;
 use crate::server::ids::SyncId;
-use crate::server::telemetry::ImageProtocol;
 use crate::terminal::model::block::BlockMetadata;
 use crate::terminal::model::block::SerializedBlock;
 use crate::terminal::model::completions::ShellCompletion;
@@ -204,7 +204,7 @@ pub struct BootstrappedEvent {
 
 #[derive(Clone)]
 pub struct BlockCompletedEvent {
-    /// This will be None when we don't want to collect telemetry
+    /// This will be None when we don't want to collect diagnostics
     /// for this block's latency.
     pub block_latency_data: Option<BlockLatencyData>,
     pub block_type: BlockType,

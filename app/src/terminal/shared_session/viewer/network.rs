@@ -19,10 +19,9 @@ use session_sharing_protocol::{
         InputOperationId, InputOperationSeqNo, InputUpdate, LinkAccessLevelUpdateResponse,
         ParticipantId, ParticipantList, ParticipantPresenceUpdate, RemoveGuestResponse, Role,
         RoleRequestId, RoleRequestResponse, Selection, SelectionUpdate, ServerConversationToken,
-        SessionId, TeamAccessLevelUpdateResponse, TeamAclData, TelemetryContext,
-        UniversalDeveloperInputContext, UniversalDeveloperInputContextUpdate,
-        UpdatePendingUserRoleResponse, UserID, WindowSize, WriteToPtyFailureReason,
-        WriteToPtyRequestId, WriteToPtySeqNo,
+        SessionId, TeamAccessLevelUpdateResponse, TeamAclData, UniversalDeveloperInputContext,
+        UniversalDeveloperInputContextUpdate, UpdatePendingUserRoleResponse, UserID, WindowSize,
+        WriteToPtyFailureReason, WriteToPtyRequestId, WriteToPtySeqNo,
     },
     sharer::SessionSourceType,
     viewer::{
@@ -41,10 +40,7 @@ use websocket::{Message, Sink, Stream, WebsocketMessage as _};
 use crate::{
     auth::{auth_state::AuthState, AuthStateProvider, UserUid},
     editor::{CrdtOperation, ReplicaId},
-    server::{
-        server_api::{auth::AuthClient, ServerApiProvider},
-        telemetry::telemetry_context,
-    },
+    server::server_api::{auth::AuthClient, ServerApiProvider},
     terminal::{
         event_listener::ChannelEventListener,
         model::block::BlockId,
@@ -398,18 +394,19 @@ impl Network {
             Self::connect_websocket_and_get_user_id(session_id, auth_client, auth_state.clone()),
             |network, conn, ctx| match conn {
                 Ok(((sink, stream), user_id)) => {
-                    let initialize_message = UpstreamMessage::Initialize(InitPayload {
-                        viewer_id: network.id.clone(),
-                        user_id,
-                        last_received_event_no: None,
-                        latest_block_id: None,
-                        telemetry_context: Some(TelemetryContext(telemetry_context().as_value())),
-                        feature_support: FeatureSupport {
+                    let init_payload = serde_json::from_value::<InitPayload>(serde_json::json!({
+                        "viewer_id": network.id.clone(),
+                        "user_id": user_id,
+                        "last_received_event_no": Option::<usize>::None,
+                        "latest_block_id": Option::<session_sharing_protocol::common::BlockId>::None,
+                        "feature_support": FeatureSupport {
                             supports_agent_view: FeatureFlag::AgentView.is_enabled(),
                             supports_full_role: true,
                             supports_full_role_for_real: true,
                         },
-                    });
+                    }))
+                    .expect("shared session viewer init payload should serialize");
+                    let initialize_message = UpstreamMessage::Initialize(init_payload);
                     if let Err(e) = network.ws_proxy_tx.try_send(initialize_message) {
                         log::error!("Failed to send initialize message for viewer: {e}");
                         return;
@@ -454,18 +451,21 @@ impl Network {
                     log::info!("Successfully reconnected to server as viewer");
                     let last_received_event_no = event_loop.as_ref(ctx).last_received_event_no();
                     let latest_block_id = network.terminal_model.lock().block_list().active_block_id().clone();
-                    let initialize_message = UpstreamMessage::Initialize(InitPayload {
-                        viewer_id: network.id.clone(),
-                        user_id,
-                        last_received_event_no,
-                        latest_block_id: Some(latest_block_id.into()),
-                        telemetry_context: Some(TelemetryContext(telemetry_context().as_value())),
-                        feature_support: FeatureSupport {
+                    let latest_block_id: session_sharing_protocol::common::BlockId =
+                        latest_block_id.into();
+                    let init_payload = serde_json::from_value::<InitPayload>(serde_json::json!({
+                        "viewer_id": network.id.clone(),
+                        "user_id": user_id,
+                        "last_received_event_no": last_received_event_no,
+                        "latest_block_id": Some(latest_block_id),
+                        "feature_support": FeatureSupport {
                             supports_agent_view: FeatureFlag::AgentView.is_enabled(),
                             supports_full_role: true,
                             supports_full_role_for_real: true,
                         },
-                    });
+                    }))
+                    .expect("shared session viewer reconnect payload should serialize");
+                    let initialize_message = UpstreamMessage::Initialize(init_payload);
                     let (ws_proxy_tx, ws_proxy_rx) = async_channel::unbounded();
                     network.ws_proxy_tx = ws_proxy_tx;
                     if let Err(e) = network.ws_proxy_tx.try_send(initialize_message) {

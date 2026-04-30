@@ -21,7 +21,7 @@ use crate::{
     cloud_object::{model::persistence::CloudModel, ObjectIdType, Space},
     drive::CloudObjectTypeAndId,
     menu::{self, Menu, MenuItemFields},
-    notebooks::telemetry::EmbeddedObjectInfo,
+    notebooks::EmbeddedObjectInfo,
     search::notebook_embedding::{
         searcher::EmbeddingSearchItemAction,
         view::{EmbeddingSearchEvent, EmbeddingSearchMenu},

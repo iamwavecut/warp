@@ -17,7 +17,6 @@ On macOS, Warp exposes a **Start Warp at login** toggle in **Settings → Featur
 9. **Integration test builds do not register.** When the `WARP_INTEGRATION` environment variable is set, Warp skips all registration/unregistration work regardless of the toggle state, mirroring the existing macOS guard.
 10. **Moving or renaming the install.** If the Warp executable moves (e.g. an update reinstalls to a new path, or a portable install is relocated), the existing registration keeps pointing at the old path until the user toggles **Start Warp at login** off and back on, at which point Warp rewrites the entry against the new path. A stale entry whose target no longer exists is left in place (Windows itself handles the dangling entry). Automatic detection on launch is tracked as a follow-up.
 11. **Visibility to the user outside Warp.** The startup entry must be visible and removable in Windows' standard UIs — at minimum, **Settings → Apps → Startup** on Windows 10/11 and **Task Manager → Startup apps**. The entry's display name is "Warp" (or the channel-specific name, e.g. "Warp Preview", "Warp Dev") so users can identify it.
-12. **Telemetry.** Toggling the setting emits the same `ToggleLoginItem` features-page telemetry event that the macOS toggle emits today, so rollout can be measured consistently across platforms.
 13. **Not applicable on web/Linux.** The setting remains hidden on Web. Linux is out of scope for this ticket (see Non-goals).
 ## Non-goals
 - Linux autostart (`~/.config/autostart/*.desktop`) is not covered here.

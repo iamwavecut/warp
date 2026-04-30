@@ -212,5 +212,4 @@ Do not run `cargo fmt --all` or file-specific `cargo fmt`; follow the repository
 
 ## Follow-ups
 - Add an explicit `title` field to the CLI agent plugin protocol if `summary` is not sufficiently stable for tab names.
-- Consider telemetry for the setting toggle only if product wants adoption data; the implementation does not need telemetry to satisfy APP-4080.
 - If vertical-tabs search indexes both rendered and non-rendered counterpart text, document that behavior in a small helper test so future changes do not accidentally regress discoverability.

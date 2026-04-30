@@ -5,7 +5,7 @@ use crate::auth::UserUid;
 use crate::context_chips::ContextChipKind;
 use crate::drive::sharing::ShareableObject;
 use crate::editor::{InteractionState, ReplicaId};
-use crate::server::telemetry::SharingDialogSource;
+use crate::interaction_sources::SharingDialogSource;
 use crate::settings::InputModeSettings;
 use crate::terminal::block_list_viewport::ScrollPositionUpdate;
 use crate::terminal::model::blocks::BlockListPoint;
@@ -31,7 +31,6 @@ use crate::{
     menu::{MenuItem, MenuItemFields},
     terminal::shared_session::presence_manager::{Event as PresenceManagerEvent, PresenceManager},
 };
-use crate::{send_telemetry_from_ctx, TelemetryEvent};
 use chrono::{DateTime, Local};
 use itertools::Itertools;
 use session_sharing_protocol::common::{
@@ -471,18 +470,6 @@ impl TerminalView {
             scrollback_type,
             source_type,
         });
-        if let Some(source) = source {
-            send_telemetry_from_ctx!(
-                TelemetryEvent::StartedSharingCurrentSession {
-                    includes_scrollback: !matches!(
-                        scrollback_type,
-                        SharedSessionScrollbackType::None
-                    ),
-                    source,
-                },
-                ctx
-            );
-        }
     }
 
     /// Sets the PresenceManager and decorates the view accordingly when a shared session has been started.
@@ -559,11 +546,6 @@ impl TerminalView {
         ctx: &mut ViewContext<Self>,
     ) {
         ctx.emit(Event::StopSharingCurrentSession { reason });
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::StoppedSharingCurrentSession { source, reason },
-            ctx
-        );
     }
 
     // TODO: why do we need to pass through input replica ID as a separate argument?
@@ -665,14 +647,6 @@ impl TerminalView {
         {
             self.maybe_auto_open_cloud_mode_details_panel(ctx);
         }
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::JoinedSharedSession {
-                session_id,
-                source_type,
-            },
-            ctx
-        );
     }
 
     pub fn rejoin_session_share(&mut self, ctx: &mut ViewContext<Self>) {
@@ -1098,13 +1072,6 @@ impl TerminalView {
         } else {
             return;
         }
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::JumpToSharedSessionParticipant {
-                jumped_to: participant_id.clone()
-            },
-            ctx
-        );
     }
 
     // If open, ensure that participant avatar context menu is not triggered
@@ -1232,8 +1199,6 @@ impl TerminalView {
                 crate::uri::web_intent_parser::open_url_on_desktop(&url);
             }
         }
-
-        send_telemetry_from_ctx!(TelemetryEvent::WebSessionOpenedOnDesktop { source }, ctx);
     }
 
     // Called when viewer receives acknowledgment from server
@@ -1344,8 +1309,6 @@ impl TerminalView {
             let toast = DismissibleToast::default(COPY_LINK_TEXT.to_string());
             toast_stack.add_ephemeral_toast(toast, window_id, ctx);
         });
-
-        send_telemetry_from_ctx!(TelemetryEvent::CopiedSharedSessionLink { source }, ctx);
     }
 
     fn insert_shared_session_started_banner(

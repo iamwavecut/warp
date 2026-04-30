@@ -14,7 +14,7 @@ Current integration test recordings show the UI state changing over time, but th
 
 ## Non-Goals
 - Changing how tests dispatch events.
-- Building a full analytics or event-inspection UI outside the recorded video.
+- Building a full event-inspection UI outside the recorded video.
 - Capturing every possible event type in the first version beyond clicks, click-and-drag, and keyboard events.
 
 ## Primary Use Cases

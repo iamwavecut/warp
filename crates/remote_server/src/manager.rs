@@ -40,7 +40,7 @@ struct ReconnectParams {
 }
 
 /// Error from [`RemoteServerManager::run_connect_and_handshake`] that
-/// preserves which phase failed so callers can report accurate telemetry.
+/// preserves which phase failed so callers can report accurate diagnostics.
 #[cfg(not(target_family = "wasm"))]
 #[derive(Debug, thiserror::Error)]
 enum ConnectAndHandshakeError {
@@ -81,7 +81,7 @@ pub enum RemoteServerOperation {
     LoadRepoMetadataDirectory,
 }
 
-/// Classification of a remote server client error for telemetry.
+/// Classification of a remote server client error for diagnostics.
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RemoteServerErrorKind {
@@ -92,7 +92,7 @@ pub enum RemoteServerErrorKind {
 }
 
 /// Exit status information captured from the remote server subprocess
-/// when the connection drops. Used for diagnostics and telemetry.
+/// when the connection drops. Used for diagnostics and diagnostics.
 #[derive(Clone, Debug, Serialize)]
 pub struct RemoteServerExitStatus {
     /// Process exit code, if the process exited normally.
@@ -102,7 +102,7 @@ pub struct RemoteServerExitStatus {
 }
 
 impl RemoteServerErrorKind {
-    /// Classify a [`ClientError`] into a telemetry error kind.
+    /// Classify a [`ClientError`] into a diagnostics error kind.
     pub fn from_client_error(error: &crate::client::ClientError) -> Self {
         use crate::client::ClientError;
         match error {
@@ -298,7 +298,7 @@ pub enum RemoteServerManagerEvent {
         result: Result<(), String>,
     },
 
-    // --- Telemetry events ---
+    // --- Diagnostics events ---
     /// A client request to the remote server failed.
     ClientRequestFailed {
         session_id: SessionId,
@@ -377,7 +377,7 @@ pub struct RemoteServerManager {
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
     auth_context: Option<Arc<RemoteServerAuthContext>>,
     /// Detected remote platform per session, populated during the binary check
-    /// phase via `detect_platform()`. Used for telemetry.
+    /// phase via `detect_platform()`. Used for diagnostics.
     session_platforms: HashMap<SessionId, RemotePlatform>,
 }
 

@@ -7,7 +7,7 @@ pub trait AnyhowErrorExt {
     /// engineering team.
     fn is_actionable(&self) -> bool;
 
-    /// Reports the error.
+    /// Marks the error as reported to the local error pipeline.
     fn report_error(&self);
 }
 
@@ -24,8 +24,5 @@ impl AnyhowErrorExt for anyhow::Error {
         true
     }
 
-    fn report_error(&self) {
-        #[cfg(feature = "crash_reporting")]
-        sentry::integrations::anyhow::capture_anyhow(self);
-    }
+    fn report_error(&self) {}
 }

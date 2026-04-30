@@ -36,7 +36,6 @@ The challenge is that this introduces two independent async conditions that must
 
 ### Key constraint
 
-`initialize_bootstrapped_session()` is called synchronously inside the `ModelEventDispatcher` event handler for `HandlerEvent::Bootstrapped` (model_events.rs:98-106). This is the only place session initialization happens. All downstream logic (view, history, telemetry) flows from the `SessionBootstrapped` event it emits.
 
 ## Proposed changes
 

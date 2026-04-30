@@ -617,8 +617,6 @@ async fn upload_gathered_snapshot(
         {
             Ok(t) => t,
             Err(e) => {
-                // Pipeline-abort: route through report_error! so Sentry captures the structured
-                // error chain and on-call alerting can fire.
                 report_error!(e.context(format!(
                     "Failed to get snapshot upload targets; skipping upload (task {task_id})"
                 )));
@@ -655,7 +653,6 @@ async fn upload_gathered_snapshot(
     let manifest_bytes = match serde_json::to_vec_pretty(&manifest) {
         Ok(b) => b,
         Err(e) => {
-            // Pipeline-abort: route through report_error! so Sentry captures it.
             report_error!(anyhow::Error::from(e).context(format!(
                 "Failed to serialize snapshot manifest; skipping upload (task {task_id})"
             )));
@@ -670,7 +667,7 @@ async fn upload_gathered_snapshot(
                 Ok(()) => (true, None),
                 Err(e) => {
                     // Capture the full chain for the manifest's `error` field, then surface it
-                    // to Sentry via report_error!.
+                    // via report_error!.
                     let e = e.context(format!(
                         "Failed to upload manifest '{manifest_filename}' (task {task_id})"
                     ));

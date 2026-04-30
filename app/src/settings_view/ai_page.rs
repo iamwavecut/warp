@@ -1,3 +1,4 @@
+use crate::ai::agent::api::direct_openai;
 #[cfg(not(target_family = "wasm"))]
 use crate::ai::aws_credentials::refresh_aws_credentials;
 use crate::ai::blocklist::agent_view::agent_input_footer::editor::{
@@ -23,7 +24,8 @@ use crate::cloud_object::ObjectType;
 use crate::editor::{EditorOptions, InteractionState, SingleLineEditorOptions, TextColors};
 use crate::settings::InputSettings;
 use crate::settings::{
-    custom_provider_config_from_ui, AIAutoDetectionEnabled, AICommandDenylist,
+    custom_provider_config_from_ui, normalize_custom_provider_env_var,
+    ranked_custom_provider_model_suggestions, AIAutoDetectionEnabled, AICommandDenylist,
     AISettingsChangedEvent, AgentModeCodingPermissionsType, AgentModeCommandExecutionDenylist,
     AgentModeCommandExecutionPredicate, AgentModeQuerySuggestionsEnabled, AwsBedrockAutoLogin,
     AwsBedrockCredentialsEnabled, CanUseWarpCreditsWithByok, CodeSettings, CodebaseContextEnabled,
@@ -41,7 +43,7 @@ use crate::view_components::{
     action_button::{ActionButton, ButtonSize, DangerNakedTheme, SecondaryTheme},
     FilterableDropdown, SubmittableTextInput, SubmittableTextInputEvent,
 };
-use crate::workspaces::user_workspaces::UserWorkspacesEvent;
+use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 use ::ai::api_keys::{ApiKeyManager, ApiKeys};
 use enum_iterator::all;
 use itertools::Itertools;
@@ -54,7 +56,8 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
 use warpui::elements::{
     Border, ChildView, ConstrainedBox, CornerRadius, CrossAxisAlignment, Dismiss, Expanded, Fill,
-    HyperlinkLens, MainAxisAlignment, MainAxisSize, MouseStateHandle, Radius, Shrinkable, Text,
+    Hoverable, HyperlinkLens, MainAxisAlignment, MainAxisSize, MouseStateHandle, Padding, Radius,
+    Shrinkable, Text, Wrap,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::id;
@@ -118,12 +121,12 @@ impl AISubpage {
     }
 }
 use crate::ai::{AIRequestUsageModel, AIRequestUsageModelEvent};
-use crate::menu::{MenuItem, MenuItemFields};
-use crate::server::telemetry::{
+use crate::interaction_sources::{
     AgentModeAutoDetectionSettingOrigin, AutonomySettingToggleSource,
     ToggleCodeSuggestionsSettingSource,
 };
-use crate::ui_components::icons::Icon;
+use crate::menu::{MenuItem, MenuItemFields};
+use crate::ui_components::{buttons::icon_button, icons::Icon};
 use crate::view_components::dropdown::DropdownAction;
 use crate::workspaces::workspace::{AdminEnablementSetting, CustomerType};
 use crate::{
@@ -135,12 +138,12 @@ use crate::{
     util::bindings,
     view_components::{Dropdown, DropdownItem},
 };
-use crate::{report_error, report_if_error, send_telemetry_from_ctx};
-use crate::{TelemetryEvent, UserWorkspaces};
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::ops::Not;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -2309,14 +2312,7 @@ impl TypedActionView for AISettingsPageView {
                 match AISettings::handle(ctx).update(ctx, |settings, ctx| {
                     settings.is_any_ai_enabled.toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleGlobalAI {
-                                is_ai_enabled: new_value,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for Global AI setting: {e:?}");
                     }
@@ -2329,14 +2325,7 @@ impl TypedActionView for AISettingsPageView {
                         .is_active_ai_enabled_internal
                         .toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleActiveAI {
-                                is_active_ai_enabled: new_value,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for Active AI setting: {e:?}");
                     }
@@ -2349,14 +2338,7 @@ impl TypedActionView for AISettingsPageView {
                         .intelligent_autosuggestions_enabled_internal
                         .toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleIntelligentAutosuggestionsSetting {
-                                is_intelligent_autosuggestions_enabled: new_value,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for Next Command setting: {e:?}");
                     }
@@ -2372,14 +2354,7 @@ impl TypedActionView for AISettingsPageView {
                         .prompt_suggestions_enabled_internal
                         .toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::TogglePromptSuggestionsSetting {
-                                is_prompt_suggestions_enabled: new_value,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for Prompt Suggestions setting: {e:?}");
                     }
@@ -2392,15 +2367,7 @@ impl TypedActionView for AISettingsPageView {
                         .code_suggestions_enabled_internal
                         .toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleCodeSuggestionsSetting {
-                                source: ToggleCodeSuggestionsSettingSource::Settings,
-                                is_code_suggestions_enabled: new_value,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for Code Suggestions setting: {e:?}");
                     }
@@ -2413,14 +2380,7 @@ impl TypedActionView for AISettingsPageView {
                         .natural_language_autosuggestions_enabled_internal
                         .toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleNaturalLanguageAutosuggestionsSetting {
-                                is_natural_language_autosuggestions_enabled: new_value,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!(
                             "Failed to set value for Natural Language Autosuggestions setting: {e:?}"
@@ -2435,14 +2395,7 @@ impl TypedActionView for AISettingsPageView {
                         .shared_block_title_generation_enabled_internal
                         .toggle_and_save_value(ctx)
                 }) {
-                    Ok(_new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleSharedBlockTitleGenerationSetting {
-                                is_shared_block_title_generation_enabled: true,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(_new_value) => {}
                     Err(e) => {
                         log::warn!(
                             "Failed to set value for Shared Block Title Generation setting: {e:?}"
@@ -2457,14 +2410,7 @@ impl TypedActionView for AISettingsPageView {
                         .git_operations_autogen_enabled_internal
                         .toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleGitOperationsAutogenSetting {
-                                is_git_operations_autogen_enabled: new_value,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for Git Operations Autogen setting: {e:?}");
                     }
@@ -2477,15 +2423,7 @@ impl TypedActionView for AISettingsPageView {
                         .ai_autodetection_enabled_internal
                         .toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::AgentModeToggleAutoDetectionSetting {
-                                is_autodetection_enabled: new_value,
-                                origin: AgentModeAutoDetectionSettingOrigin::SettingsPage
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for Input Auto-detection: {e:?}");
                     }
@@ -2511,14 +2449,7 @@ impl TypedActionView for AISettingsPageView {
                         .should_render_cli_agent_footer
                         .toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleCLIAgentToolbarSetting {
-                                is_enabled: new_value,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for CLI Agent Footer setting: {e:?}");
                     }
@@ -2553,14 +2484,7 @@ impl TypedActionView for AISettingsPageView {
                         .should_render_use_agent_footer_for_user_commands
                         .toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleUseAgentToolbarSetting {
-                                is_enabled: new_value,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for Use Agent Footer setting: {e:?}");
                     }
@@ -2571,14 +2495,7 @@ impl TypedActionView for AISettingsPageView {
                 match CodeSettings::handle(ctx).update(ctx, |settings, ctx| {
                     settings.codebase_context_enabled.toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleCodebaseContext {
-                                is_codebase_context_enabled: new_value
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for Codebase Context: {e:?}");
                     }
@@ -2591,14 +2508,7 @@ impl TypedActionView for AISettingsPageView {
                         .voice_input_enabled_internal
                         .toggle_and_save_value(ctx)
                 }) {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleVoiceInputSetting {
-                                is_voice_input_enabled: new_value,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for Voice Input: {e:?}");
                     }
@@ -2620,14 +2530,6 @@ impl TypedActionView for AISettingsPageView {
             AISettingsPageAction::ToggleShowInputHintText => {
                 InputSettings::handle(ctx).update(ctx, |input_settings, ctx| {
                     report_if_error!(input_settings.show_hint_text.toggle_and_save_value(ctx));
-                    send_telemetry_from_ctx!(
-                        // We purposely keep the FeaturesPageAction event, even though we have moved the setting to AI settings.
-                        TelemetryEvent::FeaturesPageAction {
-                            action: "ToggleShowInputHintText".to_string(),
-                            value: format!("{}", *input_settings.show_hint_text),
-                        },
-                        ctx
-                    );
                 });
             }
             AISettingsPageAction::ToggleShowAgentTips => {
@@ -2635,14 +2537,7 @@ impl TypedActionView for AISettingsPageView {
                     .show_agent_tips
                     .toggle_and_save_value(ctx)
                 {
-                    Ok(new_value) => {
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::ToggleShowAgentTips {
-                                is_enabled: new_value,
-                            },
-                            ctx
-                        );
-                    }
+                    Ok(new_value) => {}
                     Err(e) => {
                         log::warn!("Failed to set value for Show Agent Tips setting: {e:?}");
                     }
@@ -2759,14 +2654,7 @@ impl TypedActionView for AISettingsPageView {
                         readonly_cmd_execution_enabled,
                         ctx,
                     ) {
-                        Ok(_) => {
-                            send_telemetry_from_ctx!(
-                                TelemetryEvent::ToggledAgentModeAutoexecuteReadonlyCommandsSetting {
-                                    src: AutonomySettingToggleSource::SettingsPage,
-                                    enabled: readonly_cmd_execution_enabled,
-                                },
-                                ctx);
-                        }
+                        Ok(_) => {}
                         Err(e) => report_error!(e),
                     }
                 });
@@ -2774,15 +2662,7 @@ impl TypedActionView for AISettingsPageView {
             AISettingsPageAction::SetCodingPermission(p) => {
                 BlocklistAIPermissions::handle(ctx).update(ctx, |model, ctx| {
                     match model.set_coding_permissions(*p, ctx) {
-                        Ok(_) => {
-                            send_telemetry_from_ctx!(
-                                TelemetryEvent::ChangedAgentModeCodingPermissions {
-                                    src: AutonomySettingToggleSource::SettingsPage,
-                                    new: *p,
-                                },
-                                ctx
-                            );
-                        }
+                        Ok(_) => {}
                         Err(e) => report_error!(e),
                     }
                 });
@@ -3018,13 +2898,7 @@ impl TypedActionView for AISettingsPageView {
                             .set_value(*layout, ctx));
                     },
                 );
-                send_telemetry_from_ctx!(
-                    TelemetryEvent::FeaturesPageAction {
-                        action: "SetConversationLayout".to_string(),
-                        value: format!("{layout:?}")
-                    },
-                    ctx
-                );
+
                 ctx.notify();
             }
             AISettingsPageAction::ToggleOrchestration => {
@@ -6321,10 +6195,508 @@ struct LLMProviderEditorHandles {
     original_name: String,
     name_editor: ViewHandle<EditorView>,
     base_url_editor: ViewHandle<EditorView>,
-    models_editor: ViewHandle<EditorView>,
+    models_picker: ViewHandle<LLMProviderModelsPicker>,
     api_key_editor: ViewHandle<EditorView>,
     api_key_env_var_editor: ViewHandle<EditorView>,
     remove_button: ViewHandle<ActionButton>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProviderConnectionSignature {
+    base_url: String,
+    api_key_fingerprint: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ProviderModelsValidationState {
+    NotChecked,
+    Checking(ProviderConnectionSignature),
+    Valid(ProviderConnectionSignature),
+    Invalid(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LLMProviderModelsPickerEvent {
+    ModelsChanged,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LLMProviderModelsPickerAction {
+    ValidateProvider,
+    AddModel(String),
+    RemoveModel(usize),
+}
+
+struct LLMProviderModelsPicker {
+    selected_models: Vec<String>,
+    available_models: Vec<String>,
+    validation_state: ProviderModelsValidationState,
+    model_input_editor: ViewHandle<EditorView>,
+    validate_button: ViewHandle<ActionButton>,
+    base_url_editor: ViewHandle<EditorView>,
+    api_key_editor: ViewHandle<EditorView>,
+    api_key_env_var_editor: ViewHandle<EditorView>,
+    remove_model_button_states: RefCell<Vec<MouseStateHandle>>,
+    suggestion_button_states: RefCell<Vec<MouseStateHandle>>,
+}
+
+impl Entity for LLMProviderModelsPicker {
+    type Event = LLMProviderModelsPickerEvent;
+}
+
+impl View for LLMProviderModelsPicker {
+    fn ui_name() -> &'static str {
+        "LLMProviderModelsPicker"
+    }
+
+    fn render(&self, app: &AppContext) -> Box<dyn Element> {
+        let appearance = Appearance::as_ref(app);
+        self.render(appearance, app)
+    }
+}
+
+impl TypedActionView for LLMProviderModelsPicker {
+    type Action = LLMProviderModelsPickerAction;
+
+    fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
+        match action {
+            LLMProviderModelsPickerAction::ValidateProvider => self.validate_provider(ctx),
+            LLMProviderModelsPickerAction::AddModel(model) => {
+                if !self.can_add_models(ctx) {
+                    return;
+                }
+                if !self
+                    .selected_models
+                    .iter()
+                    .any(|existing| existing == model)
+                {
+                    self.selected_models.push(model.clone());
+                    self.model_input_editor.update(ctx, |editor, ctx| {
+                        editor.set_buffer_text("", ctx);
+                    });
+                    ctx.emit(LLMProviderModelsPickerEvent::ModelsChanged);
+                    ctx.notify();
+                }
+            }
+            LLMProviderModelsPickerAction::RemoveModel(index) => {
+                if *index < self.selected_models.len() {
+                    self.selected_models.remove(*index);
+                    ctx.emit(LLMProviderModelsPickerEvent::ModelsChanged);
+                    ctx.notify();
+                }
+            }
+        }
+    }
+}
+
+impl LLMProviderModelsPicker {
+    fn new(
+        selected_models: Vec<String>,
+        base_url_editor: ViewHandle<EditorView>,
+        api_key_editor: ViewHandle<EditorView>,
+        api_key_env_var_editor: ViewHandle<EditorView>,
+        ctx: &mut ViewContext<Self>,
+    ) -> Self {
+        let model_input_editor = create_llm_provider_editor(
+            String::new(),
+            "Select a model from /models",
+            false,
+            false,
+            ctx,
+        );
+        model_input_editor.update(ctx, |editor, ctx| {
+            editor.set_interaction_state(InteractionState::Disabled, ctx);
+        });
+        let validate_button = ctx.add_typed_action_view(|_| {
+            ActionButton::new("Check models", SecondaryTheme)
+                .with_icon(Icon::Refresh)
+                .with_size(ButtonSize::Small)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(LLMProviderModelsPickerAction::ValidateProvider);
+                })
+        });
+
+        let picker = Self {
+            selected_models,
+            available_models: Vec::new(),
+            validation_state: ProviderModelsValidationState::NotChecked,
+            model_input_editor,
+            validate_button,
+            base_url_editor,
+            api_key_editor,
+            api_key_env_var_editor,
+            remove_model_button_states: Default::default(),
+            suggestion_button_states: Default::default(),
+        };
+
+        picker.subscribe_to_editors(ctx);
+        picker
+    }
+
+    fn selected_models(&self) -> Vec<String> {
+        self.selected_models.clone()
+    }
+
+    fn subscribe_to_editors(&self, ctx: &mut ViewContext<Self>) {
+        for editor in [
+            self.base_url_editor.clone(),
+            self.api_key_editor.clone(),
+            self.api_key_env_var_editor.clone(),
+        ] {
+            ctx.subscribe_to_view(&editor, |me, _, event, ctx| {
+                if matches!(
+                    event,
+                    EditorEvent::Edited(_)
+                        | EditorEvent::BufferReplaced
+                        | EditorEvent::BufferReinitialized
+                ) {
+                    me.reset_validation(ctx);
+                }
+            });
+        }
+
+        let input_editor = self.model_input_editor.clone();
+        ctx.subscribe_to_view(&input_editor, |me, editor, event, ctx| match event {
+            EditorEvent::Edited(_)
+            | EditorEvent::BufferReplaced
+            | EditorEvent::BufferReinitialized => {
+                ctx.notify();
+            }
+            EditorEvent::Enter => {
+                if let Some(model) = me
+                    .current_suggestions(editor.as_ref(ctx).buffer_text(ctx))
+                    .first()
+                {
+                    ctx.dispatch_typed_action(&LLMProviderModelsPickerAction::AddModel(
+                        model.clone(),
+                    ));
+                }
+            }
+            _ => {}
+        });
+    }
+
+    fn reset_validation(&mut self, ctx: &mut ViewContext<Self>) {
+        self.validation_state = ProviderModelsValidationState::NotChecked;
+        self.available_models.clear();
+        self.model_input_editor.update(ctx, |editor, ctx| {
+            editor.set_interaction_state(InteractionState::Disabled, ctx);
+        });
+        ctx.notify();
+    }
+
+    fn validate_provider(&mut self, ctx: &mut ViewContext<Self>) {
+        let (signature, base_url, api_key) = match self.current_connection(ctx) {
+            Ok(connection) => connection,
+            Err(error) => {
+                self.validation_state = ProviderModelsValidationState::Invalid(error);
+                self.available_models.clear();
+                self.model_input_editor.update(ctx, |editor, ctx| {
+                    editor.set_interaction_state(InteractionState::Disabled, ctx);
+                });
+                ctx.notify();
+                return;
+            }
+        };
+
+        if matches!(
+            &self.validation_state,
+            ProviderModelsValidationState::Checking(checking) if checking == &signature
+        ) {
+            return;
+        }
+
+        self.validation_state = ProviderModelsValidationState::Checking(signature.clone());
+        self.available_models.clear();
+        self.model_input_editor.update(ctx, |editor, ctx| {
+            editor.set_interaction_state(InteractionState::Disabled, ctx);
+        });
+        ctx.notify();
+
+        ctx.spawn(
+            async move { direct_openai::fetch_models(&base_url, Some(&api_key)).await },
+            move |me, result, ctx| {
+                if !matches!(
+                    &me.validation_state,
+                    ProviderModelsValidationState::Checking(checking) if checking == &signature
+                ) {
+                    return;
+                }
+
+                match result {
+                    Ok(models) if models.is_empty() => {
+                        me.validation_state = ProviderModelsValidationState::Invalid(
+                            "Provider returned no models.".to_string(),
+                        );
+                    }
+                    Ok(models) => {
+                        me.available_models = models;
+                        me.validation_state =
+                            ProviderModelsValidationState::Valid(signature.clone());
+                        me.model_input_editor.update(ctx, |editor, ctx| {
+                            editor.set_interaction_state(InteractionState::Editable, ctx);
+                        });
+                    }
+                    Err(error) => {
+                        me.available_models.clear();
+                        me.validation_state = ProviderModelsValidationState::Invalid(format!(
+                            "Could not load models: {error:#}"
+                        ));
+                    }
+                }
+                ctx.notify();
+            },
+        );
+    }
+
+    fn current_connection(
+        &self,
+        ctx: &AppContext,
+    ) -> Result<(ProviderConnectionSignature, String, String), String> {
+        let base_url = self.base_url_editor.as_ref(ctx).buffer_text(ctx);
+        let base_url = base_url.trim().trim_end_matches('/').to_string();
+        if base_url.is_empty() {
+            return Err("Enter a base URL first.".to_string());
+        }
+        url::Url::parse(&base_url).map_err(|_| "Base URL is not a valid URL.".to_string())?;
+
+        let direct_key = self.api_key_editor.as_ref(ctx).buffer_text(ctx);
+        let direct_key = direct_key.trim();
+        let api_key = if direct_key.is_empty() {
+            let env_var = self.api_key_env_var_editor.as_ref(ctx).buffer_text(ctx);
+            let env_var = normalize_custom_provider_env_var(&env_var)
+                .ok_or_else(|| "Enter an API key or API-key environment variable.".to_string())?;
+            std::env::var(&env_var)
+                .map_err(|_| format!("Environment variable {env_var} is not set."))?
+        } else {
+            direct_key.to_string()
+        };
+        if api_key.trim().is_empty() {
+            return Err("API key is empty.".to_string());
+        }
+
+        let signature = ProviderConnectionSignature {
+            base_url: base_url.clone(),
+            api_key_fingerprint: api_key_fingerprint(&api_key),
+        };
+
+        Ok((signature, base_url, api_key))
+    }
+
+    fn can_add_models(&self, ctx: &AppContext) -> bool {
+        let Ok((signature, _, _)) = self.current_connection(ctx) else {
+            return false;
+        };
+        matches!(
+            &self.validation_state,
+            ProviderModelsValidationState::Valid(valid) if valid == &signature
+        )
+    }
+
+    fn current_suggestions(&self, query: String) -> Vec<String> {
+        ranked_custom_provider_model_suggestions(
+            &query,
+            &self.available_models,
+            &self.selected_models,
+        )
+        .into_iter()
+        .take(8)
+        .collect()
+    }
+
+    fn ensure_mouse_states(states: &RefCell<Vec<MouseStateHandle>>, len: usize) {
+        let mut states = states.borrow_mut();
+        while states.len() < len {
+            states.push(MouseStateHandle::default());
+        }
+        states.truncate(len);
+    }
+
+    fn status_text(&self, can_add_models: bool) -> String {
+        match &self.validation_state {
+            ProviderModelsValidationState::NotChecked => {
+                "Check provider to load models.".to_string()
+            }
+            ProviderModelsValidationState::Checking(_) => "Checking provider...".to_string(),
+            ProviderModelsValidationState::Valid(_) if can_add_models => {
+                format!("Loaded {} models.", self.available_models.len())
+            }
+            ProviderModelsValidationState::Valid(_) => {
+                "Provider changed. Check provider again.".to_string()
+            }
+            ProviderModelsValidationState::Invalid(error) => error.clone(),
+        }
+    }
+
+    fn render(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
+        let can_add_models = self.can_add_models(app);
+        let status_text = self.status_text(can_add_models);
+        let input_text = self.model_input_editor.as_ref(app).buffer_text(app);
+        let suggestions = if can_add_models {
+            self.current_suggestions(input_text)
+        } else {
+            Vec::new()
+        };
+
+        Self::ensure_mouse_states(&self.remove_model_button_states, self.selected_models.len());
+        Self::ensure_mouse_states(&self.suggestion_button_states, suggestions.len());
+
+        let editor_style = UiComponentStyles {
+            padding: Some(Coords {
+                top: 10.,
+                bottom: 10.,
+                left: 16.,
+                right: 16.,
+            }),
+            background: Some(appearance.theme().surface_2().into()),
+            ..Default::default()
+        };
+
+        let mut content = Flex::column().with_spacing(8.).with_child(
+            Text::new_inline("Models", appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                .with_color(appearance.theme().active_ui_text_color().into())
+                .finish(),
+        );
+
+        if !self.selected_models.is_empty() {
+            let mut tags = Wrap::row().with_spacing(8.).with_run_spacing(8.);
+            let remove_states = self.remove_model_button_states.borrow();
+            for (index, model) in self.selected_models.iter().enumerate() {
+                let remove_button =
+                    icon_button(appearance, Icon::X, false, remove_states[index].clone())
+                        .build()
+                        .on_click(move |ctx, _, _| {
+                            ctx.dispatch_typed_action(LLMProviderModelsPickerAction::RemoveModel(
+                                index,
+                            ));
+                        })
+                        .finish();
+
+                tags.add_child(
+                    Container::new(
+                        Flex::row()
+                            .with_spacing(4.)
+                            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                            .with_child(
+                                Text::new_inline(
+                                    model.clone(),
+                                    appearance.monospace_font_family(),
+                                    CONTENT_FONT_SIZE,
+                                )
+                                .with_color(appearance.theme().active_ui_text_color().into())
+                                .finish(),
+                            )
+                            .with_child(remove_button)
+                            .finish(),
+                    )
+                    .with_padding(
+                        Padding::uniform(0.)
+                            .with_top(4.)
+                            .with_bottom(4.)
+                            .with_left(8.)
+                            .with_right(4.),
+                    )
+                    .with_background(appearance.theme().surface_2())
+                    .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
+                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                    .finish(),
+                );
+            }
+            content.add_child(tags.finish());
+        }
+
+        content.add_child(
+            Flex::row()
+                .with_spacing(8.)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(
+                    Expanded::new(
+                        1.,
+                        appearance
+                            .ui_builder()
+                            .text_input(self.model_input_editor.clone())
+                            .with_style(editor_style)
+                            .build()
+                            .finish(),
+                    )
+                    .finish(),
+                )
+                .with_child(ChildView::new(&self.validate_button).finish())
+                .finish(),
+        );
+
+        content.add_child(
+            Text::new_inline(status_text, appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                .with_color(
+                    appearance
+                        .theme()
+                        .sub_text_color(appearance.theme().surface_1())
+                        .into(),
+                )
+                .finish(),
+        );
+
+        if !suggestions.is_empty() {
+            let suggestion_states = self.suggestion_button_states.borrow();
+            let mut suggestion_list = Flex::column().with_spacing(0.);
+            for (index, suggestion) in suggestions.into_iter().enumerate() {
+                let suggestion_for_action = suggestion.clone();
+                suggestion_list.add_child(
+                    Hoverable::new(suggestion_states[index].clone(), move |mouse_state| {
+                        Container::new(
+                            Flex::row()
+                                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                                .with_child(
+                                    Expanded::new(
+                                        1.,
+                                        Text::new_inline(
+                                            suggestion,
+                                            appearance.monospace_font_family(),
+                                            CONTENT_FONT_SIZE,
+                                        )
+                                        .with_color(
+                                            appearance.theme().active_ui_text_color().into(),
+                                        )
+                                        .finish(),
+                                    )
+                                    .finish(),
+                                )
+                                .finish(),
+                        )
+                        .with_padding(Padding::uniform(0.).with_vertical(8.).with_horizontal(12.))
+                        .with_background(if mouse_state.is_hovered() {
+                            appearance.theme().surface_3()
+                        } else {
+                            appearance.theme().surface_1()
+                        })
+                        .finish()
+                    })
+                    .on_click(move |ctx, _, _| {
+                        ctx.dispatch_typed_action(LLMProviderModelsPickerAction::AddModel(
+                            suggestion_for_action.clone(),
+                        ));
+                    })
+                    .finish(),
+                );
+            }
+
+            content.add_child(
+                Container::new(suggestion_list.finish())
+                    .with_background(appearance.theme().surface_1())
+                    .with_border(Border::all(1.).with_border_fill(appearance.theme().outline()))
+                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+                    .finish(),
+            );
+        }
+
+        content.finish()
+    }
+}
+
+fn api_key_fingerprint(api_key: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    api_key.hash(&mut hasher);
+    hasher.finish()
 }
 
 struct LLMProvidersWidget {
@@ -6360,12 +6732,12 @@ fn persist_custom_provider_configs(
     refresh_custom_provider_models(ctx);
 }
 
-fn create_llm_provider_editor(
+fn create_llm_provider_editor<V: View>(
     initial_text: String,
     placeholder: &'static str,
     is_password: bool,
     multiline: bool,
-    ctx: &mut ViewContext<AISettingsPageView>,
+    ctx: &mut ViewContext<V>,
 ) -> ViewHandle<EditorView> {
     ctx.add_typed_action_view(move |ctx| {
         let appearance = Appearance::as_ref(ctx);
@@ -6416,7 +6788,11 @@ fn sync_llm_provider_editors_to_settings(
     for provider in providers {
         let name = provider.name_editor.as_ref(ctx).buffer_text(ctx);
         let base_url = provider.base_url_editor.as_ref(ctx).buffer_text(ctx);
-        let models = provider.models_editor.as_ref(ctx).buffer_text(ctx);
+        let models = provider
+            .models_picker
+            .as_ref(ctx)
+            .selected_models()
+            .join("\n");
         let api_key_env_var = provider.api_key_env_var_editor.as_ref(ctx).buffer_text(ctx);
         let api_key = provider.api_key_editor.as_ref(ctx).buffer_text(ctx);
 
@@ -6476,13 +6852,6 @@ impl LLMProvidersWidget {
                     false,
                     ctx,
                 );
-                let models_editor = create_llm_provider_editor(
-                    provider.models.join("\n"),
-                    "qwen3-coder, llama-local",
-                    false,
-                    true,
-                    ctx,
-                );
                 let api_key_editor = create_llm_provider_editor(
                     stored_keys.get(&provider.name).cloned().unwrap_or_default(),
                     "sk-...",
@@ -6501,6 +6870,21 @@ impl LLMProvidersWidget {
                     false,
                     ctx,
                 );
+                let models_picker = {
+                    let base_url_editor = base_url_editor.clone();
+                    let api_key_editor = api_key_editor.clone();
+                    let api_key_env_var_editor = api_key_env_var_editor.clone();
+                    let selected_models = provider.models.clone();
+                    ctx.add_typed_action_view(move |ctx| {
+                        LLMProviderModelsPicker::new(
+                            selected_models,
+                            base_url_editor,
+                            api_key_editor,
+                            api_key_env_var_editor,
+                            ctx,
+                        )
+                    })
+                };
                 let remove_button = ctx.add_typed_action_view(move |_| {
                     ActionButton::new("Remove", DangerNakedTheme)
                         .with_icon(Icon::Trash)
@@ -6516,7 +6900,7 @@ impl LLMProvidersWidget {
                     original_name: provider.name.clone(),
                     name_editor,
                     base_url_editor,
-                    models_editor,
+                    models_picker,
                     api_key_editor,
                     api_key_env_var_editor,
                     remove_button,
@@ -6526,11 +6910,10 @@ impl LLMProvidersWidget {
 
         for provider in editor_handles.clone() {
             for editor in [
-                provider.name_editor,
-                provider.base_url_editor,
-                provider.models_editor,
-                provider.api_key_editor,
-                provider.api_key_env_var_editor,
+                provider.name_editor.clone(),
+                provider.base_url_editor.clone(),
+                provider.api_key_editor.clone(),
+                provider.api_key_env_var_editor.clone(),
             ] {
                 let providers = editor_handles.clone();
                 ctx.subscribe_to_view(&editor, move |_, _, event, ctx| {
@@ -6539,6 +6922,12 @@ impl LLMProvidersWidget {
                     }
                 });
             }
+            let providers = editor_handles.clone();
+            ctx.subscribe_to_view(&provider.models_picker, move |_, _, event, ctx| {
+                if matches!(event, LLMProviderModelsPickerEvent::ModelsChanged) {
+                    sync_llm_provider_editors_to_settings(&providers, ctx);
+                }
+            });
         }
 
         let add_provider_button = ctx.add_typed_action_view(|_| {
@@ -6654,11 +7043,7 @@ impl LLMProvidersWidget {
                     "Base URL",
                     provider.base_url_editor.clone(),
                 ))
-                .with_child(Self::render_editor_input(
-                    appearance,
-                    "Models",
-                    provider.models_editor.clone(),
-                ))
+                .with_child(ChildView::new(&provider.models_picker).finish())
                 .with_child(Self::render_editor_input(
                     appearance,
                     "API key",

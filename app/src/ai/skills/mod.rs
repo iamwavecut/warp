@@ -1,6 +1,3 @@
-mod telemetry;
-pub use telemetry::{SkillOpenOrigin, SkillTelemetryEvent};
-
 cfg_if::cfg_if! {
     if #[cfg(not(feature = "local_fs"))] {
         mod dummy_skill_manager;
@@ -9,6 +6,15 @@ cfg_if::cfg_if! {
 }
 
 pub use ai::skills::SkillReference;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SkillOpenOrigin {
+    ReadSkill,
+    ReadFiles,
+    EditFiles,
+    OpenSkillCommand,
+}
 
 mod listed_skill;
 pub use listed_skill::SkillDescriptor;

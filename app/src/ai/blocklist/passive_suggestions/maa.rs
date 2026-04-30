@@ -55,7 +55,7 @@ pub enum PassiveSuggestionsEvent {
         trigger: Option<PassiveSuggestionTrigger>,
         conversation_id: Option<AIConversationId>,
         /// The server-assigned request token from the passive suggestion
-        /// request. Used to join client-side telemetry with server-side logs.
+        /// request. Used to join client-side diagnostics with server-side logs.
         server_request_token: Option<String>,
     },
     NewCodeDiffSuggestion {
@@ -71,7 +71,7 @@ pub enum PassiveSuggestionsEvent {
         request_duration_ms: u64,
         trigger: PassiveSuggestionTrigger,
         /// The server-assigned request token from the passive suggestion
-        /// request. Used to join client-side telemetry with server-side logs.
+        /// request. Used to join client-side diagnostics with server-side logs.
         /// `None` on the legacy code path.
         server_request_token: Option<String>,
     },
@@ -574,7 +574,7 @@ impl Entity for PassiveSuggestionsModel {
 struct StreamExtractionResult {
     suggestion: ExtractedSuggestion,
     /// The server-assigned request token from the `StreamInit` event,
-    /// used to correlate client telemetry with server-side logs.
+    /// used to correlate client diagnostics with server-side logs.
     server_request_token: Option<String>,
 }
 

@@ -9,7 +9,6 @@ Relevant code today:
 - `app/src/lib.rs:2279-2362` — `maybe_register_app_as_login_item`. macOS-only. Guards on `WARP_INTEGRATION`, skips when bundle identifier is missing or equals `dev.warp.Warp-Local`, runs `SMAppService register/unregisterAndReturnError:` off the UI thread, then writes the result back to `app_added_as_login_item`.
 - `app/src/settings_view/features_page.rs` — toggle UI:
   - action enum: `FeaturesPageAction::ToggleLoginItem` (~l618)
-  - telemetry: `ToggleLoginItem` branch (~l975-978)
   - handler: `ToggleLoginItem => ...` (~l1855-1857)
   - widget: `LoginItemWidget` (~l4488-4533), rendered only when `add_app_as_login_item.is_supported_on_current_platform()` returns true (~l2481-2486). Label is hard-coded to `"Start Warp at login (requires macOS 13+)"`.
 - `crates/settings/src/lib.rs:161-219` — `SupportedPlatforms` enum and `matches_current_platform`. Supports `OR(…, …)` so `MAC` + `WINDOWS` can be expressed without adding a new variant.
@@ -85,7 +84,6 @@ Two tiny changes in `app/src/settings_view/features_page.rs`:
   #[cfg(target_os = "windows")]
   let label = "Start Warp at login";
   ```
-  Anything else — action enum, telemetry, handler, and widget-registration path — already flows through `is_supported_on_current_platform()` on the setting itself, so broadening the setting in step 1 automatically turns the toggle on for Windows.
 - Update `search_terms` for the widget (~l4497) to keep the macOS keyword but add "windows", so the settings search surface finds it on both OSes.
 ### Module placement
 We don't have an existing `login_item` module. A new `app/src/login_item/{mod,macos,windows}.rs` layout is the smallest, most obvious split and matches other OS-sharded areas (`app/src/terminal/local_tty/windows/*`, `app/src/util/file/external_editor/{mod,windows}.rs`, `app/src/antivirus/windows.rs`, `app/src/terminal/audible_bell/{mod,windows}.rs`). Add `mod login_item;` in `app/src/lib.rs` and re-export `maybe_register_app_as_login_item` there.
@@ -108,7 +106,6 @@ Manual validation (Windows):
 5. **Invariant 7.** Install both Stable and Preview channels; enable the setting in each; confirm both registry values (`Warp`, `WarpPreview`) coexist and unregistering one doesn't affect the other.
 6. **Invariant 8.** Run `cargo run` from a dev checkout with the toggle on; confirm no registry value is written and the preference updates still persist.
 7. **Invariant 10.** Move/rename the install directory, relaunch Warp, toggle off+on; confirm the registry value points at the new path.
-Telemetry (**Invariant 12**): filter the dashboard for `FeaturesPageAction { action: "ToggleLoginItem" }` and confirm Windows events arrive alongside macOS ones post-rollout.
 ## Risks and mitigations
 - **Silently re-enabling a user's manual removal.** Mitigated by reusing the existing `app_added_as_login_item` bookkeeping contract — Windows code *must* respect it the same way macOS does. Covered by Invariant 5 and the relevant manual test.
 - **Path quoting bugs.** Windows start entries are fragile with paths containing spaces. Store the value as a single quoted string, and add a regression test for a path with spaces.

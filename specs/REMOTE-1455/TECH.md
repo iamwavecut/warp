@@ -41,8 +41,6 @@ Add `fn render_harness_section(&self, appearance: &Appearance) -> Option<Box<dyn
 - No click target, no copy button, no tooltip (invariant 7).
 Insert in `View::render` directly below the Status section and above Artifacts / Directory / Run ID, wrapped in `Container::with_margin_bottom(FIELD_SPACING)` so the field has the same outer spacing as sibling `render_simple_field` fields (invariant 9). The placement is the same across both `PanelMode::Conversation` and `PanelMode::Task`. Because the slot is conditional, when a `from_task_id` stub later resolves into a full task, the panel only grows downward from that row — nothing above it moves (invariant 6's "no content moves out from under the cursor").
 No new actions, mouse states, copy-feedback entries, or events. `handle_action` and `PanelMouseStates` are untouched.
-### 4. No telemetry, no new surfaces
-Row is read-only metadata. No telemetry, no changes to `ConversationDetailsPanelAction`, `ConversationDetailsPanelEvent`, or any caller of `set_conversation_details`.
 ## Testing and validation
 Behavior invariants from `PRODUCT.md` map as follows:
 - Invariants 1, 4, 5, 6 — unit tests on `ConversationDetailsData.harness`, added to `app/src/ai/conversation_details_panel_tests.rs`:

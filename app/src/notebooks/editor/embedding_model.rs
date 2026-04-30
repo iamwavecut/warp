@@ -21,10 +21,8 @@ use crate::{
     appearance::Appearance,
     cloud_object::{model::persistence::CloudModel, CloudObject},
     completer::SessionAgnosticContext,
-    notebooks::{
-        styles::block_footer_action_button,
-        telemetry::{ActionEntrypoint, BlockInfo},
-    },
+    notebooks::styles::block_footer_action_button,
+    notebooks::{ActionEntrypoint, BlockInfo},
     server::ids::{HashableId, ToServerId},
     settings::FontSettings,
     terminal::input::decorations::{parse_current_commands_and_tokens, ParsedTokensSnapshot},

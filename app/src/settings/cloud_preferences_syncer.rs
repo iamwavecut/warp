@@ -168,11 +168,8 @@ struct PreferenceToCreate {
 }
 
 lazy_static! {
-    static ref LEGACY_CLOUD_SETTINGS_STORAGE_KEYS: Vec<&'static str> = vec![
-        super::privacy::TELEMETRY_ENABLED_DEFAULTS_KEY,
-        super::privacy::CRASH_REPORTING_ENABLED_DEFAULTS_KEY,
-        super::privacy::CLOUD_CONVERSATION_STORAGE_ENABLED_DEFAULTS_KEY,
-    ];
+    static ref LEGACY_CLOUD_SETTINGS_STORAGE_KEYS: Vec<&'static str> =
+        vec![super::privacy::CLOUD_CONVERSATION_STORAGE_ENABLED_DEFAULTS_KEY,];
 }
 
 const PREFERENCES_DEBOUNCE_PERIOD: Duration = Duration::from_millis(500);
@@ -461,10 +458,7 @@ impl CloudPreferencesSyncer {
             me.handle_initial_load(force_cloud_to_match_local, ctx);
         });
 
-        PrivacySettings::handle(ctx).update(ctx, |privacy_settings, ctx| {
-            // Note that this also blocks on update_manager.initial_load_complete()
-            privacy_settings.maybe_sync_with_warp_drive_prefs(ctx);
-        });
+        let _ = ctx;
     }
 
     /// Fixes https://linear.app/warpdotdev/issue/CLD-2629/duplicate-prefs-for-users

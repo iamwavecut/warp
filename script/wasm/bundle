@@ -20,8 +20,6 @@ CARGO_TARGET_DIR="$WORKSPACE_ROOT_DIR/target/wasm32-unknown-unknown"
 
 # By default we build dev bundles.
 RELEASE_CHANNEL="dev"
-# TODO: We should enable crash_reporting and before enabling for trusted testers.
-# https://linear.app/warpdotdev/issue/PLAT-428/crash-reporting-on-web
 FEATURES="release_bundle,gui"
 DEBUG=false
 
@@ -149,18 +147,6 @@ ASSET_TARGET_DIR="$ASSET_TARGET_DIR" cargo build --target wasm32-unknown-unknown
 # Generate linked JS and wasm files that can be run in the browser.
 echo "Running wasm-bindgen on $CARGO_TARGET_OUTPUT_DIR/$WARP_BIN.wasm"
 wasm-bindgen --target web --out-dir "$OUT_DIR" --out-name "warp" --keep-debug --no-typescript "$CARGO_TARGET_OUTPUT_DIR/$WARP_BIN.wasm"
-
-WASM_BINARY_OUT="${OUT_DIR}/warp_bg.wasm"
-WASM_BINARY_DEBUG="${EXTRAS_DIR}/warp_bg.debug.wasm"
-
-if [[ "$NO_SPLIT" != "true" ]]; then
-  # Run Sentry's wasm-split binary to separate out debug information from the
-  # wasm binary.
-  #
-  # Binary releases of wasm-split can be found here:
-  # https://github.com/getsentry/symbolicator/releases
-  wasm-split "$WASM_BINARY_OUT" --debug-out "$WASM_BINARY_DEBUG" --strip --strip-names
-fi
 
 # If this is being run within a GitHub action, set an output variable with the
 # directory containing all built packages.

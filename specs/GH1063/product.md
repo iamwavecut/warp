@@ -29,7 +29,6 @@ Out of scope (must continue to say "Oz"):
   "Oz Cloud API Keys" settings subpage, the "Oz" harness in the harness
   selector, and any zero-state or blocklist strings that mention the cloud Oz
   agent.
-- Internal identifiers (enum variants, field names, action names, telemetry
   keys, settings keys, URL fragments) may keep the name `Oz`. This spec
   constrains user-visible strings only.
 - Other surfaces that mention "Oz" (agent view zero state, tab titles,
@@ -43,7 +42,6 @@ Out of scope (must continue to say "Oz"):
    servers", "Knowledge", "Third party CLI agents") are unchanged.
 
 2. Opening that "Warp Agent" subpage renders the same settings content it did
-   before this rename. No widgets, toggles, options, defaults, or telemetry
    change behavior as a result of this rename.
 
 3. On the "Warp Agent" subpage, the primary page heading that sits above the

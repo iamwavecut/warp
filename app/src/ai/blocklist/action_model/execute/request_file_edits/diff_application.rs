@@ -22,12 +22,6 @@ use crate::{
         paths::host_native_absolute_path,
     },
     auth::auth_state::AuthState,
-    safe_debug, safe_warn, send_telemetry_on_executor,
-};
-
-use super::telemetry::{
-    DiffInvalidFileEvent, DiffMatchFailedEvent, MissingLineNumbersEvent,
-    RequestFileEditsTelemetryEvent,
 };
 
 /// Result of reading a file from disk or a remote server.
@@ -163,7 +157,7 @@ impl DiffApplicationError {
 /// * Search-and-replace diffs are matched to existing files on disk
 /// * Created files are expected to not already exist
 ///
-/// Errors are reported as telemetry, and also returned for display.
+/// Errors are reported as diagnostics, and also returned for display.
 pub(crate) async fn apply_edits<F, Fut>(
     edits: Vec<FileEdit>,
     session_context: &SessionContext,
@@ -179,24 +173,14 @@ where
 {
     let result = apply_edits_internal(edits, session_context, &read_file).await;
 
-    // Send telemetry for all diff application errors.
+    // Send diagnostics for all diff application errors.
 
     // Count of attempts to edit a file that doesn't exist or create a file that already exists.
     let mut invalid_file_count = 0;
 
     for error in result.errors.iter() {
         match error {
-            DiffApplicationError::UnmatchedDiffs { match_failures, .. } => {
-                send_telemetry_on_executor!(
-                    auth_state,
-                    RequestFileEditsTelemetryEvent::DiffMatchFailed(DiffMatchFailedEvent {
-                        identifiers: ai_identifiers.clone(),
-                        failures: *match_failures,
-                        passive_diff,
-                    }),
-                    background_executor
-                );
-            }
+            DiffApplicationError::UnmatchedDiffs { match_failures, .. } => {}
             DiffApplicationError::MissingFile { .. }
             | DiffApplicationError::ReadFailed { .. }
             | DiffApplicationError::AlreadyExists { .. }
@@ -210,19 +194,9 @@ where
         }
     }
 
-    if invalid_file_count > 0 {
-        send_telemetry_on_executor!(
-            auth_state,
-            RequestFileEditsTelemetryEvent::DiffInvalidFile(DiffInvalidFileEvent {
-                count: invalid_file_count,
-                identifiers: ai_identifiers.clone(),
-                passive_diff,
-            }),
-            background_executor
-        );
-    }
+    if invalid_file_count > 0 {}
 
-    // Send telemetry for any warnings, which don't necessarily prevent diff application.
+    // Send diagnostics for any warnings, which don't necessarily prevent diff application.
 
     let total_missing_line_numbers: u8 = result
         .warnings
@@ -232,17 +206,7 @@ where
         })
         .sum();
 
-    if total_missing_line_numbers > 0 {
-        send_telemetry_on_executor!(
-            auth_state,
-            RequestFileEditsTelemetryEvent::MissingLineNumbers(MissingLineNumbersEvent {
-                identifiers: ai_identifiers.clone(),
-                count: total_missing_line_numbers,
-                passive_diff,
-            }),
-            background_executor
-        );
-    }
+    if total_missing_line_numbers > 0 {}
 
     match Vec1::try_from_vec(result.errors) {
         Ok(errors) => Err(errors),
@@ -271,7 +235,7 @@ struct DiffResult {
     warnings: Vec<DiffWarning>,
 }
 
-/// You generally want to use `apply_edits`, however, if you don't want to report telemetry or be as
+/// You generally want to use `apply_edits`, however, if you don't want to report diagnostics or be as
 /// strict, this is available.  For example, we use this when debug importing conversations.
 async fn apply_edits_internal<F, Fut>(
     edits: Vec<FileEdit>,

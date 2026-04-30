@@ -18,7 +18,6 @@ Git-operation dialogs in the code review panel (Commit, Push, Create PR, and the
 7. The `CommitAndPush` chain runs `run_commit` → `run_push` with the user-typed message, unchanged. It does not involve AI in any state, so it is unaffected.
 8. The `CommitAndCreatePr` chain runs `run_commit` → `run_push` → creates the PR via `gh pr create --fill` (i.e. the existing AI-failure fallback path in `create_pr_with_ai_content`), without issuing any AI request for title or body. The resulting PR uses the latest commit's subject/body as title/body.
 9. The standalone Create PR dialog (`GitDialogMode::CreatePr`) creates the PR via `gh pr create --fill` on confirm, without issuing any AI request for title or body.
-10. Logs and telemetry emitted by the git-operations flow do not reference AI activity in this state. No `"Failed to autogenerate commit message"` warnings fire, because no request is attempted.
 11. No toast, banner, or dialog copy tells the user AI is disabled. The absence of the `"Generating…"` state is the only user-visible signal; the feature simply degrades to manual.
 ### State transitions
 12. If the user flips the global AI toggle while a Commit dialog is open, the in-flight state of that dialog is preserved — any already-generated draft stays, any already-showing `"Generating…"` placeholder stays until the in-flight request resolves or fails. The toggle only affects dialogs opened after the change.

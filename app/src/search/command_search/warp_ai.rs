@@ -250,10 +250,6 @@ impl DataSourceRunError for GenerateCommandsFromNaturalLanguageError {
         .to_string()
     }
 
-    fn telemetry_payload(&self) -> serde_json::Value {
-        json!(self)
-    }
-
     fn as_any(&self) -> &dyn Any {
         self
     }

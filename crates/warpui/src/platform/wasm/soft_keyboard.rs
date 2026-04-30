@@ -85,10 +85,10 @@ pub enum SoftKeyboardInput {
 ///     let manager = SoftKeyboardManager::new(|input| {
 ///         // Handle input from soft keyboard
 ///     })?;
-///     
+///
 ///     // Show keyboard when text input is focused
 ///     manager.show_keyboard();
-///     
+///
 ///     // Hide keyboard when text input is blurred
 ///     manager.hide_keyboard();
 /// }

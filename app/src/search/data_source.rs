@@ -533,10 +533,6 @@ impl DataSourceRunError for DataSourceSearchError {
         self.message.clone()
     }
 
-    fn telemetry_payload(&self) -> serde_json::Value {
-        json!(self)
-    }
-
     fn as_any(&self) -> &dyn Any {
         self
     }

@@ -99,7 +99,6 @@ pub struct Tier {
     pub shared_workflows_policy: Option<SharedWorkflowsPolicy>,
     pub session_sharing_policy: Option<SessionSharingPolicy>,
     pub ai_autonomy_policy: Option<AiAutonomyPolicy>,
-    pub telemetry_data_collection_policy: Option<TelemetryDataCollectionPolicy>,
     pub ugc_data_collection_policy: Option<UgcDataCollectionPolicy>,
     pub usage_based_pricing_policy: Option<UsageBasedPricingPolicy>,
     pub codebase_context_policy: Option<CodebaseContextPolicy>,
@@ -148,12 +147,6 @@ pub struct WarpAiPolicy {
     pub is_prompt_suggestions_toggleable: bool,
     pub is_next_command_enabled: bool,
     pub is_voice_enabled: bool,
-}
-
-#[derive(cynic::QueryFragment, Debug, Clone)]
-pub struct TelemetryDataCollectionPolicy {
-    pub default: bool,
-    pub toggleable: bool,
 }
 
 #[derive(cynic::QueryFragment, Debug, Clone)]

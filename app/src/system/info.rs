@@ -11,10 +11,8 @@ use sysinfo::ProcessesToUpdate;
 use warp_core::channel::ChannelState;
 use warpui::{App, AppContext, Entity, ModelContext, SingletonEntity};
 
-use crate::{
-    send_telemetry_from_app_ctx, send_telemetry_sync_from_ctx, server::telemetry,
-    system::memory_footprint, terminal::TerminalView, TelemetryEvent,
-};
+use super::memory_footprint;
+use crate::terminal::TerminalView;
 
 /// The threshold at which we emit a memory usage warning.
 const MEMORY_USAGE_WARNING_THRESHOLD: Option<Byte> = byte_unit::Byte::GIGABYTE.multiply(10);
@@ -48,7 +46,7 @@ pub struct SystemInfo {
     has_emitted_memory_warning_event: bool,
     /// A circular buffer storing resource usage data.
     stats: StatsBuffer,
-    /// A helper structure for reporting resource usage via telemetry events.
+    /// A helper structure for reporting resource usage via diagnostics events.
     resource_usage_reporter: ResourceUsageReporter,
     /// The long OS version.
     long_os_version: Option<String>,
@@ -161,13 +159,11 @@ impl SystemInfo {
         }
     }
 
-    /// Checks for excessive memory usage.  This may send a telemetry event
-    /// and trigger a Sentry heap profile dump if excessive usage is detected.
+    /// Checks for excessive memory usage and records a local diagnostic log if the
+    /// threshold is exceeded.
     ///
     /// The threshold check uses `memory_footprint` (which includes swapped
     /// and compressed pages) so we actually detect high memory situations.
-    /// The Rudderstack telemetry event still reports `rss` so existing
-    /// dashboards are unaffected.
     fn check_for_excessive_memory_usage(
         &mut self,
         rss: Byte,
@@ -189,27 +185,7 @@ impl SystemInfo {
         // Collect a detailed memory breakdown for diagnostics.
         let memory_breakdown = memory_footprint::memory_breakdown();
 
-        // If we're tracking heap usage and detect excessive memory usage,
-        // dump and upload the current heap profiling data.
-        #[cfg(feature = "heap_usage_tracking")]
-        {
-            let breakdown_for_sentry = memory_breakdown.clone();
-            ctx.spawn(
-                crate::profiling::dump_jemalloc_heap_profile(breakdown_for_sentry),
-                |_, _, _| {},
-            );
-        }
-
-        // Send a telemetry event indicating that memory usage is extreme.
-        // Report RSS here to keep Rudderstack dashboards consistent.
         let total_application_usage_bytes = rss.as_u64();
-        send_telemetry_sync_from_ctx!(
-            TelemetryEvent::MemoryUsageHigh {
-                total_application_usage_bytes,
-                memory_breakdown,
-            },
-            ctx
-        );
 
         ctx.emit(SystemInfoEvent::MemoryUsageHigh);
         self.has_emitted_memory_warning_event = true;
@@ -342,21 +318,13 @@ impl ResourceUsageReporter {
         // about memory consumption caused by the blocklist.
         //
         // TODO(vorporeal): Clean up the memory usage one, either eliminating it
-        // or merging it into the general resource usage telemetry event.
-        send_telemetry_from_app_ctx!(
-            TelemetryEvent::ResourceUsageStats {
-                cpu: cpu_usage_stats.into(),
-                mem: memory_usage_stats.into(),
-            },
-            ctx
-        );
+        // or merging it into the general resource usage diagnostics event.
 
         // Only send detailed memory usage reports in dogfood, for the time being.
         if ChannelState::channel().is_dogfood() {
             // Only send the detailed memory usage report if the user has created
             // enough blocks since the last detailed memory usage report.
             if self.blocks_created_since_last_report >= Self::MIN_BLOCKS_CREATED_PER_MEMORY_REPORT {
-                send_telemetry_from_app_ctx!(TelemetryEvent::from(memory_usage_stats), ctx);
                 self.blocks_created_since_last_report = 0;
             }
         }
@@ -436,16 +404,6 @@ struct CpuUsageStats {
     avg_usage: f32,
 }
 
-impl From<CpuUsageStats> for telemetry::CpuUsageStats {
-    fn from(value: CpuUsageStats) -> Self {
-        Self {
-            num_cpus: value.num_cpus,
-            max_usage: value.max_usage,
-            avg_usage: value.avg_usage,
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 struct MemoryUsageStats {
     total_application_usage_bytes: usize,
@@ -509,34 +467,6 @@ impl MemoryUsageStats {
     }
 }
 
-impl From<MemoryUsageStats> for TelemetryEvent {
-    fn from(value: MemoryUsageStats) -> Self {
-        TelemetryEvent::MemoryUsageStats {
-            total_application_usage_bytes: value.total_application_usage_bytes,
-            total_blocks: value.total_blocks,
-            total_lines: value.total_lines,
-            active_block_stats: value.active_block_stats.into(),
-            inactive_5m_stats: value.inactive_5m_stats.into(),
-            inactive_1h_stats: value.inactive_1h_stats.into(),
-            inactive_24h_stats: value.inactive_24h_stats.into(),
-        }
-    }
-}
-
-impl From<MemoryUsageStats> for telemetry::MemoryUsageStats {
-    fn from(value: MemoryUsageStats) -> Self {
-        Self {
-            total_application_usage_bytes: value.total_application_usage_bytes,
-            total_blocks: value.total_blocks,
-            total_lines: value.total_lines,
-            active_block_stats: value.active_block_stats.into(),
-            inactive_5m_stats: value.inactive_5m_stats.into(),
-            inactive_1h_stats: value.inactive_1h_stats.into(),
-            inactive_24h_stats: value.inactive_24h_stats.into(),
-        }
-    }
-}
-
 #[derive(Copy, Clone, Default, Serialize, PartialEq)]
 struct BlockMemoryStats {
     num_blocks: usize,
@@ -555,16 +485,6 @@ impl std::fmt::Debug for BlockMemoryStats {
                     .get_adjusted_unit(byte_unit::Unit::MB),
             )
             .finish()
-    }
-}
-
-impl From<BlockMemoryStats> for telemetry::BlockMemoryUsageStats {
-    fn from(value: BlockMemoryStats) -> Self {
-        Self {
-            num_blocks: value.num_blocks,
-            num_lines: value.num_lines,
-            estimated_memory_usage_bytes: value.estimated_memory_usage_bytes,
-        }
     }
 }
 

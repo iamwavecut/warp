@@ -1,16 +1,12 @@
-use super::{CTAButton, CheckboxConfig, LaunchModalEvent, Slide};
-use crate::ai::ambient_agents::telemetry::{CloudAgentTelemetryEvent, CloudModeEntryPoint};
+use super::{CTAButton, LaunchModalEvent, Slide};
 use crate::terminal::view::OnboardingIntention;
 use crate::ui_components::icons::Icon;
 use crate::workspace::action::WorkspaceAction;
 use crate::workspace::view::OnboardingTutorial;
-use crate::workspaces::user_workspaces::UserWorkspaces;
-use crate::workspaces::workspace::{AdminEnablementSetting, UgcCollectionEnablementSetting};
 use asset_macro::bundled_or_fetched_asset;
 use markdown_parser::{FormattedTextFragment, FormattedTextLine};
-use warp_core::send_telemetry_from_ctx;
 use warpui::assets::asset_cache::AssetSource;
-use warpui::{AppContext, SingletonEntity};
+use warpui::SingletonEntity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OzLaunchSlide {
@@ -143,12 +139,6 @@ impl Slide for OzLaunchSlide {
                 CTAButton::next_slide(next, format!("Next: {}", next.short_label()))
             }
             OzLaunchSlide::LaunchCredits => CTAButton::custom("Try it out", |ctx| {
-                send_telemetry_from_ctx!(
-                    CloudAgentTelemetryEvent::EnteredCloudMode {
-                        entry_point: CloudModeEntryPoint::OzLaunchModal,
-                    },
-                    ctx
-                );
                 ctx.emit(LaunchModalEvent::Close);
                 ctx.dispatch_typed_action(&WorkspaceAction::StartAgentOnboardingTutorial(
                     OnboardingTutorial::NoProject {
@@ -167,25 +157,6 @@ impl Slide for OzLaunchSlide {
             | OzLaunchSlide::AgentAutomations
             | OzLaunchSlide::AgentManagement => None,
         }
-    }
-
-    fn checkbox_config(&self) -> Option<CheckboxConfig> {
-        Some(CheckboxConfig {
-            label: "Sync conversations to cloud",
-            description: "Agent conversations stored in the cloud can be shared with anyone with one click, and allow conversations to be continued across devices and on logout.",
-        })
-    }
-
-    fn should_show_checkbox(&self, app: &AppContext) -> bool {
-        let cloud_storage_setting =
-            UserWorkspaces::as_ref(app).get_cloud_conversation_storage_enablement_setting();
-        let ugc_setting = UserWorkspaces::as_ref(app).get_ugc_collection_enablement_setting();
-
-        // Show checkbox only when user has control over cloud storage AND UGC is not force-enabled.
-        matches!(
-            cloud_storage_setting,
-            AdminEnablementSetting::RespectUserSetting
-        ) && !matches!(ugc_setting, UgcCollectionEnablementSetting::Enable)
     }
 
     fn on_close(&self, ctx: &mut warpui::ViewContext<super::LaunchModal<Self>>) {

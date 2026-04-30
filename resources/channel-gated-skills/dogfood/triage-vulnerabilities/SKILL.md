@@ -140,7 +140,6 @@ If a PR exists, review and approve it. If not, the fix may require manual interv
 
 **Infrastructure change**: For container image vulnerabilities, the fix may involve:
 - Updating a base Docker image (e.g. in a `Dockerfile`)
-- Updating a sidecar image version (e.g. OpenTelemetry collector in `session-sharing-server`)
 - Waiting for a distroless base image update (not actionable — report and skip)
 
 When submitting a fix PR, include:

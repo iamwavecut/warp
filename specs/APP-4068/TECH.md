@@ -211,4 +211,3 @@ sequenceDiagram
 - Client-side reconnect loop (re-run proxy, re-attach to daemon on disconnect).
 - Detect `server_version` mismatch in `InitializeResponse` and force-restart daemon.
 - Windows support (ControlMaster not supported on Windows OpenSSH; named pipes alternative).
-- Telemetry: daemon start, reconnect attempts, grace period expiry.

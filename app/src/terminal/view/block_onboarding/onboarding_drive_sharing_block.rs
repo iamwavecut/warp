@@ -17,7 +17,7 @@ use warpui::{
 use crate::{
     cloud_object::model::persistence::{CloudModel, CloudModelEvent},
     drive::CloudObjectTypeAndId,
-    terminal::view::telemetry::SharingDialogSource,
+    interaction_sources::SharingDialogSource,
     ui_components::icons::Icon,
     workspace::WorkspaceAction,
 };

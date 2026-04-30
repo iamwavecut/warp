@@ -201,4 +201,3 @@ flowchart TD
 
 - Reset `Suppressed` automatically after detecting a successful `gh auth login` or a later successful PR chip execution.
 - Improve the prompt editor disabled tooltip to distinguish missing `gh` from unauthenticated `gh`.
-- Add telemetry for validation transitions if rollout needs observability.

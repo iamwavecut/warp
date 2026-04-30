@@ -1,14 +1,11 @@
-# TECH.md — Remote Server Reliability Telemetry (APP-4217)
 
 ## Context
 
 The SSH remote server feature (gated behind `FeatureFlag::SshRemoteServer`) has no
-telemetry. Before releasing beyond dogfood we need client-side reliability metrics
 covering the full lifecycle: binary check → install → connect → initialize →
 steady-state operation → disconnection.
 
 Auth state is not yet passed to the remote server, so all tracking is client-side
-via the existing `TelemetryEvent` infrastructure.
 
 ### Relevant code
 
@@ -23,7 +20,6 @@ via the existing `TelemetryEvent` infrastructure.
   `RemoteServerController`; per-pane orchestrator for the SSH init flow
 - `app/src/terminal/view.rs (4170-4217)` — `TerminalView` subscription to
   `RemoteServerManagerEvent`; converts manager events into terminal events and UI
-- `app/src/server/telemetry/events.rs` — `TelemetryEvent` enum; each variant needs
   definition, `name()`, `description()`, `payload()`, `contains_ugc()`,
   `enablement_state()`
 
@@ -49,11 +45,9 @@ stateDiagram-v2
 ```
 
 Every `Skipped` path falls back to ControlMaster-based command execution.
-Today none of these transitions emit telemetry.
 
 ## Reliability Metrics
 
-Seven telemetry events covering every stage of the lifecycle:
 
 ### 1. Binary check outcome — `RemoteServerBinaryCheck`
 
@@ -140,9 +134,7 @@ Signals: setup latency, install vs no-install performance.
 
 ## Proposed Changes
 
-### 1. `TelemetryEvent` variants (`app/src/server/telemetry/events.rs`)
 
-Add seven new variants to the `TelemetryEvent` enum, all gated behind
 `EnablementState::Flag(FeatureFlag::SshRemoteServer)`.
 
 Each variant needs entries in:
@@ -178,12 +170,10 @@ Add `phase: &'static str` field to `RemoteServerManagerEvent::SessionConnectionF
 (`"connect"` or `"initialize"`), set at the two `Err` arms in `connect_session`
 (lines 359 and 342). Update the single downstream consumer in `terminal/view.rs`.
 
-### 5. Track telemetry in `TerminalView` subscription
 
 File: `app/src/terminal/view.rs (4170-4217)`
 
 Expand the existing `RemoteServerManagerEvent` match arms to add
-`send_telemetry_from_ctx!` calls:
 
 - `BinaryCheckComplete { Ok(true) }` → `RemoteServerBinaryCheck { found: true, error: None }`
 - `BinaryCheckComplete { Ok(false) }` → `RemoteServerBinaryCheck { found: false, error: None }`
@@ -209,12 +199,8 @@ File: `app/src/terminal/writeable_pty/remote_server_controller.rs`
 
 ## Testing and Validation
 
-1. **Unit tests for telemetry payload correctness**: verify each new
-   `TelemetryEvent` variant produces the expected `name()`, `payload()`, and
-   `enablement_state()`. Follow the pattern of existing telemetry tests.
 
 2. **Manual validation on dogfood**: SSH to a remote host and verify each metric
-   fires by checking the Rudderstack live event stream (use the `telemetry stream`
    workflow). Scenarios to exercise:
    - Clean install (binary not present) — expect BinaryCheck(not found),
      Installation(success), Initialization(success), SetupDuration.
@@ -229,11 +215,9 @@ File: `app/src/terminal/writeable_pty/remote_server_controller.rs`
 
 ## Parallelism
 
-Steps 1 (telemetry variants) and 2-3 (client/manager event plumbing) touch
 independent files and can be worked on in parallel. Steps 4-6 depend on both.
 
 ## Follow-ups
 
-- Server-side reliability telemetry once auth state is forwarded.
 - Per-request latency tracking (p50/p99 for `navigate_to_directory`, `run_command`, etc.).
 - Reconnect success/failure tracking once client-side reconnect is implemented (APP-4068 follow-up).

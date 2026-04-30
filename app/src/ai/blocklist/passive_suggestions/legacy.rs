@@ -19,10 +19,10 @@ use crate::ai::predict::generate_am_query_suggestions::{
     GenerateAMQuerySuggestionsRequest, GenerateAMQuerySuggestionsResponse, Suggestion,
 };
 use crate::ai_assistant::execution_context::WarpAiExecutionContext;
+use crate::interaction_sources::PromptSuggestionFallbackReason;
 use crate::network::NetworkStatus;
 use crate::report_error;
 use crate::server::server_api::ServerApiProvider;
-use crate::server::telemetry::PromptSuggestionFallbackReason;
 use crate::settings::AISettings;
 use crate::terminal::event::{BlockType, UserBlockCompleted};
 use crate::terminal::model::block::BlockId;

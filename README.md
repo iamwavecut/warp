@@ -14,7 +14,7 @@ This fork is **not** intended for production, commercial redistribution, or host
 This fork no longer treats local mode as an optional product branch. The app is expected to run as a local-first terminal by default:
 
 - no required registration, browser login, device auth, or Firebase anonymous user;
-- no telemetry collection, app focus telemetry, shutdown telemetry flush, crash reporting, CocoaSentry, or Sentry;
+- no manufacturer data collection, event upload, or remote incident upload;
 - no Warp account, billing, subscription, Stripe, upgrade, quota, paywall, referral, Teams, Shared Blocks, or Warp Drive cloud UI;
 - no Warp cloud/protobuf endpoint for custom AI provider calls;
 - no proprietary hosted Warp agent/server auth flow;
@@ -129,7 +129,7 @@ cargo build --features local_only --all-targets
 TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
 ```
 
-Warnings from dead hosted auth/cloud/telemetry paths may appear while those upstream modules still exist. Treat build failures as blockers; warnings should be evaluated case by case and removed when deleting the underlying hosted code is safe.
+Warnings from dead hosted auth/cloud paths may appear while those upstream modules still exist. Treat build failures as blockers; warnings should be evaluated case by case and removed when deleting the underlying hosted code is safe.
 
 ## Upstream Docs
 

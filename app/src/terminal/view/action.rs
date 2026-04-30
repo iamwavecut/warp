@@ -17,8 +17,10 @@ use warpui::EntityId;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent::AIAgentExchangeId;
 use crate::ai::blocklist::codebase_index_speedbump_banner::CodebaseIndexSpeedbumpBannerAction;
-use crate::code_review::telemetry_event::CodeReviewPaneEntrypoint;
-use crate::server::telemetry::{AgentModeRewindEntrypoint, PaletteSource, ToggleBlockFilterSource};
+use crate::code_review::CodeReviewPaneEntrypoint;
+use crate::interaction_sources::{
+    AgentModeRewindEntrypoint, PaletteSource, ToggleBlockFilterSource,
+};
 use crate::terminal::available_shells::AvailableShell;
 use crate::terminal::model::completions::ShellCompletion;
 use crate::terminal::shared_session::SharedSessionActionSource;
@@ -241,7 +243,7 @@ pub enum TerminalAction {
         ai_block_view_id: EntityId,
         exchange_id: AIAgentExchangeId,
         conversation_id: AIConversationId,
-        /// The entrypoint from which this action was triggered (for telemetry).
+        /// The entrypoint from which this action was triggered (for diagnostics).
         entrypoint: AgentModeRewindEntrypoint,
     },
     /// Actually execute the rewind (called after user confirms in the dialog)
@@ -352,7 +354,6 @@ pub enum TerminalAction {
     },
     ClearMarkedText,
     SelectAgenticSuggestion(i32),
-    HideTelemetryBannerPermanently,
     ShowInitializationBlock,
     GenerateCodebaseIndex,
     /// This is for debugging, dev only for now
@@ -640,7 +641,6 @@ impl fmt::Debug for TerminalAction {
             } => write!(f, "SetMarkedText {{{marked_text:?}, {selected_range:?}}}"),
             ClearMarkedText => write!(f, "ClearMarkedText"),
             SelectAgenticSuggestion(index) => write!(f, "SelectAgenticSuggestion({index:?})"),
-            HideTelemetryBannerPermanently => write!(f, "HideTelemetryBannerPermanently"),
             ShowInitializationBlock => write!(f, "ShowInitializationBlock"),
             GenerateCodebaseIndex => write!(f, "GenerateIndexForRepo"),
             LoadAgentModeConversation => write!(f, "LoadAgentModeConversation"),

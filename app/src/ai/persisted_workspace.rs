@@ -14,11 +14,9 @@ use crate::ai::blocklist::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel};
 use crate::ai::AIRequestUsageModel;
 use crate::persistence::ModelEvent;
 use crate::report_if_error;
-use crate::send_telemetry_from_ctx;
 use crate::settings::CodeSettings;
 use crate::terminal::TerminalView;
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
-use crate::TelemetryEvent;
 use ai::{
     index::full_source_code_embedding::manager::{CodebaseIndexManager, CodebaseIndexManagerEvent},
     workspace::{WorkspaceMetadata, WorkspaceMetadataEvent},
@@ -35,7 +33,6 @@ use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
 #[cfg(feature = "local_fs")]
 use crate::code::language_server_shutdown_manager::LanguageServerShutdownManager;
 #[cfg(feature = "local_fs")]
-use crate::code::lsp_telemetry::LspTelemetryEvent;
 #[cfg(feature = "local_fs")]
 use crate::server::server_api::ServerApiProvider;
 #[cfg(feature = "local_fs")]
@@ -240,13 +237,10 @@ impl PersistedWorkspace {
                     CodebaseIndexManagerEvent::IndexMetadataUpdated { root_path, event } => {
                         me.handle_index_metadata_event(root_path, *event);
                     }
-                    CodebaseIndexManagerEvent::NewIndexCreated => {
-                        send_active_indexed_repos_changed_telemetry(ctx);
-                    }
+                    CodebaseIndexManagerEvent::NewIndexCreated => {}
                     CodebaseIndexManagerEvent::RemoveExpiredIndexMetadata { expired_metadata } => {
                         // TODO: Disable expired metadata removal once we have other consumers of the workspace metadata.
                         me.clean_up_expired_metadata(expired_metadata.clone(), ctx);
-                        send_active_indexed_repos_changed_telemetry(ctx);
                     }
                     _ => {}
                 },
@@ -1077,20 +1071,10 @@ impl PersistedWorkspace {
             let server_type_name = server.as_ref(ctx).server_name();
             ctx.subscribe_to_model(&server, move |_me, event, ctx| match event {
                 LspEvent::Started => {
-                    send_telemetry_from_ctx!(
-                        LspTelemetryEvent::ServerStarted {
-                            server_type: server_type_name.clone(),
-                        },
-                        ctx
-                    );
+
                 }
                 LspEvent::Failed(e) => {
-                    send_telemetry_from_ctx!(
-                        LspTelemetryEvent::ServerFailed {
-                            server_type: server_type_name.clone(),
-                        },
-                        ctx
-                    );
+
                     if let Some(window_id) = WindowManager::as_ref(ctx).active_window()
                     {
                         ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
@@ -1223,18 +1207,6 @@ impl PersistedWorkspace {
             }
         }
     }
-}
-
-fn send_active_indexed_repos_changed_telemetry<T: Entity>(ctx: &mut ModelContext<T>) {
-    let total = CodebaseIndexManager::as_ref(ctx).num_active_indices();
-    let hit_max = AIRequestUsageModel::as_ref(ctx).hit_codebase_index_limit(total);
-    send_telemetry_from_ctx!(
-        TelemetryEvent::ActiveIndexedReposChanged {
-            updated_number_of_codebase_indices: total,
-            hit_max_indices: hit_max
-        },
-        ctx
-    );
 }
 
 #[cfg_attr(not(feature = "local_fs"), allow(dead_code))]

@@ -230,17 +230,6 @@ rust-embed = { version = "8.7.0", features = ["include-exclude"] }
 rustc-hash = "2.1.1"
 rustls = "0.23.39"
 schemars = { version = "1", features = ["chrono04"] }
-sentry = { version = "0.41.0", default-features = false, features = [
-  "anyhow",
-  "backtrace",
-  "contexts",
-  "debug-images",
-  "panic",
-  "release-health",
-  "reqwest",
-  "rustls",
-] }
-sentry-log = "0.41.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_bytes = "0.11"
 serde-bytes-repr = "0.3"
@@ -378,10 +367,8 @@ derivative = "2.2.0"
 parquet = { version = "55.0.0", features = ["arrow"] }
 rmcp = { git = "https://github.com/warpdotdev/rmcp.git", rev = "c0f65dc441af7d714b9c453ac5e7ef641451abe3" }
 
-# Comment this to disable building with debug symbols
-# Building with debug symbols generates a dsym which we can use to get
-# better stack traces in sentry. But there is a cost of about 20% binary size
-# increase.
+# Comment this to disable building with debug symbols. Building with debug
+# symbols improves local stack traces at the cost of binary size.
 [profile.release]
 debug = true
 # Force the rust compiler to create a dSYM. Starting in 1.53 the default on MacOS is "unpacked".

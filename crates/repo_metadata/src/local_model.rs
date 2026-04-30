@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use warp_core::{safe_warn, send_telemetry_from_ctx};
+use warp_core::safe_warn;
 use warpui::ModelHandle;
 
 /// Represents either a file or directory in a repository.
@@ -25,7 +25,6 @@ use crate::{
     entry::{Entry, FileId, IgnoredPathStrategy},
     gitignores_for_directory, matches_gitignores,
     repository::Repository,
-    telemetry::RepoMetadataTelemetryEvent,
     RepoMetadataError,
 };
 use std::sync::Arc;
@@ -943,8 +942,9 @@ impl LocalRepoMetadataModel {
                             safe: ("Failed to build file tree for repository: {e:?}"),
                             full: ("Failed to build file tree for repository {repo_path_str}: {e:?}")
                         );
-                        send_telemetry_from_ctx!(RepoMetadataTelemetryEvent::BuildTreeFailed { error: format!("{e:#}") }, ctx);
-                        ctx.emit(RepositoryMetadataEvent::UpdatingRepositoryFailed { path: std_repo_path.clone() });
+                        ctx.emit(RepositoryMetadataEvent::UpdatingRepositoryFailed {
+                            path: std_repo_path.clone(),
+                        });
                         model.repositories.insert(
                             std_repo_path,
                             IndexedRepoState::Failed(RepoMetadataError::BuildTree(e)),

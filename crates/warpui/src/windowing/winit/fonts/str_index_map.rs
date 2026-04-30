@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 /// Map that provides efficient conversion from byte <-> char index from a backing `str`.
 /// See [`StrIndexMap::byte_index`] and [`StrIndexMap::char_index`] for conversion functions to
-/// convert from/to a byte index to a char index.   
+/// convert from/to a byte index to a char index.
 pub(super) struct StrIndexMap {
     byte_to_char_index: HashMap<usize, usize>,
     char_to_byte_index: Vec<usize>,

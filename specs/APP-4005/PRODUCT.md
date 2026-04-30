@@ -13,7 +13,6 @@ An argumentless `/rename-tab` flow that opens the tab rename editor is too subtl
 - Set the active tab's custom name directly by running `/rename-tab <name>`.
 - Keep behavior consistent between horizontal tabs and vertical tabs.
 - Make the command available in Warp-owned slash-command inputs where renaming the active tab is meaningful, including standard terminal input and Warp Agent / Cloud Agent input surfaces backed by a tab.
-- Preserve existing rename-tab semantics for persistence, display, telemetry, and reset behavior.
 ## Non-goals
 - Opening the existing inline rename editor from `/rename-tab` with no argument.
 - Renaming an arbitrary non-active tab by index, title, pane id, or selector.
@@ -100,9 +99,6 @@ If the command is somehow executed when no active tab exists, the active tab can
 - Do not mutate any tab state.
 - Show a concise error toast such as `Please provide a tab name after /rename-tab` or `Cannot rename the current tab`.
 This should be rare because normal command availability and required-argument behavior should prevent most invalid execution paths.
-### Telemetry
-Executing `/rename-tab <name>` should emit the same slash-command acceptance telemetry as other handled static slash commands.
-The existing tab rename telemetry should remain meaningful: direct-set execution should count as setting a custom tab name when the resulting name differs from the current display/custom title.
 ## Success criteria
 1. `/rename-tab` appears in the slash-command menu in standard terminal input when static slash commands are available.
 2. `/rename-tab` appears in Warp Agent and Cloud Agent input surfaces where static slash commands can rename the enclosing active tab.
@@ -119,7 +115,6 @@ The existing tab rename telemetry should remain meaningful: direct-set execution
 13. Names set through `/rename-tab` can be reset through the existing reset-tab-name UI.
 14. Custom names set through `/rename-tab` persist anywhere existing custom tab names persist.
 15. The invoking input is not sent to the shell, terminal PTY, or agent as literal `/rename-tab` text when handled as a slash command.
-16. Slash-command acceptance telemetry is emitted for successful command execution.
 17. Existing double-click and context-menu rename flows continue to work unchanged.
 ## Validation
 - Unit test slash-command registration to ensure `/rename-tab` is unique, has a required argument, and does not execute on selection.
@@ -134,4 +129,3 @@ The existing tab rename telemetry should remain meaningful: direct-set execution
 - Regression validation: double-click rename, context-menu rename, and reset tab name still work after using the slash command.
 ## Open questions
 - Should `/rename-tab` be added to CLI-agent rich input even while that input is otherwise restricted to CLI-native passthrough commands plus a small explicit allowlist? This spec assumes no for the first implementation unless the broader CLI-agent input model changes.
-- Should direct-set telemetry distinguish slash-command-driven renames from editor-driven renames, or is existing slash-command acceptance telemetry plus existing tab-rename telemetry sufficient?

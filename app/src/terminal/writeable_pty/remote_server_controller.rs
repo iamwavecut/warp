@@ -16,7 +16,6 @@ use crate::server::server_api::ServerApiProvider;
 use crate::terminal::model::session::{IsLegacySSHSession, SessionInfo};
 use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
 use crate::terminal::warpify::settings::WarpifySettings;
-use crate::{send_telemetry_from_ctx, TelemetryEvent};
 use remote_server::setup::RemotePlatform;
 
 use super::pty_controller::{EventLoopSender, PtyController};
@@ -69,7 +68,7 @@ pub struct RemoteServerController<T: EventLoopSender> {
     state: SshInitState,
     /// Whether the binary was installed during this setup flow.
     did_install: bool,
-    /// Detected remote platform from the binary check phase, used for telemetry.
+    /// Detected remote platform from the binary check phase, used for diagnostics.
     remote_platform: Option<RemotePlatform>,
 }
 
@@ -301,7 +300,7 @@ impl<T: EventLoopSender> RemoteServerController<T> {
 
     /// Called when the remote server session is connected. Flushes the
     /// stashed bootstrap (so the session initializes with a live client)
-    /// and emits the `RemoteServerSetupDuration` telemetry event.
+    /// and emits the `RemoteServerSetupDuration` diagnostics event.
     fn on_session_connected(&mut self, session_id: SessionId, ctx: &mut ModelContext<Self>) {
         let SshInitState::AwaitingConnect {
             session_id: expected,
@@ -342,15 +341,6 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                 )
             })
             .unwrap_or((None, None));
-        send_telemetry_from_ctx!(
-            TelemetryEvent::RemoteServerSetupDuration {
-                duration_ms,
-                installed_binary: self.did_install,
-                remote_os,
-                remote_arch,
-            },
-            ctx
-        );
     }
 
     /// Called when the remote server connection failed. Flushes the stashed

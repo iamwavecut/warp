@@ -150,7 +150,7 @@ impl Workflow {
             .collect()
     }
 
-    /// Return a list of every enum ID that has been synced to the server, used for telemetry.
+    /// Return a list of every enum ID that has been synced to the server, used for diagnostics.
     pub fn get_server_enum_ids(&self) -> Vec<GenericStringObjectId> {
         self.arguments()
             .iter()

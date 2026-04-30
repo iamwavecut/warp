@@ -82,7 +82,6 @@ Out-of-scope references that must be preserved as "Oz" (verified by grep):
    - Internal identifiers (`disable_oz_mouse`, `disable_oz` field on
      `AgentDevelopmentSettings`, `AgentSlideAction::ToggleDisableOz`,
      `render_disable_oz_section` function name) are kept as-is to avoid
-     migration risk for persisted settings and telemetry.
 
 4. Navigation call-sites (approximately 15 files)
    - All `SettingsSection::Oz` references in navigation actions, workspace
@@ -157,7 +156,6 @@ Manual verification artifacts:
 
 ## Risks and mitigations
 
-- Risk: external deep links or persisted telemetry strings reference `"Oz"` and
   break. Mitigation: `FromStr` accepts both `"Oz"` and `"Warp Agent"` mapping to
   `SettingsSection::WarpAgent`, and the legacy `"oz"` search term is preserved so
   `oz`-based search still lands on the subpage.
@@ -176,9 +174,7 @@ Manual verification artifacts:
   completed as part of this implementation.
 - Internal identifiers (`disable_oz` setting field,
   `AgentSlideAction::ToggleDisableOz`, `render_disable_oz_section`,
-  `disable_oz_mouse`, and related settings/telemetry keys) are intentionally
-  kept as-is. They require more care around persisted settings, telemetry event
-  names, and potentially GraphQL/analytics schemas.
+  names, and potentially GraphQL schemas.
 - The broader zero-state and blocklist strings that still say "Oz agent" (e.g.,
   in `zero_state_block.rs`) should be revisited in a follow-up issue once
   product confirms which of those belong to the in-app agent vs. the cloud agent

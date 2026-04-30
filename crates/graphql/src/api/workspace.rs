@@ -139,7 +139,6 @@ pub struct WorkspaceSettings {
     pub is_discoverable: bool,
     pub is_invite_link_enabled: bool,
     pub llm_settings: LlmSettings,
-    pub telemetry_settings: TelemetrySettings,
     pub ugc_collection_settings: UgcCollectionSettings,
     pub cloud_conversation_storage_settings: CloudConversationStorageSettings,
     pub ai_permissions_settings: AiPermissionsSettings,
@@ -151,11 +150,6 @@ pub struct WorkspaceSettings {
     pub codebase_context_settings: CodebaseContextSettings,
     pub sandboxed_agent_settings: Option<SandboxedAgentSettings>,
     pub ambient_agent_settings: Option<AmbientAgentSettings>,
-}
-
-#[derive(cynic::QueryFragment, Debug, Clone)]
-pub struct TelemetrySettings {
-    pub force_enabled: bool,
 }
 
 #[derive(cynic::QueryFragment, Debug, Clone)]

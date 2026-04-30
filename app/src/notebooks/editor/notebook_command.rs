@@ -45,10 +45,8 @@ use crate::{
     debounce::debounce,
     drive::workflows::arguments::ArgumentsState,
     editor::InteractionState,
-    notebooks::{
-        styles::block_footer_action_button,
-        telemetry::{ActionEntrypoint, BlockInfo},
-    },
+    notebooks::styles::block_footer_action_button,
+    notebooks::{ActionEntrypoint, BlockInfo},
     settings::FontSettings,
     terminal::input::{
         decorations::{parse_current_commands_and_tokens, ParsedTokenData, ParsedTokensSnapshot},

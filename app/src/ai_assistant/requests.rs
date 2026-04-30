@@ -12,11 +12,7 @@ use crate::{
     ai::{RequestLimitInfo, RequestUsageInfo},
     ai_assistant::utils::{AssistantTranscriptPart, TranscriptPartSubType},
     auth::AuthStateProvider,
-    send_telemetry_from_ctx,
-    server::{
-        server_api::{ai::AIClient, ServerApi},
-        telemetry::{TelemetryEvent, WarpAIRequestResult},
-    },
+    server::server_api::{ai::AIClient, ServerApi},
     workspaces::user_workspaces::UserWorkspaces,
 };
 
@@ -87,7 +83,7 @@ pub struct Requests {
 
     /// When a user Restarts their transcript, we still remember
     /// the previous transcript parts for things like suggestions.
-    /// This list is mutually exclusive from current_transcript.  
+    /// This list is mutually exclusive from current_transcript.
     old_transcript_parts: Vec<TranscriptPart>,
 
     ai_execution_context: Option<WarpAiExecutionContext>,
@@ -238,10 +234,7 @@ impl Requests {
 
 
                             let req_latency = end_time.signed_duration_since(start_time).num_milliseconds();
-                            send_telemetry_from_ctx!(
-                                TelemetryEvent::WarpAIRequestIssued { result: WarpAIRequestResult::Succeeded { latency_ms: req_latency, truncated }},
-                                ctx
-                            );
+
                         }
                         Ok(GenerateDialogueResult::Failure { request_limit_info }) if request_limit_info.limit <= request_limit_info.num_requests_used_since_refresh => {
                             cache_request_limit_info(request_limit_info, ctx);
@@ -288,10 +281,7 @@ impl Requests {
                                 },
                             });
 
-                            send_telemetry_from_ctx!(
-                                TelemetryEvent::WarpAIRequestIssued { result: WarpAIRequestResult::OutOfRequests},
-                                ctx
-                            );
+
                         }
                         _ => {
                             let response = "We're experiencing technical difficulties right now. Please try again later.".to_owned();
@@ -312,10 +302,7 @@ impl Requests {
                                 },
                             });
 
-                            send_telemetry_from_ctx!(
-                                TelemetryEvent::WarpAIRequestIssued { result: WarpAIRequestResult::Failed},
-                                ctx
-                            );
+
                         }
                     }
                 }

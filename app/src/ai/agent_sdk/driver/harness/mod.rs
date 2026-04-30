@@ -249,7 +249,7 @@ fn task_env_vars_for_harness_name(
                 .unwrap_or_else(|_| ChannelState::channel().cli_command_name().into()),
         ),
     );
-    // `OZ_HARNESS` is only consumed by child orchestration telemetry when the child
+    // `OZ_HARNESS` is only consumed by child orchestration diagnostics when the child
     // CLI emits `run message *` events.
     env_vars.insert(
         OsString::from(OZ_HARNESS_ENV),

@@ -204,7 +204,7 @@ pub fn contains_wildcards(query: &str) -> bool {
 ///
 /// This function is optimized for common file search patterns:
 /// - Simple suffix patterns like `*.rs` use O(1) string operations
-/// - Simple prefix patterns like `src/*` use O(1) string operations  
+/// - Simple prefix patterns like `src/*` use O(1) string operations
 /// - Complex patterns use efficient recursive matching without regex
 ///
 /// # Returns

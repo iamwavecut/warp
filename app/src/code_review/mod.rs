@@ -1,26 +1,26 @@
+#[cfg_attr(not(feature = "local_fs"), allow(unused_imports))]
+pub(crate) mod code_review_header;
 pub mod code_review_view;
 pub mod comment_list_view;
+pub(crate) mod comment_rendering;
+pub mod comments;
 pub mod context;
+pub(crate) mod diff_menu;
+pub(crate) mod diff_selector;
 pub mod diff_size_limits;
 #[cfg_attr(not(feature = "local_fs"), allow(dead_code))]
 pub mod diff_state;
 pub mod editor_state;
+pub(crate) mod file_invalidation_queue;
 pub(crate) mod find_model;
 pub(crate) mod git_dialog;
 pub mod git_status_update;
 mod hidden_lines;
-pub mod telemetry_event;
-#[cfg_attr(not(feature = "local_fs"), allow(unused_imports))]
-pub use telemetry_event::CodeReviewTelemetryEvent;
-
-pub(crate) mod code_review_header;
-pub(crate) mod comment_rendering;
-pub mod comments;
-pub(crate) mod diff_menu;
-pub(crate) mod diff_selector;
-pub(crate) mod file_invalidation_queue;
 
 use code_review_view::CodeReviewAction;
+use serde::Serialize;
+use serde_with::SerializeDisplay;
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use warpui::{
     id,
@@ -28,9 +28,52 @@ use warpui::{
     AppContext, Entity, EntityId, ModelContext, SingletonEntity, WeakViewHandle, WindowId,
 };
 
-use crate::code_review::telemetry_event::CodeReviewPaneEntrypoint;
 use crate::terminal::{view::TerminalView, CLIAgent};
 use crate::util::bindings::CustomAction;
+
+#[derive(Clone, Copy, Debug, SerializeDisplay, Default)]
+pub enum CodeReviewPaneEntrypoint {
+    GitDiffChip,
+    AgentModeCompleted,
+    AgentModeRunning,
+    SlashCommand,
+    InvokedByAgent,
+    ForceOpened,
+    CodeDiffHeader,
+    PaneHeader,
+    RightPanel,
+    CLIAgentView,
+    #[default]
+    Other,
+}
+
+impl Display for CodeReviewPaneEntrypoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GitDiffChip => write!(f, "git_diff_chip"),
+            Self::AgentModeCompleted => write!(f, "agent_mode_completed"),
+            Self::AgentModeRunning => write!(f, "agent_mode_running"),
+            Self::SlashCommand => write!(f, "slash_command"),
+            Self::InvokedByAgent => write!(f, "invoked_by_agent"),
+            Self::ForceOpened => write!(f, "force_opened"),
+            Self::CodeDiffHeader => write!(f, "agent_mode_diff_header"),
+            Self::PaneHeader => write!(f, "pane_header"),
+            Self::RightPanel => write!(f, "right_panel"),
+            Self::CLIAgentView => write!(f, "cli_agent_view"),
+            Self::Other => write!(f, "other"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub enum CodeReviewContextDestination {
+    Pty,
+    AgentInput,
+    AgentAttachment,
+    ActiveCommandBuffer,
+    AgentReview,
+    RichInput,
+}
 
 /// Arguments needed to open or toggle the code review panel.
 /// Bundled into a struct so that events can atomically open the

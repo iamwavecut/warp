@@ -143,4 +143,3 @@ Main Claude flow:
 - Add Codex/Gemini-specific config prep if they still trigger first-run auth/onboarding in fresh Oz images.
 - Consider supporting user-provided harness config overlays so advanced users can opt into selected local CLI settings in cloud runs.
 - Update `resources/bundled/skills/oz-platform/SKILL.md` and `resources/bundled/skills/oz-platform/references/third-party-clis.md` once this behavior is implemented and verified.
-- Add telemetry around whether harness prep succeeded and whether the CLI still emitted known onboarding prompts, if we need production visibility into drift.

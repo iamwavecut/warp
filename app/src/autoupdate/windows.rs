@@ -1,4 +1,3 @@
-use crate::server::telemetry::TelemetryEvent;
 use anyhow::anyhow;
 use anyhow::{bail, Result};
 use channel_versions::VersionInfo;
@@ -78,9 +77,8 @@ fn autoupdate_log_file() -> Result<PathBuf> {
 }
 
 /// Checks the autoupdate log file from a previous update attempt.
-/// Sends telemetry for specific known issues, and sends a Sentry event if errors are found.
-/// The log file is renamed after processing to avoid duplicate reports on subsequent launches.
-pub(super) fn check_and_report_update_errors(ctx: &mut AppContext) {
+/// The log file is renamed after processing to avoid duplicate handling on subsequent launches.
+pub(super) fn check_and_report_update_errors(_ctx: &mut AppContext) {
     let log_path = match autoupdate_log_file() {
         Ok(path) => path,
         Err(e) => {
@@ -110,74 +108,24 @@ pub(super) fn check_and_report_update_errors(ctx: &mut AppContext) {
         b"setup was unable to automatically close all applications",
     )
     .is_some();
-    if has_unable_to_close {
-        crate::send_telemetry_sync_from_app_ctx!(
-            TelemetryEvent::AutoupdateUnableToCloseApplications,
-            ctx
-        );
-    }
+    let _ = has_unable_to_close;
 
     let has_file_in_use = memchr::memmem::find(
         &contents_lowercase,
         b"the process cannot access the file because it is being used by another process",
     )
     .is_some();
-    if has_file_in_use {
-        crate::send_telemetry_sync_from_app_ctx!(TelemetryEvent::AutoupdateFileInUse, ctx);
-    }
+    let _ = has_file_in_use;
 
     // Fired when the mutex polling loop timed out and a force-kill was attempted.
     let has_mutex_timeout =
         memchr::memmem::find(&contents_lowercase, b"warp mutex still held after timeout").is_some();
-    if has_mutex_timeout {
-        crate::send_telemetry_sync_from_app_ctx!(TelemetryEvent::AutoupdateMutexTimeout, ctx);
-    }
+    let _ = has_mutex_timeout;
 
     // Fired when taskkill returned non-zero after the mutex timeout.
     let has_forcekill_failed =
         memchr::memmem::find(&contents_lowercase, b"force-kill failed for").is_some();
-    if has_forcekill_failed {
-        crate::send_telemetry_sync_from_app_ctx!(TelemetryEvent::AutoupdateForcekillFailed, ctx);
-    }
-
-    #[cfg(feature = "crash_reporting")]
-    {
-        use sentry::protocol::{Attachment, AttachmentType};
-
-        // Patterns for known benign errors that should not trigger Sentry reporting.
-        const IGNOREABLE_ERRORS: &[&[u8]] = &[
-            // User running out of disk space is not an error we need concern ourselves with.
-            // This message occurs after "An error occurred while trying to copy a file:"
-            b"there is not enough space on the disk",
-            // Recent Inno Setup versions try to enable a security feature which is unavailable on
-            // Windows 10 versions prior to 22H2 and this call fails. The failure is benign.
-            b"setprocessmitigationpolicy failed with error code 87",
-        ];
-
-        let mut error_count = memchr::memmem::find_iter(&contents_lowercase, b"error").count();
-
-        for pattern in IGNOREABLE_ERRORS {
-            let ignoreable_count = memchr::memmem::find_iter(&contents_lowercase, pattern).count();
-            error_count = error_count.saturating_sub(ignoreable_count);
-        }
-
-        if error_count > 0 {
-            log::warn!("Autoupdate log file contains errors; reporting to Sentry");
-
-            let attachment = Attachment {
-                buffer: contents,
-                filename: UPDATE_LOG_FILENAME.to_string(),
-                ty: Some(AttachmentType::Attachment),
-                ..Default::default()
-            };
-            sentry::with_scope(
-                |scope| {
-                    scope.add_attachment(attachment);
-                },
-                || sentry::capture_message("Windows auto-update error", sentry::Level::Error),
-            );
-        }
-    }
+    let _ = has_forcekill_failed;
 
     // Rename the log file to avoid duplicate reports on subsequent launches.
     // We keep the file around so the user can still view it or attach it to a GitHub issue.

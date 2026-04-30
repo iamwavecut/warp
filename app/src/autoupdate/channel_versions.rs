@@ -34,9 +34,8 @@ pub async fn fetch_channel_versions(
         channel_versions @ Ok(_) => channel_versions,
         Err(err) => {
             match ChannelState::channel() {
-                // Only log an error on Dev and Preview -- if this is failing, its likely to be
-                // failing for all users, and Stable has too many users (this error would flood
-                // our Sentry logs).
+                // Only log an error on Dev and Preview; if this is failing, it is likely
+                // failing for all users.
                 Channel::Dev | Channel::Preview => report_error!(err),
                 _ => log::warn!(
                     "Failed to retrieve channel versions from Warp server, falling \

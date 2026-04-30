@@ -32,7 +32,6 @@ pub enum ServerExperiment {
     SessionSharingControl,
     DisableAgentModeExperiment,
     EnvVarsEarlyAccessExperiment,
-    AgentModeAnalyticsExperiment,
     WindowsLaunchExperiment,
     TmuxSshWarpificationControl,
     TmuxSshWarpificationExperiment,
@@ -82,11 +81,6 @@ impl ServerExperiment {
             }
             Self::EnvVarsEarlyAccessExperiment => {
                 // EnvVars is now always enabled; no-op.
-            }
-            Self::AgentModeAnalyticsExperiment => {
-                FeatureFlag::AgentModeAnalytics.set_enabled(true);
-                FeatureFlag::AIRules.set_enabled(true);
-                FeatureFlag::SuggestedRules.set_enabled(true);
             }
             Self::WindowsLaunchExperiment => {
                 // TODO(alokedesai): Clean this up now that we no longer gate access to the Windows

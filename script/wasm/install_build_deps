@@ -18,11 +18,3 @@ rustup target add wasm32-unknown-unknown
 WASM_BINDGEN_VERSION="$(cargo metadata --format-version 1 | jq -rc '.packages[] | select(.name == "wasm-bindgen") | .version')"
 cargo binstall --force -y wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION"
 cargo binstall --force -y wasm-opt
-
-# Install wasm-split binary.
-mkdir -p "$HOME/.local/bin"
-cd "$HOME/.local/bin"
-curl -L https://github.com/getsentry/symbolicator/releases/download/26.3.1/wasm-split-Linux-x86_64 -o wasm-split
-chmod +x wasm-split
-# Export .local/bin into the path so we can find the wasm-split binary.
-echo "$HOME/.local/bin" >> $GITHUB_PATH

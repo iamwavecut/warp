@@ -8,10 +8,8 @@ use crate::code_review::comments::{
     AttachedReviewComment, AttachedReviewCommentTarget, CommentId, CommentOrigin,
     ReviewCommentBatch, ReviewCommentBatchEvent,
 };
-use crate::code_review::CodeReviewTelemetryEvent;
 use crate::menu::{Event, Menu, MenuItem, MenuItemFields};
 use crate::notebooks::editor::view::{EditorViewEvent, RichTextEditorView};
-use crate::send_telemetry_from_ctx;
 use crate::settings::AISettings;
 use crate::view_components::action_button::{
     ActionButton, ActionButtonTheme, ButtonSize, NakedTheme, SecondaryTheme,
@@ -1184,13 +1182,7 @@ impl TypedActionView for CommentListView {
                         comment.card.refresh_last_updated_duration();
                     }
 
-                    // Telemetry: comment list view expanded.
-                    send_telemetry_from_ctx!(
-                        CodeReviewTelemetryEvent::CommentListExpanded {
-                            comment_count: self.comments_by_id.len(),
-                        },
-                        ctx
-                    );
+                    // Diagnostics: comment list view expanded.
                 }
                 ctx.notify();
             }
@@ -1275,7 +1267,6 @@ impl TypedActionView for CommentListView {
                 self.close_overflow_menu(ctx);
             }
             CommentListAction::JumpToCommentLocation(comment_id) => {
-                send_telemetry_from_ctx!(CodeReviewTelemetryEvent::CommentListItemClicked, ctx);
                 ctx.emit(CommentListEvent::JumpToCommentLocation(*comment_id));
             }
         }

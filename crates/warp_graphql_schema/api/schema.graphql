@@ -1103,10 +1103,6 @@ type EmptyTrashOutput implements Response {
 
 union EmptyTrashResult = EmptyTrashOutput | UserFacingError
 
-type EnterpriseAnalyticsPolicy {
-  enabled: Boolean!
-}
-
 type EnterpriseBillingSettings {
   maxMonthlyCloudAgentsSpendCents: Int
   maxMonthlyLocalAgentsSpendCents: Int
@@ -1148,8 +1144,6 @@ type EnterpriseUsageThresholdsPolicy {
 
 """The set of experiments that could be enabled server-side."""
 enum Experiment {
-  AGENT_MODE_ANALYTICS_CONTROL
-  AGENT_MODE_ANALYTICS_EXPERIMENT
   AGENT_MODE_EARLY_ACCESS_EXPERIMENT
   AGENT_MODE_HIGHER_LIMIT_EXPERIMENT
   AGENT_MODE_LOWER_LIMIT_EXPERIMENT
@@ -3242,19 +3236,6 @@ type TeamSizePolicy {
   limit: Int!
 }
 
-type TelemetryDataCollectionPolicy {
-  default: Boolean!
-  toggleable: Boolean!
-}
-
-type TelemetrySettings {
-  forceEnabled: Boolean!
-}
-
-input TelemetrySettingsInput {
-  enabled: AdminEnablementSetting
-}
-
 type Tier {
   agentIdentitiesPolicy: AgentIdentitiesPolicy
   aiAutonomyPolicy: AiAutonomyPolicy
@@ -3269,7 +3250,6 @@ type Tier {
   directApiUsOnlyInferencePolicy: DirectApiUsOnlyInferencePolicy
   directLinkSharingPolicy: DirectLinkSharingPolicy
   domainCapturePolicy: DomainCapturePolicy
-  enterpriseAnalyticsPolicy: EnterpriseAnalyticsPolicy
   enterpriseCreditsAutoReloadPolicy: EnterpriseCreditsAutoReloadPolicy
   enterprisePayAsYouGoPolicy: EnterprisePayAsYouGoPolicy
   enterpriseSecretRedactionPolicy: EnterpriseSecretRedactionPolicy
@@ -3284,7 +3264,6 @@ type Tier {
   sharedWorkflowsPolicy: SharedWorkflowsPolicy
   singleSignOnPolicy: SingleSignOnPolicy
   teamSizePolicy: TeamSizePolicy
-  telemetryDataCollectionPolicy: TelemetryDataCollectionPolicy
   ugcDataCollectionPolicy: UgcDataCollectionPolicy
   usageBasedPricingPolicy: UsageBasedPricingPolicy
   warpAiPolicy: WarpAiPolicy
@@ -3623,8 +3602,6 @@ union UpdateOnboardingSurveyStatusResult = UpdateOnboardingSurveyStatusOutput | 
 input UpdateUserSettingsInput {
   agentAttributionEnabled: Boolean
   cloudConversationStorageEnabled: Boolean
-  crashReportingEnabled: Boolean
-  telemetryEnabled: Boolean
 }
 
 type UpdateUserSettingsOutput implements Response {
@@ -3664,7 +3641,6 @@ input UpdateWorkspaceSettingsInput {
   setLlmSettings: LlmSettingsInput
   setSandboxedAgentSettings: SandboxedAgentSettingsInput
   setSecretRedactionSettings: SecretRedactionSettingsInput
-  setTelemetrySettings: TelemetrySettingsInput
   setUgcCollectionSettings: UgcCollectionSettingsInput
   setUsageBasedPricingSettings: UsageBasedPricingSettingsInput
   workspaceUid: String!
@@ -3899,15 +3875,12 @@ union UserResult = UserFacingError | UserOutput
 
 """
 UserSettings is a top-level subfield of user that contains user-specific settings.
-Workspace specific settings like telemetry enablement override these user settings.
 
 UserSettings types and mutations are the v2 equivalent of the v1 user_settings.graphqls file.
 """
 type UserSettings {
   isAgentAttributionEnabled: Boolean!
   isCloudConversationStorageEnabled: Boolean!
-  isCrashReportingEnabled: Boolean!
-  isTelemetryEnabled: Boolean!
 }
 
 type WarpAiPolicy {
@@ -4038,7 +4011,6 @@ type WorkspaceSettings {
   llmSettings: LlmSettings!
   sandboxedAgentSettings: SandboxedAgentSettings
   secretRedactionSettings: SecretRedactionSettings!
-  telemetrySettings: TelemetrySettings!
   ugcCollectionSettings: UgcCollectionSettings!
   usageBasedPricingSettings: UsageBasedPricingSettings!
 }

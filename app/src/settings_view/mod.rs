@@ -1,8 +1,6 @@
-use self::telemetry::SettingsTelemetryEvent;
+use crate::interaction_sources::MCPServerCollectionPaneEntrypoint;
 use crate::pane_group::focus_state::PaneFocusHandle;
-use crate::server::telemetry::MCPServerCollectionPaneEntrypoint;
 use crate::settings_view::mcp_servers_page::MCPServersSettingsPage;
-use crate::TelemetryEvent;
 use crate::{
     ai::execution_profiles::profiles::ClientProfileId,
     appearance::Appearance,
@@ -50,7 +48,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 use teams_page::{TeamsPageView, TeamsPageViewEvent};
-use warp_core::send_telemetry_from_ctx;
 use warp_core::{
     channel::ChannelState, context_flag::ContextFlag, features::FeatureFlag,
     settings::ToggleableSetting as _, ui::theme::color::internal_colors,
@@ -103,7 +100,6 @@ pub(crate) mod settings_page;
 mod show_blocks_view;
 mod tab_menu;
 mod teams_page;
-mod telemetry;
 mod transfer_ownership_confirmation_modal;
 pub mod update_environment_form;
 mod warp_drive_page;
@@ -263,7 +259,6 @@ impl SettingsSection {
         matches!(
             self,
             Self::WarpAgent
-                | Self::LLMProviders
                 | Self::AgentProfiles
                 | Self::AgentMCPServers
                 | Self::Knowledge
@@ -287,6 +282,8 @@ impl SettingsSection {
         match self {
             // AgentMCPServers renders the standalone MCPServers page directly.
             Self::AgentMCPServers => Self::MCPServers,
+            // LLM providers are a top-level sidebar item backed by AISettingsPageView.
+            Self::LLMProviders => Self::AI,
             // All other AI subpages render within the AI page.
             s if s.is_ai_subpage() => Self::AI,
             // Code subpages render within the Code page.
@@ -301,7 +298,6 @@ impl SettingsSection {
     pub fn ai_subpages() -> &'static [Self] {
         &[
             Self::WarpAgent,
-            Self::LLMProviders,
             Self::AgentProfiles,
             Self::AgentMCPServers,
             Self::Knowledge,
@@ -423,10 +419,8 @@ pub mod flags {
     pub const ERROR_UNDERLINING_FLAG: &str = "error_underlining";
     pub const SYNTAX_HIGHLIGHTING_FLAG: &str = "syntax_highlighting";
     pub const SAME_LINE_PROMPT: &str = "Same_Line_Prompt_Enabled";
-    pub const TELEMETRY_FLAG: &str = "telemetry";
     pub const SETTINGS_SYNC_FLAG: &str = "settings_sync";
     pub const SAFE_MODE_FLAG: &str = "safe_mode";
-    pub const CRASH_REPORTING_FLAG: &str = "crash_reporting";
     pub const DIM_INACTIVE_PANES_FLAG: &str = "Dim_Inactive_Panes";
     pub const QUIT_WARNING_MODAL: &str = "Quit_Warning_Modal";
     pub const BLOCK_DIVIDERS_CONTEXT_FLAG: &str = "Block_Dividers_Enabled";
@@ -1119,7 +1113,6 @@ impl SettingsView {
             me.handle_warpify_page_event(event, ctx);
         });
 
-        // Render the privacy page only if telemetry opt-out is enabled.
         let privacy_page_handle = ctx.add_typed_action_view(PrivacyPageView::new);
         ctx.subscribe_to_view(&privacy_page_handle, |me, _, event, ctx| {
             me.handle_privacy_page_event(event, ctx);
@@ -1205,6 +1198,7 @@ impl SettingsView {
         // with subpages; the actual AI SettingsPage is hidden from direct sidebar listing.
         let mut nav_items = vec![
             SettingsNavItem::Page(SettingsSection::Account),
+            SettingsNavItem::Page(SettingsSection::LLMProviders),
             SettingsNavItem::Umbrella(SettingsUmbrella::new(
                 "Agents",
                 SettingsSection::ai_subpages().to_vec(),
@@ -1363,7 +1357,11 @@ impl SettingsView {
                     // For each AI subpage, temporarily switch to that subpage's
                     // widget set and run the filter to get a subpage-specific result.
                     self.subpage_filter.clear();
-                    for &subpage_section in SettingsSection::ai_subpages() {
+                    for subpage_section in SettingsSection::ai_subpages()
+                        .iter()
+                        .copied()
+                        .chain(std::iter::once(SettingsSection::LLMProviders))
+                    {
                         if subpage_section == SettingsSection::AgentMCPServers {
                             // AgentMCPServers has its own backing page; handled below.
                             continue;
@@ -1430,7 +1428,9 @@ impl SettingsView {
                 // Restore the active subpage after filtering.
                 if is_search_active {
                     let current = self.current_settings_page;
-                    if current.is_ai_subpage() && current != SettingsSection::AgentMCPServers {
+                    if (current.is_ai_subpage() || current == SettingsSection::LLMProviders)
+                        && current != SettingsSection::AgentMCPServers
+                    {
                         if let Some(subpage) = AISubpage::from_section(current) {
                             self.ai_page_handle.update(ctx, |view, ctx| {
                                 view.set_active_subpage(Some(subpage), ctx);
@@ -1917,13 +1917,15 @@ impl SettingsView {
             self.clear_search_query(ctx);
         }
         self.current_settings_page = section;
-        if previous_section != section && section == SettingsSection::CloudEnvironments {
-            send_telemetry_from_ctx!(SettingsTelemetryEvent::EnvironmentsPageOpened, ctx);
-        }
+        if previous_section != section && section == SettingsSection::CloudEnvironments {}
 
         // When navigating to a subpage, update the backing page's active subpage mode
         // and auto-expand the umbrella containing it.
-        if section.is_subpage() {
+        if section == SettingsSection::LLMProviders {
+            self.ai_page_handle.update(ctx, |view, ctx| {
+                view.set_active_subpage(Some(AISubpage::LLMProviders), ctx);
+            });
+        } else if section.is_subpage() {
             // AI subpages: update the AI page's subpage mode.
             if section.is_ai_subpage() && section != SettingsSection::AgentMCPServers {
                 let subpage = AISubpage::from_section(section);
@@ -1949,11 +1951,6 @@ impl SettingsView {
                     }
                 }
             }
-        }
-
-        #[cfg(feature = "crash_reporting")]
-        {
-            crate::crash_reporting::set_tag("warp.settings_page", section.to_string());
         }
 
         if let Some(settings_page) = self.current_settings_page() {
@@ -2336,12 +2333,19 @@ impl View for SettingsView {
                 SettingsNavItem::Page(section) => {
                     let section = *section;
                     // Find the page in settings_pages for render/visibility check.
-                    if let Some((page, match_data)) =
-                        settings_pages.iter().find(|(p, _)| p.section == section)
+                    let page_section = section.parent_page_section();
+                    if let Some((page, match_data)) = settings_pages
+                        .iter()
+                        .find(|(p, _)| p.section == page_section)
                     {
+                        let match_data = self
+                            .subpage_filter
+                            .get(&section)
+                            .copied()
+                            .unwrap_or(*match_data);
                         let page_active = section == self.current_settings_page;
                         buttons.add_child(
-                            page.render_page_button(appearance, *match_data, page_active)
+                            page.render_page_button(appearance, match_data, page_active)
                                 .on_click(move |ctx, _, _| {
                                     ctx.dispatch_typed_action(SettingsAction::SelectAndRefresh(
                                         section,
@@ -2551,14 +2555,7 @@ impl TypedActionView for SettingsView {
             SettingsAction::SelectAndRefresh(section) => {
                 self.set_and_refresh_current_page_internal(*section, false, true, ctx);
 
-                if *section == SettingsSection::MCPServers {
-                    send_telemetry_from_ctx!(
-                        TelemetryEvent::MCPServerCollectionPaneOpened {
-                            entrypoint: MCPServerCollectionPaneEntrypoint::MCPSettingsTab,
-                        },
-                        ctx
-                    );
-                }
+                if *section == SettingsSection::MCPServers {}
             }
             SettingsAction::ToggleUmbrella(nav_index) => {
                 if let Some(SettingsNavItem::Umbrella(umbrella)) =

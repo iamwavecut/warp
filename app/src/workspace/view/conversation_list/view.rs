@@ -7,7 +7,6 @@ use crate::ai::active_agent_views_model::{ActiveAgentViewsModel, ConversationOrT
 use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent_conversations_model::{AgentConversationsModel, ConversationOrTask};
-use crate::ai::agent_management::telemetry::{AgentManagementTelemetryEvent, OpenedFrom};
 use crate::ai::blocklist::history_model::BlocklistAIHistoryModel;
 use crate::appearance::Appearance;
 use crate::drive::sharing::dialog::SharingDialog;
@@ -16,8 +15,8 @@ use crate::editor::{
     EditorView, Event as EditorEvent, PropagateAndNoOpNavigationKeys,
     PropagateHorizontalNavigationKeys, SingleLineEditorOptions, TextOptions,
 };
+use crate::interaction_sources::SharingDialogSource;
 use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields};
-use crate::server::telemetry::SharingDialogSource;
 use crate::view_components::action_button::{ActionButton, ButtonSize, SecondaryTheme};
 use crate::view_components::DismissibleToast;
 use crate::workspace::global_actions::ForkedConversationDestination;
@@ -30,7 +29,6 @@ use crate::workspace::view::conversation_list::item::{
 use crate::workspace::ToastStack;
 use crate::workspace::WorkspaceAction;
 use warp_core::features::FeatureFlag;
-use warp_core::send_telemetry_from_ctx;
 use warp_core::ui::Icon;
 
 use super::view_model::{ConversationEntry, ConversationListViewModel};
@@ -531,30 +529,6 @@ impl ConversationListView {
         self.focus_query_editor(ctx);
     }
 
-    /// Send telemetry for opening a conversation or task
-    fn send_open_telemetry(id: &ConversationOrTaskId, ctx: &mut ViewContext<Self>) {
-        match id {
-            ConversationOrTaskId::ConversationId(conversation_id) => {
-                send_telemetry_from_ctx!(
-                    AgentManagementTelemetryEvent::ConversationOpened {
-                        conversation_id: conversation_id.to_string(),
-                        opened_from: OpenedFrom::ConversationList,
-                    },
-                    ctx
-                );
-            }
-            ConversationOrTaskId::TaskId(task_id) => {
-                send_telemetry_from_ctx!(
-                    AgentManagementTelemetryEvent::CloudRunOpened {
-                        task_id: task_id.to_string(),
-                        opened_from: OpenedFrom::ConversationList,
-                    },
-                    ctx
-                );
-            }
-        }
-    }
-
     /// Activate the currently selected item by dispatching the appropriate WorkspaceAction
     /// (i.e. opening the selected conversation or starting a new conversation).
     fn activate_selected_item(&mut self, ctx: &mut ViewContext<Self>) {
@@ -577,7 +551,6 @@ impl ConversationListView {
 
                 // Use shared logic from ConversationOrTask to determine click action
                 if let Some(action) = item.get_open_action(None, ctx) {
-                    Self::send_open_telemetry(&entry.id, ctx);
                     ctx.dispatch_typed_action(&action);
                 }
             }
@@ -1079,7 +1052,6 @@ impl TypedActionView for ConversationListView {
                     return;
                 };
 
-                Self::send_open_telemetry(id, ctx);
                 ctx.dispatch_typed_action(&action);
             }
             ConversationListViewAction::ArrowUp => {

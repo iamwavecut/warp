@@ -16,7 +16,7 @@ pub trait FilterChipRenderer {
     /// Returns the margin from the top of the icon of the filter chip.
     fn icon_margin_top(&self) -> f32;
 
-    /// Renders the filter chip. When the filter chip is clicked, `on_click_fn` is called.  
+    /// Renders the filter chip. When the filter chip is clicked, `on_click_fn` is called.
     fn render_filter_chip(
         &self,
         mouse_state_handle: MouseStateHandle,

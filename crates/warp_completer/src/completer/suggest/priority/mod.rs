@@ -1,5 +1,5 @@
 //! This module contains the `Priority` struct, which may be specified on [`Suggestion`]s to
-//! influence the order of suggestions returned to users.  
+//! influence the order of suggestions returned to users.
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "v2")] {

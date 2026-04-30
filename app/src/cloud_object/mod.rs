@@ -1669,7 +1669,7 @@ impl From<Space> for WorkflowSource {
         match space {
             Space::Personal => WorkflowSource::PersonalCloud,
             Space::Team { team_uid } => WorkflowSource::Team { team_uid },
-            // TODO(ben): Model sharing in workflow telemetry.
+            // TODO(ben): Model sharing in workflow diagnostics.
             Space::Shared => WorkflowSource::PersonalCloud,
         }
     }
@@ -1678,7 +1678,7 @@ impl From<Space> for WorkflowSource {
 impl From<Owner> for WorkflowSource {
     fn from(owner: Owner) -> WorkflowSource {
         match owner {
-            // TODO(ben): Represent shared objects in telemetry.
+            // TODO(ben): Represent shared objects in diagnostics.
             Owner::User { .. } => Self::PersonalCloud,
             Owner::Team { team_uid } => Self::Team { team_uid },
         }

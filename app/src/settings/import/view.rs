@@ -20,10 +20,9 @@ use warpui::{
 use warpui::ui_components::radio_buttons::RadioButtonStateHandle;
 
 use crate::{
-    report_if_error, send_telemetry_from_ctx,
     settings::{
         import::{
-            config::{Config, ParsedTerminalSetting, SettingType},
+            config::{Config, SettingType},
             model::{ImportedConfigModel, TerminalTypeAndProfile},
         },
         AppEditorSettings, CursorBlink, FontSettings, GlobalHotkeyMode, SelectionSettings,
@@ -37,7 +36,6 @@ use crate::{
     ui_components::blended_colors,
     user_config::{self, WarpConfig},
     window_settings::WindowSettings,
-    GlobalResourceHandlesProvider, TelemetryEvent,
 };
 
 use super::config::{QuakeModeWindow, ThemeType};
@@ -691,7 +689,6 @@ impl SettingsImportView {
             }
         });
 
-        self.send_completed_import_telemetry_event(terminal_type_and_profile, ctx);
         ctx.notify();
     }
 
@@ -864,41 +861,6 @@ impl SettingsImportView {
     pub(crate) fn interrupt_block(&mut self, ctx: &mut warpui::ViewContext<Self>) {
         self.state = State::Completed { imported_idx: None };
         ctx.notify();
-    }
-
-    fn send_completed_import_telemetry_event(
-        &self,
-        terminal_type_and_profile: &TerminalTypeAndProfile,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        let model = ImportedConfigModel::handle(ctx);
-        let imported_settings = model.read(ctx, |model, _ctx| {
-            let Some(config) = model.config(terminal_type_and_profile) else {
-                log::error!("Could not find config for terminal {terminal_type_and_profile:?}");
-                return Default::default();
-            };
-
-            config
-                .valid_setting_types()
-                .into_iter()
-                .map(|setting_type| {
-                    let was_imported_by_user =
-                        model.should_import(terminal_type_and_profile, &setting_type);
-                    ParsedTerminalSetting {
-                        setting_type,
-                        was_imported_by_user,
-                    }
-                })
-                .collect_vec()
-        });
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::CompletedSettingsImport {
-                terminal_type: terminal_type_and_profile.into(),
-                imported_settings,
-            },
-            ctx
-        );
     }
 }
 
@@ -1092,11 +1054,6 @@ impl TypedActionView for SettingsImportView {
                 ctx.notify();
             }
             SettingsImportAction::SetSelectedConfig(idx) => {
-                let old_selected_idx = self
-                    .configs
-                    .iter()
-                    .find_position(|config| config.expanded)
-                    .map(|(position, _item)| position);
                 // Collapse all other configs.
                 self.configs
                     .iter_mut()
@@ -1105,15 +1062,6 @@ impl TypedActionView for SettingsImportView {
                     .for_each(|(_, config)| config.expanded = false);
                 // Set the current config to expand.
                 self.configs[*idx].expanded = true;
-                // Only send the telemetry event if the new selected item is different.
-                if old_selected_idx.is_none_or(|old_idx| old_idx != *idx) {
-                    send_telemetry_from_ctx!(
-                        TelemetryEvent::SettingsImportConfigFocused(
-                            self.configs[*idx].terminal_type_and_profile.into()
-                        ),
-                        ctx
-                    );
-                }
                 // The radio button state already updates, since each element is a child of a RadioButtonItem.
                 ctx.notify();
             }
@@ -1138,7 +1086,6 @@ impl TypedActionView for SettingsImportView {
                 ) {
                     self.state = State::Completed { imported_idx: None }
                 }
-                send_telemetry_from_ctx!(TelemetryEvent::SettingsImportResetButtonClicked, ctx);
             }
         }
     }
@@ -1161,3 +1108,4 @@ fn create_toggleable_settings(config: &Config) -> Vec<ToggleableSetting> {
         .map(ToggleableSetting::new)
         .collect()
 }
+use crate::GlobalResourceHandlesProvider;

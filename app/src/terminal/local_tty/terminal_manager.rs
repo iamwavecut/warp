@@ -71,12 +71,8 @@ use crate::context_chips::prompt_type::PromptType;
 use crate::features::FeatureFlag;
 use crate::pane_group::TerminalViewResources;
 use crate::persistence::ModelEvent;
-
-use crate::send_telemetry_on_executor;
-use crate::server::telemetry::{TelemetryAgentViewEntryOrigin, TelemetryEvent};
 use crate::settings::DebugSettings;
-use crate::settings::{PrivacySettings, SshSettings};
-use warp_core::send_telemetry_from_ctx;
+use crate::settings::SshSettings;
 
 use crate::terminal::model::session::Sessions;
 
@@ -578,13 +574,6 @@ impl TerminalManager {
                                 ctx,
                             );
                         }
-                        send_telemetry_from_ctx!(
-                            TelemetryEvent::AgentViewExited {
-                                origin: TelemetryAgentViewEntryOrigin::from(*origin),
-                                was_empty: *final_exchange_count == 0,
-                            },
-                            ctx
-                        );
                     }
                     AgentViewControllerEvent::ExitConfirmed { .. } => {}
                 },
@@ -1012,8 +1001,6 @@ impl TerminalManager {
             .is_shell_debug_mode_enabled
             .value();
         let is_honor_ps1_enabled = *SessionSettings::as_ref(ctx).honor_ps1;
-        let is_crash_reporting_enabled = PrivacySettings::as_ref(ctx).is_crash_reporting_enabled;
-
         // The TMUX SSH wrapper supercedes the original ControlMaster wrapper.
         let enable_ssh_wrapper = if FeatureFlag::SSHTmuxWrapper.is_enabled() {
             *WarpifySettings::as_ref(ctx)
@@ -1039,7 +1026,6 @@ impl TerminalManager {
 
         Pty::new(
             options,
-            is_crash_reporting_enabled,
             #[cfg(windows)]
             event_loop_tx,
             ctx,
@@ -1888,15 +1874,15 @@ impl TerminalManager {
 
                 // If a third-party CLI harness (e.g. Claude Code) is running, write
                 // the follow-up prompt directly to the PTY. The CLI handles it as
-                // interactive input. 
+                // interactive input.
                 let terminal_view_id = terminal_view.id();
                 let has_active_cli_agent = CLIAgentSessionsModel::as_ref(ctx)
                     .session(terminal_view_id)
                     .is_some();
                 if has_active_cli_agent {
                     // Reuse the rich input submit pipeline so agent-specific
-                    // strategies are applied. Bypasses the rich-input-UI side effects 
-  					// (telemetry, draft clear, editor buffer clear, pending-image consumption).
+                    // strategies are applied. Bypasses the rich-input-UI side effects
+  					// (diagnostics, draft clear, editor buffer clear, pending-image consumption).
                     terminal_view.update(ctx, |view, ctx| {
                         view.submit_text_to_cli_agent_pty(request.prompt.clone(), ctx);
                     });
@@ -2456,21 +2442,9 @@ fn get_shell_starter_internal(
             ShellStarter::Direct(starter)
         }
         ShellStarterSource::Fallback {
-            unsupported_shell,
+            unsupported_shell: _,
             starter,
-        } => {
-            if let Some(unsupported_shell) = unsupported_shell {
-                send_telemetry_on_executor!(
-                    auth_state,
-                    TelemetryEvent::UnsupportedShell {
-                        shell: unsupported_shell
-                    },
-                    background_executor
-                );
-            }
-
-            ShellStarter::Direct(starter)
-        }
+        } => ShellStarter::Direct(starter),
     }
 }
 
@@ -2517,7 +2491,7 @@ impl crate::terminal::TerminalManager for TerminalManager {
                 *SessionSettings::as_ref(app).should_confirm_close_session;
             self.view.update(app, |terminal_view, ctx| {
                 // This emits an event that is handled in [`Self::end_shared_session`].
-                // We still need to call this in order to emit a telemetry event.
+                // We still need to call this in order to emit a diagnostics event.
                 terminal_view.stop_sharing_session(
                     SharedSessionActionSource::Closed {
                         is_confirm_close_session,

@@ -51,10 +51,6 @@ Any future origin that should behave the same way can call the draft entrypoint 
 This is defense-in-depth: step 1 is sufficient on its own for correctness; step 3 ensures that even if `should_autotrigger_request` ever grows a buggy allowlist entry, Linear deeplinks remain safe.
 ### 4. Leave `LinearAction`, `LinearIssueWork::from_url`, and the URI validation layer unchanged
 No parsing, validation, or sanitization of the `prompt` query parameter is added. The mitigation depends on user gesture, not on string filtering — content-based filters are trivially bypassable for prompt injection. `LinearIssueWork::from_url` continues to decode `prompt` verbatim (still filtering empty strings, matching product invariant 6).
-### 5. Telemetry and logging redaction
-No telemetry schema changes are required. `did_auto_trigger_request` in `TelemetryEvent::AgentViewEntered` naturally reports `false` for Linear deeplinks after the fix; no extra code is needed.
-To honor product invariant 12 (logging / telemetry redaction), the implementation commits to the following, and reviewers should verify:
-- `TelemetryEvent::AgentViewEntered` and `TelemetryEvent::LinearIssueLinkOpened` carry only origin classifiers and fixed schema fields. The `initial_prompt` value is never attached to a telemetry payload.
 - The `log::error!` call in `enter_agent_view_for_new_conversation_with_policy` interpolates only `origin` (a compile-time enum discriminant) and `e` (a structured `EnterAgentViewError` whose `Display` does not include the prompt body). The `initial_prompt: Option<String>` is explicitly not passed to any formatting macro in this file.
 - `self.show_error_toast(e.to_string(), ctx)` relies on `EnterAgentViewError: Display`; the error types enumerated in `EnterAgentViewError` do not carry user-prompt strings. New error variants added in the future must not include the prompt body.
 - Conversation title fallback remains `"Linear Issue"` (product invariant 9) so the prompt never becomes a title.
@@ -82,7 +78,6 @@ Tests map back to the numbered product invariants in `specs/GH703/product.md`.
    - Repeat with the app closed (cold start) to cover the dispatch path used by `open_linear_issue_work_in_new_window`.
    - Repeat with Warp backgrounded at dispatch time (invariant 11): foreground Warp afterward and confirm the prompt stays as a draft and the affordance is still shown.
    - Confirm that opening the URL does not cause any of `read_files`, `StartAgent`, `SendMessageToAgent`, `FetchConversation`, or `UseComputer` tool calls to be issued.
-5. **Telemetry and redaction spot check (invariants 8, 12).** Inspect the emitted `AgentViewEntered` event and confirm `did_auto_trigger_request = false`. Confirm `LinearIssueLinkOpened` still fires once per dispatch. Grep `log::` output from the agent-view entry path to confirm the verbatim prompt never appears in a log line.
 6. **`./script/presubmit`** passes (fmt, clippy, tests).
 
 ## Risks and mitigations

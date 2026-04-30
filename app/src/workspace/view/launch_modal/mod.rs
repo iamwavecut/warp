@@ -5,7 +5,6 @@ pub mod oz_launch;
 // Re-export slide types for convenience
 pub use oz_launch::OzLaunchSlide;
 
-use crate::settings::PrivacySettings;
 use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
 use crate::view_components::action_button::{ActionButton, PrimaryTheme, SecondaryTheme};
@@ -61,12 +60,6 @@ pub fn init<S: Slide>(app: &mut AppContext) {
     ]);
 }
 
-/// Configuration for an optional checkbox displayed in the modal's control panel.
-pub struct CheckboxConfig {
-    pub label: &'static str,
-    pub description: &'static str,
-}
-
 pub trait Slide:
     'static + Send + Sync + std::fmt::Debug + PartialEq + Eq + std::hash::Hash + Copy + Clone
 where
@@ -92,18 +85,6 @@ where
         None
     }
 
-    /// Returns an optional checkbox configuration for the modal.
-    /// When Some, a checkbox is rendered at the bottom of the control panel.
-    fn checkbox_config(&self) -> Option<CheckboxConfig> {
-        None
-    }
-
-    /// Returns whether the checkbox should be shown.
-    /// This is checked in addition to checkbox_config() returning Some.
-    fn should_show_checkbox(&self, _app: &AppContext) -> bool {
-        false
-    }
-
     /// Called when the modal is closed via the X button or esc or close CTA.
     /// Not called if closed via another CTA.
     fn on_close(&self, _ctx: &mut ViewContext<LaunchModal<Self>>) {}
@@ -112,7 +93,6 @@ where
 pub struct StateHandles<S: Slide> {
     pub close_button: MouseStateHandle,
     pub slides: HashMap<S, SlideStateHandles>,
-    pub checkbox: MouseStateHandle,
 }
 
 #[derive(Default)]
@@ -130,7 +110,6 @@ impl<S: Slide> Default for StateHandles<S> {
         StateHandles {
             close_button: Default::default(),
             slides: slide_handles,
-            checkbox: Default::default(),
         }
     }
 }
@@ -210,64 +189,6 @@ impl<S: Slide> LaunchModal<S> {
         }
 
         ctx.notify();
-    }
-
-    fn render_checkbox(&self, app: &AppContext) -> Option<Box<dyn Element>> {
-        if !self.slide.should_show_checkbox(app) {
-            return None;
-        }
-        let checkbox_config = self.slide.checkbox_config()?;
-        let appearance = Appearance::handle(app).as_ref(app);
-        let theme = appearance.theme();
-
-        let is_checked = PrivacySettings::handle(app)
-            .as_ref(app)
-            .is_cloud_conversation_storage_enabled;
-
-        let checkbox = appearance
-            .ui_builder()
-            .checkbox(self.state_handles.checkbox.clone(), Some(10.5))
-            .check(is_checked)
-            .build()
-            .on_click(|ctx, _, _| ctx.dispatch_typed_action(LaunchModalAction::<S>::ToggleCheckbox))
-            .finish();
-
-        let label =
-            FormattedTextElement::from_str(checkbox_config.label, appearance.ui_font_family(), 12.)
-                .with_color(blended_colors::text_sub(
-                    theme,
-                    blended_colors::neutral_1(theme),
-                ))
-                .finish();
-
-        let description = FormattedTextElement::from_str(
-            checkbox_config.description,
-            appearance.ui_font_family(),
-            12.,
-        )
-        .with_color(blended_colors::text_disabled(
-            theme,
-            blended_colors::neutral_1(theme),
-        ))
-        .finish();
-
-        Some(
-            Container::new(
-                Flex::column()
-                    .with_cross_axis_alignment(CrossAxisAlignment::Start)
-                    .with_child(
-                        Flex::row()
-                            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                            .with_child(checkbox)
-                            .with_child(Container::new(label).with_margin_left(4.).finish())
-                            .finish(),
-                    )
-                    .with_child(Container::new(description).with_margin_top(4.).finish())
-                    .finish(),
-            )
-            .with_margin_top(24.)
-            .finish(),
-        )
     }
 
     fn render_slide_controls(&self, app: &AppContext) -> Box<dyn Element> {
@@ -594,7 +515,6 @@ impl<S: Slide> View for LaunchModal<S> {
                         }),
                 )
                 .with_child(Expanded::new(1., self.render_slide_controls(app)).finish())
-                .with_children(self.render_checkbox(app))
                 .finish(),
         )
         .with_background_color(blended_colors::neutral_1(theme))
@@ -721,9 +641,6 @@ impl<S: Slide> TypedActionView for LaunchModal<S> {
             LaunchModalAction::FinishSecondary => {
                 self.handle_secondary_cta_button_action(ctx);
             }
-            LaunchModalAction::ToggleCheckbox => {
-                ctx.emit(LaunchModalEvent::ToggleCheckbox);
-            }
         }
     }
 }
@@ -731,7 +648,6 @@ impl<S: Slide> TypedActionView for LaunchModal<S> {
 #[derive(Copy, Clone, Debug)]
 pub enum LaunchModalEvent {
     Close,
-    ToggleCheckbox,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -742,5 +658,4 @@ pub enum LaunchModalAction<S: Slide> {
     Close,
     Finish,
     FinishSecondary,
-    ToggleCheckbox,
 }

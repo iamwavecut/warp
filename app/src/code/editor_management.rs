@@ -179,18 +179,7 @@ impl CodeSource {
         }
     }
 
-    /// Returns the variant name as a string for telemetry purposes.
-    pub fn telemetry_source_name(&self) -> &'static str {
-        match self {
-            Self::New { .. } => "new",
-            Self::Link { .. } => "link",
-            Self::AIAction { .. } => "ai_action",
-            Self::ProjectRules { .. } => "project_rules",
-            Self::FileTree { .. } => "file_tree",
-            Self::Finder { .. } => "finder",
-            Self::Skill { .. } => "skill",
-        }
-    }
+    /// Returns the variant name as a string for diagnostics purposes.
 
     /// Returns `true` if this source should be restored across app restarts.
     ///

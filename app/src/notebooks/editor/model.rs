@@ -19,7 +19,8 @@ use crate::{
     cloud_object::model::persistence::{CloudModel, CloudModelEvent},
     debounce::debounce,
     editor::InteractionState,
-    notebooks::telemetry::BlockInfo,
+    notebooks::editor::embedding_model::NotebookEmbed,
+    notebooks::BlockInfo,
 };
 use crate::{
     notebooks::editor::interaction_state_model::InteractionStateModelEvent,
@@ -52,7 +53,6 @@ use warp_editor::{
 use warpui::elements::ListIndentLevel;
 
 use super::{
-    super::telemetry::SelectionMode as TelemetrySelectionMode, embedding_model::NotebookEmbed,
     interaction_state_model::InteractionStateModel, notebook_command::NotebookCommand,
     NotebookWorkflow,
 };
@@ -1313,7 +1313,7 @@ impl NotebooksEditorModel {
 
         if !had_command_selection {
             ctx.emit(RichTextEditorModelEvent::SwitchedSelectionMode {
-                new_mode: TelemetrySelectionMode::Command,
+                new_mode: NotebookSelectionMode::Command,
             });
         };
 
@@ -1407,7 +1407,7 @@ impl NotebooksEditorModel {
 
         if self.clear_command_selections(ctx) {
             ctx.emit(RichTextEditorModelEvent::SwitchedSelectionMode {
-                new_mode: TelemetrySelectionMode::Text,
+                new_mode: NotebookSelectionMode::Text,
             });
         }
 
@@ -1729,6 +1729,12 @@ impl NotebooksEditorModel {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotebookSelectionMode {
+    Command,
+    Text,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RichTextEditorModelEvent {
     /// The active styles at the cursor/selection have changed.
@@ -1745,7 +1751,7 @@ pub enum RichTextEditorModelEvent {
     ContentChanged(EditOrigin),
     /// The user switched selection modes.
     SwitchedSelectionMode {
-        new_mode: TelemetrySelectionMode,
+        new_mode: NotebookSelectionMode,
     },
 }
 

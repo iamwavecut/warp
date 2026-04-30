@@ -54,7 +54,7 @@ pub enum CLIAgentInputState {
     Closed,
     /// The rich input editor is open.
     Open {
-        /// How this session was opened (for telemetry).
+        /// How this session was opened (for diagnostics).
         entrypoint: CLIAgentInputEntrypoint,
         /// The input config that was active before opening rich input.
         previous_input_config: InputConfig,
@@ -63,7 +63,7 @@ pub enum CLIAgentInputState {
     },
 }
 
-/// Why the CLI agent rich input was closed (for telemetry).
+/// Why the CLI agent rich input was closed (for diagnostics).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum CLIAgentRichInputCloseReason {
     /// User explicitly closed (Escape, Ctrl-G, footer button).

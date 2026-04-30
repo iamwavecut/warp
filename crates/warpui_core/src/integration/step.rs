@@ -173,7 +173,7 @@ impl AssertionOutcome {
 /// An assertion callback checks the state of the app and last presenter
 /// (current element tree and last scene) for the given window_id.
 /// It should be idempotent because it can be called multiple times until
-/// the timeout is reached.  
+/// the timeout is reached.
 pub type AssertionCallback = Box<dyn FnMut(&mut App, WindowId) -> AssertionOutcome>;
 
 /// An assertion callback checks the state of the app and last presenter

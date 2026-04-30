@@ -11,7 +11,8 @@ use super::style;
 use crate::{
     cloud_object::{model::persistence::CloudModel, ServerObjectContainer},
     drive::CloudObjectTypeAndId,
-    server::{ids::SyncId, telemetry::SharingDialogSource},
+    interaction_sources::SharingDialogSource,
+    server::ids::SyncId,
     workspace::WorkspaceAction,
 };
 

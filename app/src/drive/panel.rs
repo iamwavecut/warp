@@ -14,11 +14,11 @@ use crate::{
         CloudObjectEventEntrypoint, GenericStringObjectFormat, JsonObjectType, Owner, Space,
     },
     env_vars::{manager::EnvVarCollectionSource, CloudEnvVarCollection},
+    interaction_sources::SharingDialogSource,
     notebooks::{manager::NotebookSource, CloudNotebook},
     server::{
         cloud_objects::update_manager::{InitiatedBy, UpdateManager},
         ids::{ClientId, ServerId, SyncId},
-        telemetry::SharingDialogSource,
     },
     workflows::{manager::WorkflowOpenSource, CloudWorkflow, WorkflowViewMode},
     workspaces::user_workspaces::UserWorkspaces,

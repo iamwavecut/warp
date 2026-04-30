@@ -28,7 +28,7 @@ if (-not (Get-Command -Name cargo -Type Application -ErrorAction SilentlyContinu
 # Needed in wasm compilation for parsing the version of wasm-bindgen
 winget install jqlang.jq
 
-# CMake is needed to build some dependencies, e.g.: sentry-contrib-native.
+# CMake is needed to build some dependencies.
 winget install -e --id Kitware.CMake
 
 # We use InnoSetup to build our release bundle installer.

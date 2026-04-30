@@ -82,9 +82,6 @@ query GetWorkspacesMetadataForUser($requestContext: RequestContext!) {
             llmSettings {
               enabled
             }
-            telemetrySettings {
-              forceEnabled
-            }
             linkSharingSettings {
               anyoneWithLinkSharingEnabled
               directLinkSharingEnabled

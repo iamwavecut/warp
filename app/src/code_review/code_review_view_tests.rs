@@ -18,7 +18,6 @@ use crate::pane_group::WorkingDirectoriesModel;
 use crate::server::server_api::{
     team::MockTeamClient, workspace::MockWorkspaceClient, ServerApiProvider,
 };
-use crate::server::telemetry::context_provider::AppTelemetryContextProvider;
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::terminal::local_shell::LocalShellState;
 use crate::test_util::settings::initialize_settings_for_tests;
@@ -67,7 +66,6 @@ impl warpui::TypedActionView for TestView {
 fn initialize_test_app(app: &mut App) {
     initialize_settings_for_tests(app);
     app.add_singleton_model(|_| AuthStateProvider::new_for_test());
-    app.add_singleton_model(AppTelemetryContextProvider::new_context_provider);
     app.add_singleton_model(|_| Appearance::mock());
     app.add_singleton_model(|_| SyncedInputState::mock());
     app.add_singleton_model(|_| VimRegisters::new());

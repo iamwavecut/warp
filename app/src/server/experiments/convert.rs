@@ -14,7 +14,6 @@ impl Display for ServerExperiment {
             Self::SessionSharingExperiment => "SESSION_SHARING_EXPERIMENT",
             Self::DisableAgentModeExperiment => "DISABLE_AGENT_MODE_EXPERIMENT",
             Self::EnvVarsEarlyAccessExperiment => "ENV_VARS_EARLY_ACCESS_EXPERIMENT",
-            Self::AgentModeAnalyticsExperiment => "AGENT_MODE_ANALYTICS_EXPERIMENT",
             Self::WindowsLaunchExperiment => "WINDOWS_LAUNCH_EXPERIMENT",
             Self::TmuxSshWarpificationControl => "TMUX_SSH_WARPIFICATION_CONTROL",
             Self::TmuxSshWarpificationExperiment => "TMUX_SSH_WARPIFICATION_EXPERIMENT",
@@ -50,7 +49,6 @@ impl ServerExperiment {
             "SESSION_SHARING_EXPERIMENT" => Ok(Self::SessionSharingExperiment),
             "DISABLE_AGENT_MODE_EXPERIMENT" => Ok(Self::DisableAgentModeExperiment),
             "ENV_VARS_EARLY_ACCESS_EXPERIMENT" => Ok(Self::EnvVarsEarlyAccessExperiment),
-            "AGENT_MODE_ANALYTICS_EXPERIMENT" => Ok(Self::AgentModeAnalyticsExperiment),
             "WINDOWS_LAUNCH_EXPERIMENT" => Ok(Self::WindowsLaunchExperiment),
             "TMUX_SSH_WARPIFICATION_CONTROL" => Ok(Self::TmuxSshWarpificationControl),
             "TMUX_SSH_WARPIFICATION_EXPERIMENT" => Ok(Self::TmuxSshWarpificationExperiment),
@@ -92,7 +90,6 @@ impl TryFrom<Experiment> for ServerExperiment {
             }
             Experiment::DisableAgentModeExperiment => Ok(Self::DisableAgentModeExperiment),
             Experiment::EnvVarsEarlyAccessExperiment => Ok(Self::EnvVarsEarlyAccessExperiment),
-            Experiment::AgentModeAnalyticsExperiment => Ok(Self::AgentModeAnalyticsExperiment),
             Experiment::TmuxSshWarpificationControl => Ok(Self::TmuxSshWarpificationControl),
             Experiment::TmuxSshWarpificationExperiment => Ok(Self::TmuxSshWarpificationExperiment),
             Experiment::WindowsLaunchExperiment => Ok(Self::WindowsLaunchExperiment),

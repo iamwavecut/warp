@@ -44,10 +44,10 @@ use crate::{
     code::view::CodeView,
     drive::sharing::ShareableObject,
     env_vars::view::env_var_collection::EnvVarCollectionView,
+    interaction_sources::SharingDialogSource,
     menu::MenuItem,
     notebooks::{file::FileNotebookView, notebook::NotebookView},
     server::network_log_view::NetworkLogView,
-    server::telemetry::SharingDialogSource,
     settings::PaneSettings,
     settings_view::{environments_page::EnvironmentsPageView, SettingsView},
     terminal::{available_shells::AvailableShell, TerminalView},
@@ -996,7 +996,7 @@ pub trait BackingView: View {
 
     /// Processes the corresponding action when one of the
     /// overflow menu items is selected. Allows implementers
-    /// to add pre-/post-processing logic (e.g. telemetry).
+    /// to add pre-/post-processing logic (e.g. diagnostics).
     ///
     // Note: even if the [`PaneHeaderOverflowMenuAction`] was [`TypedActionView::Action`]
     // (assuming [`TypedActionView`] was one of the trait bounds for [`BackingView`]),

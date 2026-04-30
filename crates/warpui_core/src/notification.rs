@@ -6,7 +6,7 @@ use chrono::NaiveDateTime;
 use serde::Serialize;
 
 /// Content to be sent as a notification to the user. Includes `data` that is sent back to
-/// application when the notification is clicked--see `NotificationResponse` for more details.  
+/// application when the notification is clicked--see `NotificationResponse` for more details.
 #[derive(Clone, Debug)]
 pub struct UserNotification {
     title: String,
@@ -78,7 +78,7 @@ pub struct NotificationResponse {
     sent_date: NaiveDateTime,
 
     /// The data associated with the notification, if any. This matches the data included in the
-    /// `NotificationContent` when the notification was sent.  
+    /// `NotificationContent` when the notification was sent.
     data: Option<String>,
 }
 

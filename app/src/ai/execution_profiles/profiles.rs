@@ -12,7 +12,6 @@ use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity};
 use crate::ai::llms::LLMId;
 use crate::ai::mcp::templatable_manager::TemplatableMCPServerManagerEvent;
 use crate::cloud_object::model::persistence::{CloudModelEvent, UpdateSource};
-use crate::{send_telemetry_from_ctx, LaunchMode, TelemetryEvent};
 
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::cloud_object::{GenericStringObjectFormat, JsonObjectType};
@@ -22,6 +21,7 @@ use crate::server::ids::SyncId;
 use crate::settings::AgentModeCommandExecutionPredicate;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::CloudModel;
+use crate::LaunchMode;
 use crate::{
     cloud_object::model::generic_string_model::GenericStringObjectId, server::ids::ClientId,
 };
@@ -303,8 +303,6 @@ impl AIExecutionProfilesModel {
         self.profile_id_to_sync_id
             .insert(profile_id, SyncId::ClientId(client_id));
 
-        send_telemetry_from_ctx!(TelemetryEvent::AIExecutionProfileCreated, ctx);
-
         ctx.emit(AIExecutionProfilesModelEvent::ProfileCreated);
 
         Some(profile_id)
@@ -331,7 +329,6 @@ impl AIExecutionProfilesModel {
             update_manager.delete_ai_execution_profile(sync_id, ctx);
         });
 
-        send_telemetry_from_ctx!(TelemetryEvent::AIExecutionProfileDeleted, ctx);
         ctx.emit(AIExecutionProfilesModelEvent::ProfileDeleted);
     }
 
@@ -509,16 +506,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        if let Some(model_id) = &llm_id {
-            send_telemetry_from_ctx!(
-                TelemetryEvent::AIExecutionProfileModelSelected {
-                    model_type: "base".to_string(),
-                    model_value: model_id.to_string(),
-                },
-                ctx
-            );
-        }
     }
 
     pub fn set_coding_model(
@@ -538,16 +525,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        if let Some(model_id) = &model_id {
-            send_telemetry_from_ctx!(
-                TelemetryEvent::AIExecutionProfileModelSelected {
-                    model_type: "coding".to_string(),
-                    model_value: model_id.to_string(),
-                },
-                ctx
-            );
-        }
     }
 
     pub fn set_cli_agent_model(
@@ -567,16 +544,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        if let Some(model_id) = &model_id {
-            send_telemetry_from_ctx!(
-                TelemetryEvent::AIExecutionProfileModelSelected {
-                    model_type: "cli_agent".to_string(),
-                    model_value: model_id.to_string(),
-                },
-                ctx
-            );
-        }
     }
 
     pub fn set_computer_use_model(
@@ -596,16 +563,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        if let Some(model_id) = &model_id {
-            send_telemetry_from_ctx!(
-                TelemetryEvent::AIExecutionProfileModelSelected {
-                    model_type: "computer_use".to_string(),
-                    model_value: model_id.to_string(),
-                },
-                ctx
-            );
-        }
     }
 
     pub fn set_context_window_limit(
@@ -626,12 +583,7 @@ impl AIExecutionProfilesModel {
             ctx,
         );
 
-        if changed {
-            send_telemetry_from_ctx!(
-                TelemetryEvent::AIExecutionProfileContextWindowSelected { tokens: limit },
-                ctx
-            );
-        }
+        if changed {}
     }
 
     pub fn set_apply_code_diffs(
@@ -650,14 +602,6 @@ impl AIExecutionProfilesModel {
                 false
             },
             ctx,
-        );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileSettingUpdated {
-                setting_type: "apply_code_diffs".to_string(),
-                setting_value: format!("{apply_code_diffs:?}"),
-            },
-            ctx
         );
     }
 
@@ -678,14 +622,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileSettingUpdated {
-                setting_type: "read_files".to_string(),
-                setting_value: format!("{read_files:?}"),
-            },
-            ctx
-        );
     }
 
     pub fn set_execute_commands(
@@ -705,14 +641,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileSettingUpdated {
-                setting_type: "execute_commands".to_string(),
-                setting_value: format!("{execute_commands:?}"),
-            },
-            ctx
-        );
     }
 
     pub fn set_write_to_pty(
@@ -731,13 +659,6 @@ impl AIExecutionProfilesModel {
                 false
             },
             ctx,
-        );
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileSettingUpdated {
-                setting_type: "write_to_pty".to_string(),
-                setting_value: format!("{write_to_pty:?}"),
-            },
-            ctx
         );
     }
 
@@ -764,14 +685,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileSettingUpdated {
-                setting_type: "mcp_permissions".to_string(),
-                setting_value: format!("{mcp_permissions:?}"),
-            },
-            ctx
-        );
     }
 
     pub fn set_computer_use(
@@ -796,15 +709,7 @@ impl AIExecutionProfilesModel {
             ctx,
         );
 
-        if current_value != Some(*permission) {
-            send_telemetry_from_ctx!(
-                TelemetryEvent::AIExecutionProfileSettingUpdated {
-                    setting_type: "computer_use".to_string(),
-                    setting_value: format!("{permission:?}"),
-                },
-                ctx
-            );
-        }
+        if current_value != Some(*permission) {}
     }
 
     pub fn set_ask_user_question(
@@ -829,15 +734,7 @@ impl AIExecutionProfilesModel {
             ctx,
         );
 
-        if current_value != Some(permission) {
-            send_telemetry_from_ctx!(
-                TelemetryEvent::AIExecutionProfileSettingUpdated {
-                    setting_type: "ask_user_question".to_string(),
-                    setting_value: format!("{permission:?}"),
-                },
-                ctx
-            );
-        }
+        if current_value != Some(permission) {}
     }
 
     pub fn set_web_search_enabled(
@@ -856,14 +753,6 @@ impl AIExecutionProfilesModel {
                 false
             },
             ctx,
-        );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileSettingUpdated {
-                setting_type: "web_search_enabled".to_string(),
-                setting_value: format!("{enabled}"),
-            },
-            ctx
         );
     }
 
@@ -884,14 +773,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileSettingUpdated {
-                setting_type: "plan_auto_sync".to_string(),
-                setting_value: format!("{enabled}"),
-            },
-            ctx
-        );
     }
 
     pub fn set_profile_name(
@@ -910,14 +791,6 @@ impl AIExecutionProfilesModel {
                 false
             },
             ctx,
-        );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileSettingUpdated {
-                setting_type: "name".to_string(),
-                setting_value: name.to_string(),
-            },
-            ctx
         );
     }
 
@@ -938,14 +811,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileAddedToAllowlist {
-                list_type: "command".to_string(),
-                value: predicate.to_string(),
-            },
-            ctx
-        );
     }
 
     pub fn remove_from_command_allowlist(
@@ -962,14 +827,6 @@ impl AIExecutionProfilesModel {
                 profile.command_allowlist.len() != original_len
             },
             ctx,
-        );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileRemovedFromAllowlist {
-                list_type: "command".to_string(),
-                value: predicate.to_string(),
-            },
-            ctx
         );
     }
 
@@ -990,14 +847,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileAddedToAllowlist {
-                list_type: "directory".to_string(),
-                value: path.to_string_lossy().to_string(),
-            },
-            ctx
-        );
     }
 
     pub fn remove_from_directory_allowlist(
@@ -1014,14 +863,6 @@ impl AIExecutionProfilesModel {
                 profile.directory_allowlist.len() != original_len
             },
             ctx,
-        );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileRemovedFromAllowlist {
-                list_type: "directory".to_string(),
-                value: path.to_string_lossy().to_string(),
-            },
-            ctx
         );
     }
 
@@ -1042,14 +883,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileAddedToDenylist {
-                list_type: "command".to_string(),
-                value: predicate.to_string(),
-            },
-            ctx
-        );
     }
 
     pub fn remove_from_command_denylist(
@@ -1066,14 +899,6 @@ impl AIExecutionProfilesModel {
                 profile.command_denylist.len() != original_len
             },
             ctx,
-        );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileRemovedFromDenylist {
-                list_type: "command".to_string(),
-                value: predicate.to_string(),
-            },
-            ctx
         );
     }
 
@@ -1094,14 +919,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileAddedToAllowlist {
-                list_type: "mcp".to_string(),
-                value: id.to_string(),
-            },
-            ctx
-        );
     }
 
     pub fn remove_from_mcp_allowlist(
@@ -1118,14 +935,6 @@ impl AIExecutionProfilesModel {
                 profile.mcp_allowlist.len() != original_len
             },
             ctx,
-        );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileRemovedFromAllowlist {
-                list_type: "mcp".to_string(),
-                value: id.to_string(),
-            },
-            ctx
         );
     }
 
@@ -1146,14 +955,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileAddedToDenylist {
-                list_type: "mcp".to_string(),
-                value: id.to_string(),
-            },
-            ctx
-        );
     }
 
     pub fn remove_from_mcp_denylist(
@@ -1171,14 +972,6 @@ impl AIExecutionProfilesModel {
             },
             ctx,
         );
-
-        send_telemetry_from_ctx!(
-            TelemetryEvent::AIExecutionProfileRemovedFromDenylist {
-                list_type: "mcp".to_string(),
-                value: id.to_string(),
-            },
-            ctx
-        );
     }
 
     /// `edit_profile_internal` edits an AIExecutionProfile and upserts the changed profile to the cloud
@@ -1189,7 +982,7 @@ impl AIExecutionProfilesModel {
     ///
     /// Returns `true` if the profile was actually changed (and synced),
     /// `false` otherwise. Callers can use this to gate side effects such as
-    /// telemetry on real changes.
+    /// diagnostics on real changes.
     fn edit_profile_internal(
         &mut self,
         profile_id: ClientProfileId,

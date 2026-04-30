@@ -12,14 +12,12 @@ use warpui::{
 use crate::{
     editor::EditorView,
     menu::{self, Menu, MenuItem, MenuItemFields},
+    notebooks::ActionEntrypoint,
     pane_group::{focus_state::PaneFocusHandle, PaneEvent, SplitPaneState},
     util::bindings::{keybinding_name_to_display_string, trigger_to_keystroke, CustomAction},
 };
 
-use super::{
-    editor::{keys::custom_action_to_display, view::RichTextEditorView},
-    telemetry::ActionEntrypoint,
-};
+use super::editor::{keys::custom_action_to_display, view::RichTextEditorView};
 
 #[cfg(test)]
 #[path = "context_menu_tests.rs"]

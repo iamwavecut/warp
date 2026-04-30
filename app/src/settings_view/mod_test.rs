@@ -6,7 +6,7 @@ use settings_page::MatchData;
 #[test]
 fn ai_subpages_are_identified() {
     assert!(SettingsSection::WarpAgent.is_ai_subpage());
-    assert!(SettingsSection::LLMProviders.is_ai_subpage());
+    assert!(!SettingsSection::LLMProviders.is_ai_subpage());
     assert!(SettingsSection::AgentProfiles.is_ai_subpage());
     assert!(SettingsSection::AgentMCPServers.is_ai_subpage());
     assert!(SettingsSection::Knowledge.is_ai_subpage());
@@ -48,6 +48,7 @@ fn is_subpage_covers_all_umbrella_types() {
 
     // Top-level pages should not be subpages.
     assert!(!SettingsSection::Account.is_subpage());
+    assert!(!SettingsSection::LLMProviders.is_subpage());
     assert!(!SettingsSection::AI.is_subpage());
     assert!(!SettingsSection::Code.is_subpage());
     assert!(!SettingsSection::Privacy.is_subpage());
@@ -134,7 +135,6 @@ fn non_subpage_sections_map_to_themselves() {
 fn ai_subpages_list_contains_all_ai_subpage_variants() {
     let subpages = SettingsSection::ai_subpages();
     assert!(subpages.contains(&SettingsSection::WarpAgent));
-    assert!(subpages.contains(&SettingsSection::LLMProviders));
     assert!(subpages.contains(&SettingsSection::AgentProfiles));
     assert!(subpages.contains(&SettingsSection::AgentMCPServers));
     assert!(subpages.contains(&SettingsSection::Knowledge));
@@ -145,6 +145,7 @@ fn ai_subpages_list_contains_all_ai_subpage_variants() {
 fn ai_subpages_list_does_not_contain_non_subpages() {
     let subpages = SettingsSection::ai_subpages();
     assert!(!subpages.contains(&SettingsSection::AI));
+    assert!(!subpages.contains(&SettingsSection::LLMProviders));
     assert!(!subpages.contains(&SettingsSection::Account));
     assert!(!subpages.contains(&SettingsSection::Code));
 }
@@ -207,7 +208,7 @@ fn subpage_display_names_are_correct() {
 fn subpage_from_str_parses_display_names() {
     // Both the legacy "Oz" name and the new "Warp Agent" display name must
     // resolve to SettingsSection::WarpAgent so existing deep links, persisted
-    // telemetry strings, and external callers continue to work after the
+    // identifiers, and external callers continue to work after the
     // user-facing rename (see specs/GH1063/product.md, Behavior #8).
     assert_eq!(
         SettingsSection::from_str("Oz"),

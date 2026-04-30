@@ -27,11 +27,11 @@ use crate::ai::AIRequestUsageModel;
 use crate::channel::Channel;
 use crate::code;
 use crate::features::FeatureFlag;
+use crate::interaction_sources::AgentModeEntrypoint;
+use crate::interaction_sources::PaletteSource;
 use crate::modal;
 use crate::notebooks;
 use crate::pane_group::TabBarHoverIndex;
-use crate::server::telemetry::AgentModeEntrypoint;
-use crate::server::telemetry::PaletteSource;
 use crate::settings::AISettings;
 use crate::settings_view::{self, flags, SettingsSection};
 use crate::tab::uses_vertical_tabs;
@@ -154,9 +154,9 @@ pub fn init(app: &mut AppContext) {
 
     if ChannelState::enable_debug_features() {
         let crash_description = if cfg!(target_os = "macos") {
-            "Crash the app (for testing sentry-cocoa)"
+            "Crash the app (debug)"
         } else {
-            "Crash the app (for testing sentry-native)"
+            "Crash the app (debug)"
         };
         app.register_editable_bindings([
             EditableBinding::new("workspace:crash", crash_description, WorkspaceAction::Crash)
@@ -169,7 +169,7 @@ pub fn init(app: &mut AppContext) {
             .with_context_predicate(id!("Workspace")),
             EditableBinding::new(
                 "workspace:panic",
-                "Trigger a panic (for testing sentry-rust)",
+                "Trigger a panic (debug)",
                 WorkspaceAction::Panic,
             )
             .with_context_predicate(id!("Workspace")),

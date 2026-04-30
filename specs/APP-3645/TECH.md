@@ -74,7 +74,6 @@ All manual close call sites (Escape, Ctrl-G toggle, footer button toggle, footer
 
 ### 7. New `CLIAgentInputEntrypoint::AutoShow` variant
 
-Added to `cli_agent_sessions/mod.rs` to distinguish auto-opens from manual opens in telemetry.
 
 ## End-to-End Flow
 
@@ -108,5 +107,4 @@ Added to `cli_agent_sessions/mod.rs` to distinguish auto-opens from manual opens
 - Manual testing with and without the plugin to verify both settings behave correctly.
 
 ## Follow-ups
-- Add telemetry for auto-show/auto-dismiss to track adoption.
 - Consider debounce/delay on auto-show if rapid transitions prove to be an issue.

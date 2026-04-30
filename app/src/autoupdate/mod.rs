@@ -8,21 +8,17 @@ mod mac;
 mod windows;
 
 use crate::features::FeatureFlag;
-use crate::send_telemetry_sync_from_app_ctx;
 use crate::server::server_api::ServerApi;
-use crate::server::telemetry::TelemetryEvent;
 use crate::workspace::Workspace;
-use crate::{
-    channel::Channel, report_if_error, send_telemetry_from_ctx, server::datetime_ext::DateTimeExt,
-    ChannelState,
-};
+use crate::ChannelState;
 use ::channel_versions::{ParsedVersion, VersionInfo};
 use anyhow::{anyhow, Context as _, Result};
-use chrono::{DateTime, FixedOffset, NaiveDate};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate};
 use rand::Rng as _;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
+use warp_core::channel::Channel;
 use warp_core::execution_mode::AppExecutionMode;
 use warpui::platform::TerminationMode;
 use warpui::r#async::Timer;
@@ -223,7 +219,7 @@ impl AutoupdateState {
     /// The caller is responsible for checking that we _should_ check for an update. Generally, the
     /// only caller should be [`Self::try_execute_request`].
     fn check_for_update(&mut self, request_type: RequestType, ctx: &mut ModelContext<Self>) {
-        let current_date = DateTime::now().date_naive();
+        let current_date = Local::now().date_naive();
         let is_daily = self.should_make_daily_request(
             request_type,
             &current_date,
@@ -368,7 +364,7 @@ impl AutoupdateState {
         ctx: &mut ModelContext<AutoupdateState>,
     ) {
         if is_daily && version.is_ok() {
-            self.last_successful_daily_update_check = Some(DateTime::now());
+            self.last_successful_daily_update_check = Some(Local::now().fixed_offset());
         }
 
         // If one update was already applied, we cannot apply another.
@@ -497,7 +493,6 @@ impl AutoupdateState {
                 })
             }
             Ok(DownloadReady::NeedsAuthorization) => {
-                send_telemetry_from_ctx!(TelemetryEvent::UnableToAutoUpdateToNewVersion, ctx);
                 self.stage = AutoupdateStage::UnableToUpdateToNewVersion { new_version };
                 Ok(UpdateReady::No)
             }
@@ -882,10 +877,6 @@ pub fn initiate_relaunch_for_update(app: &mut AppContext) {
                 // Report that we're attempting to relaunch for an update, so that we can track failed
                 // relaunches (e.g. if the update got corrupted). This is sent synchronously because
                 // the app is about to quit.
-                let event = TelemetryEvent::AutoupdateRelaunchAttempt {
-                    new_version: new_version_string,
-                };
-                send_telemetry_sync_from_app_ctx!(event, app);
 
                 // Request termination of the app.
                 app.terminate_app(TerminationMode::Cancellable, None);

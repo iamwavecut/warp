@@ -248,7 +248,7 @@ jobs:
         env:
           # Attach the GitHub auth token so that requests to the GitHub API
           # don't get rate limited during compilation (e.g.: retrieving
-          # Sentry SDK binary releases).
+          # binary SDK releases).
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run unit tests
@@ -263,20 +263,6 @@ jobs:
           # and tends to be the most reliable.
           WARP_SHELL_PATH: ${{ steps.echo_default_shell.outputs.default_shell_path }}
 
-      - name: Upload results of unit tests to trunk.io
-        # Run this step even when the tests fail. Skip if the workflow is cancelled.
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
-        with:
-          junit-paths: target/nextest/ci/junit.xml
-          cli-version: 0.12.5
-          org-slug: warp
-          token: ${{ secrets.TRUNK_API_TOKEN }}
-          tags: type=unit
-          variant: ${{ matrix.os }}
-          use-cache: true
-
       - name: Run shell-agnostic integration tests
         # Run this step even if a previous test step fails
         if: matrix.os != 'windows' && (success() || failure())
@@ -288,20 +274,6 @@ jobs:
           # bootstrap times and tends to be the most reliable.
           WARP_SHELL_PATH: ${{ steps.echo_shells_unix.outputs.zsh_path }}
 
-      - name: Upload results of shell-agnostic integration tests to trunk.io
-        # Run this step even when the tests fail. Skip if the workflow is cancelled.
-        if: ${{ matrix.os != 'windows' && !cancelled() }}
-        continue-on-error: true
-        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
-        with:
-          junit-paths: target/nextest/ci/junit.xml
-          cli-version: 0.12.5
-          org-slug: warp
-          token: ${{ secrets.TRUNK_API_TOKEN }}
-          tags: type=integration,category=shell-agnostic
-          variant: ${{ matrix.os }}
-          use-cache: true
-
       - name: Run shell integration tests against default version of bash
         # Run this step even if a previous test step fails
         if: matrix.os != 'windows' && (success() || failure())
@@ -310,20 +282,6 @@ jobs:
           run: cargo nextest run ${{ env.WORKSPACE_TEST_ARGS }} ${{ matrix.extra_test_args }} -E "package(integration) and test(shell_integration_tests)${{ env.EXCLUDE_SSH_TESTS_FILTER }}"
         env:
           WARP_SHELL_PATH: ${{ steps.echo_shells_unix.outputs.default_bash_path }}
-
-      - name: Upload results of shell integration tests against default version of bash to trunk.io
-        # Run this step even when the tests fail. Skip if the workflow is cancelled.
-        if: ${{ matrix.os != 'windows' && !cancelled() }}
-        continue-on-error: true
-        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
-        with:
-          junit-paths: target/nextest/ci/junit.xml
-          cli-version: 0.12.5
-          org-slug: warp
-          token: ${{ secrets.TRUNK_API_TOKEN }}
-          tags: type=integration,category=bash-default
-          variant: ${{ matrix.os }}
-          use-cache: true
 
       - name: Run shell integration tests against latest version of bash
         # Run this step even if a previous test step fails.
@@ -337,20 +295,6 @@ jobs:
         env:
           WARP_SHELL_PATH: ${{ steps.echo_shells_unix.outputs.latest_bash_path }}
 
-      - name: Upload results of shell integration tests against latest version of bash to trunk.io
-        # Run this step even when the tests fail. Skip if the workflow is cancelled.
-        if: ${{ matrix.os != 'windows' && !cancelled() }}
-        continue-on-error: true
-        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
-        with:
-          junit-paths: target/nextest/ci/junit.xml
-          cli-version: 0.12.5
-          org-slug: warp
-          token: ${{ secrets.TRUNK_API_TOKEN }}
-          tags: type=integration,category=bash-latest
-          variant: ${{ matrix.os }}
-          use-cache: true
-
       - name: Run shell integration tests against fish
         # Run this step even if a previous test step fails
         if: matrix.os != 'windows' && (success() || failure())
@@ -359,20 +303,6 @@ jobs:
           run: cargo nextest run ${{ env.WORKSPACE_TEST_ARGS }} ${{ matrix.extra_test_args }} -E "package(integration) and test(shell_integration_tests)${{ env.EXCLUDE_SSH_TESTS_FILTER }}"
         env:
           WARP_SHELL_PATH: ${{ steps.echo_shells_unix.outputs.fish_path }}
-
-      - name: Upload results of shell integration tests against fish to trunk.io
-        # Run this step even when the tests fail. Skip if the workflow is cancelled.
-        if: ${{ matrix.os != 'windows' && !cancelled() }}
-        continue-on-error: true
-        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
-        with:
-          junit-paths: target/nextest/ci/junit.xml
-          cli-version: 0.12.5
-          org-slug: warp
-          token: ${{ secrets.TRUNK_API_TOKEN }}
-          tags: type=integration,category=fish
-          variant: ${{ matrix.os }}
-          use-cache: true
 
       - name: Run shell integration tests against zsh
         # Run this step even if a previous test step fails
@@ -383,20 +313,6 @@ jobs:
         env:
           WARP_SHELL_PATH: ${{ steps.echo_shells_unix.outputs.zsh_path }}
 
-      - name: Upload results of shell integration tests against zsh to trunk.io
-        # Run this step even when the tests fail. Skip if the workflow is cancelled.
-        if: ${{ matrix.os != 'windows' && !cancelled() }}
-        continue-on-error: true
-        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
-        with:
-          junit-paths: target/nextest/ci/junit.xml
-          cli-version: 0.12.5
-          org-slug: warp
-          token: ${{ secrets.TRUNK_API_TOKEN }}
-          tags: type=integration,category=zsh
-          variant: ${{ matrix.os }}
-          use-cache: true
-
       - name: Run shell integration tests against powershell
         # Run this step even if a previous test step fails
         if: matrix.os != 'windows' && (success() || failure())
@@ -405,20 +321,6 @@ jobs:
           run: cargo nextest run ${{ env.WORKSPACE_TEST_ARGS }} ${{ matrix.extra_test_args }} -E "package(integration) and test(shell_integration_tests)${{ env.EXCLUDE_SSH_TESTS_FILTER }}"
         env:
           WARP_SHELL_PATH: ${{ steps.echo_shells_unix.outputs.powershell_path }}
-
-      - name: Upload results of shell integration tests against powershell to trunk.io
-        # Run this step even when the tests fail. Skip if the workflow is cancelled.
-        if: ${{ matrix.os != 'windows' && !cancelled() }}
-        continue-on-error: true
-        uses: trunk-io/analytics-uploader@95a0fb8b29e45b6068304261fb518644b426a803 # v2.0.8
-        with:
-          junit-paths: target/nextest/ci/junit.xml
-          cli-version: 0.12.5
-          org-slug: warp
-          token: ${{ secrets.TRUNK_API_TOKEN }}
-          tags: type=integration,category=powershell
-          variant: ${{ matrix.os }}
-          use-cache: true
 
       # Run doctests explicitly, as nextest doesn't yet support running them.
       # See: https://github.com/nextest-rs/nextest/issues/16
@@ -534,7 +436,7 @@ jobs:
         env:
           # Attach the GitHub auth token so that requests to the GitHub API
           # don't get rate limited during compilation (e.g.: retrieving
-          # Sentry SDK binary releases).
+          # binary SDK releases).
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run clang-format
@@ -676,7 +578,7 @@ jobs:
         env:
           # Attach the GitHub auth token so that requests to the GitHub API
           # don't get rate limited during compilation (e.g.: retrieving
-          # Sentry SDK binary releases).
+          # binary SDK releases).
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # A final job that collects the results of all of the parallel CI jobs and

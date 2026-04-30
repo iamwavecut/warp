@@ -69,6 +69,44 @@ fn builds_openai_compatible_custom_provider_from_ui_fields() {
     );
 }
 
+#[test]
+fn ranks_custom_provider_model_suggestions_with_prefix_priority() {
+    let suggestions = ranked_custom_provider_model_suggestions(
+        "qwen code",
+        &[
+            "llama-local".to_string(),
+            "qwen3-coder".to_string(),
+            "coder-qwen".to_string(),
+            "qwen2.5-coder".to_string(),
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        suggestions,
+        vec![
+            "qwen2.5-coder".to_string(),
+            "qwen3-coder".to_string(),
+            "coder-qwen".to_string()
+        ]
+    );
+}
+
+#[test]
+fn ranked_custom_provider_model_suggestions_excludes_selected_models() {
+    let suggestions = ranked_custom_provider_model_suggestions(
+        "qwen",
+        &[
+            "qwen3-coder".to_string(),
+            "qwen2.5-coder".to_string(),
+            "qwen3-coder".to_string(),
+        ],
+        &["qwen3-coder".to_string()],
+    );
+
+    assert_eq!(suggestions, vec!["qwen2.5-coder".to_string()]);
+}
+
 // FocusedTerminalInfo Tests
 
 #[test]

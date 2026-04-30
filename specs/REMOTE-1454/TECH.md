@@ -356,6 +356,5 @@ Integration / manual validation (mirrors the product spec's validation list):
 - Toggle `CloudModeSetupV2` off; confirm legacy cloud-mode behavior restored for all harnesses.
 - Toggle `AgentHarness` off; confirm harness selector hides non-oz options and nothing in this spec activates.
 ## Follow-ups
-- Consider telemetry for `HarnessCommandStarted` (time from `DispatchedAgent` / `SessionReady` to harness start) so we can monitor setup latency per-harness.
 - If detection proves flaky in practice, add a timeout-based fallback transition (e.g. "still in setup 60s after session ready with no matching CLI agent detection → transition anyway and log a warning").
 - Once `CloudModeSetupV2` ships to stable, consider unifying the "pre-first-exchange" and "pre-harness" concepts behind a single view-model state rather than the current combination of block-list flag + exchange count + harness-started bool.

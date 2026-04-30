@@ -367,7 +367,7 @@ impl ExportManager {
         ctx: &mut ModelContext<Self>,
     ) {
         let id = *export.key();
-        // Don't send the error to Sentry, since it likely includes a user file path and their Warp
+        // Do not log the error, since it likely includes a user file path and their Warp
         // Drive object name. Also don't report this as an error, since the most likely failure
         // reason is an I/O issue on the user's machine (like being out of disk space, or exporting
         // to a directory they can't write to).

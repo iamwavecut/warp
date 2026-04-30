@@ -3,7 +3,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     ai::{RequestLimitInfo, RequestLimitRefreshDuration},
-    server::telemetry::OpenedWarpAISource,
+    interaction_sources::OpenedWarpAISource,
     terminal::model::terminal_model::BlockIndex,
     workflows::workflow::{Argument, Workflow},
 };

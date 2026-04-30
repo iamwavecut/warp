@@ -371,7 +371,7 @@ impl From<ShellStarterSource> for ShellStarter {
 }
 
 /// A [`ShellStarterSource`] if a shell is not WSL or the name of a WSL distribution if this is a
-/// WSL session.  
+/// WSL session.
 pub enum ShellStarterSourceOrWslName {
     Source(ShellStarterSource),
     WSLName { distro_name: String },

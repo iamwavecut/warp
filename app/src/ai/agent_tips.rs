@@ -1,6 +1,6 @@
 use crate::ai::persisted_workspace::PersistedWorkspace;
+use crate::interaction_sources::PaletteSource;
 use crate::palette::PaletteMode;
-use crate::server::telemetry::PaletteSource;
 use crate::settings::AISettings;
 use crate::terminal::input::SET_INPUT_MODE_AGENT_ACTION_NAME;
 use crate::terminal::view::init::{
