@@ -37,7 +37,7 @@ use crate::{
         profile_model_selector::{ProfileModelSelector, ProfileModelSelectorEvent},
         session_settings::{SessionSettings, SessionSettingsChangedEvent, ToolbarChipSelection},
         shared_session::SharedSessionStatus,
-        view::ambient_agent::{AmbientAgentViewModel, ModelSelector},
+        view::ambient_agent::{AmbientAgentViewModel, ModelSelector, ModelSelectorEvent},
         view::init::OPEN_CLI_AGENT_RICH_INPUT_KEYBINDING,
         view::TerminalAction,
         CLIAgent, TerminalModel,
@@ -601,6 +601,9 @@ impl AgentInputFooter {
             ctx.subscribe_to_view(environment_selector, |_, _, event, ctx| match event {
                 EnvironmentSelectorEvent::MenuVisibilityChanged { open } => {
                     ctx.emit(AgentInputFooterEvent::ToggledChipMenu { open: *open });
+                    if !*open {
+                        ctx.emit(AgentInputFooterEvent::EnvironmentSelectorClosed);
+                    }
                 }
                 EnvironmentSelectorEvent::OpenEnvironmentManagementPane => {
                     ctx.emit(AgentInputFooterEvent::OpenEnvironmentManagementPane);
@@ -707,9 +710,19 @@ impl AgentInputFooter {
         });
 
         let v2_model_selector = if FeatureFlag::CloudModeInputV2.is_enabled() {
-            Some(ctx.add_typed_action_view(|ctx| {
+            let view = ctx.add_typed_action_view(|ctx| {
                 ModelSelector::new(menu_positioning_provider.clone(), terminal_view_id, ctx)
-            }))
+            });
+            ctx.subscribe_to_view(&view, |_, _, event, ctx| match event {
+                ModelSelectorEvent::MenuVisibilityChanged { open } => {
+                    if *open {
+                        ctx.emit(AgentInputFooterEvent::ModelSelectorOpened);
+                    } else {
+                        ctx.emit(AgentInputFooterEvent::ModelSelectorClosed);
+                    }
+                }
+            });
+            Some(view)
         } else {
             None
         };
@@ -780,6 +793,24 @@ impl AgentInputFooter {
         self.v2_model_selector
             .as_ref()
             .is_some_and(|s| s.as_ref(app).is_menu_open())
+    }
+
+    pub fn open_v2_model_selector(&mut self, ctx: &mut ViewContext<Self>) {
+        if let Some(selector) = self.v2_model_selector.clone() {
+            selector.update(ctx, |s, ctx| s.open_menu(ctx));
+        }
+    }
+
+    pub fn is_v2_environment_selector_open(&self, app: &AppContext) -> bool {
+        self.environment_selector
+            .as_ref()
+            .is_some_and(|s| s.as_ref(app).is_menu_open())
+    }
+
+    pub fn open_v2_environment_selector(&mut self, ctx: &mut ViewContext<Self>) {
+        if let Some(selector) = self.environment_selector.clone() {
+            selector.update(ctx, |s, ctx| s.open_menu(ctx));
+        }
     }
 
     fn should_render_cloud_mode_v2(&self, app: &AppContext) -> bool {
@@ -2316,6 +2347,7 @@ pub enum AgentInputFooterEvent {
     PromptAlert(PromptAlertEvent),
     ModelSelectorOpened,
     ModelSelectorClosed,
+    EnvironmentSelectorClosed,
     ToggleInlineModelSelector {
         initial_tab: InlineModelSelectorTab,
     },

@@ -135,7 +135,7 @@ pub async fn load_conversation_from_server(
                         }
                     }
                 }
-                AIAgentHarness::ClaudeCode | AIAgentHarness::Gemini => {
+                AIAgentHarness::ClaudeCode | AIAgentHarness::Gemini | AIAgentHarness::Codex => {
                     log::warn!(
                         "Ignoring remote CLI agent conversation {conversation_id}: remote block snapshots are disabled in this local-first build"
                     );

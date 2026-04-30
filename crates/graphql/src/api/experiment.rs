@@ -65,6 +65,8 @@ pub enum Experiment {
     FreeUserInitialCreditsThreeHundred,
     OzMultiHarnessControl,
     OzMultiHarnessExperiment,
+    SshRemoteServerControl,
+    SshRemoteServerExperiment,
     #[cynic(fallback)]
     Other(String),
 }
