@@ -945,10 +945,7 @@ impl LLMPreferences {
                         request_multiplier: 1,
                         credit_multiplier: None,
                     },
-                    description: Some(format!(
-                        "Custom provider: {} ({})",
-                        provider_name, provider_config.base_url
-                    )),
+                    description: None,
                     disable_reason: None,
                     vision_supported: false,
                     spec: None,

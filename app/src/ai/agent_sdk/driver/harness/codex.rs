@@ -13,11 +13,8 @@ use warp_cli::agent::Harness;
 use warp_managed_secrets::ManagedSecretValue;
 use warpui::{ModelHandle, ModelSpawner};
 
-use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::ambient_agents::AmbientAgentTaskId;
-use crate::server::server_api::harness_support::HarnessSupportClient;
 use crate::server::server_api::ServerApi;
-use crate::terminal::model::block::BlockId;
 use crate::terminal::CLIAgent;
 
 use super::super::terminal::{CommandHandle, TerminalDriver};
@@ -27,8 +24,6 @@ use super::{write_temp_file, HarnessRunner, ResumePayload, SavePoint, ThirdParty
 
 pub(crate) struct CodexHarness;
 
-/// Format slug sent to the server when creating a Codex conversation.
-const CODEX_CLI_FORMAT: &str = "codex_cli";
 /// Slash command Codex's TUI recognises as a graceful shutdown.
 const CODEX_EXIT_COMMAND: &str = "/exit";
 
@@ -68,18 +63,16 @@ impl ThirdPartyHarness for CodexHarness {
         _resumption_prompt: Option<&str>,
         working_dir: &Path,
         _task_id: Option<AmbientAgentTaskId>,
-        server_api: Arc<ServerApi>,
+        _server_api: Arc<ServerApi>,
         terminal_driver: ModelHandle<TerminalDriver>,
         _resume: Option<ResumePayload>,
     ) -> Result<Box<dyn HarnessRunner>, AgentDriverError> {
         // TODO(REMOTE-1503): support resume for Codex.
-        let client: Arc<dyn HarnessSupportClient> = server_api;
         Ok(Box::new(CodexHarnessRunner::new(
             self.cli_agent().command_prefix(),
             prompt,
             system_prompt,
             working_dir,
-            client,
             terminal_driver,
         )?))
     }
@@ -95,17 +88,13 @@ fn codex_command(cli_name: &str, prompt_path: &str) -> String {
 
 enum CodexRunnerState {
     Preexec,
-    Running {
-        conversation_id: AIConversationId,
-        block_id: BlockId,
-    },
+    Running,
 }
 
 struct CodexHarnessRunner {
     command: String,
     /// Held so the temp file is cleaned up when the runner is dropped.
     _temp_prompt_file: NamedTempFile,
-    client: Arc<dyn HarnessSupportClient>,
     terminal_driver: ModelHandle<TerminalDriver>,
     state: Mutex<CodexRunnerState>,
 }
@@ -116,7 +105,6 @@ impl CodexHarnessRunner {
         prompt: &str,
         _system_prompt: Option<&str>,
         _working_dir: &Path,
-        client: Arc<dyn HarnessSupportClient>,
         terminal_driver: ModelHandle<TerminalDriver>,
     ) -> Result<Self, AgentDriverError> {
         let temp_file = write_temp_file("oz_prompt_", prompt)?;
@@ -125,7 +113,6 @@ impl CodexHarnessRunner {
         Ok(Self {
             command: codex_command(cli_command, &prompt_path),
             _temp_prompt_file: temp_file,
-            client,
             terminal_driver,
             state: Mutex::new(CodexRunnerState::Preexec),
         })
@@ -139,16 +126,6 @@ impl HarnessRunner for CodexHarnessRunner {
         &self,
         foreground: &ModelSpawner<AgentDriver>,
     ) -> Result<CommandHandle, AgentDriverError> {
-        let conversation_id = self
-            .client
-            .create_external_conversation(CODEX_CLI_FORMAT)
-            .await
-            .map_err(|e| {
-                log::error!("Failed to create external conversation: {e}");
-                AgentDriverError::ConfigBuildFailed(e)
-            })?;
-        log::info!("Created external conversation {conversation_id}");
-
         let command = self.command.clone();
         let terminal_driver = self.terminal_driver.clone();
         let command_handle = foreground
@@ -158,10 +135,7 @@ impl HarnessRunner for CodexHarnessRunner {
             .await??
             .await?;
 
-        *self.state.lock() = CodexRunnerState::Running {
-            conversation_id,
-            block_id: command_handle.block_id().clone(),
-        };
+        *self.state.lock() = CodexRunnerState::Running;
 
         Ok(command_handle)
     }
@@ -191,26 +165,15 @@ impl HarnessRunner for CodexHarnessRunner {
             return Ok(());
         }
 
-        let (conversation_id, block_id) = match &*self.state.lock() {
+        match &*self.state.lock() {
             CodexRunnerState::Preexec => {
                 log::warn!("save_conversation called before start");
                 return Ok(());
             }
-            CodexRunnerState::Running {
-                conversation_id,
-                block_id,
-            } => (*conversation_id, block_id.clone()),
-        };
+            CodexRunnerState::Running => {}
+        }
 
-        // TODO(REMOTE-1504) Also save the conversation transcript.
-        super::upload_current_block_snapshot(
-            foreground,
-            &self.terminal_driver,
-            self.client.as_ref(),
-            conversation_id,
-            block_id,
-        )
-        .await
+        Ok(())
     }
 }
 
@@ -261,8 +224,7 @@ fn write_codex_agents_override(codex_dir: &Path, system_prompt: &str) -> Result<
         )
     })?;
 
-    // Note: this currently works because we are only doing this for cloud agents; if we enable
-    // this for local runs we'll want to make sure we don't clobber any existing file overrides.
+    // Keep this in a dedicated override file so local Codex runs don't clobber user config.
     let prompt_path = codex_dir.join(CODEX_AGENTS_OVERRIDE_FILE_NAME);
     fs::write(&prompt_path, system_prompt).with_context(|| {
         format!(

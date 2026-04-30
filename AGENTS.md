@@ -116,6 +116,11 @@ If the env-var field starts with `$`, strip the `$` and resolve that environment
 variable at request time. Do not restore the legacy proprietary key-only
 provider UI.
 
+Compact model selectors should identify custom models by provider and model
+name only, such as `provider / model`. Keep the OpenAI-compatible `base_url` in
+settings and config surfaces; do not expose it in picker labels or other
+space-constrained AI model UI.
+
 ## Cargo Features
 
 File: `app/Cargo.toml`
@@ -213,6 +218,17 @@ File: `app/src/ai/llms.rs`
 The model list should come from `AISettings.custom_providers`, not from the Warp
 server. Custom providers should be available without fetching hosted model
 metadata.
+
+## Agent Harnesses
+
+Relevant files:
+
+- `app/src/ai/agent_sdk/driver/harness/codex.rs`
+
+Local third-party CLI harnesses should run through the local terminal harness
+only. They must not create external conversations, upload block snapshots, or
+depend on Warp hosted `/harness_support` APIs. Save/resume behavior should be
+local, or a no-op until local persistence exists.
 
 ## Usage, Paywall, And Entitlements
 

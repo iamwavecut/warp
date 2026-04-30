@@ -1,7 +1,9 @@
+mod cloud_mode_v2_view;
 mod data_source;
 mod search_item;
 mod view;
 
+pub use cloud_mode_v2_view::*;
 pub use data_source::*;
 pub use view::*;
 
@@ -963,6 +965,26 @@ impl Input {
             | SlashCommandEntryState::Composing { .. }
             | SlashCommandEntryState::DisabledUntilEmptyBuffer => false,
         }
+    }
+
+    pub(super) fn maybe_clear_v2_slash_section_filter(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if !self.is_cloud_mode_input_v2_composing(ctx) {
+            return false;
+        }
+        let Some(view) = self.cloud_mode_v2_slash_commands_view.clone() else {
+            return false;
+        };
+        let has_filter = view.as_ref(ctx).has_section_filter();
+        if !has_filter {
+            return false;
+        }
+        view.update(ctx, |view, ctx| {
+            view.set_section_filter(None, ctx);
+        });
+        true
     }
 
     /// Executes a slash command on `enter` keypress.

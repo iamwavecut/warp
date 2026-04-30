@@ -61,6 +61,9 @@ For example:
 custom/local-openai-compatible/qwen3-coder
 ```
 
+Compact model selectors show custom models as `provider / model`. The provider
+base URL stays in settings and is intentionally not shown in picker labels.
+
 Custom provider requests go directly to:
 
 ```http

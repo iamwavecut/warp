@@ -101,9 +101,10 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                 session_id,
                 result,
                 remote_platform,
+                has_old_binary,
             } => {
                 me.remote_platform = remote_platform.clone();
-                me.on_binary_check_complete(*session_id, result.clone(), ctx);
+                me.on_binary_check_complete(*session_id, result.clone(), *has_old_binary, ctx);
             }
             RemoteServerManagerEvent::BinaryInstallComplete { session_id, result } => {
                 me.on_binary_install_complete(*session_id, result.clone(), ctx);
@@ -197,6 +198,7 @@ impl<T: EventLoopSender> RemoteServerController<T> {
         &mut self,
         session_id: SessionId,
         result: Result<bool, String>,
+        has_old_binary: bool,
         ctx: &mut ModelContext<Self>,
     ) {
         let SshInitState::AwaitingCheck {
@@ -228,6 +230,18 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                 };
                 self.connect_session_for_current_identity(session_id, socket_path, ctx);
             }
+            Ok(false) if has_old_binary => {
+                self.did_install = true;
+                self.state = SshInitState::AwaitingInstall {
+                    session_id,
+                    session_info,
+                    transport: transport.clone(),
+                    setup_start,
+                };
+                RemoteServerManager::handle(ctx).update(ctx, |mgr, ctx| {
+                    mgr.install_binary(session_id, transport, true, ctx);
+                });
+            }
             Ok(false) => {
                 let install_mode = *WarpifySettings::as_ref(ctx)
                     .ssh_extension_install_mode
@@ -252,7 +266,7 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                             setup_start,
                         };
                         RemoteServerManager::handle(ctx).update(ctx, |mgr, ctx| {
-                            mgr.install_binary(session_id, transport, ctx);
+                            mgr.install_binary(session_id, transport, false, ctx);
                         });
                     }
                     SshExtensionInstallMode::NeverInstall => {
@@ -294,7 +308,7 @@ impl<T: EventLoopSender> RemoteServerController<T> {
             setup_start,
         };
         RemoteServerManager::handle(ctx).update(ctx, |mgr, ctx| {
-            mgr.install_binary(session_id, transport, ctx);
+            mgr.install_binary(session_id, transport, false, ctx);
         });
     }
 
