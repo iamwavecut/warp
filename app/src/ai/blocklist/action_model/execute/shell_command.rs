@@ -246,7 +246,10 @@ impl ShellCommandExecutor {
                 drop(model);
 
                 ActionExecution::new_async(
-                    self.action_result_future(block_selector.clone(), None),
+                    self.action_result_future(
+                        block_selector.clone(),
+                        wait_policy_for_requested_command(*wait_until_completion),
+                    ),
                     move |result, ctx| {
                         // Remove the senders from the maps.
                         if let Some(handle) = handle.upgrade(ctx) {
@@ -305,7 +308,9 @@ impl ShellCommandExecutor {
                 ActionExecution::new_async(
                     self.action_result_future(
                         block_selector.clone(),
-                        Some(ShellCommandDelay::Duration(Duration::from_millis(200))),
+                        ShellCommandWaitPolicy::AgentDelay(Some(ShellCommandDelay::Duration(
+                            Duration::from_millis(200),
+                        ))),
                     ),
                     move |result, ctx| {
                         // Remove the senders from the maps.
@@ -343,7 +348,10 @@ impl ShellCommandExecutor {
 
                 let block_selector = BlockSelector::Id(block_id.clone());
                 ActionExecution::new_async(
-                    self.action_result_future(block_selector.clone(), delay.clone()),
+                    self.action_result_future(
+                        block_selector.clone(),
+                        ShellCommandWaitPolicy::AgentDelay(delay.clone()),
+                    ),
                     move |result, ctx| {
                         // Remove the senders from the maps.
                         if let Some(handle) = handle.upgrade(ctx) {
@@ -481,7 +489,7 @@ impl ShellCommandExecutor {
     fn action_result_future(
         &mut self,
         block_selector: BlockSelector,
-        delay: Option<ShellCommandDelay>,
+        wait_policy: ShellCommandWaitPolicy,
     ) -> impl Spawnable<Output = ActionResult> {
         // Create a channel to notify us when we receive block metadata.
         let (block_metadata_received_tx, block_metadata_received_rx) = oneshot::channel();
@@ -508,50 +516,44 @@ impl ShellCommandExecutor {
         }
 
         async move {
-            // If we support long-running commands, set up a timeout after which we'll
-            // treat the command as long-running and give the agent a snapshot of the
-            // current state.  Otherwise, we'll wait indefinitely for the command to
-            // finish executing.
-            let mut timeout = match delay {
-                Some(ShellCommandDelay::Duration(duration)) => {
-                    // Enforce a maximum allowed delay that the agent may request, never waiting longer than MAX_AGENT_DELAY_DURATION.
-                    // If the requested duration exceeds this cap, we'll still behave as if the agent may expect a running command,
-                    // so there's no need to signal preemption (the agent already anticipates an incomplete command state).
-                    Timer::after(duration.min(Self::MAX_AGENT_DELAY_DURATION))
-                }
-                Some(ShellCommandDelay::OnCompletion) => {
-                    Timer::after(Self::MAX_AGENT_DELAY_DURATION)
-                }
-                None => Timer::after(Self::MAX_WAIT_DURATION),
-            }
-            .fuse();
-
             pin!(block_metadata_received_rx);
             pin!(force_refresh_rx);
 
-            let wake_reason = select! {
-                val = block_metadata_received_rx => match val {
-                    Ok(_) => WakeReason::BlockFinished,
-                    Err(_) => return ActionResult::Cancelled,
-                },
-                val = force_refresh_rx => match val {
-                    // User asked the agent to check now; fall through to the snapshot
-                    // code path below. Treated as a preemption (snapshot arrives before
-                    // the agent's own timer would have fired).
-                    Ok(_) => WakeReason::ForceRefresh,
-                    // Sender was dropped (e.g. because the executor is being torn down).
-                    Err(_) => return ActionResult::Cancelled,
-                },
-                _ = timeout => WakeReason::Timeout,
+            let wake_reason = if let Some(timeout_duration) = wait_policy.timeout_duration() {
+                let mut timeout = Timer::after(timeout_duration).fuse();
+                select! {
+                    val = block_metadata_received_rx => match val {
+                        Ok(_) => WakeReason::BlockFinished,
+                        Err(_) => return ActionResult::Cancelled,
+                    },
+                    val = force_refresh_rx => match val {
+                        // User asked the agent to check now; fall through to the snapshot
+                        // code path below. Treated as a preemption (snapshot arrives before
+                        // the agent's own timer would have fired).
+                        Ok(_) => WakeReason::ForceRefresh,
+                        // Sender was dropped (e.g. because the executor is being torn down).
+                        Err(_) => return ActionResult::Cancelled,
+                    },
+                    _ = timeout => WakeReason::Timeout,
+                }
+            } else {
+                select! {
+                    val = block_metadata_received_rx => match val {
+                        Ok(_) => WakeReason::BlockFinished,
+                        Err(_) => return ActionResult::Cancelled,
+                    },
+                    val = force_refresh_rx => match val {
+                        Ok(_) => WakeReason::ForceRefresh,
+                        Err(_) => return ActionResult::Cancelled,
+                    },
+                }
             };
 
             // Mark the snapshot as preempted if woken early, allowing the server to distinguish
             // true completion from a forced client poll (`ForceRefresh`) or a timeout during `on_completion`.
             let is_preempted = matches!(wake_reason, WakeReason::ForceRefresh)
-                || matches!(
-                    (&wake_reason, &delay),
-                    (WakeReason::Timeout, Some(ShellCommandDelay::OnCompletion))
-                );
+                || (matches!(wake_reason, WakeReason::Timeout)
+                    && wait_policy.timeout_preempts_completion());
 
             // At this point, we've either received block metadata or we've timed out.
             // Check the current state of the block and produce a result accordingly.
@@ -666,6 +668,44 @@ impl BlockSelector {
                 .block_list()
                 .block_for_ai_action_id(requested_command_id),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ShellCommandWaitPolicy {
+    /// Wait until Warp observes the requested command's block complete.
+    UntilCompletion,
+    /// Use the agent/client requested delay semantics, where timeout returns a snapshot.
+    AgentDelay(Option<ShellCommandDelay>),
+}
+
+impl ShellCommandWaitPolicy {
+    fn timeout_duration(&self) -> Option<Duration> {
+        match self {
+            Self::UntilCompletion => None,
+            Self::AgentDelay(Some(ShellCommandDelay::Duration(duration))) => {
+                Some((*duration).min(ShellCommandExecutor::MAX_AGENT_DELAY_DURATION))
+            }
+            Self::AgentDelay(Some(ShellCommandDelay::OnCompletion)) => {
+                Some(ShellCommandExecutor::MAX_AGENT_DELAY_DURATION)
+            }
+            Self::AgentDelay(None) => Some(ShellCommandExecutor::MAX_WAIT_DURATION),
+        }
+    }
+
+    fn timeout_preempts_completion(&self) -> bool {
+        matches!(
+            self,
+            Self::AgentDelay(Some(ShellCommandDelay::OnCompletion))
+        )
+    }
+}
+
+fn wait_policy_for_requested_command(wait_until_completion: bool) -> ShellCommandWaitPolicy {
+    if wait_until_completion {
+        ShellCommandWaitPolicy::UntilCompletion
+    } else {
+        ShellCommandWaitPolicy::AgentDelay(None)
     }
 }
 
@@ -851,6 +891,23 @@ pub enum ShellCommandExecutorEvent {
 
 impl Entity for ShellCommandExecutor {
     type Event = ShellCommandExecutorEvent;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn requested_command_wait_until_completion_uses_completion_wait_policy() {
+        assert_eq!(
+            wait_policy_for_requested_command(true),
+            ShellCommandWaitPolicy::UntilCompletion
+        );
+        assert_eq!(
+            wait_policy_for_requested_command(false),
+            ShellCommandWaitPolicy::AgentDelay(None)
+        );
+    }
 }
 
 /// Result from waiting for control transfer.

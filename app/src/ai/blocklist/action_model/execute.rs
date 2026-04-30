@@ -545,6 +545,13 @@ impl BlocklistAIActionExecutor {
             || can_auto_execute
             || (is_agent_autonomous && action.action.is_request_command_output()));
         if needs_confirmation {
+            log::warn!(
+                "Agent action requires confirmation: action_id={}, can_auto_execute={}, is_user_initiated={}, is_agent_autonomous={}",
+                action.id,
+                can_auto_execute,
+                is_user_initiated,
+                is_agent_autonomous
+            );
             return TryExecuteResult::NotExecuted {
                 action: Box::new(action),
                 reason: NotExecutedReason::NeedsConfirmation,

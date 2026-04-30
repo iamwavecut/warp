@@ -782,7 +782,7 @@ fn test_can_autoexecute_command_allowlist_precedence() {
 }
 
 #[test]
-fn test_can_autoexecute_command_denylist_beats_run_to_completion() {
+fn test_can_autoexecute_command_run_to_completion_beats_denylist() {
     App::test((), |mut app| async move {
         let PermissionsTestState {
             convo_id,
@@ -807,7 +807,7 @@ fn test_can_autoexecute_command_denylist_beats_run_to_completion() {
             history.toggle_autoexecute_override(&convo_id, terminal_view_id, ctx);
         });
 
-        // Despite run-to-completion, denylist must take precedence and deny execution.
+        // Run-to-completion is the explicit auto-approve-all override for this conversation.
         permissions.read(&app, |model, ctx| {
             let result = model.can_autoexecute_command(
                 &convo_id,
@@ -818,11 +818,11 @@ fn test_can_autoexecute_command_denylist_beats_run_to_completion() {
                 Some(terminal_view_id),
                 ctx,
             );
-            assert!(!result.is_allowed());
+            assert!(result.is_allowed());
             assert!(matches!(
                 result,
-                CommandExecutionPermission::Denied(
-                    CommandExecutionPermissionDeniedReason::ExplicitlyDenylisted
+                CommandExecutionPermission::Allowed(
+                    CommandExecutionPermissionAllowedReason::RunToCompletion
                 )
             ));
         });

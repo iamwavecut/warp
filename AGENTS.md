@@ -188,6 +188,11 @@ Authorization: Bearer ***   # only when a key is configured
 
 This path must bypass Warp cloud/protobuf `/ai/multi-agent`.
 
+The direct OpenAI-compatible provider path must wait for `run_shell_command`
+results to complete before returning a tool result. Do not send
+`LongRunningCommandSnapshot` results to OpenAI-compatible providers unless that
+same path also exposes the matching long-running command polling/control tools.
+
 Example settings shape:
 
 ```toml
@@ -394,13 +399,30 @@ target/debug/warp-oss
 ## Build Cache Cleanup
 
 Avoid full `cargo clean` when the current `.app` bundle should be preserved.
+After final successful local builds or bundle builds, clean reproducible Cargo
+cache and debug-output leftovers before ending the work iteration. This repo's
+debug artifacts can grow by tens of gigabytes per build because `incremental`,
+hashed `deps` outputs, and top-level debug binaries keep multiple feature-set
+generations side by side.
 
-Safe cleanup after heavy builds:
+Safe cleanup after successful heavy builds:
 
 ```sh
-rm -rf target/debug/incremental
-rm -f target/debug/deps/warp-* target/debug/deps/*-*.dSYM 2>/dev/null || true
+rm -rf target/debug/incremental \
+  target/debug/deps \
+  target/debug/build \
+  target/debug/examples \
+  target/debug/.fingerprint
+rm -f target/debug/libwarp*.rlib \
+  target/debug/warp \
+  target/debug/warp-oss \
+  target/debug/stable \
+  target/debug/dev 2>/dev/null || true
 ```
+
+This cleanup removes the simple top-level `target/debug/warp-oss` binary. That
+binary is reproducible; preserve and verify the `.app` bundle instead when the
+goal is to keep a launchable local build.
 
 Verify the bundle still exists:
 

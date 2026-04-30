@@ -851,7 +851,16 @@ impl BlocklistAIPermissions {
         // break it up first.
         let (commands, contains_redirection) = decompose_command(&normalized_command, escape_char);
 
-        // The denylist takes precedence over all other conditions.
+        if BlocklistAIHistoryModel::as_ref(ctx)
+            .conversation(conversation_id)
+            .is_some_and(|convo| convo.autoexecute_any_action())
+        {
+            return CommandExecutionPermission::Allowed(
+                CommandExecutionPermissionAllowedReason::RunToCompletion,
+            );
+        }
+
+        // Outside of run-to-completion, the denylist takes precedence over all other conditions.
         let denylist = self.get_execute_commands_denylist(ctx, terminal_view_id);
         if commands
             .iter()
@@ -859,15 +868,6 @@ impl BlocklistAIPermissions {
         {
             return CommandExecutionPermission::Denied(
                 CommandExecutionPermissionDeniedReason::ExplicitlyDenylisted,
-            );
-        }
-
-        if BlocklistAIHistoryModel::as_ref(ctx)
-            .conversation(conversation_id)
-            .is_some_and(|convo| convo.autoexecute_any_action())
-        {
-            return CommandExecutionPermission::Allowed(
-                CommandExecutionPermissionAllowedReason::RunToCompletion,
             );
         }
 

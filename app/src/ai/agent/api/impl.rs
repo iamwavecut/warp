@@ -14,8 +14,18 @@ pub async fn generate_multi_agent_output(
     mut params: RequestParams,
     cancellation_rx: futures::channel::oneshot::Receiver<()>,
 ) -> Result<ResponseStream, ConvertToAPITypeError> {
+    let supported_tools = params
+        .supported_tools_override
+        .take()
+        .unwrap_or_else(|| get_supported_tools(&params));
+
+    if params.should_redact_secrets {
+        redaction::redact_inputs(&mut params.input);
+    }
+
     if let Some(route) = params.custom_provider_route.clone() {
-        let response_stream = super::direct_openai::generate(route, params).await?;
+        let response_stream =
+            super::direct_openai::generate(route, params, supported_tools).await?;
         return Ok(Box::pin(response_stream.take_until(cancellation_rx)));
     }
 
@@ -27,10 +37,6 @@ pub async fn generate_multi_agent_output(
         return Ok(Box::pin(response_stream.take_until(cancellation_rx)));
     }
 
-    let supported_tools = params
-        .supported_tools_override
-        .take()
-        .unwrap_or_else(|| get_supported_tools(&params));
     let supported_cli_agent_tools = get_supported_cli_agent_tools(&params);
     let mut logging_metadata = HashMap::new();
     if let Some(metadata) = params.metadata {
@@ -58,10 +64,6 @@ pub async fn generate_multi_agent_output(
                 )),
             },
         );
-    }
-
-    if params.should_redact_secrets {
-        redaction::redact_inputs(&mut params.input);
     }
 
     let mut api_keys = params.api_keys;

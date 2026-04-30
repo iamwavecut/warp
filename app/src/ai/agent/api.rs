@@ -97,6 +97,7 @@ impl TryFrom<ServerConversationToken>
 #[derive(Debug, Clone)]
 pub struct RequestParams {
     pub input: Vec<AIAgentInput>,
+    pub(crate) request_task_id: Option<String>,
     pub conversation_token: Option<ServerConversationToken>,
     pub forked_from_conversation_token: Option<ServerConversationToken>,
     pub ambient_agent_task_id: Option<AmbientAgentTaskId>,
@@ -269,6 +270,11 @@ impl RequestParams {
                 api_key: secure_storage_key.or(env_key),
             })
         });
+        let request_task_id = request_input
+            .input_messages
+            .keys()
+            .next()
+            .map(ToString::to_string);
         let app_execution_mode = AppExecutionMode::as_ref(app);
         let autonomy_level = if app_execution_mode.is_autonomous() {
             warp_multi_agent_api::AutonomyLevel::Unsupervised
@@ -326,6 +332,7 @@ impl RequestParams {
 
         Self {
             input: request_input.all_inputs().cloned().collect(),
+            request_task_id,
             conversation_token: conversation.server_conversation_token,
             forked_from_conversation_token: conversation.forked_from_conversation_token,
             ambient_agent_task_id: conversation.ambient_agent_task_id,
