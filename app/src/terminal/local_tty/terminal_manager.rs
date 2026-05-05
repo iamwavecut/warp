@@ -109,6 +109,7 @@ use super::recorder;
 use super::shell::ShellStarter;
 use super::{event_loop::EventLoop, shell::ShellStarterSource};
 
+use crate::server::server_api::ServerApiProvider;
 #[cfg(unix)]
 use {
     super::terminal_attributes::TerminalAttributesPoller,
@@ -1282,6 +1283,15 @@ impl TerminalManager {
             });
         }
 
+        // Snapshot the conversation the user has selected at click time so the
+        // share is linked to that run, even if selection drifts before the
+        // server confirms session creation.
+        let selected_conversation_id = terminal_view
+            .as_ref(ctx)
+            .ai_context_model()
+            .as_ref(ctx)
+            .selected_conversation_id(ctx);
+
         let active_prompt = if *SessionSettings::as_ref(ctx).honor_ps1 {
             ActivePrompt::PS1
         } else {
@@ -1469,6 +1479,20 @@ impl TerminalManager {
                 // Stream historical agent conversations so viewers have conversation and task context.
                 if FeatureFlag::AgentSharedSessions.is_enabled() {
                     Self::stream_historical_agent_conversations(&terminal_view, &model, ctx);
+                }
+
+                let session_id_for_link = *session_id;
+
+                // Read task_id lazily so we still pick up a server-assigned
+                // task_id that arrived after the user clicked share.
+                let task_id = selected_conversation_id.and_then(|conversation_id| {
+                    BlocklistAIHistoryModel::as_ref(ctx)
+                        .conversation(&conversation_id)
+                        .and_then(|c| c.task_id())
+                });
+
+                if let Some(task_id) = task_id {
+                    let _ = (task_id, session_id_for_link);
                 }
             }
             NetworkEvent::FailedToCreateSharedSession {

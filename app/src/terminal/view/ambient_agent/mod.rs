@@ -88,6 +88,7 @@ pub fn create_cloud_mode_view(
                 AmbientAgentViewModelEvent::EnteredSetupState
                 | AmbientAgentViewModelEvent::EnteredComposingState
                 | AmbientAgentViewModelEvent::DispatchedAgent
+                | AmbientAgentViewModelEvent::FollowupDispatched
                 | AmbientAgentViewModelEvent::ProgressUpdated
                 | AmbientAgentViewModelEvent::EnvironmentSelected
                 | AmbientAgentViewModelEvent::Failed { .. }
@@ -96,6 +97,7 @@ pub fn create_cloud_mode_view(
                 | AmbientAgentViewModelEvent::NeedsGithubAuth
                 | AmbientAgentViewModelEvent::Cancelled
                 | AmbientAgentViewModelEvent::HarnessSelected
+                | AmbientAgentViewModelEvent::HostSelected
                 | AmbientAgentViewModelEvent::HarnessCommandStarted
                 | AmbientAgentViewModelEvent::UpdatedSetupCommandVisibility => {}
             }

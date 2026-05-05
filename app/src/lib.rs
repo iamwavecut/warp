@@ -728,6 +728,9 @@ fn init_common(launch_mode: &LaunchMode, timer: Option<&mut IntervalTimer>) -> R
         timer.mark_interval_end("LOG_FILE_SETUP_COMPLETE");
     }
 
+    #[cfg(windows)]
+    platform::windows::check_redirection_guard();
+
     // Adjust resource limits early, before doing other work, to ensure that
     // any children we spawn (like the terminal server) inherit our adjusted
     // rlimits.
@@ -766,12 +769,18 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
     }
 
     #[cfg_attr(
-        not(all(feature = "release_bundle", any(windows, target_os = "linux"))),
+        not(all(
+            feature = "release_bundle",
+            any(windows, any(target_os = "linux", target_os = "freebsd"))
+        )),
         expect(unused_mut)
     )]
     let mut startup_errors: Vec<anyhow::Error> = Vec::new();
 
-    #[cfg(all(feature = "release_bundle", target_os = "linux"))]
+    #[cfg(all(
+        feature = "release_bundle",
+        any(target_os = "linux", target_os = "freebsd")
+    ))]
     if let LaunchMode::App { .. } = launch_mode {
         match app_services::linux::pass_startup_args_to_existing_instance(
             launch_mode.args().as_ref(),
@@ -829,7 +838,10 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
     // When the SettingsFile feature flag is enabled, public settings live in
     // the TOML-backed store. When disabled, they live in the platform-native
     // store (same backend as private). Use the correct one for pre-app reads.
-    #[cfg_attr(not(any(enable_crash_recovery, target_os = "linux")), expect(unused))]
+    #[cfg_attr(
+        not(any(enable_crash_recovery, any(target_os = "linux", target_os = "freebsd"))),
+        expect(unused)
+    )]
     let prefs_for_public_settings: &dyn warpui_extras::user_preferences::UserPreferences =
         if FeatureFlag::SettingsFile.is_enabled() {
             public_preferences.as_ref()
@@ -878,7 +890,7 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
         app_builder.set_dock_menu_builder(|_| app_menus::dock_menu());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         use crate::settings::ForceX11;
         use warpui::platform::linux::{self, AppBuilderExt};
@@ -952,11 +964,6 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
         ctx.add_singleton_model(move |_ctx| private_preferences);
         let startup_toml_parse_error = startup_toml_parse_error;
 
-        // Tell the settings crate whether the TOML settings file is active.
-        // This must happen after preferences are registered but before settings
-        // are initialized, so the routing logic picks the correct backend.
-        ::settings::set_settings_file_enabled(FeatureFlag::SettingsFile.is_enabled());
-
         #[cfg(enable_crash_recovery)]
         ctx.add_singleton_model(move |_ctx| crash_recovery);
 
@@ -997,7 +1004,7 @@ fn initialize_app(
     cfg_if::cfg_if! {
         if #[cfg(feature = "integration_tests")] {
             warpui_extras::secure_storage::register_noop(&data_domain, ctx);
-        } else if #[cfg(target_os = "linux")] {
+        } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
             warpui_extras::secure_storage::register_with_fallback(&data_domain, warp_core::paths::state_dir(), ctx)
         } else if #[cfg(target_os = "windows")] {
             warpui_extras::secure_storage::register_with_dir(&data_domain, warp_core::paths::state_dir(), ctx)
@@ -1852,8 +1859,9 @@ fn app_callbacks(is_integration_test: bool) -> warpui::platform::AppCallbacks {
             let general_settings = GeneralSettings::as_ref(ctx);
             // On Linux or Windows, if we're about to close the final window, we should quit the app instead.
             // On Mac, we do this conditionally based on a user setting.
-            let quit_on_last_window_closed = cfg!(any(target_os = "linux", windows))
-                || *general_settings.quit_on_last_window_closed;
+            let quit_on_last_window_closed =
+                cfg!(any(target_os = "linux", target_os = "freebsd", windows))
+                    || *general_settings.quit_on_last_window_closed;
             if ctx.window_ids().count() == 1 && quit_on_last_window_closed {
                 log::info!("No windows left, terminating app");
                 ctx.terminate_app(TerminationMode::Cancellable, None);

@@ -349,7 +349,7 @@ nix = { workspace = true, features = [
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 freedesktop-desktop-entry = "0.5.0"
 x11rb.workspace = true
 zbus.workspace = true

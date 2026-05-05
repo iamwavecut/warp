@@ -19,7 +19,10 @@ use crate::terminal::CLIAgent;
 use super::super::terminal::{CommandHandle, TerminalDriver};
 use super::super::{AgentDriver, AgentDriverError};
 use super::json_utils::{read_json_file_or_default, write_json_file};
-use super::{write_temp_file, HarnessRunner, ResumePayload, SavePoint, ThirdPartyHarness};
+use super::{
+    write_temp_file, HarnessCleanupDisposition, HarnessRunner, ResumePayload, SavePoint,
+    ThirdPartyHarness,
+};
 
 pub(crate) struct GeminiHarness;
 
@@ -171,6 +174,14 @@ impl HarnessRunner for GeminiHarnessRunner {
             GeminiRunnerState::Running => {}
         }
 
+        Ok(())
+    }
+
+    async fn cleanup(
+        &self,
+        _cleanup_disposition: HarnessCleanupDisposition,
+        _foreground: &ModelSpawner<AgentDriver>,
+    ) -> Result<()> {
         Ok(())
     }
 }

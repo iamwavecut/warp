@@ -413,6 +413,24 @@ fn build_server_side_task(
     Ok((config, task))
 }
 
+fn reconcile_task_harness(
+    task_id: &str,
+    selected_harness: &mut Harness,
+    task_harness: Harness,
+) -> Result<HarnessKind, AgentDriverError> {
+    if *selected_harness == Harness::Oz {
+        *selected_harness = task_harness;
+    } else if task_harness != *selected_harness {
+        return Err(AgentDriverError::TaskHarnessMismatch {
+            task_id: task_id.to_string(),
+            expected: task_harness.to_string(),
+            got: selected_harness.to_string(),
+        });
+    }
+
+    harness_kind(*selected_harness)
+}
+
 /// Resolve a `Prompt` to a plain string.
 fn resolve_prompt(prompt: &Prompt, ctx: &AppContext) -> Result<String, AgentDriverError> {
     match prompt {
@@ -517,8 +535,8 @@ impl AgentDriverRunner {
             // Pull relevant variables out of args before moving it into the closure.
             let share_requests = args.share.share.clone();
             let bedrock_inference_role = args.bedrock_inference_role.clone();
+            let has_task_id = args.task_id.is_some();
             let args_harness = args.harness;
-
             // `--conversation` path (user-invoked local resume): validate before any task side
             // effects so mismatches fail fast. The `--task-id` path derives its conversation id
             // from the server-side task metadata inside `build_driver_options_and_task`. When both
@@ -735,6 +753,9 @@ impl AgentDriverRunner {
                     cloud_providers: Vec::new(),
                     environment: None,
                     selected_harness: args.harness,
+                    snapshot_disabled: None,
+                    snapshot_upload_timeout: None,
+                    snapshot_script_timeout: None,
                 };
 
                 Ok((merged_config, task, driver_options))
@@ -778,7 +799,6 @@ impl AgentDriverRunner {
             .await?;
             None
         };
-
         // Resolve environment and cloud providers.
         Self::resolve_environment(foreground, environment_id, &mut driver_options).await?;
 
@@ -986,13 +1006,11 @@ impl AgentDriverRunner {
         // task is linked to an existing conversation, since task harness and conversation harness
         // always match (the task spawned the conversation).
         if let Some(task_harness) = task_harness {
-            if task_harness != driver_options.selected_harness {
-                return Err(AgentDriverError::TaskHarnessMismatch {
-                    task_id: task_id_str,
-                    expected: task_harness.to_string(),
-                    got: driver_options.selected_harness.to_string(),
-                });
-            }
+            task.harness = reconcile_task_harness(
+                &task_id_str,
+                &mut driver_options.selected_harness,
+                task_harness,
+            )?;
         }
 
         // Set the task ID on the ServerApi so it's sent with all subsequent requests.
@@ -1064,7 +1082,6 @@ impl AgentDriverRunner {
                         "Failed to convert conversation data to AIConversation".into(),
                     )
                 })?;
-
                 Ok(Some(driver::ResumeOptions::Oz(Box::new(
                     ConversationRestorationInNewPaneType::Historical {
                         conversation,
@@ -1076,9 +1093,19 @@ impl AgentDriverRunner {
             HarnessKind::ThirdParty(h) => {
                 let resume_conversation_id = AIConversationId::try_from(conversation_id.clone())
                     .map_err(|err| AgentDriverError::ConversationLoadFailed(format!("{err:#}")))?;
-                Ok(h.fetch_resume_payload(&resume_conversation_id)
-                    .await?
-                    .map(|payload| driver::ResumeOptions::ThirdParty(Box::new(payload))))
+                let harness_support_client = foreground
+                    .spawn(|_, ctx| {
+                        let client: Arc<
+                            dyn crate::server::server_api::harness_support::HarnessSupportClient,
+                        > = ServerApiProvider::handle(ctx).as_ref(ctx).get();
+                        client
+                    })
+                    .await?;
+                Ok(
+                    h.fetch_resume_payload(&resume_conversation_id, harness_support_client)
+                        .await?
+                        .map(|payload| driver::ResumeOptions::ThirdParty(Box::new(payload))),
+                )
             }
             HarnessKind::Unsupported(harness) => Err(AgentDriverError::HarnessSetupFailed {
                 harness: harness.to_string(),

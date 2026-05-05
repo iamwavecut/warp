@@ -14,6 +14,7 @@ use std::{
     time::Duration,
 };
 
+use crate::ai::blocklist::task_status_sync_model::TaskStatusSyncModel;
 use crate::ai::document::ai_document_model::{AIDocumentModel, AIDocumentModelEvent};
 use crate::ai::llms::{LLMId, LLMPreferences};
 use crate::ai::mcp::MCPServerState;
@@ -21,7 +22,8 @@ use crate::ai::skills::{SkillManager, SkillWatcher};
 use crate::ai::{
     agent::conversation::AIConversationId,
     agent_sdk::driver::harness::{
-        task_env_vars, HarnessKind, HarnessRunner, ResumePayload, SavePoint, ThirdPartyHarness,
+        task_env_vars, HarnessCleanupDisposition, HarnessKind, HarnessRunner, ResumePayload,
+        SavePoint, ThirdPartyHarness,
     },
 };
 use crate::terminal::cli_agent_sessions::plugin_manager::{
@@ -33,15 +35,19 @@ use crate::terminal::cli_agent_sessions::{
 use crate::{
     ai::{
         agent::{
-            AIAgentExchange, AIAgentInput, AIAgentOutput, CancellationReason, RenderableAIError,
+            AIAgentActionResultType, AIAgentExchange, AIAgentInput, AIAgentOutput,
+            CancellationReason, RenderableAIError, RequestFileEditsResult,
         },
         ambient_agents::{
             conversation_output_status_from_conversation, AmbientAgentTaskId,
             AmbientConversationStatus,
         },
         blocklist::{
-            agent_view::AgentViewEntryOrigin, BlocklistAIHistoryEvent, BlocklistAIHistoryModel,
-            BlocklistAIPermissions,
+            agent_view::AgentViewEntryOrigin,
+            orchestration_event_streamer::{
+                register_agent_event_consumer, unregister_agent_event_consumer,
+            },
+            BlocklistAIHistoryEvent, BlocklistAIHistoryModel, BlocklistAIPermissions,
         },
         cloud_environments::{AmbientAgentEnvironment, CloudAmbientAgentEnvironment},
         execution_profiles::profiles::AIExecutionProfilesModel,
@@ -56,7 +62,13 @@ use crate::{
     cloud_object::CloudObject,
     server::{
         ids::{ServerId, SyncId},
-        server_api::ServerApiProvider,
+        server_api::{
+            ai::AIClient,
+            harness_support::{
+                HarnessSupportClient, ResolvePromptAttachedSkill, ResolvePromptRequest,
+            },
+            ServerApiProvider,
+        },
     },
     terminal::view::ConversationRestorationInNewPaneType,
 };
@@ -82,8 +94,10 @@ use warpui::{
 pub(crate) mod attachments;
 pub(crate) mod cloud_provider;
 pub(crate) mod environment;
+mod error_classification;
 pub(crate) mod harness;
 pub(super) mod output;
+mod snapshot;
 pub(crate) mod terminal;
 
 use environment::PrepareEnvironmentError;
@@ -220,6 +234,12 @@ pub struct AgentDriverOptions {
     pub environment: Option<AmbientAgentEnvironment>,
     /// Selected execution harness for this run.
     pub selected_harness: Harness,
+    /// Whether end-of-run snapshot upload is disabled.
+    pub snapshot_disabled: Option<bool>,
+    /// End-of-run snapshot upload timeout override.
+    pub snapshot_upload_timeout: Option<Duration>,
+    /// Declarations script timeout override.
+    pub snapshot_script_timeout: Option<Duration>,
 }
 
 /// `AgentDriver` is a model for driving an ambient Warp agent to completion.
@@ -252,16 +272,27 @@ pub struct AgentDriver {
     // The conversation ID to continue (if provided).
     restored_conversation_id: Option<AIConversationId>,
 
+    /// If set, a third-party-harness conversation to resume. Consumed when
+    /// preparing the harness runner and cleared afterward.
+    resume_payload: Option<ResumePayload>,
+
     /// Cloud providers set up within this driver session.
     cloud_providers: Vec<Box<dyn cloud_provider::CloudProvider>>,
 
     /// Resolved environment configuration.
     environment: Option<AmbientAgentEnvironment>,
 
-    /// If set, a third-party-harness conversation to resume. Consumed by `prepare_harness`
-    /// when building the runner and taken back to `None` after use so subsequent runs start
-    /// fresh.
-    resume_payload: Option<ResumePayload>,
+    // End-of-run snapshot upload controls.
+    snapshot_disabled: bool,
+    snapshot_upload_timeout: Duration,
+    snapshot_script_timeout: Duration,
+
+    /// Conversation ID this driver is running.
+    run_conversation_id: Option<AIConversationId>,
+    /// Parent agent run ID for child driver-hosted flows.
+    parent_run_id: Option<String>,
+    /// Snapshot declarations writer.
+    snapshot_file_writer: Option<snapshot::DeclarationsWriterHandle>,
 }
 
 pub(crate) enum SDKConversationOutputStatus {
@@ -452,6 +483,9 @@ impl AgentDriver {
             cloud_providers,
             environment,
             selected_harness,
+            snapshot_disabled,
+            snapshot_upload_timeout,
+            snapshot_script_timeout,
         } = options;
 
         // Split the unified resume option into the two internal slots that the rest of
@@ -564,6 +598,9 @@ impl AgentDriver {
 
         // Inject cloud provider env vars.
         cloud_provider::collect_env_vars(&cloud_providers, &mut env_vars)?;
+        // Clone before consuming for env vars; the field on `Self` is
+        // also needed at register time.
+        let parent_run_id_for_self = parent_run_id.clone();
         env_vars.extend(task_env_vars(
             task_id.as_ref(),
             parent_run_id.as_deref(),
@@ -592,6 +629,32 @@ impl AgentDriver {
             me.handle_terminal_driver_event(event, ctx);
         });
 
+        let mut run_conversation_id: Option<AIConversationId> = None;
+
+        // For a resumed conversation the ID is known up front; register
+        // immediately so the streamer can satisfy the parent gate as soon
+        // as the first child is registered.
+        if let Some(conv_id) = restored_conversation_id {
+            stamp_parent_agent_id_if_some(conv_id, parent_run_id_for_self.as_deref(), ctx);
+            register_agent_event_consumer(conv_id, ctx.model_id(), ctx);
+            run_conversation_id = Some(conv_id);
+        }
+
+        // Spawn the async declarations writer only when the snapshot pipeline will actually
+        // read what it produces: feature enabled, cloud task run, and --no-snapshot not set.
+        let snapshot_disabled_value = snapshot_disabled.unwrap_or(false);
+        let snapshot_file_writer = match task_id {
+            Some(id) if FeatureFlag::OzHandoff.is_enabled() && !snapshot_disabled_value => {
+                let background = ctx.background_executor();
+                Some(snapshot::DeclarationsWriterHandle::new(
+                    id,
+                    working_dir.clone(),
+                    &background,
+                ))
+            }
+            _ => None,
+        };
+
         Ok(Self {
             terminal_driver,
             working_dir,
@@ -601,10 +664,27 @@ impl AgentDriver {
             harness: None,
             idle_on_complete,
             restored_conversation_id,
+            resume_payload,
             cloud_providers,
             environment,
-            resume_payload,
+            snapshot_disabled: snapshot_disabled_value,
+            snapshot_upload_timeout: snapshot_upload_timeout
+                .unwrap_or(snapshot::DEFAULT_SNAPSHOT_UPLOAD_TIMEOUT),
+            snapshot_script_timeout: snapshot_script_timeout
+                .unwrap_or(snapshot::DEFAULT_DECLARATIONS_SCRIPT_TIMEOUT),
+            run_conversation_id,
+            parent_run_id: parent_run_id_for_self,
+            snapshot_file_writer,
         })
+    }
+
+    /// Pair to the registration in `new` / `execute_run`. No-op when
+    /// nothing was registered.
+    fn unregister_streamer_consumer(&self, ctx: &mut ModelContext<Self>) {
+        let Some(conversation_id) = self.run_conversation_id else {
+            return;
+        };
+        unregister_agent_event_consumer(conversation_id, ctx.model_id(), ctx);
     }
 
     pub fn set_output_format(&mut self, output_format: OutputFormat) {
@@ -1453,11 +1533,6 @@ impl AgentDriver {
             .await
             .map_err(|_| AgentDriverError::InvalidRuntimeState)?;
         harness.prepare_environment_config(&working_dir, system_prompt.as_deref(), &secrets)?;
-
-        // Pull the resume payload off the driver so the harness runner can rehydrate any
-        // existing session/conversation state before launching its CLI. The payload variant
-        // is harness-specific; harnesses match on their own [`ResumePayload`] variant and
-        // ignore others.
         let resume = foreground
             .spawn(|me, _| me.resume_payload.take())
             .await
@@ -1521,14 +1596,31 @@ impl AgentDriver {
 
         // Final save after the command finishes.
         log::debug!("Triggering final save of harness conversation data");
-        report_if_error!(runner
+        let final_save_succeeded = match runner
             .save_conversation(SavePoint::Final, foreground)
             .await
-            .context("Failed to save harness conversation (final)"));
-        report_if_error!(runner
-            .cleanup(foreground)
+            .context("Failed to save harness conversation (final)")
+        {
+            Ok(()) => true,
+            Err(err) => {
+                report_error!(err);
+                false
+            }
+        };
+        let cleanup_disposition = if final_save_succeeded
+            && matches!(command_result.as_ref(), Ok(exit_code) if exit_code.was_successful())
+        {
+            HarnessCleanupDisposition::PreserveResumptionStateIfSupported
+        } else {
+            HarnessCleanupDisposition::DropResumptionState
+        };
+        if let Err(err) = runner
+            .cleanup(cleanup_disposition, foreground)
             .await
-            .context("Failed to clean up harness runtime state"));
+            .context("Failed to clean up harness runtime state")
+        {
+            report_error!(err);
+        }
 
         let exit_code = command_result?;
         log::debug!("Agent harness exited with status {exit_code}");
@@ -1607,6 +1699,25 @@ impl AgentDriver {
                 return;
             }
 
+            // Fresh runs learn their conversation_id via
+            // `ConversationServerTokenAssigned`; resumed runs already
+            // registered in `new` (and so skip this branch).
+            if me.run_conversation_id.is_none() {
+                if let BlocklistAIHistoryEvent::ConversationServerTokenAssigned {
+                    conversation_id,
+                    ..
+                } = event
+                {
+                    me.run_conversation_id = Some(*conversation_id);
+                    stamp_parent_agent_id_if_some(
+                        *conversation_id,
+                        me.parent_run_id.as_deref(),
+                        ctx,
+                    );
+                    register_agent_event_consumer(*conversation_id, ctx.model_id(), ctx);
+                }
+            }
+
             match event {
                 BlocklistAIHistoryEvent::UpdatedTodoList { .. } => {
                     // TODO: Log TODO list updates.
@@ -1632,6 +1743,26 @@ impl AgentDriver {
                     report_if_error!(me
                         .write_exchange_inputs(exchange)
                         .context("Failed to write exchange inputs"));
+
+                    // Forward any successful file-edit paths from this exchange's inputs to the
+                    // snapshot declarations writer so the end-of-run upload covers files written
+                    // outside any declared repo.
+                    if let Some(writer) = me.snapshot_file_writer.as_ref() {
+                        let mut paths = Vec::new();
+                        for input in &exchange.input {
+                            if let AIAgentInput::ActionResult { result, .. } = input {
+                                if let AIAgentActionResultType::RequestFileEdits(
+                                    RequestFileEditsResult::Success { updated_files, .. },
+                                ) = &result.result
+                                {
+                                    for updated in updated_files {
+                                        paths.push(updated.file_context.file_name.clone().into());
+                                    }
+                                }
+                            }
+                        }
+                        writer.append(paths);
+                    }
 
                     // Reset the idle timer only if we've already scheduled one.
                     // This handles the case where a follow-up query creates new exchanges after
@@ -1762,6 +1893,7 @@ impl AgentDriver {
                 | BlocklistAIHistoryEvent::ClearedActiveConversation { .. }
                 | BlocklistAIHistoryEvent::UpdatedConversationArtifacts { .. }
                 | BlocklistAIHistoryEvent::ConversationServerTokenAssigned { .. } => (),
+            BlocklistAIHistoryEvent::NewConversationRequestComplete { .. } => (),
             }
         });
 
@@ -2058,6 +2190,13 @@ impl AgentDriver {
             }
         }
     }
+}
+
+fn stamp_parent_agent_id_if_some(
+    _conversation_id: AIConversationId,
+    _parent_run_id: Option<&str>,
+    _ctx: &mut ModelContext<AgentDriver>,
+) {
 }
 
 impl Entity for AgentDriver {

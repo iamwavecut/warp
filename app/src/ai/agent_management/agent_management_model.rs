@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use warp_core::features::FeatureFlag;
-use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity, WindowId};
+use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity, ViewHandle, WindowId};
 
 use crate::settings::AISettings;
 
@@ -13,10 +13,11 @@ use crate::ai::agent_management::notifications::{
 };
 use crate::ai::artifacts::Artifact;
 use crate::ai::blocklist::BlocklistAIHistoryEvent;
+use crate::ai::blocklist::ConversationStatusUpdate;
 use crate::terminal::cli_agent_sessions::{
     CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
-use crate::terminal::CLIAgent;
+use crate::terminal::{CLIAgent, TerminalView};
 use crate::workspace::util::is_terminal_view_in_same_tab;
 use crate::workspace::{Workspace, WorkspaceRegistry};
 use crate::BlocklistAIHistoryModel;
@@ -163,14 +164,19 @@ impl AgentNotificationsModel {
                         CLIAgent::Codex => "Notification from Codex",
                         _ => "Task completed.",
                     };
+                    let metadata = TerminalViewMetadata::lookup(*terminal_view_id, ctx);
                     self.add_notification(
                         title,
                         message.to_owned(),
                         NotificationCategory::Complete,
-                        NotificationSourceAgent::CLI(*agent),
+                        NotificationSourceAgent::CLI {
+                            agent: *agent,
+                            is_ambient: metadata.is_ambient,
+                        },
                         NotificationOrigin::CLISession(*terminal_view_id),
                         *terminal_view_id,
                         vec![],
+                        metadata.branch,
                         ctx,
                     );
                 }
@@ -178,16 +184,21 @@ impl AgentNotificationsModel {
                     let title = session_context
                         .display_title()
                         .unwrap_or_else(|| format!("{} needs attention", agent.display_name()));
+                    let metadata = TerminalViewMetadata::lookup(*terminal_view_id, ctx);
                     self.add_notification(
                         title,
                         message
                             .clone()
                             .unwrap_or_else(|| "Waiting for input.".to_owned()),
                         NotificationCategory::Request,
-                        NotificationSourceAgent::CLI(*agent),
+                        NotificationSourceAgent::CLI {
+                            agent: *agent,
+                            is_ambient: metadata.is_ambient,
+                        },
                         NotificationOrigin::CLISession(*terminal_view_id),
                         *terminal_view_id,
                         vec![],
+                        metadata.branch,
                         ctx,
                     );
                 }
@@ -238,7 +249,8 @@ impl AgentNotificationsModel {
             terminal_view_id,
             conversation_id,
             // We shouldn't trigger toasts when restoring conversations on startup.
-            is_restored: false,
+            update: ConversationStatusUpdate::Changed { .. },
+            ..
         } = event
         else {
             return;
@@ -308,6 +320,10 @@ impl AgentNotificationsModel {
         }
 
         let title = latest_query.unwrap_or_else(|| "Agent task".to_owned());
+        let metadata = TerminalViewMetadata::lookup(terminal_view_id, ctx);
+        let oz_agent = NotificationSourceAgent::Oz {
+            is_ambient: metadata.is_ambient,
+        };
 
         match status {
             // When the agent resumes its work, clear stale notifications.
@@ -320,10 +336,11 @@ impl AgentNotificationsModel {
                     title,
                     "Task completed.".to_owned(),
                     NotificationCategory::Complete,
-                    NotificationSourceAgent::Oz,
+                    oz_agent,
                     origin,
                     terminal_view_id,
                     artifacts,
+                    metadata.branch,
                     ctx,
                 );
             }
@@ -333,10 +350,11 @@ impl AgentNotificationsModel {
                     title,
                     "Task was cancelled.".to_owned(),
                     NotificationCategory::Complete,
-                    NotificationSourceAgent::Oz,
+                    oz_agent,
                     origin,
                     terminal_view_id,
                     artifacts,
+                    metadata.branch,
                     ctx,
                 );
             }
@@ -345,10 +363,11 @@ impl AgentNotificationsModel {
                     title,
                     blocked_action.clone(),
                     NotificationCategory::Request,
-                    NotificationSourceAgent::Oz,
+                    oz_agent,
                     origin,
                     terminal_view_id,
                     vec![],
+                    metadata.branch,
                     ctx,
                 );
             }
@@ -358,10 +377,11 @@ impl AgentNotificationsModel {
                     title,
                     "Something went wrong.".to_owned(),
                     NotificationCategory::Error,
-                    NotificationSourceAgent::Oz,
+                    oz_agent,
                     origin,
                     terminal_view_id,
                     artifacts,
+                    metadata.branch,
                     ctx,
                 );
             }
@@ -399,6 +419,7 @@ impl AgentNotificationsModel {
         origin: NotificationOrigin,
         terminal_view_id: EntityId,
         artifacts: Vec<Artifact>,
+        branch: Option<String>,
         ctx: &mut ModelContext<Self>,
     ) {
         if !*AISettings::as_ref(ctx).show_agent_notifications {
@@ -406,7 +427,6 @@ impl AgentNotificationsModel {
         }
 
         let is_visible = is_terminal_view_visible(terminal_view_id, ctx);
-        let branch = resolve_git_branch_for_terminal_view(terminal_view_id, ctx);
         let item = NotificationItem::new(
             title,
             message,
@@ -494,17 +514,41 @@ fn window_and_tab_idx_id_for_conversation(
         })
 }
 
-fn resolve_git_branch_for_terminal_view(
+/// Per-notification metadata derived from a single [`TerminalView`] lookup. Both fields
+/// are read on the same emit path, so we resolve the view once and pass the projection
+/// down rather than walking the workspace tree for each.
+struct TerminalViewMetadata {
+    is_ambient: bool,
+    branch: Option<String>,
+}
+
+impl TerminalViewMetadata {
+    fn lookup(terminal_view_id: EntityId, app: &AppContext) -> Self {
+        let Some(terminal_view) = find_terminal_view_by_id(terminal_view_id, app) else {
+            return Self {
+                is_ambient: false,
+                branch: None,
+            };
+        };
+        let view = terminal_view.as_ref(app);
+        Self {
+            is_ambient: view.is_ambient_agent_session(app),
+            branch: view.current_git_branch(app),
+        }
+    }
+}
+
+fn find_terminal_view_by_id(
     terminal_view_id: EntityId,
     app: &AppContext,
-) -> Option<String> {
+) -> Option<ViewHandle<TerminalView>> {
     for (_, workspace_handle) in WorkspaceRegistry::as_ref(app).all_workspaces(app) {
         for pane_group in workspace_handle.as_ref(app).tab_views() {
             let pane_group = pane_group.as_ref(app);
             for pane_id in pane_group.terminal_pane_ids() {
                 if let Some(terminal_view) = pane_group.terminal_view_from_pane_id(pane_id, app) {
                     if terminal_view.id() == terminal_view_id {
-                        return terminal_view.as_ref(app).current_git_branch(app);
+                        return Some(terminal_view);
                     }
                 }
             }

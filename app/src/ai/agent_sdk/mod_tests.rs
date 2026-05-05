@@ -1,4 +1,5 @@
 use warp_cli::{
+    agent::Harness,
     artifact::{ArtifactCommand, DownloadArtifactArgs, GetArtifactArgs, UploadArtifactArgs},
     task::{MessageCommand, MessageSendArgs, MessageWatchArgs, TaskCommand},
     CliCommand,

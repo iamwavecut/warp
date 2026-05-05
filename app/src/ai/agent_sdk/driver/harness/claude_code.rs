@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -25,25 +25,31 @@ use super::claude_transcript::{
 };
 use super::json_utils::{read_json_file_or_default, write_json_file};
 use super::{
-    write_temp_file, HarnessRunner, ManagedSecretValue, ResumePayload, SavePoint, ThirdPartyHarness,
+    cli_agent_session_status, write_temp_file, HarnessCleanupDisposition, HarnessRunner,
+    ManagedSecretValue, ResumePayload, SavePoint, ThirdPartyHarness,
 };
 mod parent_bridge;
+mod wake_driver;
 
 #[cfg(test)]
 use super::super::OZ_MESSAGE_LISTENER_STATE_ROOT_ENV;
-use parent_bridge::MessageBridge;
 #[cfg(test)]
 use parent_bridge::{
     acknowledge_parent_bridge_hook_output, ensure_parent_bridge_state_dir,
-    parent_bridge_char_count, parent_bridge_hook_output_ack_file, parent_bridge_hook_output_file,
-    parent_bridge_root, parent_bridge_staged_message_path, parent_bridge_surfaced_message_path,
-    prepare_parent_bridge_hook_output, render_parent_bridge_message_block,
-    stage_parent_bridge_message, MessageBridgeHookOutput, MessageBridgeMessageRecord,
-    MESSAGE_BRIDGE_CONTEXT_PREAMBLE,
+    parent_bridge_char_count, parent_bridge_event_cursor_file, parent_bridge_hook_output_ack_file,
+    parent_bridge_hook_output_file, parent_bridge_root, parent_bridge_staged_message_path,
+    parent_bridge_surfaced_message_path, prepare_parent_bridge_hook_output,
+    read_parent_bridge_event_cursor, render_parent_bridge_message_block,
+    stage_parent_bridge_message, write_parent_bridge_event_cursor, MessageBridgeHookOutput,
+    MessageBridgeMessageRecord, MESSAGE_BRIDGE_CONTEXT_PREAMBLE,
 };
+use parent_bridge::{MessageBridge, MessageBridgeCleanupDisposition};
+#[cfg(test)]
+use shell_words::quote as shell_quote;
+#[cfg(test)]
+use wake_driver::{ClaudeWakeRemoteContext, CLAUDE_WAKE_PROMPT_FILE_NAME};
 
 pub(crate) struct ClaudeHarness;
-
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 impl ThirdPartyHarness for ClaudeHarness {
@@ -84,12 +90,8 @@ impl ThirdPartyHarness for ClaudeHarness {
         terminal_driver: ModelHandle<TerminalDriver>,
         resume: Option<ResumePayload>,
     ) -> Result<Box<dyn HarnessRunner>, AgentDriverError> {
-        // Extract the Claude variant; any other variant is ignored since it belongs to a
-        // different harness. Today there are no other variants, but this keeps the shape
-        // ready for future CLI-specific payloads.
-        let claude_resume = resume.map(|payload| match payload {
-            ResumePayload::Claude(info) => info,
-        });
+        // The ResumePayload shouldn't contain non-Claude information, error if it does.
+        let claude_resume = resume.map(ClaudeResumeInfo::try_from).transpose()?;
         // Claude treats the user-turn message as immediate intent, so the resumption preamble
         // is most reliable when prepended directly to the prompt that gets piped into the CLI.
         let owned_prompt = match resumption_prompt {
@@ -173,7 +175,7 @@ impl ClaudeHarnessRunner {
         let temp_file = write_temp_file("oz_prompt_", prompt)?;
         let prompt_path = temp_file.path().display().to_string();
 
-        let (session_id, preexisting_conversation_id, resuming) = match resume {
+        let (session_id, preexisting_conversation_id) = match resume {
             Some(ClaudeResumeInfo {
                 conversation_id,
                 session_id,
@@ -199,9 +201,9 @@ impl ClaudeHarnessRunner {
                 if let Err(e) = write_session_index_entry(session_id, working_dir, &config_root) {
                     log::warn!("Failed to update Claude sessions-index.json: {e:#}");
                 }
-                (session_id, Some(conversation_id), true)
+                (session_id, Some(conversation_id))
             }
-            None => (Uuid::new_v4(), None, false),
+            None => (Uuid::new_v4(), None),
         };
 
         let temp_system_prompt_file = system_prompt
@@ -220,7 +222,7 @@ impl ClaudeHarnessRunner {
                 &session_id,
                 &prompt_path,
                 system_prompt_path.as_deref(),
-                resuming,
+                preexisting_conversation_id.is_some(),
             ),
             _temp_prompt_file: temp_file,
             _temp_system_prompt_file: temp_system_prompt_file,
@@ -258,9 +260,33 @@ impl ClaudeHarnessRunner {
             .await
     }
 
-    fn cleanup_parent_bridge(&self) -> Result<()> {
+    async fn should_preserve_parent_bridge(
+        &self,
+        cleanup_disposition: HarnessCleanupDisposition,
+        foreground: &ModelSpawner<AgentDriver>,
+    ) -> bool {
+        if !matches!(
+            cleanup_disposition,
+            HarnessCleanupDisposition::PreserveResumptionStateIfSupported
+        ) {
+            return false;
+        }
+
+        !matches!(
+            cli_agent_session_status(&self.terminal_driver, foreground).await,
+            Some(crate::terminal::cli_agent_sessions::CLIAgentSessionStatus::Blocked { .. })
+                | Some(crate::terminal::cli_agent_sessions::CLIAgentSessionStatus::InProgress)
+        )
+    }
+
+    fn cleanup_parent_bridge(&self, preserve_state: bool) -> Result<()> {
         if let Some(parent_bridge) = self.parent_bridge.as_ref() {
-            parent_bridge.cleanup()?;
+            let cleanup_disposition = if preserve_state {
+                MessageBridgeCleanupDisposition::PreserveState
+            } else {
+                MessageBridgeCleanupDisposition::RemoveState
+            };
+            parent_bridge.cleanup(cleanup_disposition)?;
         }
         Ok(())
     }
@@ -291,7 +317,7 @@ impl HarnessRunner for ClaudeHarnessRunner {
         {
             Ok(command_handle) => command_handle,
             Err(err) => {
-                self.cleanup_parent_bridge()
+                self.cleanup_parent_bridge(false)
                     .map_err(AgentDriverError::ConfigBuildFailed)?;
                 return Err(err);
             }
@@ -342,9 +368,16 @@ impl HarnessRunner for ClaudeHarnessRunner {
 
         Ok(())
     }
-    async fn cleanup(&self, _foreground: &ModelSpawner<AgentDriver>) -> Result<()> {
+    async fn cleanup(
+        &self,
+        cleanup_disposition: HarnessCleanupDisposition,
+        foreground: &ModelSpawner<AgentDriver>,
+    ) -> Result<()> {
         self.flush_parent_bridge_acks().await?;
-        self.cleanup_parent_bridge()
+        let preserve_state = self
+            .should_preserve_parent_bridge(cleanup_disposition, foreground)
+            .await;
+        self.cleanup_parent_bridge(preserve_state)
     }
 }
 
@@ -352,14 +385,24 @@ fn prepare_claude_environment_config(
     working_dir: &Path,
     secrets: &HashMap<String, ManagedSecretValue>,
 ) -> Result<()> {
-    let home_dir =
-        dirs::home_dir().ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
+    let home_dir = claude_home_dir()?;
     let claude_json_path = home_dir.join(CLAUDE_JSON_FILE_NAME);
     let claude_settings_path = claude_config_dir()?.join(CLAUDE_SETTINGS_FILE_NAME);
     let api_key_suffix = resolve_anthropic_api_key_suffix(secrets);
     prepare_claude_config(&claude_json_path, working_dir, api_key_suffix.as_deref())?;
     prepare_claude_settings(&claude_settings_path)?;
     Ok(())
+}
+
+fn claude_home_dir() -> Result<PathBuf> {
+    #[cfg(test)]
+    if let Some(home_dir) = std::env::var_os("HOME") {
+        if !home_dir.as_os_str().is_empty() {
+            return Ok(PathBuf::from(home_dir));
+        }
+    }
+
+    dirs::home_dir().ok_or_else(|| anyhow::anyhow!("could not determine home directory"))
 }
 
 fn prepare_claude_config(

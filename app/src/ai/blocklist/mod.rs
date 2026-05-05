@@ -8,6 +8,7 @@ mod controller;
 pub(crate) mod orchestration_event_streamer;
 pub(crate) mod orchestration_events;
 mod passive_suggestions;
+pub(crate) mod task_status_sync_model;
 pub(super) use controller::RequestInput;
 pub mod history_model;
 pub mod inline_action;
@@ -29,6 +30,7 @@ pub(crate) use action_model::{
     apply_edits, read_local_file_context, BlocklistAIActionEvent, BlocklistAIActionModel,
     FileReadResult, ReadFileContextResult, RequestFileEditsFormatKind, ShellCommandExecutor,
     ShellCommandExecutorEvent, StartAgentExecutor, StartAgentExecutorEvent, StartAgentRequest,
+    StartAgentRequestId,
 };
 
 #[cfg(any(test, feature = "integration_tests"))]
@@ -45,7 +47,7 @@ pub(crate) use controller::{
 };
 pub(crate) use history_model::{
     AIQueryHistory, AIQueryHistoryOutputStatus, BlocklistAIHistoryEvent, BlocklistAIHistoryModel,
-    FORK_PREFIX, PRE_REWIND_PREFIX,
+    ConversationStatusUpdate, FORK_PREFIX, PRE_REWIND_PREFIX,
 };
 pub(crate) use input_model::{
     BlocklistAIInputEvent, BlocklistAIInputModel, InputConfig, InputType,
