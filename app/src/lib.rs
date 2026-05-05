@@ -1180,7 +1180,9 @@ fn initialize_app(
 
     // Initialize ApiKeyManager after UserWorkspaces so it can subscribe to workspace/settings changes
     ctx.add_singleton_model(|ctx| {
-        #[cfg_attr(target_family = "wasm", allow(unused_mut))]
+        #[cfg(target_os = "macos")]
+        let mut manager = ::ai::api_keys::ApiKeyManager::new_deferred(data_domain.clone(), ctx);
+        #[cfg(not(target_os = "macos"))]
         let mut manager = ::ai::api_keys::ApiKeyManager::new(ctx);
         #[cfg(not(target_family = "wasm"))]
         manager.subscribe_to_settings_changes(ctx);

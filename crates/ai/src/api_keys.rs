@@ -57,15 +57,35 @@ pub struct ApiKeyManager {
     keys: ApiKeys,
     pub(crate) aws_credentials_state: AwsCredentialsState,
     aws_credentials_refresh_strategy: AwsCredentialsRefreshStrategy,
+    startup_keys_mutated: bool,
 }
 
 impl ApiKeyManager {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
         let keys = Self::load_keys_from_secure_storage(ctx);
+        Self::with_keys(keys)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn new_deferred(service_name: String, ctx: &mut ModelContext<Self>) -> Self {
+        let manager = Self::with_keys(ApiKeys::default());
+        ctx.spawn(
+            async move { Self::load_keys_from_named_secure_storage(&service_name) },
+            |manager, keys, ctx| {
+                if manager.apply_startup_loaded_keys(keys) {
+                    ctx.emit(ApiKeyManagerEvent::KeysUpdated);
+                }
+            },
+        );
+        manager
+    }
+
+    fn with_keys(keys: ApiKeys) -> Self {
         Self {
             keys,
             aws_credentials_state: AwsCredentialsState::Missing,
             aws_credentials_refresh_strategy: AwsCredentialsRefreshStrategy::default(),
+            startup_keys_mutated: false,
         }
     }
 
@@ -74,24 +94,28 @@ impl ApiKeyManager {
     }
 
     pub fn set_google_key(&mut self, key: Option<String>, ctx: &mut ModelContext<Self>) {
+        self.startup_keys_mutated = true;
         self.keys.google = key;
         ctx.emit(ApiKeyManagerEvent::KeysUpdated);
         self.write_keys_to_secure_storage(ctx);
     }
 
     pub fn set_anthropic_key(&mut self, key: Option<String>, ctx: &mut ModelContext<Self>) {
+        self.startup_keys_mutated = true;
         self.keys.anthropic = key;
         ctx.emit(ApiKeyManagerEvent::KeysUpdated);
         self.write_keys_to_secure_storage(ctx);
     }
 
     pub fn set_openai_key(&mut self, key: Option<String>, ctx: &mut ModelContext<Self>) {
+        self.startup_keys_mutated = true;
         self.keys.openai = key;
         ctx.emit(ApiKeyManagerEvent::KeysUpdated);
         self.write_keys_to_secure_storage(ctx);
     }
 
     pub fn set_open_router_key(&mut self, key: Option<String>, ctx: &mut ModelContext<Self>) {
+        self.startup_keys_mutated = true;
         self.keys.open_router = key;
         ctx.emit(ApiKeyManagerEvent::KeysUpdated);
         self.write_keys_to_secure_storage(ctx);
@@ -104,6 +128,7 @@ impl ApiKeyManager {
         key: Option<String>,
         ctx: &mut ModelContext<Self>,
     ) {
+        self.startup_keys_mutated = true;
         match key {
             Some(k) => {
                 self.keys.custom.insert(provider_name, k);
@@ -197,7 +222,7 @@ impl ApiKeyManager {
     }
 
     fn load_keys_from_secure_storage(ctx: &mut ModelContext<Self>) -> ApiKeys {
-        let key_json = match ctx.secure_storage().read_value(SECURE_STORAGE_KEY) {
+        Self::deserialize_keys(match ctx.secure_storage().read_value(SECURE_STORAGE_KEY) {
             Ok(json) => json,
             Err(e) => {
                 if !matches!(e, secure_storage::Error::NotFound) {
@@ -205,17 +230,40 @@ impl ApiKeyManager {
                 }
                 return ApiKeys::default();
             }
-        };
+        })
+    }
 
-        let keys = match serde_json::from_str(&key_json) {
+    #[cfg(target_os = "macos")]
+    fn load_keys_from_named_secure_storage(service_name: &str) -> ApiKeys {
+        Self::deserialize_keys(
+            match secure_storage::read_value_for_service(service_name, SECURE_STORAGE_KEY) {
+                Ok(json) => json,
+                Err(e) => {
+                    if !matches!(e, secure_storage::Error::NotFound) {
+                        log::error!("Failed to read API keys from secure storage: {e:#}");
+                    }
+                    return ApiKeys::default();
+                }
+            },
+        )
+    }
+
+    fn deserialize_keys(key_json: String) -> ApiKeys {
+        match serde_json::from_str(&key_json) {
             Ok(keys) => keys,
             Err(e) => {
                 log::error!("Failed to deserialize API keys: {e:#}");
                 ApiKeys::default()
             }
-        };
+        }
+    }
 
-        keys
+    fn apply_startup_loaded_keys(&mut self, keys: ApiKeys) -> bool {
+        if self.startup_keys_mutated || self.keys == keys {
+            return false;
+        }
+        self.keys = keys;
+        true
     }
 
     fn write_keys_to_secure_storage(&mut self, ctx: &mut ModelContext<Self>) {
@@ -240,3 +288,44 @@ impl Entity for ApiKeyManager {
 }
 
 impl SingletonEntity for ApiKeyManager {}
+
+#[cfg(test)]
+mod tests {
+    use super::{ApiKeyManager, ApiKeys, AwsCredentialsRefreshStrategy, AwsCredentialsState};
+
+    fn manager_with(keys: ApiKeys) -> ApiKeyManager {
+        ApiKeyManager {
+            keys,
+            aws_credentials_state: AwsCredentialsState::Missing,
+            aws_credentials_refresh_strategy: AwsCredentialsRefreshStrategy::default(),
+            startup_keys_mutated: false,
+        }
+    }
+
+    #[test]
+    fn apply_startup_loaded_keys_hydrates_empty_manager() {
+        let mut manager = manager_with(ApiKeys::default());
+        let loaded = ApiKeys {
+            openai: Some("secret".to_string()),
+            ..ApiKeys::default()
+        };
+
+        assert!(manager.apply_startup_loaded_keys(loaded.clone()));
+        assert_eq!(manager.keys(), &loaded);
+    }
+
+    #[test]
+    fn apply_startup_loaded_keys_does_not_overwrite_local_edits() {
+        let mut manager = manager_with(ApiKeys {
+            openai: Some("user-value".to_string()),
+            ..ApiKeys::default()
+        });
+        manager.startup_keys_mutated = true;
+
+        assert!(!manager.apply_startup_loaded_keys(ApiKeys {
+            openai: Some("old-startup-value".to_string()),
+            ..ApiKeys::default()
+        }));
+        assert_eq!(manager.keys().openai.as_deref(), Some("user-value"));
+    }
+}

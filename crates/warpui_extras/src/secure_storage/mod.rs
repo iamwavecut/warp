@@ -55,6 +55,13 @@ pub fn register(service_name: &str, ctx: &mut warpui::AppContext) {
     ctx.add_singleton_model(|_| -> Model { Box::new(imp::SecureStorage::new(service_name)) });
 }
 
+/// Reads a value directly from the platform-native secure storage backend
+/// without requiring an application context.
+#[cfg(not(target_os = "windows"))]
+pub fn read_value_for_service(service_name: &str, key: &str) -> Result<String, Error> {
+    imp::SecureStorage::new(service_name).read_value(key)
+}
+
 /// Registers a no-op Secure Storage provider with the application.
 pub fn register_noop(service_name: &str, ctx: &mut warpui::AppContext) {
     ctx.add_singleton_model(|_| -> Model { Box::new(noop::SecureStorage::new(service_name)) });

@@ -59,9 +59,10 @@ define_settings_group!(DebugSettings, settings: [
 
 impl DebugSettings {
     pub fn should_show_memory_stats(&self) -> bool {
-        // We only want to show memory stats in dogfood and not in tests.
+        // This is debug-only footer UI and should never ship in the production bundle.
         *self.show_memory_stats.value()
             && warp_core::channel::ChannelState::enable_debug_features()
+            && !warp_core::channel::ChannelState::is_release_bundle()
             && !cfg!(test)
     }
 }
