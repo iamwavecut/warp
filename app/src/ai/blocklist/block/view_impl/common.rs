@@ -3387,7 +3387,8 @@ pub(super) fn query_prefix_highlight_len(
             | AIAgentInput::ActionResult { .. }
             | AIAgentInput::MessagesReceivedFromAgents { .. }
             | AIAgentInput::EventsFromAgents { .. }
-            | AIAgentInput::PassiveSuggestionResult { .. } => None,
+            | AIAgentInput::PassiveSuggestionResult { .. }
+            | AIAgentInput::OrchestrationConfigUpdate { .. } => None,
         }
     }
 }

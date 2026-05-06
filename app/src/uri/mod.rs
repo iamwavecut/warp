@@ -15,6 +15,7 @@ use crate::server::ids::ServerId;
 use crate::util::openable_file_type::{
     is_file_openable_in_warp, is_markdown_file, is_runnable_shell_script, starts_with_shebang,
 };
+use crate::workspace::util::PaneViewLocator;
 use crate::workspace::{Workspace, WorkspaceAction, WorkspaceRegistry};
 use crate::{cloud_object::ObjectType, workspace::ToastStack};
 use crate::{drive::OpenWarpDriveObjectArgs, view_components::DismissibleToast};
@@ -1297,6 +1298,21 @@ fn safe_url_log_fields(url: &Url) -> String {
         url.host_str().unwrap_or("-"),
         url.path(),
     )
+}
+
+fn decode_uuid_hex(hex: &str) -> Option<Vec<u8>> {
+    let hex = hex.as_bytes();
+    if hex.len() != 32 {
+        return None;
+    }
+
+    hex.chunks_exact(2)
+        .map(|pair| {
+            let high = (pair[0] as char).to_digit(16)?;
+            let low = (pair[1] as char).to_digit(16)?;
+            Some(((high << 4) | low) as u8)
+        })
+        .collect()
 }
 
 #[cfg(test)]

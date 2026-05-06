@@ -103,6 +103,8 @@ use warpui::{
     ViewHandle,
 };
 
+#[cfg(feature = "local_fs")]
+pub(crate) use self::environment_selector::sort_environments_by_recency;
 #[cfg(not(target_family = "wasm"))]
 use warpui::r#async::Timer;
 
@@ -213,6 +215,11 @@ pub struct AgentInputFooter {
 
     // Fast-forward (auto-approve) toggle button shown in the agent view footer.
     fast_forward_button: ViewHandle<ActionButton>,
+
+    // "Hand off to cloud" chip. Visibility is gated on native/local handoff
+    // availability. Per-conversation eligibility is enforced by
+    // `Workspace::start_local_to_cloud_handoff`.
+    handoff_to_cloud_button: ViewHandle<ActionButton>,
 
     // CLI agent voice input state (self-contained, bypasses editor voice flow).
     #[cfg(feature = "voice_input")]
@@ -332,6 +339,20 @@ impl AgentInputFooter {
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(TerminalAction::ToggleAutoexecuteMode);
+                })
+        });
+
+        // "Hand off to cloud" chip. On click dispatches the workspace action that
+        // splits a new cloud-mode pane next to the local pane; that pane handles
+        // the rest of the handoff flow when native/local handoff is available.
+        let handoff_to_cloud_button = ctx.add_typed_action_view(|_ctx| {
+            ActionButton::new("", AgentInputButtonTheme)
+                .with_icon(Icon::UploadCloud)
+                .with_tooltip("Hand off to cloud")
+                .with_size(button_size)
+                .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::OpenHandoffPane);
                 })
         });
 
@@ -536,7 +557,7 @@ impl AgentInputFooter {
         );
 
         let start_remote_control_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("/remote-control", AgentInputButtonTheme)
+            ActionButton::new("/remote-control", RemoteControlButtonTheme)
                 .with_icon(Icon::Phone01)
                 .with_tooltip(START_REMOTE_CONTROL_TOOLTIP)
                 .with_size(cli_button_size)
@@ -547,7 +568,7 @@ impl AgentInputFooter {
         });
 
         let stop_remote_control_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Stop sharing", AgentInputButtonTheme)
+            ActionButton::new("Stop sharing", RemoteControlButtonTheme)
                 .with_icon(Icon::StopFilled)
                 .with_icon_ansi_color(AnsiColorIdentifier::Red)
                 .with_tooltip("Stop sharing")
@@ -756,6 +777,7 @@ impl AgentInputFooter {
             cli_display_chips: vec![],
             display_chip_config,
             fast_forward_button,
+            handoff_to_cloud_button,
             #[cfg(feature = "voice_input")]
             cli_voice_input_state: CLIVoiceInputState::default(),
             #[cfg(feature = "voice_input")]
@@ -1334,7 +1356,8 @@ impl AgentInputFooter {
             AgentToolbarItemKind::ModelSelector
             | AgentToolbarItemKind::NLDToggle
             | AgentToolbarItemKind::ContextWindowUsage
-            | AgentToolbarItemKind::FastForwardToggle => None,
+            | AgentToolbarItemKind::FastForwardToggle
+            | AgentToolbarItemKind::HandoffToCloud => None,
         }
     }
 
@@ -1910,6 +1933,17 @@ impl AgentInputFooter {
             AgentToolbarItemKind::FastForwardToggle => FeatureFlag::FastForwardAutoexecuteButton
                 .is_enabled()
                 .then(|| ChildView::new(&self.fast_forward_button).finish()),
+            AgentToolbarItemKind::HandoffToCloud => {
+                if !AgentToolbarItemKind::handoff_to_cloud_available() {
+                    return None;
+                }
+                // Render the chip when the native/local handoff surface is available.
+                // Per-conversation eligibility (synced server token, non-empty
+                // history) is enforced by `Workspace::start_local_to_cloud_handoff`,
+                // which surfaces an error toast and does not open a pane when
+                // the active conversation isn't handoff-able.
+                Some(ChildView::new(&self.handoff_to_cloud_button).finish())
+            }
             // Handled by the available_in() guard above; included for exhaustiveness.
             AgentToolbarItemKind::FileExplorer
             | AgentToolbarItemKind::RichInput
@@ -2173,6 +2207,9 @@ pub enum AgentInputFooterAction {
     StartRemoteControl,
     StopRemoteControl,
     OpenCodingAgentSettings,
+    /// Open the local-to-cloud handoff pane. Dispatched by the
+    /// "Hand off to cloud" footer chip.
+    OpenHandoffPane,
     ShowContextMenu {
         position: Vector2F,
     },
@@ -2318,6 +2355,13 @@ impl TypedActionView for AgentInputFooter {
                     widget_id: crate::settings_view::cli_agent_settings_widget_id(),
                 });
             }
+            AgentInputFooterAction::OpenHandoffPane => {
+                if AgentToolbarItemKind::handoff_to_cloud_available() {
+                    ctx.emit(AgentInputFooterEvent::OpenHandoffPane {
+                        initial_prompt: None,
+                    });
+                }
+            }
             AgentInputFooterAction::ShowContextMenu { position } => {
                 ctx.emit(AgentInputFooterEvent::ShowContextMenu {
                     position: *position,
@@ -2364,6 +2408,11 @@ pub enum AgentInputFooterEvent {
     PluginInstalled(CLIAgent),
     #[cfg(not(target_family = "wasm"))]
     OpenPluginInstructionsPane(CLIAgent, PluginModalKind),
+    /// Local-to-cloud handoff chip clicked. The terminal `Input` subscriber
+    /// forwards this to `WorkspaceAction::OpenLocalToCloudHandoffPane`.
+    OpenHandoffPane {
+        initial_prompt: Option<String>,
+    },
 }
 
 impl Entity for AgentInputFooter {
@@ -2418,6 +2467,31 @@ impl ActionButtonTheme for AgentInputButtonTheme {
         } else {
             None
         }
+    }
+}
+
+struct RemoteControlButtonTheme;
+
+impl ActionButtonTheme for RemoteControlButtonTheme {
+    fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
+        AgentInputButtonTheme.background(hovered, appearance)
+    }
+
+    fn text_color(
+        &self,
+        hovered: bool,
+        background: Option<Fill>,
+        appearance: &Appearance,
+    ) -> ColorU {
+        AgentInputButtonTheme.text_color(hovered, background, appearance)
+    }
+
+    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
+        AgentInputButtonTheme.border(appearance)
+    }
+
+    fn should_opt_out_of_contrast_adjustment(&self) -> bool {
+        AgentInputButtonTheme.should_opt_out_of_contrast_adjustment()
     }
 }
 

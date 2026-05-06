@@ -894,6 +894,15 @@ fn openai_messages_from_inputs(input: &[AIAgentInput]) -> Vec<ChatMessage> {
                     "Passive suggestion result: {suggestion:?}"
                 )));
             }
+            AIAgentInput::OrchestrationConfigUpdate {
+                plan_id,
+                config,
+                status,
+            } => {
+                messages.push(ChatMessage::user(format!(
+                    "Orchestration config update for plan {plan_id} ({status:?}): {config:?}"
+                )));
+            }
             AIAgentInput::ResumeConversation { .. }
             | AIAgentInput::InitProjectRules { .. }
             | AIAgentInput::CreateEnvironment { .. }

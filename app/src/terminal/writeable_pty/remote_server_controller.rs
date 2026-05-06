@@ -13,6 +13,7 @@ use crate::terminal::warpify::settings::SshExtensionInstallMode;
 use crate::remote_server::manager::{RemoteServerManager, RemoteServerManagerEvent};
 use crate::remote_server::ssh_transport::SshTransport;
 use crate::server::server_api::ServerApiProvider;
+use crate::settings::PrivacySettings;
 use crate::terminal::model::session::{IsLegacySSHSession, SessionInfo};
 use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
 use crate::terminal::warpify::settings::WarpifySettings;
@@ -66,7 +67,6 @@ enum SshInitState {
 pub struct RemoteServerController<T: EventLoopSender> {
     pty_controller: WeakModelHandle<PtyController<T>>,
     model_event_dispatcher: ModelHandle<ModelEventDispatcher>,
-    auth_context: Arc<RemoteServerAuthContext>,
     state: SshInitState,
     /// Whether the binary was installed during this setup flow.
     did_install: bool,
@@ -87,10 +87,6 @@ impl<T: EventLoopSender> RemoteServerController<T> {
         model_event_dispatcher: ModelHandle<ModelEventDispatcher>,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
-        let auth_context = Arc::new(server_api_auth_context(
-            AuthStateProvider::as_ref(ctx).get().clone(),
-            ServerApiProvider::as_ref(ctx).get_auth_client(),
-        ));
         ctx.subscribe_to_model(&model_event_dispatcher, |me, event, ctx| {
             if let ModelEvent::SshInitShell {
                 pending_session_info,
@@ -146,7 +142,6 @@ impl<T: EventLoopSender> RemoteServerController<T> {
         Self {
             pty_controller,
             model_event_dispatcher,
-            auth_context,
             state: SshInitState::Idle,
             did_install: false,
             remote_platform: None,
@@ -195,7 +190,7 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                 self.flush_stashed_bootstrap(old_info, ctx);
             }
         }
-        let transport = SshTransport::new(socket_path, self.auth_context.clone());
+        let transport = SshTransport::new(socket_path, self.build_auth_context(ctx));
         self.did_install = false;
         self.remote_platform = None;
         self.preinstall_check = None;
@@ -484,14 +479,24 @@ impl<T: EventLoopSender> RemoteServerController<T> {
         }
     }
 
+    /// Builds a fresh [`RemoteServerAuthContext`] for the current identity.
+    ///
+    /// This fork keeps crash reporting disabled, so daemon sessions are always
+    /// initialized with `crash_reporting_enabled = false`.
+    fn build_auth_context(&self, ctx: &ModelContext<Self>) -> Arc<RemoteServerAuthContext> {
+        let auth_state = AuthStateProvider::as_ref(ctx).get().clone();
+        let auth_client = ServerApiProvider::as_ref(ctx).get_auth_client();
+        Arc::new(server_api_auth_context(auth_state, auth_client, false))
+    }
+
     fn connect_session_for_current_identity(
         &mut self,
         session_id: SessionId,
         socket_path: PathBuf,
         ctx: &mut ModelContext<Self>,
     ) {
-        let transport = SshTransport::new(socket_path, self.auth_context.clone());
-        let auth_context = self.auth_context.clone();
+        let auth_context = self.build_auth_context(ctx);
+        let transport = SshTransport::new(socket_path, auth_context.clone());
         RemoteServerManager::handle(ctx).update(ctx, |mgr, ctx| {
             mgr.connect_session(session_id, transport, auth_context, ctx);
         });

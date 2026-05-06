@@ -37,6 +37,7 @@ use crate::ai::ambient_agents::{cancel_task_with_toast, AmbientAgentTaskId};
 use crate::ai::artifacts::{Artifact, ArtifactButtonsRow, ArtifactButtonsRowEvent};
 use crate::ai::blocklist::BlocklistAIHistoryModel;
 use crate::ai::cloud_environments::{AmbientAgentEnvironment, CloudAmbientAgentEnvironment};
+use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::harness_display;
 use crate::appearance::Appearance;
 use crate::auth::UserUid;
@@ -906,8 +907,13 @@ impl ConversationDetailsPanel {
         )
     }
 
-    fn render_harness_section(&self, appearance: &Appearance) -> Option<Box<dyn Element>> {
-        if !FeatureFlag::AgentHarness.is_enabled() {
+    fn render_harness_section(
+        &self,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Option<Box<dyn Element>> {
+        let availability = HarnessAvailabilityModel::as_ref(app);
+        if !availability.should_show_harness_selector() {
             return None;
         }
         let harness = self.data.harness?;
@@ -936,7 +942,7 @@ impl ConversationDetailsPanel {
         .finish();
 
         let name = Text::new(
-            harness_display::display_name(harness).to_string(),
+            availability.display_name_for(harness).to_string(),
             appearance.ui_font_family(),
             ui_font_size,
         )
@@ -1561,7 +1567,7 @@ impl View for ConversationDetailsPanel {
             );
         }
 
-        if let Some(harness_section) = self.render_harness_section(appearance) {
+        if let Some(harness_section) = self.render_harness_section(appearance, app) {
             content.add_child(
                 Container::new(harness_section)
                     .with_margin_bottom(FIELD_SPACING)
