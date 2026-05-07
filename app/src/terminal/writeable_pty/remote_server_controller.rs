@@ -134,6 +134,8 @@ impl<T: EventLoopSender> RemoteServerController<T> {
             | RemoteServerManagerEvent::RepoMetadataSnapshot { .. }
             | RemoteServerManagerEvent::RepoMetadataUpdated { .. }
             | RemoteServerManagerEvent::RepoMetadataDirectoryLoaded { .. }
+            | RemoteServerManagerEvent::CodebaseIndexStatusesSnapshot { .. }
+            | RemoteServerManagerEvent::CodebaseIndexStatusUpdated { .. }
             | RemoteServerManagerEvent::SetupStateChanged { .. }
             | RemoteServerManagerEvent::ClientRequestFailed { .. }
             | RemoteServerManagerEvent::ServerMessageDecodingError { .. } => {}

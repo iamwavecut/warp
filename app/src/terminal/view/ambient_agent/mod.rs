@@ -130,7 +130,7 @@ pub fn create_cloud_mode_view(
 pub fn is_cloud_agent_pre_first_exchange(
     ambient_agent_view_model: Option<&ModelHandle<AmbientAgentViewModel>>,
     agent_view_controller: &ModelHandle<AgentViewController>,
-    terminal_model: &Arc<FairMutex<TerminalModel>>,
+    terminal_model: &TerminalModel,
     app: &AppContext,
 ) -> bool {
     if !(FeatureFlag::CloudMode.is_enabled() && FeatureFlag::AgentView.is_enabled()) {
@@ -177,7 +177,6 @@ pub fn is_cloud_agent_pre_first_exchange(
     }
 
     terminal_model
-        .lock()
         .block_list()
         .is_executing_oz_environment_startup_commands()
 }

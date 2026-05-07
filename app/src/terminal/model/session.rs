@@ -173,6 +173,8 @@ impl Sessions {
                 | RemoteServerManagerEvent::RepoMetadataSnapshot { .. }
                 | RemoteServerManagerEvent::RepoMetadataUpdated { .. }
                 | RemoteServerManagerEvent::RepoMetadataDirectoryLoaded { .. }
+                | RemoteServerManagerEvent::CodebaseIndexStatusesSnapshot { .. }
+                | RemoteServerManagerEvent::CodebaseIndexStatusUpdated { .. }
                 | RemoteServerManagerEvent::BinaryCheckComplete { .. }
                 | RemoteServerManagerEvent::BinaryInstallComplete { .. }
                 | RemoteServerManagerEvent::ClientRequestFailed { .. }

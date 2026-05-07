@@ -609,6 +609,7 @@ default = [
     "skip_firebase_anonymous_user",
     "solo_user_byok",
     "settings_file",
+    "directory_tab_colors",
 ]
 # Enable this feature to automatically perform heap profiling.  NOTE: This will
 # substantially slow down program execution.

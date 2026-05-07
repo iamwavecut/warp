@@ -13,12 +13,12 @@ use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::ai::ambient_agents::{AgentSource, AmbientAgentTask, AmbientAgentTaskState};
 use crate::ai::artifacts::Artifact;
 use crate::ai::blocklist::{
-    format_credits, BlocklistAIHistoryEvent, BlocklistAIHistoryModel, ConversationStatusUpdate,
+    BlocklistAIHistoryEvent, BlocklistAIHistoryModel, ConversationStatusUpdate,
 };
 use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
 use crate::ai::conversation_navigation::ConversationNavigationData;
 use crate::auth::auth_manager::{AuthManager, AuthManagerEvent};
-use crate::auth::{AuthStateProvider, UserUid};
+use crate::auth::AuthStateProvider;
 use crate::network::{NetworkStatus, NetworkStatusEvent, NetworkStatusKind};
 use crate::server::cloud_objects::update_manager::{UpdateManager, UpdateManagerEvent};
 use crate::server::ids::{ServerId, SyncId};
@@ -29,14 +29,12 @@ use crate::server::server_api::{ai::TaskListFilter, ServerApiProvider};
 use crate::settings::AISettings;
 use crate::ui_components::icons::Icon;
 use crate::workspace::{RestoreConversationLayout, WorkspaceAction};
-use crate::workspaces::user_profiles::UserProfiles;
 use chrono::{DateTime, Utc};
 use clap::ValueEnum;
 use futures::stream::AbortHandle;
 use instant::Instant;
 use itertools::Itertools;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use session_sharing_protocol::common::SessionId;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use warp_cli::agent::Harness;
@@ -52,7 +50,6 @@ use warpui::{
     SingletonEntity, WindowId,
 };
 
-const SESSION_EXPIRATION_TIME: chrono::Duration = chrono::Duration::weeks(1);
 const POLLING_INTERVAL: Duration = Duration::from_secs(30);
 const INITIAL_TASK_AMOUNT: i32 = 100;
 
@@ -93,7 +90,7 @@ enum TaskFetchState {
 const MAX_PERSONAL_TASKS: usize = 200;
 const MAX_TEAM_TASKS: usize = 300;
 
-#[derive(PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SessionStatus {
     Available,
     Expired,
@@ -239,16 +236,6 @@ impl AgentManagementFilters {
             || self.environment != EnvironmentFilter::default()
             || self.harness != HarnessFilter::default()
     }
-}
-
-/// Preference for which type of link/action to use for a conversation or task.
-enum LinkPreference {
-    /// Use session link/action
-    Session,
-    /// Use conversation link/action
-    Conversation,
-    /// No link/action available
-    None,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -946,6 +933,8 @@ pub enum ConversationUpdateKind {
         prev_filter: StatusFilter,
         new_filter: StatusFilter,
     },
+    /// Conversation metadata or capabilities changed.
+    MetadataChanged,
 }
 
 impl Entity for AgentConversationsModel {
@@ -1457,19 +1446,7 @@ impl AgentConversationsModel {
         }
     }
 
-    fn conversation_ids_shadowed_by_tasks(&self, app: &AppContext) -> HashSet<AIConversationId> {
-        let history_model = BlocklistAIHistoryModel::as_ref(app);
-        self.tasks
-            .values()
-            .filter_map(|task| entry::conversation_id_shadowed_by_task(task, history_model))
-            .collect()
-    }
-
     /// Returns normalized, owned entries for agent management/navigation surfaces.
-    ///
-    /// This projection keeps task, local conversation, and cloud metadata identity together while
-    /// leaving the current `ConversationOrTask` call sites unchanged.
-    #[allow(dead_code)]
     pub fn get_entries(
         &self,
         filters: &AgentManagementFilters,
@@ -1577,6 +1554,22 @@ impl AgentConversationsModel {
         }
     }
 
+    pub fn resolve_copy_link(
+        subject: AgentConversationNavigationSubject,
+        app: &AppContext,
+    ) -> Option<String> {
+        let model = Self::as_ref(app);
+        match subject {
+            AgentConversationNavigationSubject::Entry(id) => model
+                .get_entry_by_id(&id, app)
+                .and_then(|entry| model.resolve_entry_copy_link(&entry)),
+            AgentConversationNavigationSubject::ServerToken(server_token) => model
+                .entry_for_server_token(&server_token, app)
+                .and_then(|entry| model.resolve_entry_copy_link(&entry))
+                .or_else(|| Some(server_token.conversation_link())),
+        }
+    }
+
     fn resolve_entry_open_action(
         &self,
         entry: &AgentConversationEntry,
@@ -1638,8 +1631,9 @@ impl AgentConversationsModel {
                 .conversations
                 .get(&conversation_id)
                 .map(|metadata| &metadata.nav_data);
-            if entry.backing.has_loaded_conversation
+            if !entry.backing.has_cloud_data
                 || entry.backing.has_local_persisted_data
+                || entry.backing.has_loaded_conversation
                 || nav_data.is_some()
             {
                 return Some(WorkspaceAction::RestoreOrNavigateToConversation {
@@ -1660,6 +1654,28 @@ impl AgentConversationsModel {
                 conversation_id: token.clone(),
                 ambient_agent_task_id: entry.identity.ambient_agent_task_id,
             })
+    }
+
+    fn resolve_entry_copy_link(&self, entry: &AgentConversationEntry) -> Option<String> {
+        if let Some(task_id) = entry.identity.ambient_agent_task_id {
+            if let Some(session_link) = self.tasks.get(&task_id).and_then(|task| {
+                task.has_active_execution()
+                    .then(|| {
+                        task.active_run_execution()
+                            .session_link
+                            .map(ToString::to_string)
+                    })
+                    .flatten()
+            }) {
+                return Some(session_link);
+            }
+        }
+
+        entry
+            .identity
+            .server_conversation_token
+            .as_ref()
+            .map(ServerConversationToken::conversation_link)
     }
 
     fn entry_for_server_token(
@@ -1777,87 +1793,16 @@ impl AgentConversationsModel {
             // doesn't change any ConversationNavigationData fields (title comes from
             // UpdateTaskDescription, last_updated uses exchange.start_time which is set at append time).
             | BlocklistAIHistoryEvent::UpdatedStreamingExchange { .. }
-            | BlocklistAIHistoryEvent::ConversationServerTokenAssigned { .. }
             | BlocklistAIHistoryEvent::ConversationOwnershipTransferred { .. }
             | BlocklistAIHistoryEvent::NewConversationRequestComplete { .. }
             | BlocklistAIHistoryEvent::OrchestrationConfigUpdated { .. } => {}
+
+            BlocklistAIHistoryEvent::ConversationServerTokenAssigned { .. } => {
+                ctx.emit(AgentConversationsModelEvent::ConversationUpdated {
+                    kind: ConversationUpdateKind::MetadataChanged,
+                });
+            }
         }
-    }
-
-    /// Returns an iterator with all tasks and conversations with filters applied, sorted with the
-    /// most recently updated items first.
-    pub fn get_tasks_and_conversations(
-        &self,
-        filters: &AgentManagementFilters,
-        app: &AppContext,
-    ) -> impl Iterator<Item = ConversationOrTask<'_>> {
-        let conversation_ids_shadowed_by_tasks = self.conversation_ids_shadowed_by_tasks(app);
-        let owner_creator_filter = move |t: &ConversationOrTask| {
-            t.matches_owner_and_creator(&filters.owners, &filters.creator, app)
-        };
-
-        let status_filter = move |t: &ConversationOrTask| t.matches_status(&filters.status, app);
-
-        let source_filter = move |t: &ConversationOrTask| match &filters.source {
-            SourceFilter::All => true,
-            SourceFilter::Specific(s) => t.source() == Some(s),
-        };
-
-        let now = Utc::now();
-        let created_cutoff = match filters.created_on {
-            CreatedOnFilter::All => None,
-            CreatedOnFilter::Last24Hours => Some(now - chrono::Duration::hours(24)),
-            CreatedOnFilter::Past3Days => Some(now - chrono::Duration::days(3)),
-            CreatedOnFilter::LastWeek => Some(now - chrono::Duration::days(7)),
-        };
-
-        let created_on_filter = move |t: &ConversationOrTask| match created_cutoff {
-            Some(cutoff) => t.created_at() >= cutoff,
-            None => true,
-        };
-
-        let artifact_filter_value = filters.artifact;
-        let artifact_filter =
-            move |t: &ConversationOrTask| t.matches_artifact(&artifact_filter_value, app);
-
-        let environment_filter = move |t: &ConversationOrTask| match &filters.environment {
-            EnvironmentFilter::All => true,
-            EnvironmentFilter::NoEnvironment => t.environment_id().is_none(),
-            EnvironmentFilter::Specific(id) => t.environment_id() == Some(id.as_str()),
-        };
-
-        let harness_filter_value = filters.harness;
-        let harness_filter =
-            move |t: &ConversationOrTask| t.matches_harness(&harness_filter_value, app);
-
-        let tasks_iter = self.tasks.values().map(ConversationOrTask::Task);
-        let conversations_iter = self
-            .conversations
-            .values()
-            .filter(move |conversation| {
-                // Prefer rendering the task row when both representations exist for the same local
-                // run. Task entries preserve task-specific affordances like source, runtime,
-                // session status, and ambient-session open behavior that the conversation row
-                // cannot express.
-                !conversation_ids_shadowed_by_tasks.contains(&conversation.nav_data.id)
-            })
-            .map(ConversationOrTask::Conversation);
-
-        tasks_iter
-            .chain(conversations_iter)
-            .filter(owner_creator_filter)
-            .filter(status_filter)
-            .filter(source_filter)
-            .filter(created_on_filter)
-            .filter(artifact_filter)
-            .filter(environment_filter)
-            .filter(harness_filter)
-            .sorted_by(|a, b| b.last_updated().cmp(&a.last_updated()))
-    }
-
-    /// Get a task by its task ID
-    pub fn get_task(&self, task_id: &AmbientAgentTaskId) -> Option<ConversationOrTask<'_>> {
-        self.tasks.get(task_id).map(ConversationOrTask::Task)
     }
 
     /// Get raw task data by task ID
@@ -1962,16 +1907,6 @@ impl AgentConversationsModel {
         None
     }
 
-    /// Get a conversation by its AIConversationId
-    pub fn get_conversation(
-        &self,
-        conversation_id: &AIConversationId,
-    ) -> Option<ConversationOrTask<'_>> {
-        self.conversations
-            .get(conversation_id)
-            .map(ConversationOrTask::Conversation)
-    }
-
     /// Returns all (name, uid) pairs for creators of tasks in the model.
     ///
     /// We use this function to populate the available creator filter list
@@ -1980,10 +1915,9 @@ impl AgentConversationsModel {
         let mut creators: Vec<(String, String)> = self
             .tasks
             .values()
-            .filter_map(|t| {
-                let wrapper = ConversationOrTask::Task(t);
-                let name = wrapper.creator_name(app)?;
-                let uid = wrapper.creator_uid(app)?;
+            .filter_map(|task| {
+                let name = entry::task_creator_name(task, app)?;
+                let uid = entry::task_creator_uid(task)?;
                 Some((name, uid))
             })
             .collect();

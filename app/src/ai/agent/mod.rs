@@ -2507,6 +2507,7 @@ pub enum AIAgentInput {
 
     SummarizeConversation {
         prompt: Option<String>,
+        context: Arc<[AIAgentContext]>,
     },
 
     /// Invoke a skill. The skill content is passed as instructions to the agent.
@@ -2809,8 +2810,8 @@ impl AIAgentInput {
             | Self::InvokeSkill { context, .. }
             | Self::StartFromAmbientRunPrompt { context, .. }
             | Self::PassiveSuggestionResult { context, .. } => Some(context),
-            Self::SummarizeConversation { .. }
-            | Self::MessagesReceivedFromAgents { .. }
+            Self::SummarizeConversation { context, .. } => Some(context),
+            Self::MessagesReceivedFromAgents { .. }
             | Self::EventsFromAgents { .. }
             | Self::OrchestrationConfigUpdate { .. } => None,
         }
