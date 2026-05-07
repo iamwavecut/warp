@@ -812,7 +812,6 @@ impl View {
                         &pane_group_id,
                     );
                 }
-                send_telemetry_from_ctx!(TelemetryEvent::SelectNavigationPaletteItem, ctx);
             }
             CommandPaletteItemAction::NavigateToConversation {
                 pane_view_locator,

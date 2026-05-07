@@ -13,12 +13,13 @@ use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::ai::ambient_agents::{AgentSource, AmbientAgentTask, AmbientAgentTaskState};
 use crate::ai::artifacts::Artifact;
 use crate::ai::blocklist::{
-    BlocklistAIHistoryEvent, BlocklistAIHistoryModel, ConversationStatusUpdate,
+    format_credits, BlocklistAIHistoryEvent, BlocklistAIHistoryModel, ConversationStatusUpdate,
 };
 use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
 use crate::ai::conversation_navigation::ConversationNavigationData;
 use crate::auth::auth_manager::{AuthManager, AuthManagerEvent};
 use crate::auth::AuthStateProvider;
+use crate::auth::UserUid;
 use crate::network::{NetworkStatus, NetworkStatusEvent, NetworkStatusKind};
 use crate::server::cloud_objects::update_manager::{UpdateManager, UpdateManagerEvent};
 use crate::server::ids::{ServerId, SyncId};
@@ -29,12 +30,14 @@ use crate::server::server_api::{ai::TaskListFilter, ServerApiProvider};
 use crate::settings::AISettings;
 use crate::ui_components::icons::Icon;
 use crate::workspace::{RestoreConversationLayout, WorkspaceAction};
+use crate::workspaces::user_profiles::UserProfiles;
 use chrono::{DateTime, Utc};
 use clap::ValueEnum;
 use futures::stream::AbortHandle;
 use instant::Instant;
 use itertools::Itertools;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use session_sharing_protocol::common::SessionId;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use warp_cli::agent::Harness;
@@ -64,6 +67,14 @@ const TRANSIENT_FETCH_FAILURE_COOLDOWN: Duration = Duration::from_secs(2);
 /// (e.g. an ACL grant) — but we wait long enough that streaming bursts and rapid re-entries
 /// can't cause a flood.
 const PERMANENT_FETCH_FAILURE_COOLDOWN: Duration = Duration::from_secs(60);
+const SESSION_EXPIRATION_TIME: chrono::Duration = chrono::Duration::weeks(1);
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum LinkPreference {
+    Session,
+    Conversation,
+    None,
+}
 
 /// Per-task fetch state for `get_or_async_fetch_task_data`. The three variants are mutually
 /// exclusive: a task id is either being fetched right now, in a short cooldown after a

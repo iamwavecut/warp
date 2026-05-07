@@ -1049,7 +1049,7 @@ impl AgentManagementView {
             AgentDetailsButtonEvent::CopyLink { link } => {
                 match item_id {
                     ManagementCardItemId::Conversation(conversation_id) => {}
-                    ManagementCardItemId::Task(task_id) => {}
+                    ManagementCardItemId::AmbientRun(task_id) => {}
                 }
 
                 ctx.clipboard()
@@ -2087,7 +2087,7 @@ impl TypedActionView for AgentManagementView {
 
                 match item_id {
                     ManagementCardItemId::Conversation(conversation_id) => {}
-                    ManagementCardItemId::Task(task_id) => {}
+                    ManagementCardItemId::AmbientRun(task_id) => {}
                 }
                 ctx.dispatch_typed_action(&action);
             }

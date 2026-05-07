@@ -29,6 +29,7 @@ use warpui::{r#async::SpawnedFutureHandle, ModelContext};
 
 use crate::code_review::diff_size_limits::DiffSize;
 use crate::features::FeatureFlag;
+use crate::throttle::throttle;
 #[cfg(feature = "local_fs")]
 use crate::util::git::get_pr_for_branch;
 use crate::util::git::{
@@ -1470,17 +1471,6 @@ impl DiffStateModel {
         diffs: DiffsWithBaseContent,
         ctx: &mut ModelContext<Self>,
     ) {
-        if Some(diffs.repository_path.as_path()) != self.active_repository_path(ctx).as_deref() {
-            // The current repository is different from the one we fetched state for.
-            // Refetch metadata for this new repository (which will trigger any downstream consumers to
-            // recompute diffs if they so please.
-            self.refresh_diff_metadata_for_current_repo(
-                InvalidationBehavior::All(InvalidationSource::MetadataChange),
-                ctx,
-            );
-            return;
-        }
-
         if let Err(e) = &diffs.changes {}
 
         self.state = InternalDiffState::Loaded((&diffs).into());

@@ -826,7 +826,7 @@ fn openai_messages_from_inputs(input: &[AIAgentInput]) -> Vec<ChatMessage> {
                     context_text(context).as_deref(),
                 )));
             }
-            AIAgentInput::SummarizeConversation { prompt } => {
+            AIAgentInput::SummarizeConversation { prompt, .. } => {
                 messages.push(ChatMessage::user(
                     prompt
                         .clone()
