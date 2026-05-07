@@ -11,6 +11,12 @@ revive the old `local-byok` branch.
 Use paths relative to the repository root in this file. Do not add local
 absolute paths to `AGENTS.md`.
 
+Routine fork maintenance should use the primary clean `master` checkout
+directly. Do not create temporary Codex/automation worktrees or backup branches
+for no-op audits, fast-forward upkeep, or ordinary upstream sync preparation;
+use a short-lived branch only when isolation is explicitly needed to protect
+active local work.
+
 ## Context Maintenance
 
 When the user gives durable repository-specific context, workflow constraints,
