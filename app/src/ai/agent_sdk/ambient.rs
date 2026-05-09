@@ -489,6 +489,7 @@ impl AmbientAgentRunner {
                 referenced_attachments: vec![],
                 conversation_id: None,
                 initial_snapshot_token: None,
+                agent_identity_uid: None,
             };
 
             let should_open = args.open;

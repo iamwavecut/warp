@@ -162,6 +162,7 @@ use crate::auth::auth_override_warning_modal::{
 };
 use crate::auth::auth_state::AuthState;
 use crate::auth::auth_view_modal::{AuthRedirectPayload, AuthView, AuthViewEvent, AuthViewVariant};
+use crate::code::buffer_location::BufferLocation;
 #[cfg(feature = "local_fs")]
 use crate::code::editor_management::CodeManager;
 use crate::code::editor_management::CodeSource;
@@ -3993,8 +3994,11 @@ impl Workspace {
 
                 // Update the pane group with the loaded conversation
                 new_pane_group.update(ctx, |pane_group, ctx| {
-                    pane_group
-                        .load_data_into_conversation_transcript_viewer(cloud_conversation, ctx);
+                    pane_group.load_data_into_conversation_transcript_viewer(
+                        cloud_conversation,
+                        None,
+                        ctx,
+                    );
                 });
 
                 // Open the transcript details panel by default on WASM (unless on mobile)
@@ -7827,7 +7831,10 @@ impl Workspace {
                 |(repo_path, terminal_view): (Option<PathBuf>, WeakViewHandle<TerminalView>)| {
                     let diff_state_model = repo_path.as_ref().and_then(|rp: &PathBuf| {
                         self.working_directories_model.update(ctx, |model, ctx| {
-                            model.get_or_create_diff_state_model(rp.clone(), ctx)
+                            model.get_or_create_diff_state_model(
+                                BufferLocation::Local(rp.clone()),
+                                ctx,
+                            )
                         })
                     })?;
                     Some((repo_path, diff_state_model, terminal_view))
@@ -7872,7 +7879,7 @@ impl Workspace {
         let repo_path = panel_context.repo_path.clone();
         let diff_state_model = repo_path.as_ref().and_then(|rp| {
             self.working_directories_model.update(ctx, |model, ctx| {
-                model.get_or_create_diff_state_model(rp.clone(), ctx)
+                model.get_or_create_diff_state_model(BufferLocation::Local(rp.clone()), ctx)
             })
         });
         let Some(diff_state_model) = diff_state_model else {
@@ -7982,7 +7989,7 @@ impl Workspace {
             |(repo_path, terminal_view): (Option<PathBuf>, WeakViewHandle<TerminalView>)| {
                 let diff_state_model = repo_path.as_ref().and_then(|rp: &PathBuf| {
                     self.working_directories_model.update(ctx, |model, ctx| {
-                        model.get_or_create_diff_state_model(rp.clone(), ctx)
+                        model.get_or_create_diff_state_model(BufferLocation::Local(rp.clone()), ctx)
                     })
                 })?;
                 Some(CodeReviewPaneContext {
@@ -20252,7 +20259,10 @@ impl TypedActionView for Workspace {
                     if let Some((repo_path, terminal_view)) = read_result {
                         let diff_state_model = repo_path.as_ref().and_then(|rp| {
                             self.working_directories_model.update(ctx, |model, ctx| {
-                                model.get_or_create_diff_state_model(rp.clone(), ctx)
+                                model.get_or_create_diff_state_model(
+                                    BufferLocation::Local(rp.clone()),
+                                    ctx,
+                                )
                             })
                         });
                         if let Some(diff_state_model) = diff_state_model {

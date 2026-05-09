@@ -1217,15 +1217,26 @@ impl TerminalModel {
         is_inverted: bool,
         obfuscate_secrets: ObfuscateSecrets,
     ) -> Self {
-        let mut me = Self::new_for_shared_session_viewer_internal(
+        let mut me = Self::new_internal(
+            None,
             sizes,
             colors,
             event_proxy,
             background_executor,
+            false,
+            false,
             show_memory_stats,
             honor_ps1,
             is_inverted,
             obfuscate_secrets,
+            None,
+            // TODO: use the same shell type as the sharer
+            ShellLaunchState::ShellSpawned {
+                available_shell: None,
+                display_name: ShellName::blank(),
+                shell_type: ShellType::Zsh,
+            },
+            SharedSessionStatus::ViewPending,
             true,
         );
         if FeatureFlag::CloudModeSetupV2.is_enabled() {
@@ -1245,7 +1256,6 @@ impl TerminalModel {
         honor_ps1: bool,
         is_inverted: bool,
         obfuscate_secrets: ObfuscateSecrets,
-        is_dummy_cloud_mode_session: bool,
     ) -> Self {
         Self::new_internal(
             None,
@@ -1267,7 +1277,7 @@ impl TerminalModel {
                 shell_type: ShellType::Zsh,
             },
             SharedSessionStatus::ViewPending,
-            is_dummy_cloud_mode_session,
+            false,
         )
     }
 
@@ -1292,7 +1302,6 @@ impl TerminalModel {
             honor_ps1,
             is_inverted,
             obfuscate_secrets,
-            false,
         )
     }
 
@@ -3640,5 +3649,5 @@ pub enum ExitReason {
 }
 
 #[cfg(test)]
-#[path = "terminal_model_test.rs"]
+#[path = "terminal_model_tests.rs"]
 pub(crate) mod tests;

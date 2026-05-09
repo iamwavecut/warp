@@ -726,6 +726,7 @@ fn cloud_mode_dispatched_agent_inserts_queued_user_query() {
                             referenced_attachments: vec![],
                             conversation_id: None,
                             initial_snapshot_token: None,
+                            agent_identity_uid: None,
                         },
                         ctx,
                     );
@@ -4626,6 +4627,7 @@ fn cli_session_status_updates_active_child_conversation() {
                         view.view_id,
                         "Agent 2".to_string(),
                         parent_conversation_id,
+                        None,
                         ctx,
                     )
                 });
@@ -4773,6 +4775,7 @@ fn cli_session_status_updates_single_child_conversation_without_agent_view() {
                         view.view_id,
                         "Agent 2".to_string(),
                         parent_conversation_id,
+                        None,
                         ctx,
                     )
                 });

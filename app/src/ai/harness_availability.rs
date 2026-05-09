@@ -16,10 +16,18 @@ const CACHE_KEY: &str = "AvailableHarnesses";
 
 /// Server-resolved harness availability entry.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct HarnessModelInfo {
+    pub id: String,
+    pub display_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HarnessAvailability {
     pub harness: Harness,
     pub display_name: String,
     pub enabled: bool,
+    #[serde(default)]
+    pub available_models: Vec<HarnessModelInfo>,
 }
 
 /// Default fallback used before the server responds.
@@ -30,6 +38,7 @@ fn default_harnesses() -> Vec<HarnessAvailability> {
         harness: Harness::Oz,
         display_name: "Warp".to_string(),
         enabled: true,
+        available_models: vec![],
     }]
 }
 
@@ -98,6 +107,14 @@ impl HarnessAvailabilityModel {
         self.harnesses
             .iter()
             .any(|h| h.harness == harness && h.enabled)
+    }
+
+    pub fn models_for(&self, harness: Harness) -> Option<&[HarnessModelInfo]> {
+        self.harnesses
+            .iter()
+            .find(|h| h.harness == harness)
+            .map(|h| h.available_models.as_slice())
+            .filter(|models| !models.is_empty())
     }
 
     pub fn refresh(&self, ctx: &mut ModelContext<Self>) {

@@ -74,6 +74,16 @@ impl AuthState {
         }
     }
 
+    #[cfg(test)]
+    pub fn new_logged_out_for_test() -> Self {
+        Self {
+            user: RwLock::new(None),
+            anonymous_id: Uuid::new_v4(),
+            needs_reauth: AtomicBool::new(false),
+            credentials: RwLock::new(None),
+        }
+    }
+
     /// Creates and initializes auth state for the local fork.
     ///
     /// There is no remote account branch in this build: every app session runs
@@ -210,6 +220,16 @@ impl AuthState {
         let credentials = self.credentials.read();
         credentials.as_ref()?.bearer_token().bearer_token()
     }
+
+    pub fn apply_remote_server_auth_context(
+        &self,
+        _auth_token: String,
+        _user_id: String,
+        _user_email: String,
+    ) {
+    }
+
+    pub fn set_remote_server_bearer_token(&self, _auth_token: String) {}
 
     /// Returns the user's display name.
     pub fn username_for_display(&self) -> Option<String> {

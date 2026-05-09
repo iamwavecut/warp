@@ -602,5 +602,5 @@ pub mod regexes {
 }
 
 #[cfg(test)]
-#[path = "secrets_test.rs"]
+#[path = "secrets_tests.rs"]
 mod tests;

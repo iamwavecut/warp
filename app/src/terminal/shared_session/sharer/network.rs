@@ -1388,5 +1388,5 @@ impl Drop for Network {
 }
 
 #[cfg(test)]
-#[path = "network_test.rs"]
+#[path = "network_tests.rs"]
 mod tests;

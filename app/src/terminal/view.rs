@@ -1975,6 +1975,11 @@ pub enum Event {
     RevealChildAgent {
         conversation_id: AIConversationId,
     },
+    /// Emitted when the user clicks a pill in the orchestration pill bar.
+    /// The pane group swaps visibility instead of cloning the conversation.
+    SwapPaneToConversation {
+        conversation_id: AIConversationId,
+    },
     /// Emitted when the user picks "Open in new tab" from a child pill's 3-dot
     /// menu in the orchestration pill bar. Bubbles up through `PaneGroup` to
     /// `Workspace`, which creates a new tab and switches its agent view to
@@ -2719,6 +2724,7 @@ pub struct TerminalView {
     /// child agents. Gated by `FeatureFlag::OrchestrationPillBar`. The view is
     /// always constructed; render-time guards control whether it draws anything.
     orchestration_pill_bar: ViewHandle<OrchestrationPillBar>,
+    is_orchestration_split_off: bool,
     is_using_conversation_for_pane_header_title: bool,
 
     ambient_agent_view_model: Option<ModelHandle<ambient_agent::AmbientAgentViewModel>>,
@@ -4153,6 +4159,7 @@ impl TerminalView {
             agent_view_controller,
             agent_view_back_button,
             orchestration_pill_bar,
+            is_orchestration_split_off: false,
             is_using_conversation_for_pane_header_title: false,
             ambient_agent_view_model,
             conversation_details_panel,
@@ -4242,7 +4249,7 @@ impl TerminalView {
                         me.show_ssh_remote_server_failed_banner(
                             *session_id,
                             SshRemoteServerFailureKind::Launch,
-                            error,
+                            &error.to_string(),
                             ctx,
                         );
                     }
@@ -4281,7 +4288,7 @@ impl TerminalView {
                             me.show_ssh_remote_server_failed_banner(
                                 *session_id,
                                 SshRemoteServerFailureKind::BinaryInstall,
-                                error,
+                                &error.to_string(),
                                 ctx,
                             );
                         }
@@ -4307,7 +4314,7 @@ impl TerminalView {
                             me.show_ssh_remote_server_failed_banner(
                                 *session_id,
                                 SshRemoteServerFailureKind::BinaryCheck,
-                                error,
+                                &error.to_string(),
                                 ctx,
                             );
                         }
@@ -4366,7 +4373,8 @@ impl TerminalView {
                     | RemoteServerManagerEvent::RepoMetadataUpdated { .. }
                     | RemoteServerManagerEvent::RepoMetadataDirectoryLoaded { .. }
                     | RemoteServerManagerEvent::CodebaseIndexStatusesSnapshot { .. }
-                    | RemoteServerManagerEvent::CodebaseIndexStatusUpdated { .. } => {}
+                    | RemoteServerManagerEvent::CodebaseIndexStatusUpdated { .. }
+                    | RemoteServerManagerEvent::BufferUpdated { .. } => {}
                 }
             });
         }
@@ -4775,6 +4783,24 @@ impl TerminalView {
         });
 
         agent_todos_popup
+    }
+
+    pub fn mark_as_orchestration_split_off(&mut self, ctx: &mut ViewContext<Self>) {
+        if !self.is_orchestration_split_off {
+            self.is_orchestration_split_off = true;
+            ctx.notify();
+        }
+    }
+
+    pub fn clear_orchestration_split_off(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.is_orchestration_split_off {
+            self.is_orchestration_split_off = false;
+            ctx.notify();
+        }
+    }
+
+    pub fn is_orchestration_split_off(&self) -> bool {
+        self.is_orchestration_split_off
     }
 
     pub fn attach_path_as_context(&mut self, path: &Path, ctx: &mut ViewContext<Self>) {
@@ -9944,7 +9970,7 @@ impl TerminalView {
 
     /// Updates the agent view back button's disabled state and tooltip based on whether
     /// the user can exit agent mode, and shows a tooltip explaining when exiting is blocked.
-    fn update_agent_view_back_button_state(&mut self, ctx: &mut ViewContext<Self>) {
+    pub(crate) fn update_agent_view_back_button_state(&mut self, ctx: &mut ViewContext<Self>) {
         let disabled_reason = self
             .can_exit_agent_view_for_terminal_view(ctx)
             .err()
@@ -23968,7 +23994,7 @@ impl TypedActionView for TerminalView {
             | OpenChildAgentInNewTab { .. }
             | StopAgentConversation { .. }
             | KillAgentConversation { .. }
-            | OpenCLIAgentRichInput
+            | ToggleCLIAgentRichInput
             | ToggleSessionRecording => Empty,
         }
     }
@@ -25075,7 +25101,7 @@ impl TypedActionView for TerminalView {
                     recorder.toggle_recording(ctx);
                 });
             }
-            OpenCLIAgentRichInput => {
+            ToggleCLIAgentRichInput => {
                 if self.has_active_cli_agent_input_session(ctx) {
                     self.close_cli_agent_rich_input_and_disable_auto_toggle(ctx);
                 } else {

@@ -1180,6 +1180,6 @@ fn render_draggable_placeholder_element(
 }
 
 #[cfg(test)]
-#[path = "mod_test.rs"]
+#[path = "mod_tests.rs"]
 mod tests;
 use crate::interaction_sources::SharingDialogSource;

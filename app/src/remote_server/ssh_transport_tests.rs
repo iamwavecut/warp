@@ -7,7 +7,6 @@ fn static_auth_context() -> Arc<RemoteServerAuthContext> {
         || "user id/with spaces".to_string(),
         String::new(),
         String::new(),
-        true,
     ))
 }
 

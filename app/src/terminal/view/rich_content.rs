@@ -262,6 +262,7 @@ pub enum RichContentMetadata {
     TerminalViewZeroState,
     PluginInstructionsBlock,
     PendingUserQuery,
+    HarnessSessionHeader,
 }
 
 impl TerminalView {

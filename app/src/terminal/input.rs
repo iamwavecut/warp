@@ -3049,6 +3049,7 @@ impl Input {
                 agent_view_controller: agent_view_controller.clone(),
                 cli_subagent_controller: cli_subagent_controller.clone(),
                 terminal_view_id,
+                ambient_agent_view_model: ambient_agent_view_model.clone(),
             };
             SlashCommandDataSource::new(args, ctx)
         });
@@ -3059,6 +3060,7 @@ impl Input {
                 agent_view_controller: agent_view_controller.clone(),
                 cli_subagent_controller: cli_subagent_controller.clone(),
                 terminal_view_id,
+                ambient_agent_view_model: ambient_agent_view_model.clone(),
             };
             Some(ctx.add_model(|ctx| SlashCommandDataSource::for_cloud_mode_v2(args, ctx)))
         } else {
@@ -3409,7 +3411,11 @@ impl Input {
         };
 
         #[cfg(feature = "local_fs")]
-        if let Some(db_url) = crate::persistence::database_file_path().to_str() {
+        if let Some(db_url) = crate::persistence::database_file_path_for_scope(
+            &crate::persistence::PersistenceScope::App,
+        )
+        .to_str()
+        {
             if let Ok(conn) = crate::persistence::establish_ro_connection(db_url) {
                 input.conn = Some(Arc::new(Mutex::new(conn)));
             }

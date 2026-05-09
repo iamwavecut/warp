@@ -14,7 +14,6 @@ async fn round_trip_client_message() {
             auth_token: String::new(),
             user_id: String::new(),
             user_email: String::new(),
-            crash_reporting_enabled: true,
         })),
     };
 
@@ -128,7 +127,6 @@ fn try_extract_request_id_from_valid_message() {
             auth_token: String::new(),
             user_id: String::new(),
             user_email: String::new(),
-            crash_reporting_enabled: true,
         })),
     };
     let buf = msg.encode_to_vec();

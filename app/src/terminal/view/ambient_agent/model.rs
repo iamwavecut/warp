@@ -853,6 +853,7 @@ impl AmbientAgentViewModel {
             referenced_attachments: vec![],
             conversation_id: None,
             initial_snapshot_token: None,
+            agent_identity_uid: None,
         };
 
         self.spawn_internal(request, ctx);
@@ -1472,6 +1473,7 @@ impl AmbientAgentViewModel {
             referenced_attachments: vec![],
             conversation_id: Some(forked_conversation_id),
             initial_snapshot_token,
+            agent_identity_uid: None,
         };
         self.spawn_agent_with_request(request, ctx);
     }

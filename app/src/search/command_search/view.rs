@@ -1128,7 +1128,7 @@ pub mod styles {
 }
 
 #[cfg(test)]
-#[path = "view_test.rs"]
+#[path = "view_tests.rs"]
 mod tests;
 use crate::server::ids::ServerId;
 use crate::server::server_api::ai::AIClient;

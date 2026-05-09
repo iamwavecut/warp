@@ -20,6 +20,7 @@ use crate::terminal::warpify::settings::WarpifySettings;
 use remote_server::setup::{
     PreinstallCheckResult, PreinstallStatus, RemoteLibc, RemotePlatform, UnsupportedReason,
 };
+use remote_server::transport::Error;
 
 use super::pty_controller::{EventLoopSender, PtyController};
 
@@ -138,7 +139,8 @@ impl<T: EventLoopSender> RemoteServerController<T> {
             | RemoteServerManagerEvent::CodebaseIndexStatusUpdated { .. }
             | RemoteServerManagerEvent::SetupStateChanged { .. }
             | RemoteServerManagerEvent::ClientRequestFailed { .. }
-            | RemoteServerManagerEvent::ServerMessageDecodingError { .. } => {}
+            | RemoteServerManagerEvent::ServerMessageDecodingError { .. }
+            | RemoteServerManagerEvent::BufferUpdated { .. } => {}
         });
 
         Self {
@@ -209,7 +211,7 @@ impl<T: EventLoopSender> RemoteServerController<T> {
     fn on_binary_check_complete(
         &mut self,
         session_id: SessionId,
-        result: Result<bool, String>,
+        result: Result<bool, Arc<Error>>,
         preinstall_check: Option<PreinstallCheckResult>,
         has_old_binary: bool,
         ctx: &mut ModelContext<Self>,
@@ -439,7 +441,7 @@ impl<T: EventLoopSender> RemoteServerController<T> {
     fn on_binary_install_complete(
         &mut self,
         session_id: SessionId,
-        result: Result<(), String>,
+        result: Result<(), Arc<Error>>,
         ctx: &mut ModelContext<Self>,
     ) {
         let SshInitState::AwaitingInstall {
@@ -483,12 +485,11 @@ impl<T: EventLoopSender> RemoteServerController<T> {
 
     /// Builds a fresh [`RemoteServerAuthContext`] for the current identity.
     ///
-    /// This fork keeps crash reporting disabled, so daemon sessions are always
-    /// initialized with `crash_reporting_enabled = false`.
+    /// This fork does not forward crash-reporting preferences to remote daemons.
     fn build_auth_context(&self, ctx: &ModelContext<Self>) -> Arc<RemoteServerAuthContext> {
         let auth_state = AuthStateProvider::as_ref(ctx).get().clone();
         let auth_client = ServerApiProvider::as_ref(ctx).get_auth_client();
-        Arc::new(server_api_auth_context(auth_state, auth_client, false))
+        Arc::new(server_api_auth_context(auth_state, auth_client))
     }
 
     fn connect_session_for_current_identity(

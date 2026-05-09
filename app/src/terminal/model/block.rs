@@ -399,6 +399,9 @@ pub struct Block {
     /// If `true`, the output grid should not be rendered.
     should_hide_output_grid: bool,
 
+    /// If `true`, the prompt+command grid should not be rendered.
+    should_hide_command_grid: bool,
+
     /// [`Self::linefeed`] may discard some linefeeds at the beginning of the prompt. Doing so will
     /// alter the row numbers for [`Self::goto`] and [`Self::goto_line`] when ConPTY is involved. We
     /// track the count of discarded newlines here in order to correct the row number.
@@ -993,6 +996,7 @@ impl Block {
             has_received_user_input: false,
             hidden: false,
             should_hide_output_grid: false,
+            should_hide_command_grid: false,
             leading_linefeeds_ignored: 0,
             restored_block_was_local: None,
             agent_view_visibility: match conversation_id {
@@ -1474,6 +1478,14 @@ impl Block {
         self.should_hide_output_grid = should_hide;
     }
 
+    pub fn should_hide_command_grid(&self) -> bool {
+        self.should_hide_command_grid
+    }
+
+    pub fn set_should_hide_command_grid(&mut self, should_hide: bool) {
+        self.should_hide_command_grid = should_hide;
+    }
+
     /// Returns true iff this block should be used as a scrollback block
     /// in a shared session context. Note the active block is included in scrollback to get the active prompt.
     pub fn is_scrollback_block_for_shared_session(
@@ -1500,9 +1512,11 @@ impl Block {
             Lines::zero()
         } else {
             self.block_banner_height()
-                + self.padding_top()
-                + self.prompt_and_command_height()
-                + self.padding_middle()
+                + if self.should_hide_command_grid {
+                    Lines::zero()
+                } else {
+                    self.padding_top() + self.prompt_and_command_height() + self.padding_middle()
+                }
                 + if self.should_hide_output_grid {
                     Lines::zero()
                 } else {
@@ -1925,7 +1939,7 @@ impl Block {
     /// In the case of combined grid: for Warp prompt, this includes the height of both the Warp prompt
     /// AND combined grid; for PS1, this is just the combined grid (PS1 is included there).
     pub fn prompt_and_command_height(&self) -> Lines {
-        if !self.ready_to_render() {
+        if !self.ready_to_render() || self.should_hide_command_grid {
             Lines::zero()
         } else if self.header_grid.honor_ps1 {
             // No padding between prompt and command in the case of PS1 (combined grid).
@@ -3312,5 +3326,5 @@ impl ansi::Handler for Block {
 }
 
 #[cfg(test)]
-#[path = "block_test.rs"]
+#[path = "block_tests.rs"]
 mod tests;

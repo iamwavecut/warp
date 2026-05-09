@@ -751,6 +751,7 @@ impl AgentDriverRunner {
                     cloud_providers: Vec::new(),
                     environment: None,
                     selected_harness: args.harness,
+                    third_party_harness_model_id: None,
                     snapshot_disabled: None,
                     snapshot_upload_timeout: None,
                     snapshot_script_timeout: None,
