@@ -21225,8 +21225,9 @@ impl TypedActionView for Workspace {
                     FeatureFlag::OpenWarpLaunchModal.is_enabled()
                 );
             }
+            #[cfg(debug_assertions)]
             InstallOpenCodeWarpPlugin => {
-                let message = set_opencode_warp_plugin("github:warpdotdev/opencode-warp-internal");
+                let message = set_opencode_warp_plugin("@warp-dot-dev/opencode-warp");
                 self.toast_stack.update(ctx, |view, ctx| {
                     view.add_ephemeral_toast(DismissibleToast::default(message), ctx);
                 });
