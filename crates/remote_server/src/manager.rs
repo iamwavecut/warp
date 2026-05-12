@@ -20,7 +20,7 @@ use crate::setup::RemoteServerSetupState;
 use crate::setup::UnsupportedReason;
 #[cfg(not(target_family = "wasm"))]
 use crate::transport::Connection;
-use crate::transport::{Error, RemoteTransport};
+use crate::transport::{Error, InstallSource, RemoteTransport};
 use crate::HostId;
 use repo_metadata::RepoMetadataUpdate;
 use serde::Serialize;
@@ -62,10 +62,10 @@ struct InitializeHandshake {
 enum ConnectAndHandshakeError {
     /// `transport.connect()` failed, or the session was deregistered
     /// before the connect phase could complete.
-    #[error("connect: {0:#}")]
+    #[error("{0:#}")]
     Connect(anyhow::Error),
     /// `client.initialize()` handshake failed.
-    #[error("initialize: {0:#}")]
+    #[error("{0:#}")]
     Initialize(anyhow::Error),
 }
 
@@ -173,6 +173,7 @@ fn client_event_kind(event: &ClientEvent) -> &'static str {
         }
         ClientEvent::CodebaseIndexStatusUpdated { .. } => "codebase_index_status_updated",
         ClientEvent::BufferUpdated { .. } => "buffer_updated",
+        ClientEvent::BufferConflictDetected { .. } => "buffer_conflict_detected",
         ClientEvent::MessageDecodingError => "message_decoding_error",
     }
 }
@@ -261,6 +262,15 @@ pub enum RemoteServerManagerEvent {
         phase: RemoteServerInitPhase,
         /// The error message from the failed phase.
         error: String,
+        /// Exit status of the SSH subprocess, if available.
+        /// Used to distinguish proxy crashes from other failures.
+        exit_status: Option<RemoteServerExitStatus>,
+        /// `true` when the failure is attributed to a user-initiated
+        /// cancellation (session deregistered or transport-level
+        /// disconnect) rather than a server-side error. Subscribers
+        /// that only care about real failures (for example UI
+        /// banners) should skip when this is `true`.
+        is_cancelled: bool,
     },
     /// This session's connection dropped. Carries `host_id` so consumers
     /// don't need to look it up from the already-transitioned state.
@@ -354,6 +364,10 @@ pub enum RemoteServerManagerEvent {
         expected_client_version: u64,
         edits: Vec<crate::proto::TextEdit>,
     },
+    /// The file changed on disk while the client had unsaved edits.
+    /// The server did NOT apply the change; the client should show a
+    /// conflict resolution banner.
+    BufferConflictDetected { host_id: HostId, path: String },
 
     // --- Setup events ---
     /// Intermediate state change during the binary check/install flow.
@@ -386,12 +400,15 @@ pub enum RemoteServerManagerEvent {
         /// detection itself failed.
         has_old_binary: bool,
     },
-    /// Result of [`RemoteServerManager::install_binary`]. Returns a result where:
-    /// - `Ok(())` means the install succeeded, and
-    /// - `Err(_)` means the install failed and carries the failure reason (SSH error, timeout, script error, etc.).
+    /// Result of [`RemoteServerManager::install_binary`].
     BinaryInstallComplete {
         session_id: SessionId,
+        /// Whether the install succeeded or failed.
         result: Result<(), Arc<Error>>,
+        /// Which install path was attempted (`Server` for remote download,
+        /// `Client` for SCP upload). `None` if the path could not be
+        /// determined before the failure.
+        install_source: Option<InstallSource>,
     },
 
     // --- Diagnostics events ---
@@ -431,7 +448,8 @@ impl RemoteServerManagerEvent {
             | RemoteServerManagerEvent::RepoMetadataDirectoryLoaded { .. }
             | RemoteServerManagerEvent::CodebaseIndexStatusesSnapshot { .. }
             | RemoteServerManagerEvent::CodebaseIndexStatusUpdated { .. }
-            | RemoteServerManagerEvent::BufferUpdated { .. } => None,
+            | RemoteServerManagerEvent::BufferUpdated { .. }
+            | RemoteServerManagerEvent::BufferConflictDetected { .. } => None,
         }
     }
 }
@@ -646,7 +664,7 @@ impl RemoteServerManager {
     /// Installs the remote server binary.
     /// Emits `BinaryInstallComplete { result }`.
     ///
-    /// Returns Ok(()) if the install succeeded, and
+    /// Returns Ok(method) with the install method on success, and
     /// Err(_) if the install failed (e.g. SSH timeout/unreachable).
     #[cfg_attr(target_family = "wasm", allow(unused_variables))]
     pub fn install_binary<T>(
@@ -679,10 +697,10 @@ impl RemoteServerManager {
             let spawner = self.spawner.clone();
             ctx.background_executor()
                 .spawn(async move {
-                    let result = transport.install_binary().await;
+                    let outcome = transport.install_binary().await;
                     let _ = spawner
                         .spawn(move |_me, ctx| {
-                            if let Err(error) = &result {
+                            if let Err(error) = &outcome.result {
                                 ctx.emit(RemoteServerManagerEvent::SetupStateChanged {
                                     session_id,
                                     state: RemoteServerSetupState::Failed {
@@ -692,7 +710,8 @@ impl RemoteServerManager {
                             }
                             ctx.emit(RemoteServerManagerEvent::BinaryInstallComplete {
                                 session_id,
-                                result: result.map_err(Arc::new),
+                                result: outcome.result.map_err(Arc::new),
+                                install_source: outcome.source,
                             });
                         })
                         .await;
@@ -784,6 +803,30 @@ impl RemoteServerManager {
                             let error = format!("{e}");
                             let _ = spawner
                                 .spawn(move |me, ctx| {
+                                    // Capture exit status from the Initializing
+                                    // child (if present) for failure classification.
+                                    let exit_status = match me.sessions.get_mut(&session_id) {
+                                        Some(RemoteSessionState::Initializing {
+                                            _child, ..
+                                        }) => Self::capture_exit_status(_child, session_id),
+                                        _ => None,
+                                    };
+
+                                    // Classify: user cancellation vs real failure.
+                                    //
+                                    // Signal A: session was already deregistered
+                                    // (user exited before the error handler ran).
+                                    //
+                                    // Signal B: the transport reports the
+                                    // connection is unrecoverable (e.g. SSH
+                                    // exit 255 = ControlMaster death) and the
+                                    // process was not signal-killed (OOM etc.
+                                    // are real failures).
+                                    let is_cancelled = !me.sessions.contains_key(&session_id)
+                                        || exit_status.as_ref().is_some_and(|s| {
+                                            !transport.is_reconnectable(Some(s)) && !s.signal_killed
+                                        });
+
                                     ctx.emit(RemoteServerManagerEvent::SetupStateChanged {
                                         session_id,
                                         state: RemoteServerSetupState::Failed {
@@ -794,6 +837,8 @@ impl RemoteServerManager {
                                         session_id,
                                         phase,
                                         error,
+                                        exit_status,
+                                        is_cancelled,
                                     });
                                     me.mark_session_disconnected(session_id, ctx);
                                 })
@@ -875,9 +920,16 @@ impl RemoteServerManager {
             .await
             .map_err(|e| ConnectAndHandshakeError::Initialize(anyhow::anyhow!("{e:#}")))?;
 
-        // Version compatibility check. If the server reports a different release
-        // tag than the client expects, the binary on disk is stale. Remove it so
-        // the next reconnect (or explicit reconnect by the user) will reinstall.
+        // Version compatibility check. If the server reports a different
+        // release tag than the client expects, the binary on disk is stale.
+        // Remove it so the next reconnect (or explicit reconnect by the
+        // user) will reinstall.
+        //
+        // For versioned channels (Stable, Preview, Dev, Integration) the
+        // version is also encoded in the binary path and verified by the
+        // pre-connect `check_binary` / post-install verification steps,
+        // so this is a belt-and-suspenders check at zero extra cost (it
+        // uses data already received in the InitializeResponse).
         let client_version = ChannelState::app_version();
         if !version_is_compatible(client_version, &resp.server_version) {
             log::warn!(
@@ -1329,12 +1381,15 @@ impl RemoteServerManager {
                 edits,
             } => {
                 ctx.emit(RemoteServerManagerEvent::BufferUpdated {
-                    host_id,
+                    host_id: host_id.clone(),
                     path,
                     new_server_version,
                     expected_client_version,
                     edits,
                 });
+            }
+            ClientEvent::BufferConflictDetected { path } => {
+                ctx.emit(RemoteServerManagerEvent::BufferConflictDetected { host_id, path });
             }
             ClientEvent::Disconnected => {
                 // Handled by the drain loop's completion callback.

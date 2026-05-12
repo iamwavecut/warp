@@ -1,4 +1,5 @@
 use crate::terminal::shell::ShellType;
+use remote_server::proto::OpenBufferSuccess;
 use repo_metadata::repositories::{DetectedRepositories, RepoDetectionSource};
 use repo_metadata::{RepoMetadataEvent, RepoMetadataModel, RepositoryIdentifier};
 use std::collections::{HashMap, HashSet};
@@ -50,6 +51,7 @@ use crate::terminal::model::session::command_executor::{
 /// Notifications (fire-and-forget messages like `SessionBootstrapped` and
 /// `Abort`) do not produce a `HandlerOutcome`; they are dispatched inline in
 /// `handle_message` and return early.
+#[allow(clippy::large_enum_variant)]
 enum HandlerOutcome {
     /// The response is ready synchronously — the caller sends it immediately.
     Sync(server_message::Message),
@@ -322,15 +324,15 @@ impl ServerModel {
                             .sync_clock_for_server_local(*file_id)
                             .map(|c| c.server_version.as_u64());
 
-                        for (request_id, conn_id) in pending {
+                        for req in pending {
                             let message = match (&content, server_version) {
                                 (Some(content), Some(sv)) => {
-                                    server_message::Message::OpenBufferResponse(
-                                        OpenBufferResponse {
-                                            content: content.clone(),
+                                    server_message::Message::OpenBufferResponse(OpenBufferResponse{
+                                        result: Some(remote_server::proto::open_buffer_response::Result::Success(OpenBufferSuccess {
+                                             content: content.clone(),
                                             server_version: sv,
-                                        },
-                                    )
+                                        }))
+                                    })
                                 }
                                 _ => server_message::Message::Error(ErrorResponse {
                                     code: ErrorCode::Internal.into(),
@@ -340,8 +342,8 @@ impl ServerModel {
                                 }),
                             };
                             me.send_server_message(
-                                Some(conn_id),
-                                Some(&request_id),
+                                Some(req.connection_id),
+                                Some(&req.request_id),
                                 message,
                             );
                         }
@@ -353,10 +355,14 @@ impl ServerModel {
                     new_server_version,
                     expected_client_version,
                 } => {
-                    // Push incremental edits to all connections that have this buffer open.
+                    // Push incremental edits to all connections that have this buffer open,
+                    // except connections with a pending OpenBuffer request (they will
+                    // receive the content via OpenBufferResponse instead).
                     let Some(conns) = me.buffers.connections_for_buffer(file_id) else {
                         return;
                     };
+                    let excluded =
+                        me.buffers.pending_connections_for_open_buffer(file_id);
                     // Find the path for this file_id.
                     let path = me.buffers.path_for_file_id(*file_id).unwrap_or_default();
 
@@ -370,6 +376,9 @@ impl ServerModel {
                         .collect();
 
                     for &conn_id in conns {
+                        if excluded.contains(&conn_id) {
+                            continue;
+                        }
                         me.send_server_message(
                             Some(conn_id),
                             None,
@@ -383,13 +392,13 @@ impl ServerModel {
                     }
                 }
                 GlobalBufferModelEvent::FileSaved { file_id } => {
-                    for (request_id, conn_id) in me.buffers.take_pending_by_kind(
+                    for req in me.buffers.take_pending_by_kind(
                         file_id,
                         PendingBufferRequestKind::SaveBuffer,
                     ) {
                         me.send_server_message(
-                            Some(conn_id),
-                            Some(&request_id),
+                            Some(req.connection_id),
+                            Some(&req.request_id),
                             server_message::Message::SaveBufferResponse(SaveBufferResponse {
                                 result: Some(save_buffer_response::Result::Success(
                                     SaveBufferSuccess {},
@@ -397,13 +406,13 @@ impl ServerModel {
                             }),
                         );
                     }
-                    for (request_id, conn_id) in me.buffers.take_pending_by_kind(
+                    for req in me.buffers.take_pending_by_kind(
                         file_id,
                         PendingBufferRequestKind::ResolveConflict,
                     ) {
                         me.send_server_message(
-                            Some(conn_id),
-                            Some(&request_id),
+                            Some(req.connection_id),
+                            Some(&req.request_id),
                             server_message::Message::ResolveConflictResponse(
                                 ResolveConflictResponse {
                                     result: Some(
@@ -417,13 +426,13 @@ impl ServerModel {
                     }
                 }
                 GlobalBufferModelEvent::FailedToSave { file_id, error } => {
-                    for (request_id, conn_id) in me.buffers.take_pending_by_kind(
+                    for req in me.buffers.take_pending_by_kind(
                         file_id,
                         PendingBufferRequestKind::SaveBuffer,
                     ) {
                         me.send_server_message(
-                            Some(conn_id),
-                            Some(&request_id),
+                            Some(req.connection_id),
+                            Some(&req.request_id),
                             server_message::Message::SaveBufferResponse(SaveBufferResponse {
                                 result: Some(save_buffer_response::Result::Error(
                                     FileOperationError {
@@ -433,13 +442,13 @@ impl ServerModel {
                             }),
                         );
                     }
-                    for (request_id, conn_id) in me.buffers.take_pending_by_kind(
+                    for req in me.buffers.take_pending_by_kind(
                         file_id,
                         PendingBufferRequestKind::ResolveConflict,
                     ) {
                         me.send_server_message(
-                            Some(conn_id),
-                            Some(&request_id),
+                            Some(req.connection_id),
+                            Some(&req.request_id),
                             server_message::Message::ResolveConflictResponse(
                                 ResolveConflictResponse {
                                     result: Some(resolve_conflict_response::Result::Error(
@@ -453,22 +462,47 @@ impl ServerModel {
                     }
                 }
                 GlobalBufferModelEvent::FailedToLoad { file_id, error } => {
-                    for (request_id, conn_id) in me.buffers.take_pending_by_kind(
+                    for req in me.buffers.take_pending_by_kind(
                         file_id,
                         PendingBufferRequestKind::OpenBuffer,
                     ) {
                         me.send_server_message(
-                            Some(conn_id),
-                            Some(&request_id),
-                            server_message::Message::Error(ErrorResponse {
-                                code: ErrorCode::Internal.into(),
-                                message: format!("Failed to load buffer: {error}"),
-                            }),
+                            Some(req.connection_id),
+                            Some(&req.request_id),
+                            server_message::Message::OpenBufferResponse(OpenBufferResponse{
+                                        result: Some(remote_server::proto::open_buffer_response::Result::Error(FileOperationError {
+                                             message: format!("Failed to load buffer: {error}"),
+                                        }))
+                                    }),
                         );
                     }
                 }
-                GlobalBufferModelEvent::BufferUpdatedFromFileEvent { .. }
-                | GlobalBufferModelEvent::RemoteBufferConflict { .. } => {
+                GlobalBufferModelEvent::BufferUpdatedFromFileEvent {
+                    file_id,
+                    success,
+                    ..
+                } => {
+                    // When a file-watcher update couldn't be applied because
+                    // the buffer has unsaved client edits, forward the conflict
+                    // to connected clients so they can show a resolution banner.
+                    if !success {
+                        if let Some(conns) = me.buffers.connections_for_buffer(file_id) {
+                            let path = me.buffers.path_for_file_id(*file_id).unwrap_or_default();
+                            for &conn_id in conns {
+                                me.send_server_message(
+                                    Some(conn_id),
+                                    None,
+                                    server_message::Message::BufferConflictDetected(
+                                        super::proto::BufferConflictDetected {
+                                            path: path.clone(),
+                                        },
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+                GlobalBufferModelEvent::RemoteBufferConflict { .. } => {
                     // Not relevant for server-local buffers.
                 }
             });
@@ -615,6 +649,10 @@ impl ServerModel {
             Some(client_message::Message::ResolveConflict(msg)) => {
                 self.handle_resolve_conflict(msg, &request_id, conn_id, ctx)
             }
+            // TODO: implement diff state handlers
+            Some(client_message::Message::GetDiffState(_)) => return,
+            Some(client_message::Message::UnsubscribeDiffState(_)) => return,
+            Some(client_message::Message::DiscardFiles(_)) => return,
             None => {
                 log::warn!(
                     "Received ClientMessage with no message variant (request_id={request_id})"
@@ -1299,6 +1337,11 @@ impl ServerModel {
 
     /// Handles `OpenBuffer` by opening the file via `GlobalBufferModel`.
     /// The response is sent asynchronously when `BufferLoaded` fires.
+    ///
+    /// When `force_reload` is set, the server re-reads the file from disk
+    /// even if the buffer is already loaded. This broadcasts a
+    /// `BufferUpdatedPush` to other connections and responds with the
+    /// fresh content via `OpenBufferResponse`.
     fn handle_open_buffer(
         &mut self,
         msg: OpenBuffer,
@@ -1307,9 +1350,44 @@ impl ServerModel {
         ctx: &mut ModelContext<Self>,
     ) -> HandlerOutcome {
         log::info!(
-            "Handling OpenBuffer path={} (request_id={request_id})",
-            msg.path
+            "Handling OpenBuffer path={} force_reload={} (request_id={request_id})",
+            msg.path,
+            msg.force_reload,
         );
+
+        // For force_reload on an already-tracked buffer, skip open_server_local
+        // to avoid a spurious BufferLoaded event that would consume the pending
+        // request before ServerLocalBufferUpdated can use it for exclusion.
+        if msg.force_reload {
+            if let Some(file_id) = self.buffers.file_id_for_path(&msg.path) {
+                self.buffers.add_connection(file_id, conn_id);
+                let gbm = GlobalBufferModel::handle(ctx);
+
+                self.buffers.insert_pending(
+                    file_id,
+                    request_id.clone(),
+                    conn_id,
+                    PendingBufferRequestKind::OpenBuffer,
+                );
+                if let Err(e) =
+                    gbm.update(ctx, |gbm, ctx| gbm.force_reload_server_local(file_id, ctx))
+                {
+                    self.buffers
+                        .take_pending_by_kind(&file_id, PendingBufferRequestKind::OpenBuffer);
+                    return HandlerOutcome::Sync(server_message::Message::OpenBufferResponse(
+                        OpenBufferResponse {
+                            result: Some(
+                                remote_server::proto::open_buffer_response::Result::Error(
+                                    FileOperationError { message: e },
+                                ),
+                            ),
+                        },
+                    ));
+                }
+                return HandlerOutcome::Async(None);
+            }
+            // Buffer not yet tracked — fall through to open_server_local below.
+        }
 
         let path = PathBuf::from(&msg.path);
         let gbm = GlobalBufferModel::handle(ctx);
@@ -1317,24 +1395,47 @@ impl ServerModel {
         let file_id = buffer_state.file_id;
 
         // Track path → FileId mapping and connection.
-        self.buffers.track_open_buffer(msg.path.clone(), file_id);
+        // Retain the strong buffer handle so the model stays alive until
+        // all connections close the buffer.
+        self.buffers
+            .track_open_buffer(msg.path.clone(), file_id, buffer_state.buffer);
         self.buffers.add_connection(file_id, conn_id);
 
-        // If already loaded, respond immediately.
         if gbm.as_ref(ctx).buffer_loaded(file_id) {
-            let content = gbm
-                .as_ref(ctx)
-                .content_for_file(file_id, ctx)
-                .unwrap_or_default();
-            let server_version = gbm
+            let Some(content) = gbm.as_ref(ctx).content_for_file(file_id, ctx) else {
+                return HandlerOutcome::Sync(server_message::Message::OpenBufferResponse(
+                    OpenBufferResponse {
+                        result: Some(remote_server::proto::open_buffer_response::Result::Error(
+                            FileOperationError {
+                                message: "Buffer loaded but has no file content".to_string(),
+                            },
+                        )),
+                    },
+                ));
+            };
+            let Some(server_version) = gbm
                 .as_ref(ctx)
                 .sync_clock_for_server_local(file_id)
                 .map(|c| c.server_version.as_u64())
-                .unwrap_or(1);
+            else {
+                return HandlerOutcome::Sync(server_message::Message::OpenBufferResponse(
+                    OpenBufferResponse {
+                        result: Some(remote_server::proto::open_buffer_response::Result::Error(
+                            FileOperationError {
+                                message: "Buffer loaded but has no sync clock".to_string(),
+                            },
+                        )),
+                    },
+                ));
+            };
             return HandlerOutcome::Sync(server_message::Message::OpenBufferResponse(
                 OpenBufferResponse {
-                    content,
-                    server_version,
+                    result: Some(remote_server::proto::open_buffer_response::Result::Success(
+                        OpenBufferSuccess {
+                            content,
+                            server_version,
+                        },
+                    )),
                 },
             ));
         }
@@ -1354,6 +1455,13 @@ impl ServerModel {
     /// Delegates to `GlobalBufferModel::apply_client_edit`. On rejection
     /// (stale server version), the edit is silently dropped.
     fn handle_buffer_edit(&mut self, msg: BufferEdit, ctx: &mut ModelContext<Self>) {
+        log::info!(
+            "Handling BufferEdit path={} expected_sv={} new_cv={} edit_count={}",
+            msg.path,
+            msg.expected_server_version,
+            msg.new_client_version,
+            msg.edits.len()
+        );
         let Some(file_id) = self.buffers.file_id_for_path(&msg.path) else {
             log::warn!("BufferEdit for unknown buffer: {}", msg.path);
             return;
@@ -1364,9 +1472,10 @@ impl ServerModel {
 
         // Per spec: if the edit is rejected (stale server version),
         // the server silently drops it.
-        GlobalBufferModel::handle(ctx).update(ctx, |gbm, ctx| {
-            gbm.apply_client_edit(file_id, &msg.edits, expected_sv, new_cv, ctx);
+        let accepted = GlobalBufferModel::handle(ctx).update(ctx, |gbm, ctx| {
+            gbm.apply_client_edit(file_id, &msg.edits, expected_sv, new_cv, ctx)
         });
+        log::info!("BufferEdit result: path={} accepted={accepted}", msg.path);
     }
 
     /// Handles `SaveBuffer` by persisting the buffer to disk.

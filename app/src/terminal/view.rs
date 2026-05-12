@@ -1996,6 +1996,14 @@ pub enum Event {
     OpenChildAgentInNewPane {
         conversation_id: AIConversationId,
     },
+    /// Emitted when "Stop agent" is picked from a child pill's 3-dot menu.
+    StopAgentConversation {
+        conversation_id: AIConversationId,
+    },
+    /// Emitted when "Kill agent" is picked from a child pill's 3-dot menu.
+    KillAgentConversation {
+        conversation_id: AIConversationId,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -4224,6 +4232,8 @@ impl TerminalView {
                         session_id,
                         phase,
                         error,
+                        exit_status,
+                        is_cancelled,
                     } => {
                         me.model.lock().event_proxy.send_terminal_event(
                             crate::terminal::event::Event::RemoteServerFailed {
@@ -4268,7 +4278,11 @@ impl TerminalView {
                         me.remove_ssh_remote_server_choice_block(*session_id, ctx);
                         me.remove_ssh_remote_server_failed_banner(*session_id, ctx);
                     }
-                    RemoteServerManagerEvent::BinaryInstallComplete { session_id, result } => {
+                    RemoteServerManagerEvent::BinaryInstallComplete {
+                        session_id,
+                        result,
+                        install_source,
+                    } => {
                         let (remote_os, remote_arch) = RemoteServerManager::handle(ctx)
                             .as_ref(ctx)
                             .platform_for_session(*session_id)
@@ -4370,7 +4384,8 @@ impl TerminalView {
                     | RemoteServerManagerEvent::RepoMetadataDirectoryLoaded { .. }
                     | RemoteServerManagerEvent::CodebaseIndexStatusesSnapshot { .. }
                     | RemoteServerManagerEvent::CodebaseIndexStatusUpdated { .. }
-                    | RemoteServerManagerEvent::BufferUpdated { .. } => {}
+                    | RemoteServerManagerEvent::BufferUpdated { .. }
+                    | RemoteServerManagerEvent::BufferConflictDetected { .. } => {}
                 }
             });
         }
@@ -5069,16 +5084,64 @@ impl TerminalView {
         }
     }
 
+    fn render_owner_for_ai_history_event(
+        &self,
+        history_model: &BlocklistAIHistoryModel,
+        event: &BlocklistAIHistoryEvent,
+    ) -> Option<EntityId> {
+        match event {
+            BlocklistAIHistoryEvent::AppendedExchange {
+                conversation_id, ..
+            }
+            | BlocklistAIHistoryEvent::UpdatedStreamingExchange {
+                conversation_id, ..
+            }
+            | BlocklistAIHistoryEvent::UpdatedConversationStatus {
+                conversation_id, ..
+            }
+            | BlocklistAIHistoryEvent::UpdatedConversationMetadata {
+                conversation_id, ..
+            }
+            | BlocklistAIHistoryEvent::UpdatedConversationArtifacts {
+                conversation_id, ..
+            } => history_model.terminal_view_id_for_conversation(conversation_id),
+            BlocklistAIHistoryEvent::ReassignedExchange {
+                new_conversation_id,
+                ..
+            } => history_model.terminal_view_id_for_conversation(new_conversation_id),
+            BlocklistAIHistoryEvent::StartedNewConversation { .. }
+            | BlocklistAIHistoryEvent::CreatedSubtask { .. }
+            | BlocklistAIHistoryEvent::UpgradedTask { .. }
+            | BlocklistAIHistoryEvent::SetActiveConversation { .. }
+            | BlocklistAIHistoryEvent::ClearedActiveConversation { .. }
+            | BlocklistAIHistoryEvent::ClearedConversationsInTerminalView { .. }
+            | BlocklistAIHistoryEvent::UpdatedTodoList { .. }
+            | BlocklistAIHistoryEvent::UpdatedAutoexecuteOverride { .. }
+            | BlocklistAIHistoryEvent::SplitConversation { .. }
+            | BlocklistAIHistoryEvent::RemoveConversation { .. }
+            | BlocklistAIHistoryEvent::DeletedConversation { .. }
+            | BlocklistAIHistoryEvent::RestoredConversations { .. }
+            | BlocklistAIHistoryEvent::ConversationServerTokenAssigned { .. }
+            | BlocklistAIHistoryEvent::ConversationOwnershipTransferred { .. }
+            | BlocklistAIHistoryEvent::NewConversationRequestComplete { .. }
+            | BlocklistAIHistoryEvent::OrchestrationConfigUpdated { .. } => None,
+        }
+    }
+
     fn handle_ai_history_model_event(
         &mut self,
         history_model: ModelHandle<BlocklistAIHistoryModel>,
         event: &BlocklistAIHistoryEvent,
         ctx: &mut ViewContext<Self>,
     ) {
-        if event
-            .terminal_view_id()
-            .is_some_and(|id| id != self.view_id)
-        {
+        let history_model_ref = history_model.as_ref(ctx);
+        let should_handle = match self.render_owner_for_ai_history_event(history_model_ref, event) {
+            Some(owner_terminal_view_id) => owner_terminal_view_id == self.view_id,
+            None => event
+                .terminal_view_id()
+                .is_none_or(|terminal_view_id| terminal_view_id == self.view_id),
+        };
+        if !should_handle {
             return;
         }
         // If the conversation details panel is open and showing an active local
@@ -5601,16 +5664,29 @@ impl TerminalView {
                     // which enables visual continuity in the requested command's expanded state
                     // (e.g. the expanded requested command header appears right on top of the
                     // running command block; they appear part of the same UI component).
-                    if let Some(result_ai_block_id) =
+                    if let Some((result_ai_block_id, result_conversation_id, result_exchange_id)) =
                         self.rich_content_views.iter().find_map(|view| {
                             let ai_metadata = view.ai_block_metadata()?;
                             ai_metadata
                                 .ai_block_handle
                                 .as_ref(ctx)
                                 .contains_action_result(initial_requested_command_id, ctx)
-                                .then_some(view.view_id())
+                                .then_some((
+                                    view.view_id(),
+                                    ai_metadata.conversation_id,
+                                    ai_metadata.exchange_id,
+                                ))
                         })
                     {
+                        BlocklistAIHistoryModel::handle(ctx).update(ctx, |history_model, ctx| {
+                            history_model.set_exchange_hidden_status(
+                                self.view_id,
+                                result_conversation_id,
+                                result_exchange_id,
+                                true,
+                                ctx,
+                            );
+                        });
                         self.rich_content_views
                             .retain(|rich_content| rich_content.view_id() != result_ai_block_id);
                         self.model
@@ -7155,6 +7231,66 @@ impl TerminalView {
     pub fn shutdown_pty(&mut self, ctx: &mut ViewContext<Self>) {
         self.manual_pty_shutdown_requested = true;
         ctx.emit(Event::ShutdownPty);
+    }
+
+    pub(crate) fn stop_local_agent_conversation(
+        &mut self,
+        conversation_id: AIConversationId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let had_active_stream = self
+            .ai_controller
+            .as_ref(ctx)
+            .has_active_stream_for_conversation(conversation_id, ctx);
+
+        self.ai_controller.update(ctx, |controller, ctx| {
+            controller.cancel_conversation_progress(
+                conversation_id,
+                CancellationReason::ManuallyCancelled,
+                ctx,
+            );
+        });
+
+        let visible_conversation_id = self
+            .agent_view_controller
+            .as_ref(ctx)
+            .agent_view_state()
+            .active_conversation_id();
+        let history_active_conversation_id =
+            BlocklistAIHistoryModel::as_ref(ctx).active_conversation_id(self.view_id);
+
+        let should_interrupt_active_command = {
+            let mut model = self.model.lock();
+            let active_block = model.block_list_mut().active_block_mut();
+            let active_block_matches = active_block.ai_conversation_id() == Some(conversation_id)
+                || visible_conversation_id == Some(conversation_id)
+                || history_active_conversation_id == Some(conversation_id);
+            let command_is_running = active_block.is_executing()
+                || active_block.is_command_grid_active()
+                || active_block.is_active_and_long_running();
+
+            if active_block_matches && command_is_running {
+                active_block.set_user_control_with_stop_reason();
+                true
+            } else {
+                false
+            }
+        };
+
+        if should_interrupt_active_command {
+            self.user_write_ctrl_c_to_pty(ctx);
+        }
+
+        if !had_active_stream {
+            BlocklistAIHistoryModel::handle(ctx).update(ctx, |history, ctx| {
+                history.update_conversation_status(
+                    self.view_id,
+                    conversation_id,
+                    ConversationStatus::Cancelled,
+                    ctx,
+                );
+            });
+        }
     }
 
     fn user_write_ctrl_c_to_pty(&mut self, ctx: &mut ViewContext<Self>) {
@@ -19580,9 +19716,11 @@ impl TerminalView {
                 });
 
                 // When AgentView is enabled and the buffer is cleared, reset the input type
-                // based on whether there's an active agent view.
+                // based on whether there's an active agent view. Skip for cloud mode v2
+                // where the input is always AI.
                 if FeatureFlag::AgentView.is_enabled()
                     && *is_empty
+                    && !self.input.as_ref(ctx).is_cloud_mode_input_v2_composing(ctx)
                     && self
                         .ai_input_model
                         .as_ref(ctx)
@@ -22654,6 +22792,7 @@ impl TerminalView {
                     &conversation,
                     PRE_REWIND_PREFIX,
                     false, /* preserve_task_ids */
+                    None,
                     ctx,
                 ) {
                     log::warn!("Failed to save pre-rewind backup of conversation {conversation_id}: {e}");
@@ -25030,64 +25169,14 @@ impl TypedActionView for TerminalView {
                 self.revert_agent_view_to_parent_if_displaying_child(*conversation_id, ctx);
             }
             StopAgentConversation { conversation_id } => {
-                // Cancel the ambient task only if the conversation is
-                // still in progress. The server rejects cancel requests
-                // for terminated runs ("Terminated agent runs cannot be
-                // cancelled"), which would otherwise pop a confusing
-                // error toast every time a user clicks Stop on an
-                // already-finished agent. For local conversations, we
-                // also have no per-conversation cancel entry point yet.
-                let history_model = BlocklistAIHistoryModel::as_ref(ctx);
-                let conversation = history_model.conversation(conversation_id);
-                let is_in_progress = conversation
-                    .map(|c| c.status().is_in_progress())
-                    .unwrap_or(false);
-                let task_id = conversation.and_then(|c| c.task_id());
-                match (is_in_progress, task_id) {
-                    (true, Some(task_id)) => {
-                        crate::ai::ambient_agents::task::cancel_task_with_toast(task_id, ctx);
-                    }
-                    (true, None) => {
-                        // TODO(QUALITY-567): wire local conversation cancel for
-                        // child agents whose run is hosted in this client.
-                        log::info!(
-                            "StopAgentConversation: no task_id for in-progress conversation {conversation_id:?}; skipping (local cancel TODO)",
-                        );
-                    }
-                    (false, _) => {
-                        log::debug!(
-                            "StopAgentConversation: conversation {conversation_id:?} is not in progress; nothing to cancel",
-                        );
-                    }
-                }
+                ctx.emit(Event::StopAgentConversation {
+                    conversation_id: *conversation_id,
+                });
             }
             KillAgentConversation { conversation_id } => {
-                // Best-effort: cancel the ambient run if it's still in
-                // progress, then remove the conversation from local
-                // history regardless. Cloud-side deletion is
-                // intentionally not done in V2 (see PRODUCT.md
-                // "Non-goals" — server cleanup is a follow-up).
-                //
-                // We gate the cancel on `is_in_progress()` so killing an
-                // already-terminated run doesn't surface the server's
-                // "Terminated agent runs cannot be cancelled" error.
-                let history_model = BlocklistAIHistoryModel::as_ref(ctx);
-                let conversation = history_model.conversation(conversation_id);
-                let is_in_progress = conversation
-                    .map(|c| c.status().is_in_progress())
-                    .unwrap_or(false);
-                let task_id = conversation.and_then(|c| c.task_id());
-                if is_in_progress {
-                    if let Some(task_id) = task_id {
-                        crate::ai::ambient_agents::task::cancel_task_with_toast(task_id, ctx);
-                    }
-                }
-                conversation_utils::remove_conversation(
-                    *conversation_id,
-                    self.view_id,
-                    false, /* delete_from_cloud */
-                    ctx,
-                );
+                ctx.emit(Event::KillAgentConversation {
+                    conversation_id: *conversation_id,
+                });
             }
             ToggleSessionRecording => {
                 self.pty_recorder.update(ctx, |recorder, ctx| {

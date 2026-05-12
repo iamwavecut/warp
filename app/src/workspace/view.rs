@@ -162,7 +162,7 @@ use crate::auth::auth_override_warning_modal::{
 };
 use crate::auth::auth_state::AuthState;
 use crate::auth::auth_view_modal::{AuthRedirectPayload, AuthView, AuthViewEvent, AuthViewVariant};
-use crate::code::buffer_location::BufferLocation;
+use crate::code::buffer_location::FileLocation;
 #[cfg(feature = "local_fs")]
 use crate::code::editor_management::CodeManager;
 use crate::code::editor_management::CodeSource;
@@ -4774,7 +4774,7 @@ impl Workspace {
 
         self.tabs.iter().enumerate().find_map(|(index, tab)| {
             let pane_group = tab.pane_group.as_ref(ctx);
-            let has_task = pane_group.terminal_pane_ids().into_iter().any(|pane_id| {
+            let has_task = pane_group.visible_pane_ids().into_iter().any(|pane_id| {
                 pane_group
                     .terminal_view_from_pane_id(pane_id, ctx)
                     .is_some_and(|tv| {
@@ -5754,17 +5754,35 @@ impl Workspace {
                 self.handle_warp_drive_event(drive_event, ctx);
             }
             LeftPanelEvent::OpenFileWithTarget {
-                path,
+                location,
                 target,
                 line_col,
             } => {
-                self.open_file_with_target(
-                    path.clone(),
-                    target.clone(),
-                    *line_col,
-                    CodeSource::FileTree { path: path.clone() },
-                    ctx,
-                );
+                let code_source = CodeSource::FileTree {
+                    location: location.clone(),
+                };
+                match location {
+                    FileLocation::Local(path) => {
+                        self.open_file_with_target(
+                            path.clone(),
+                            target.clone(),
+                            *line_col,
+                            code_source,
+                            ctx,
+                        );
+                    }
+                    FileLocation::Remote(_) => {
+                        #[cfg(feature = "local_fs")]
+                        self.open_code(
+                            code_source,
+                            crate::util::openable_file_type::EditorLayout::SplitPane,
+                            None,
+                            false,
+                            &[],
+                            ctx,
+                        );
+                    }
+                }
             }
             LeftPanelEvent::NewConversationInNewTab => {
                 self.add_terminal_tab_with_new_agent_view(ctx);
@@ -7161,10 +7179,18 @@ impl Workspace {
                     if preview {
                         code_view.open_in_preview_or_promote_and_jump(path, line_col, ctx);
                     } else {
-                        code_view.open_or_focus_existing(Some(path), line_col, ctx);
+                        code_view.open_or_focus_existing(
+                            Some(FileLocation::Local(path)),
+                            line_col,
+                            ctx,
+                        );
                     }
                     for extra in additional_paths {
-                        code_view.open_or_focus_existing(Some(extra.clone()), None, ctx);
+                        code_view.open_or_focus_existing(
+                            Some(FileLocation::Local(extra.clone())),
+                            None,
+                            ctx,
+                        );
                     }
                 });
                 // Only focus the pane for non-preview opens
@@ -7200,7 +7226,7 @@ impl Workspace {
                                     );
                                 } else {
                                     code_view.open_or_focus_existing(
-                                        Some(path.clone()),
+                                        Some(FileLocation::Local(path.clone())),
                                         line_col,
                                         ctx,
                                     );
@@ -7208,7 +7234,7 @@ impl Workspace {
 
                                 for extra in additional_paths {
                                     code_view.open_or_focus_existing(
-                                        Some(extra.clone()),
+                                        Some(FileLocation::Local(extra.clone())),
                                         None,
                                         ctx,
                                     );
@@ -7266,7 +7292,11 @@ impl Workspace {
             if let Some(code_view) = code_view_handle {
                 code_view.update(ctx, |code_view, ctx| {
                     for path in additional_paths {
-                        code_view.open_or_focus_existing(Some(path.clone()), None, ctx);
+                        code_view.open_or_focus_existing(
+                            Some(FileLocation::Local(path.clone())),
+                            None,
+                            ctx,
+                        );
                     }
                 });
             }
@@ -7832,7 +7862,7 @@ impl Workspace {
                     let diff_state_model = repo_path.as_ref().and_then(|rp: &PathBuf| {
                         self.working_directories_model.update(ctx, |model, ctx| {
                             model.get_or_create_diff_state_model(
-                                BufferLocation::Local(rp.clone()),
+                                FileLocation::Local(rp.clone()),
                                 ctx,
                             )
                         })
@@ -7879,7 +7909,7 @@ impl Workspace {
         let repo_path = panel_context.repo_path.clone();
         let diff_state_model = repo_path.as_ref().and_then(|rp| {
             self.working_directories_model.update(ctx, |model, ctx| {
-                model.get_or_create_diff_state_model(BufferLocation::Local(rp.clone()), ctx)
+                model.get_or_create_diff_state_model(FileLocation::Local(rp.clone()), ctx)
             })
         });
         let Some(diff_state_model) = diff_state_model else {
@@ -7989,7 +8019,7 @@ impl Workspace {
             |(repo_path, terminal_view): (Option<PathBuf>, WeakViewHandle<TerminalView>)| {
                 let diff_state_model = repo_path.as_ref().and_then(|rp: &PathBuf| {
                     self.working_directories_model.update(ctx, |model, ctx| {
-                        model.get_or_create_diff_state_model(BufferLocation::Local(rp.clone()), ctx)
+                        model.get_or_create_diff_state_model(FileLocation::Local(rp.clone()), ctx)
                     })
                 })?;
                 Some(CodeReviewPaneContext {
@@ -11281,6 +11311,7 @@ impl Workspace {
                         fork_from.exchange_id,
                         fork_from.fork_from_exact_exchange,
                         FORK_PREFIX,
+                        None,
                         ctx,
                     )
                 } else {
@@ -11288,6 +11319,7 @@ impl Workspace {
                         &source_conversation,
                         FORK_PREFIX,
                         false, /* preserve_task_ids */
+                        None,
                         ctx,
                     )
                 }
@@ -12636,8 +12668,15 @@ impl Workspace {
 
         let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
         let source_conversation_id = source_token.as_str().to_string();
+        let title_for_fork = source_conversation
+            .title()
+            .map(|t| format!("{t} (Moved to cloud)"));
         ctx.spawn(
-            async move { ai_client.fork_conversation(source_conversation_id).await },
+            async move {
+                ai_client
+                    .fork_conversation(source_conversation_id, title_for_fork)
+                    .await
+            },
             move |me, result, ctx| match result {
                 Ok(response) => {
                     me.complete_local_to_cloud_handoff_open(
@@ -12695,6 +12734,7 @@ impl Workspace {
                 &source_conversation,
                 FORK_PREFIX,
                 true, /* preserve_task_ids */
+                None,
                 ctx,
             )
         }) {
@@ -13535,7 +13575,11 @@ impl Workspace {
                                         // After removing the file from the origin's editor, we want to open it in the target's editor.
                                         if let Some(path) = moved_file_path {
                                             target_code_view.update(ctx, |view, ctx| {
-                                                view.open_or_focus_existing(Some(path), None, ctx);
+                                                view.open_or_focus_existing(
+                                                    Some(FileLocation::Local(path)),
+                                                    None,
+                                                    ctx,
+                                                );
                                             });
                                         }
                                         return;
@@ -20252,7 +20296,7 @@ impl TypedActionView for Workspace {
                         let diff_state_model = repo_path.as_ref().and_then(|rp| {
                             self.working_directories_model.update(ctx, |model, ctx| {
                                 model.get_or_create_diff_state_model(
-                                    BufferLocation::Local(rp.clone()),
+                                    FileLocation::Local(rp.clone()),
                                     ctx,
                                 )
                             })
@@ -21181,7 +21225,6 @@ impl TypedActionView for Workspace {
                     FeatureFlag::OpenWarpLaunchModal.is_enabled()
                 );
             }
-            #[cfg(debug_assertions)]
             InstallOpenCodeWarpPlugin => {
                 let message = set_opencode_warp_plugin("github:warpdotdev/opencode-warp-internal");
                 self.toast_stack.update(ctx, |view, ctx| {

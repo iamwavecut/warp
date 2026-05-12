@@ -27,12 +27,15 @@ use warpui::{
 };
 
 use crate::ai::agent::api::ServerConversationToken;
-use crate::ai::agent::conversation::AIConversation;
-use crate::ai::agent::conversation::{AIConversationId, ConversationStatus, StatusColorStyle};
+use crate::ai::agent::conversation::{
+    AIConversation, AIConversationId, ConversationStatus, StatusColorStyle,
+};
+use crate::ai::agent_conversations_model::entry::PrincipalType;
 use crate::ai::agent_conversations_model::{AgentConversationEntry, AgentRunDisplayStatus};
 use crate::ai::agent_management::details_action_buttons::{
     ActionButtonsConfig, AgentDetailsButtonEvent, ConversationActionButtonsRow,
 };
+use crate::ai::ambient_agents::task::TaskPrincipalInfo;
 use crate::ai::ambient_agents::{cancel_task_with_toast, AmbientAgentTaskId};
 use crate::ai::artifacts::{Artifact, ArtifactButtonsRow, ArtifactButtonsRowEvent};
 use crate::ai::blocklist::BlocklistAIHistoryModel;
@@ -124,6 +127,7 @@ struct PanelMouseStates {
     inference_info_tooltip: MouseStateHandle,
     compute_info_tooltip: MouseStateHandle,
     skill_source_link: MouseStateHandle,
+    executor_agent_link: MouseStateHandle,
 }
 
 /// Tracks which copy button action was last triggered (for checkmark feedback).
@@ -138,28 +142,46 @@ enum CopyButtonKind {
     SetupCommands,
 }
 
-/// Information about the creator of a conversation.
+/// Information about a principal involved in a conversation.
 #[derive(Debug, Clone)]
-struct CreatorInfo {
-    /// Display name of the creator (or fallback identifier).
+struct PrincipalInfo {
+    /// Display name of the principal (or fallback identifier).
     pub display_name: String,
     /// Optional photo URL for the avatar.
     pub photo_url: Option<String>,
+    /// UID of the principal, when known (used for building Oz links).
+    pub uid: Option<String>,
+    /// Whether this principal is a service account.
+    pub is_service_account: bool,
 }
 
-impl CreatorInfo {
-    /// Create a new CreatorInfo with a display name and optional photo URL.
-    pub fn new(display_name: String, photo_url: Option<String>) -> Self {
+impl PrincipalInfo {
+    /// Create a new PrincipalInfo with a display name and optional photo URL.
+    fn new(display_name: String, photo_url: Option<String>) -> Self {
         Self {
             display_name,
             photo_url,
+            uid: None,
+            is_service_account: false,
         }
     }
 
-    /// Create a CreatorInfo with just the first character as a fallback.
-    pub fn from_uid_fallback(uid: &str) -> Self {
+    /// Create a PrincipalInfo with just the first character as a fallback.
+    fn from_uid_fallback(uid: &str) -> Self {
         let first_char = uid.chars().next().unwrap_or('?').to_uppercase().to_string();
         Self::new(first_char, None)
+    }
+}
+
+impl From<&TaskPrincipalInfo> for PrincipalInfo {
+    fn from(p: &TaskPrincipalInfo) -> Self {
+        Self {
+            display_name: p.display_name.clone().unwrap_or_else(|| p.uid.clone()),
+            photo_url: None,
+            uid: Some(p.uid.clone()),
+            is_service_account: PrincipalType::parse(&p.creator_type)
+                .is_some_and(|pt| pt.is_service_account()),
+        }
     }
 }
 
@@ -177,7 +199,9 @@ pub struct ConversationDetailsData {
     mode: PanelMode,
     title: String,
     /// Information about the creator.
-    creator: Option<CreatorInfo>,
+    creator: Option<PrincipalInfo>,
+    /// Principal the cloud run executed as.
+    executor: Option<PrincipalInfo>,
     /// When the conversation was created.
     created_at: Option<DateTime<Local>>,
     credits: Option<CreditsInfo>,
@@ -237,10 +261,10 @@ impl ConversationDetailsData {
                 if let Some(profile) = user_profiles.profile_for_uid(creator_uid) {
                     let display_name = profile.displayable_identifier();
                     let photo_url = Some(profile.photo_url.clone()).filter(|url| !url.is_empty());
-                    creator = Some(CreatorInfo::new(display_name, photo_url));
+                    creator = Some(PrincipalInfo::new(display_name, photo_url));
                 } else {
                     // Fallback to first character of UID
-                    creator = Some(CreatorInfo::from_uid_fallback(creator_uid_str));
+                    creator = Some(PrincipalInfo::from_uid_fallback(creator_uid_str));
                 }
             }
 
@@ -294,6 +318,7 @@ impl ConversationDetailsData {
                 .title()
                 .unwrap_or_else(|| "Conversation".to_string()),
             creator,
+            executor: None,
             created_at,
             credits: Some(CreditsInfo::LocalConversation(conversation.credits_spent())),
             run_time,
@@ -360,8 +385,11 @@ impl ConversationDetailsData {
             run_time: task.run_time(),
             open_action,
             creator: task
-                .creator_display_name()
-                .map(|name| CreatorInfo::new(name, None)),
+                .creator
+                .as_ref()
+                .filter(|c| c.display_name.is_some())
+                .map(PrincipalInfo::from),
+            executor: task.executor.as_ref().map(PrincipalInfo::from),
             source_prompt: Some(task.prompt.clone()),
             copy_link_url,
             skill_spec,
@@ -380,7 +408,16 @@ impl ConversationDetailsData {
             .creator
             .name
             .clone()
-            .map(|name| CreatorInfo::new(name, None));
+            .map(|name| PrincipalInfo::new(name, None));
+        let executor = entry.display.executor.as_ref().and_then(|e| {
+            let display_name = e.name.clone().or_else(|| e.uid.clone())?;
+            Some(PrincipalInfo {
+                display_name,
+                photo_url: None,
+                uid: e.uid.clone(),
+                is_service_account: e.principal_type.is_some_and(|pt| pt.is_service_account()),
+            })
+        });
         let created_at = Some(entry.display.created_at.with_timezone(&Local));
         let source_prompt = entry.display.initial_query.clone();
         let harness = entry.display.harness;
@@ -420,6 +457,7 @@ impl ConversationDetailsData {
                 },
                 title: entry.display.title.clone(),
                 creator,
+                executor,
                 created_at,
                 credits,
                 run_time: task.and_then(AmbientAgentTask::run_time),
@@ -445,6 +483,7 @@ impl ConversationDetailsData {
             },
             title: entry.display.title.clone(),
             creator,
+            executor: None,
             created_at,
             credits: entry
                 .display
@@ -474,6 +513,7 @@ impl ConversationDetailsData {
             },
             title: "Cloud agent run".to_string(),
             creator: None,
+            executor: None,
             created_at: None,
             credits: None,
             run_time: None,
@@ -513,7 +553,8 @@ impl ConversationDetailsData {
                 status,
             },
             title,
-            creator: creator_name.map(|name| CreatorInfo::new(name, None)),
+            creator: creator_name.map(|name| PrincipalInfo::new(name, None)),
+            executor: None,
             created_at: Some(created_at),
             credits: credits_used.map(CreditsInfo::LocalConversation),
             run_time: None,
@@ -888,6 +929,56 @@ impl ConversationDetailsPanel {
                         .finish(),
                 )
                 .with_child(Expanded::new(1., created_text).finish())
+                .finish(),
+        )
+    }
+
+    fn render_executor_section(&self, appearance: &Appearance) -> Option<Box<dyn Element>> {
+        let executor = self.data.executor.as_ref()?;
+        if !executor.is_service_account {
+            return None;
+        }
+        // Hide when the executor is the same person as the creator.
+        if self
+            .data
+            .creator
+            .as_ref()
+            .is_some_and(|c| match (&c.uid, &executor.uid) {
+                (Some(c_uid), Some(e_uid)) => c_uid == e_uid,
+                _ => c.display_name == executor.display_name,
+            })
+        {
+            return None;
+        }
+        let theme = appearance.theme();
+        let ui_font_size = appearance.ui_font_size();
+
+        let label_text = Text::new(
+            "Agent".to_string(),
+            appearance.ui_font_family(),
+            ui_font_size,
+        )
+        .with_color(blended_colors::text_sub(theme, theme.surface_1()))
+        .finish();
+
+        let agent_name_element = Text::new(
+            executor.display_name.clone(),
+            appearance.ui_font_family(),
+            ui_font_size,
+        )
+        .with_color(theme.foreground().into())
+        .with_selectable(true)
+        .finish();
+
+        Some(
+            Flex::column()
+                .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                .with_child(
+                    Container::new(label_text)
+                        .with_margin_bottom(LABEL_VALUE_GAP)
+                        .finish(),
+                )
+                .with_child(agent_name_element)
                 .finish(),
         )
     }
@@ -1662,6 +1753,15 @@ impl View for ConversationDetailsPanel {
         if let Some(status_section) = self.render_status_section(appearance) {
             content.add_child(
                 Container::new(status_section)
+                    .with_margin_bottom(FIELD_SPACING)
+                    .finish(),
+            );
+        }
+
+        // Executor section
+        if let Some(executor_section) = self.render_executor_section(appearance) {
+            content.add_child(
+                Container::new(executor_section)
                     .with_margin_bottom(FIELD_SPACING)
                     .finish(),
             );
