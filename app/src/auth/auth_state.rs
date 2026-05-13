@@ -147,6 +147,7 @@ impl AuthState {
             linked_at: persisted.linked_at,
             personal_object_limits: persisted.personal_object_limits,
             principal_type: PrincipalType::default(),
+            global_skills: Vec::new(),
         };
         *self.user.write() = Some(user);
 
@@ -167,6 +168,14 @@ impl AuthState {
     /// Returns the current credentials.
     pub fn credentials(&self) -> Option<Credentials> {
         self.credentials.read().clone()
+    }
+
+    pub fn global_skills(&self) -> Vec<String> {
+        self.user
+            .read()
+            .as_ref()
+            .map(|user| user.global_skills.clone())
+            .unwrap_or_default()
     }
 
     /// Sets the credentials. Should only be called within the auth module.

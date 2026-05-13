@@ -145,7 +145,10 @@ impl<T: EventLoopSender> RemoteServerController<T> {
             | RemoteServerManagerEvent::ClientRequestFailed { .. }
             | RemoteServerManagerEvent::ServerMessageDecodingError { .. }
             | RemoteServerManagerEvent::BufferUpdated { .. }
-            | RemoteServerManagerEvent::BufferConflictDetected { .. } => {}
+            | RemoteServerManagerEvent::BufferConflictDetected { .. }
+            | RemoteServerManagerEvent::DiffStateSnapshotReceived { .. }
+            | RemoteServerManagerEvent::DiffStateMetadataUpdateReceived { .. }
+            | RemoteServerManagerEvent::DiffStateFileDeltaReceived { .. } => {}
         });
 
         Self {
