@@ -94,9 +94,8 @@ fn open_toolbar_items_from_settings<V: View>(
         }
     };
 
-    // Drop saved items that are no longer available (e.g. their feature flag was disabled).
-    // Without this, the editor renders chips like `HandoffToCloud` from a prior `Custom`
-    // selection even when the gating flag is off.
+    // Drop saved items that are no longer available (e.g. their feature flag was disabled
+    // or a setting was turned off).
     let filter_unavailable = |items: Vec<AgentToolbarItemKind>| -> Vec<AgentToolbarItemKind> {
         items
             .into_iter()

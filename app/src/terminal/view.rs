@@ -50,10 +50,11 @@ use std::ops::Deref as _;
 
 use crate::ai::blocklist::agent_view::fork_from_last_known_good_state_exchange_id;
 use crate::ai::blocklist::agent_view::{
-    agent_view_bg_fill, AgentViewController, AgentViewControllerEvent, AgentViewDisplayMode,
-    AgentViewEntryBlockParams, AgentViewEntryOrigin, AgentViewHeaderDisabledTheme,
-    AgentViewHeaderTheme, AgentViewZeroStateBlock, AgentViewZeroStateEvent, EphemeralMessageModel,
-    ExitAgentViewError, ExitConfirmationTrigger, InlineAgentViewHeader, OrchestrationPillBar,
+    agent_view_bg_fill, get_agent_view_entry_block_position_id, AgentViewController,
+    AgentViewControllerEvent, AgentViewDisplayMode, AgentViewEntryBlockParams,
+    AgentViewEntryOrigin, AgentViewHeaderDisabledTheme, AgentViewHeaderTheme,
+    AgentViewZeroStateBlock, AgentViewZeroStateEvent, EphemeralMessageModel, ExitAgentViewError,
+    ExitConfirmationTrigger, InlineAgentViewHeader, OrchestrationPillBar,
     ENTER_OR_EXIT_CONFIRMATION_WINDOW,
 };
 use crate::ai::conversation_utils;
@@ -335,7 +336,7 @@ use crate::workflows::workflow::Workflow;
 use crate::workflows::WorkflowSelectionSource;
 use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::{CommandSearchOptions, OneTimeModalModel, ToastStack, WorkspaceAction};
-use crate::workspace::{ForkAIConversationParams, ForkFromExchange, ForkedConversationDestination};
+use crate::workspace::{ForkFromExchange, ForkedConversationDestination};
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::AIRequestUsageModel;
 use crate::ActiveSession as WindowActiveSession;
@@ -392,7 +393,7 @@ use warpui::elements::new_scrollable::{
 use warpui::elements::{
     get_rich_content_position_id, ChildAnchor, ClippedScrollStateHandle, Container,
     CrossAxisAlignment, DispatchEventResult, DropTarget, DropTargetData, Empty, EventHandler,
-    Expanded, Flex, NewScrollable, OffsetPositioning, ParentAnchor, ParentElement,
+    Expanded, Flex, LiveElement, NewScrollable, OffsetPositioning, ParentAnchor, ParentElement,
     ParentOffsetBounds, PositionedElementAnchor, PositionedElementOffsetBounds, Radius,
     ScrollableElement, ScrollbarWidth, Shrinkable, Text,
 };
@@ -742,6 +743,9 @@ lazy_static! {
     /// `BlockList` or the `AltScreen`) should be rendered.
     pub static ref PADDING_LEFT: f32 = 16.;
 }
+
+/// Interval at which the live command duration counter repaints.
+const LIVE_COMMAND_DURATION_REPAINT_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
 pub struct ControlMasterErrorBannerState {
@@ -1393,6 +1397,18 @@ pub enum ContextMenuAction {
     CopyServerRequestId {
         request_id: ServerConversationToken,
     },
+    // Copy the share link for a conversation in the blocklist.
+    CopyConversationShareLink {
+        conversation_id: AIConversationId,
+    },
+    // Copy the text of a conversation in the blocklist.
+    CopyConversationText {
+        conversation_id: AIConversationId,
+    },
+    // Fork a conversation in the blocklist into a new pane.
+    ForkAIConversation {
+        conversation_id: AIConversationId,
+    },
     /// Opens the sharing dialog for a conversation from the AI block context menu
     OpenConversationShareDialog {
         conversation_id: AIConversationId,
@@ -1511,6 +1527,9 @@ impl fmt::Debug for ContextMenuAction {
             CopyExternalDebuggingId { .. } => f.write_str("CopyExternalDebuggingId"),
             CopyConversationId { .. } => f.write_str("CopyConversationId"),
             CopyServerRequestId { .. } => f.write_str("CopyServerRequestId"),
+            CopyConversationShareLink { .. } => f.write_str("CopyConversationShareLink"),
+            CopyConversationText { .. } => f.write_str("CopyConversationText"),
+            ForkAIConversation { .. } => f.write_str("ForkAIConversation"),
             OpenConversationShareDialog { .. } => f.write_str("OpenConversationShareDialog"),
             ForkAIConversationFromBlock { .. } => f.write_str("ForkAIConversationFromBlock"),
             ForkAIConversationFromExactExchange { .. } => {
@@ -2067,6 +2086,11 @@ pub enum ContextMenuType {
     /// Shows the overflow menu with copy options for an AI block. The menu is opened by clicking
     /// on the overflow (three dots) button inside the AI block header.
     AIBlockOverflowMenu { ai_block_view_id: EntityId },
+    /// Shows the conversation actions menu for an Agent View entry block.
+    AgentViewEntryConversation {
+        agent_view_entry_block_id: EntityId,
+        position: Vector2F,
+    },
 }
 
 impl ContextMenuType {
@@ -2098,6 +2122,7 @@ impl ContextMenuType {
             ContextMenuType::Input { position } => Some(*position),
             ContextMenuType::AIBlockAttachedContext { .. } => None,
             ContextMenuType::AIBlockOverflowMenu { .. } => None,
+            ContextMenuType::AgentViewEntryConversation { .. } => None,
         }
     }
 }
@@ -4361,8 +4386,7 @@ impl TerminalView {
                     }
                     RemoteServerManagerEvent::NavigatedToDirectory {
                         session_id: nav_session_id,
-                        host_id,
-                        indexed_path,
+                        remote_path,
                         ..
                     } => {
                         // Check if this navigation belongs to our active session
@@ -4372,8 +4396,7 @@ impl TerminalView {
                             .is_some_and(|sid| sid == *nav_session_id);
                         if is_relevant {
                             ctx.emit(Event::Pane(PaneEvent::RemoteRepoNavigated {
-                                host_id: host_id.clone(),
-                                indexed_path: indexed_path.clone(),
+                                remote_path: remote_path.clone(),
                             }));
                         }
                     }
@@ -7188,6 +7211,10 @@ impl TerminalView {
                 LongRunningCommandAgentInteractionState::NotInteracting
             }
         };
+        log::info!(
+            "emit_long_running_command_agent_interaction_state_changed: \
+             agent_has_control={agent_has_control}, emitting state={state:?}"
+        );
         ctx.emit(Event::LongRunningCommandAgentInteractionStateChanged { state });
     }
 
@@ -16264,6 +16291,99 @@ impl TerminalView {
         }
     }
 
+    fn conversation_text(
+        &self,
+        conversation_id: AIConversationId,
+        ctx: &AppContext,
+    ) -> Option<String> {
+        let Some(conversation) =
+            BlocklistAIHistoryModel::as_ref(ctx).conversation(&conversation_id)
+        else {
+            log::warn!("No conversation found for conversation ID {conversation_id}");
+            return None;
+        };
+
+        let mut result = Vec::new();
+        for exchange in conversation.root_task_exchanges() {
+            let formatted_exchange =
+                exchange.format_for_copy(Some(self.ai_action_model.as_ref(ctx)));
+            if !formatted_exchange.is_empty() {
+                result.push(formatted_exchange);
+            }
+        }
+
+        if result.is_empty() {
+            log::warn!("No copyable conversation text found for conversation ID {conversation_id}");
+            return None;
+        }
+
+        Some(result.join("\n\n"))
+    }
+
+    fn copy_conversation_text(
+        &self,
+        conversation_id: AIConversationId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if let Some(conversation_text) = self.conversation_text(conversation_id, ctx) {
+            ctx.clipboard()
+                .write(ClipboardContent::plain_text(conversation_text));
+        }
+    }
+
+    fn fork_ai_conversation(
+        &self,
+        conversation_id: AIConversationId,
+        fork_from_exchange: Option<ForkFromExchange>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.dispatch_typed_action(&WorkspaceAction::ForkAIConversation {
+            conversation_id,
+            fork_from_exchange,
+            summarize_after_fork: false,
+            summarization_prompt: None,
+            initial_prompt: None,
+            destination: ForkedConversationDestination::SplitPane,
+        });
+    }
+
+    fn agent_view_entry_conversation_menu_items(
+        &self,
+        conversation_id: AIConversationId,
+    ) -> Vec<MenuItem<TerminalAction>> {
+        vec![
+            MenuItemFields::new("Copy conversation text")
+                .with_on_select_action(TerminalAction::ContextMenu(
+                    ContextMenuAction::CopyConversationText { conversation_id },
+                ))
+                .into_item(),
+            MenuItemFields::new("Fork")
+                .with_on_select_action(TerminalAction::ContextMenu(
+                    ContextMenuAction::ForkAIConversation { conversation_id },
+                ))
+                .into_item(),
+        ]
+    }
+
+    fn open_agent_view_entry_context_menu(
+        &mut self,
+        conversation_id: AIConversationId,
+        agent_view_entry_block_id: EntityId,
+        position: Vector2F,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.show_context_menu(
+            ContextMenuState {
+                menu_type: ContextMenuType::AgentViewEntryConversation {
+                    agent_view_entry_block_id,
+                    position,
+                },
+            },
+            self.agent_view_entry_conversation_menu_items(conversation_id),
+            ctx,
+        );
+    }
+
     fn open_ai_block_overflow_context_menu(
         &mut self,
         ai_block_view_id: EntityId,
@@ -21136,6 +21256,23 @@ impl TerminalView {
             .formatted_duration_string()
     }
 
+    fn is_block_duration_live(model: &TerminalModel, block_index: BlockIndex) -> bool {
+        model
+            .block_list()
+            .block_at(block_index)
+            .is_some_and(|block| block.is_duration_live())
+    }
+
+    /// Returns `true` when the block is actively executing (has started but not
+    /// yet completed). Used to kick off the repaint timer before the first
+    /// whole-second tick so the live duration counter appears promptly.
+    fn is_block_executing(model: &TerminalModel, block_index: BlockIndex) -> bool {
+        model
+            .block_list()
+            .block_at(block_index)
+            .is_some_and(|block| block.is_executing())
+    }
+
     fn block_start_and_completed_ts(model: &TerminalModel, block_index: BlockIndex) -> String {
         let block = match model.block_list().block_at(block_index) {
             None => return String::new(),
@@ -21462,6 +21599,7 @@ impl TerminalView {
 
         let mut label_row = Flex::row().with_child(prompt);
 
+        let is_live = Self::is_block_duration_live(model, index);
         if let Some(duration_string) = Self::block_duration_text(model, index) {
             let duration = Text::new_inline(
                 duration_string,
@@ -21471,6 +21609,14 @@ impl TerminalView {
             .with_style(Properties::default().weight(appearance.monospace_font_weight()))
             .with_color(terminal_theme_prompt)
             .finish();
+
+            // Wrap in LiveElement to trigger periodic repaints while the command
+            // is still running, so the counter updates live.
+            let duration: Box<dyn Element> = if is_live {
+                LiveElement::new(duration, LIVE_COMMAND_DURATION_REPAINT_INTERVAL).finish()
+            } else {
+                duration
+            };
 
             label_row.add_child(if let Some(state) = mouse_state {
                 Hoverable::new(state.clone(), |state| {
@@ -21510,6 +21656,20 @@ impl TerminalView {
             } else {
                 duration
             });
+        } else if Self::is_block_executing(model, index) {
+            // Block is executing but less than 1 second has elapsed — no duration
+            // text to show yet. Add an invisible LiveElement to kick off the
+            // repaint timer so the counter appears as soon as 1s elapses.
+            label_row.add_child(
+                LiveElement::new(
+                    ConstrainedBox::new(Empty::new().finish())
+                        .with_width(0.)
+                        .with_height(0.)
+                        .finish(),
+                    LIVE_COMMAND_DURATION_REPAINT_INTERVAL,
+                )
+                .finish(),
+            );
         }
 
         SavePosition::new(
@@ -22609,16 +22769,13 @@ impl TerminalView {
                 }
             }
             CopyAIBlockConversation { ai_block_view_id } => {
-                // Copy the entire conversation by delegating to the AI block
-                for rich_content in self.rich_content_views.iter() {
-                    if let Some(ai_metadata) = rich_content.ai_block_metadata() {
-                        if ai_metadata.ai_block_handle.id() == *ai_block_view_id {
-                            ai_metadata.ai_block_handle.update(ctx, |block, ctx| {
-                                block.handle_action(&AIBlockAction::CopyConversation, ctx);
-                            });
-                            break;
-                        }
-                    }
+                let conversation_id = self.rich_content_views.iter().find_map(|rich_content| {
+                    let ai_metadata = rich_content.ai_block_metadata()?;
+                    (ai_metadata.ai_block_handle.id() == *ai_block_view_id)
+                        .then_some(ai_metadata.conversation_id)
+                });
+                if let Some(conversation_id) = conversation_id {
+                    self.copy_conversation_text(conversation_id, ctx);
                 }
             }
             CopyExternalDebuggingId {
@@ -22646,6 +22803,17 @@ impl TerminalView {
                 ctx.clipboard().write(ClipboardContent::plain_text(
                     request_id.as_str().to_string(),
                 ));
+            }
+            CopyConversationShareLink { conversation_id } => {
+                if let Some(link) = ShareableObject::AIConversation(*conversation_id).link(ctx) {
+                    ctx.clipboard().write(ClipboardContent::plain_text(link));
+                }
+            }
+            CopyConversationText { conversation_id } => {
+                self.copy_conversation_text(*conversation_id, ctx);
+            }
+            ForkAIConversation { conversation_id } => {
+                self.fork_ai_conversation(*conversation_id, None, ctx);
             }
             OpenConversationShareDialog { conversation_id } => {
                 // Set the shareable object and open the sharing dialog via the pane header
@@ -22696,19 +22864,13 @@ impl TerminalView {
                 exchange_id,
                 conversation_id,
             } => {
-                ctx.dispatch_global_action(
-                    "workspace:fork_ai_conversation",
-                    ForkAIConversationParams {
-                        conversation_id: *conversation_id,
-                        fork_from_exchange: Some(ForkFromExchange {
-                            exchange_id: *exchange_id,
-                            fork_from_exact_exchange: false,
-                        }),
-                        summarize_after_fork: false,
-                        summarization_prompt: None,
-                        initial_prompt: None,
-                        destination: ForkedConversationDestination::SplitPane,
-                    },
+                self.fork_ai_conversation(
+                    *conversation_id,
+                    Some(ForkFromExchange {
+                        exchange_id: *exchange_id,
+                        fork_from_exact_exchange: false,
+                    }),
+                    ctx,
                 );
             }
             ForkAIConversationFromExactExchange {
@@ -22716,19 +22878,13 @@ impl TerminalView {
                 exchange_id,
                 conversation_id,
             } => {
-                ctx.dispatch_global_action(
-                    "workspace:fork_ai_conversation",
-                    ForkAIConversationParams {
-                        conversation_id: *conversation_id,
-                        fork_from_exchange: Some(ForkFromExchange {
-                            exchange_id: *exchange_id,
-                            fork_from_exact_exchange: true,
-                        }),
-                        summarize_after_fork: false,
-                        summarization_prompt: None,
-                        initial_prompt: None,
-                        destination: ForkedConversationDestination::SplitPane,
-                    },
+                self.fork_ai_conversation(
+                    *conversation_id,
+                    Some(ForkFromExchange {
+                        exchange_id: *exchange_id,
+                        fork_from_exact_exchange: true,
+                    }),
+                    ctx,
                 );
             }
             SavePromptAsAgentModeWorkflow { ai_block_view_id } => {
@@ -25538,6 +25694,19 @@ impl View for TerminalView {
                         ChildAnchor::TopRight,
                     ),
                 ),
+            Some(ContextMenuType::AgentViewEntryConversation {
+                agent_view_entry_block_id,
+                position,
+            }) => stack.add_positioned_overlay_child(
+                ChildView::new(&self.context_menu).finish(),
+                OffsetPositioning::offset_from_save_position_element(
+                    get_agent_view_entry_block_position_id(*agent_view_entry_block_id),
+                    *position,
+                    PositionedElementOffsetBounds::WindowByPosition,
+                    PositionedElementAnchor::TopLeft,
+                    ChildAnchor::TopLeft,
+                ),
+            ),
             None => {}
         }
 
@@ -25838,6 +26007,15 @@ impl View for TerminalView {
                 if is_rich_input_chip_in_cli_toolbar(app) {
                     context.set.insert(flags::CLI_AGENT_RICH_INPUT_CHIP_ENABLED);
                 }
+            }
+
+            // Mirror the rich-input-open flag onto the terminal context so the
+            // Ctrl+G toggle binding can close rich input regardless of which
+            // descendant view currently holds focus, and even when the
+            // active block has transitioned out of `LongRunningCommand`
+            // (e.g., the CLI agent has paused waiting for user input). See #9916.
+            if CLIAgentSessionsModel::as_ref(app).is_input_open(self.view_id) {
+                context.set.insert(flags::CLI_AGENT_RICH_INPUT_OPEN);
             }
         }
 

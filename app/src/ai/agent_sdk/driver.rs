@@ -1299,7 +1299,7 @@ impl AgentDriver {
             safe: ("Loading skills from {} environment repositories", repos.len()),
             full: (
                 "Loading environment skills from repositories: {}",
-                repos.iter().format(", ")
+                repos.iter().join(", ")
             )
         );
 
@@ -1423,8 +1423,8 @@ impl AgentDriver {
             safe: ("Loading {} global skill(s) from {} repo(s)", specs.len(), repos.len()),
             full: (
                 "Loading global skills {} from repos: {}",
-                specs.iter().map(|s| &s.skill_identifier).format(", "),
-                repos.iter().format(", ")
+                specs.iter().map(|s| &s.skill_identifier).join(", "),
+                repos.iter().join(", ")
             )
         );
 

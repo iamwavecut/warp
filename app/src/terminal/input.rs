@@ -244,6 +244,8 @@ use string_offset::CharOffset;
 use vec1::Vec1;
 use vim::vim::{VimHandler, VimMode};
 use warp_completer::util::parse_current_commands_and_tokens;
+#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
+use warpui::r#async::FutureExt as _;
 
 use warp_completer::{
     completer::{
@@ -2106,6 +2108,7 @@ impl Input {
                         );
                     });
                 }
+
                 // Re-render on status-footer transitions and on status-affecting events that
                 // decide whether the input is in its composing shape.
                 let should_notify = handle.as_ref(ctx).should_show_status_footer()
@@ -2119,9 +2122,12 @@ impl Input {
                             | AmbientAgentViewModelEvent::Cancelled
                             | AmbientAgentViewModelEvent::NeedsGithubAuth
                             | AmbientAgentViewModelEvent::HarnessSelected
+                            | AmbientAgentViewModelEvent::PendingHandoffChanged
                             | AmbientAgentViewModelEvent::HandoffSnapshotUploadFailed { .. }
                     );
+
                 if should_notify {
+                    me.set_zero_state_hint_text(ctx);
                     ctx.notify();
                 }
             });

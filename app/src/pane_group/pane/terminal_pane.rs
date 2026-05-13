@@ -1786,6 +1786,7 @@ fn handle_terminal_view_event(
                                 conversation_id: None,
                                 initial_snapshot_token: None,
                                 agent_identity_uid: None,
+                                snapshot_disabled: None,
                             };
 
                             new_terminal_view.update(ctx, |terminal_view, ctx| {
@@ -2237,6 +2238,8 @@ fn launch_remote_child(
             }
         }
     };
+    let computer_use_enabled =
+        (orchestration_harness == Harness::Oz).then_some(computer_use_enabled);
     let spawn_request = SpawnAgentRequest {
         prompt: request.prompt,
         mode: UserQueryMode::Normal,
@@ -2244,7 +2247,7 @@ fn launch_remote_child(
             environment_id,
             model_id: (!model_id.is_empty()).then_some(model_id),
             worker_host: (!worker_host.is_empty()).then_some(worker_host),
-            computer_use_enabled: Some(computer_use_enabled),
+            computer_use_enabled,
             harness: harness_override,
             ..Default::default()
         }),
@@ -2259,6 +2262,7 @@ fn launch_remote_child(
         conversation_id: None,
         initial_snapshot_token: None,
         agent_identity_uid: None,
+        snapshot_disabled: None,
     };
 
     new_terminal_view.update(ctx, |terminal_view, ctx| {

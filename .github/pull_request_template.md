@@ -42,4 +42,5 @@ CHANGELOG-BUG-FIX: {{text goes here...}}
 CHANGELOG-BUG-FIX: {{more text goes here...}}
 CHANGELOG-IMAGE: {{GCP-hosted URL goes here...}}
 CHANGELOG-OZ: {{text goes here...}}
+CHANGELOG-NONE
 -->

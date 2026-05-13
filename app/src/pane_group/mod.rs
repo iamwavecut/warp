@@ -82,10 +82,10 @@ use uuid::Uuid;
 use warp_cli::agent::Harness;
 use warp_core::command::ExitCode;
 use warp_core::context_flag::ContextFlag;
-use warp_core::HostId;
 use warp_util::path::convert_wsl_to_windows_host_path;
 #[cfg(feature = "local_fs")]
 use warp_util::path::LineAndColumnArg;
+use warp_util::remote_path::RemotePath;
 use warpui::elements::{
     Clipped, CrossAxisAlignment, DispatchEventResult, EventHandler, Flex, MainAxisSize, Shrinkable,
     Stack,
@@ -577,8 +577,7 @@ pub enum Event {
     MaximizePaneToggled,
     /// A remote server resolved the repo root for a session in this pane group.
     RemoteRepoNavigated {
-        host_id: HostId,
-        indexed_path: String,
+        remote_path: RemotePath,
     },
     /// Refresh the workspace-level active session state.
     ActiveSessionChanged,
@@ -3535,9 +3534,9 @@ impl PaneGroup {
     ) {
         let history_model_handle = BlocklistAIHistoryModel::handle(ctx);
 
-        let future = history_model_handle
-            .as_ref(ctx)
-            .load_conversation_by_server_token(&server_conversation_token, ctx);
+        let future = history_model_handle.update(ctx, |history_model, ctx| {
+            history_model.load_conversation_by_server_token(&server_conversation_token, ctx)
+        });
         ctx.spawn(future, move |group, conversation, ctx| {
             if let Some(conversation) = conversation {
                 group.load_data_into_transcript_viewer(
@@ -5202,13 +5201,9 @@ impl PaneGroup {
             PaneEvent::RepoChanged => {
                 ctx.emit(Event::RepoChanged);
             }
-            PaneEvent::RemoteRepoNavigated {
-                host_id,
-                indexed_path,
-            } => {
+            PaneEvent::RemoteRepoNavigated { remote_path } => {
                 ctx.emit(Event::RemoteRepoNavigated {
-                    host_id: host_id.clone(),
-                    indexed_path: indexed_path.clone(),
+                    remote_path: remote_path.clone(),
                 });
             }
         }

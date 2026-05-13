@@ -854,6 +854,7 @@ impl AmbientAgentViewModel {
             conversation_id: None,
             initial_snapshot_token: None,
             agent_identity_uid: None,
+            snapshot_disabled: None,
         };
 
         self.spawn_internal(request, ctx);
@@ -1474,6 +1475,7 @@ impl AmbientAgentViewModel {
             conversation_id: Some(forked_conversation_id),
             initial_snapshot_token,
             agent_identity_uid: None,
+            snapshot_disabled: None,
         };
         self.spawn_agent_with_request(request, ctx);
     }
