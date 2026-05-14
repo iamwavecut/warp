@@ -8,16 +8,7 @@ use warp_core::ui::icons::Icon;
 use warp_core::user_preferences::GetUserPreferences;
 use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity};
 
-use crate::{
-    auth::{
-        auth_manager::{AuthManager, AuthManagerEvent},
-        AuthStateProvider,
-    },
-    network::{NetworkStatus, NetworkStatusEvent, NetworkStatusKind},
-    report_error,
-    server::server_api::ServerApiProvider,
-    workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent},
-};
+use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 
 use ai::api_keys::{ApiKeyManager, ApiKeyManagerEvent};
 
@@ -58,7 +49,6 @@ pub enum DisableReason {
     AdminDisabled,
     OutOfRequests,
     ProviderOutage,
-    RequiresUpgrade,
     Unavailable,
 }
 
@@ -66,12 +56,13 @@ impl DisableReason {
     /// Returns a user-facing tooltip explaining why the model is disabled.
     pub fn tooltip_text(&self) -> &'static str {
         match self {
-            DisableReason::AdminDisabled => "This model has been disabled by your team admin.",
-            DisableReason::OutOfRequests => "Please upgrade your plan to make more requests.",
+            DisableReason::AdminDisabled => "This model is disabled by local provider settings.",
+            DisableReason::OutOfRequests => {
+                "This hosted quota path is unavailable. Configure a local or BYOK provider."
+            }
             DisableReason::ProviderOutage => {
                 "This model is temporarily unavailable due to a provider outage."
             }
-            DisableReason::RequiresUpgrade => "Please upgrade your plan to access this model.",
             DisableReason::Unavailable => "This model is unavailable.",
         }
     }
@@ -79,16 +70,11 @@ impl DisableReason {
     /// Returns `true` when this disable reason means the user cannot use the model
     /// and we should clear their stored preference.
     ///
-    /// `RequiresUpgrade` is BYOK-aware: if the user has a BYO API key for the
-    /// model's provider (`has_byok_key = true`), the server will still accept
-    /// the request, so we keep the selection.
-    ///
     /// `OutOfRequests` and `ProviderOutage` are transient and expected to
     /// resolve without user action, so we preserve the selection.
-    fn should_clear_preference(&self, has_byok_key: bool) -> bool {
+    fn should_clear_preference(&self) -> bool {
         match self {
             DisableReason::AdminDisabled | DisableReason::Unavailable => true,
-            DisableReason::RequiresUpgrade => !has_byok_key,
             DisableReason::OutOfRequests | DisableReason::ProviderOutage => false,
         }
     }
@@ -170,7 +156,6 @@ pub struct LLMInfo {
     pub spec: Option<LLMSpec>,
     pub provider: LLMProvider,
     pub host_configs: HashMap<LLMModelHost, RoutingHostConfig>,
-    pub discount_percentage: Option<f32>,
     pub context_window: LLMContextWindow,
 }
 
@@ -216,8 +201,6 @@ impl<'de> Deserialize<'de> for LLMInfo {
             #[serde(default)]
             host_configs: HostConfigsWire,
             #[serde(default)]
-            discount_percentage: Option<f32>,
-            #[serde(default)]
             context_window: LLMContextWindow,
         }
 
@@ -252,7 +235,6 @@ impl<'de> Deserialize<'de> for LLMInfo {
             disable_reason: wire.disable_reason,
             spec: wire.spec,
             host_configs,
-            discount_percentage: wire.discount_percentage,
             context_window: wire.context_window,
         })
     }
@@ -319,7 +301,6 @@ impl LLMInfo {
             spec: None,
             provider: LLMProvider::Unknown,
             host_configs: HashMap::new(),
-            discount_percentage: None,
             context_window: LLMContextWindow::default(),
         }
     }
@@ -380,10 +361,9 @@ impl AvailableLLMs {
     /// and not effectively disabled for the current user).
     fn usable_info_for_id(&self, id: &LLMId, app: &AppContext) -> Option<&LLMInfo> {
         self.info_for_id(id).filter(|info| {
-            let has_byok_key = is_using_api_key_for_provider(&info.provider, app);
             info.disable_reason
                 .as_ref()
-                .is_none_or(|reason| !reason.should_clear_preference(has_byok_key))
+                .is_none_or(|reason| !reason.should_clear_preference())
         })
     }
 
@@ -403,7 +383,7 @@ impl AvailableLLMs {
 }
 
 /// The set of models available to the client, grouped by the feature they support.
-/// This is fetched from the server and cached.
+/// In this fork it is built from local OpenAI-compatible provider settings.
 ///
 /// Currently, if a model is available for multiple features,
 /// it will appear denormalized in each of the feature's
@@ -456,7 +436,6 @@ fn default_computer_use_llms() -> AvailableLLMs {
             spec: None,
             provider: LLMProvider::Unknown,
             host_configs: HashMap::new(),
-            discount_percentage: None,
             context_window: LLMContextWindow::default(),
         }],
         preferred_codex_model_id: None,
@@ -483,7 +462,6 @@ impl Default for ModelsByFeature {
                     spec: None,
                     provider: LLMProvider::Unknown,
                     host_configs: HashMap::new(),
-                    discount_percentage: None,
                     context_window: LLMContextWindow::default(),
                 }],
                 preferred_codex_model_id: None,
@@ -505,7 +483,6 @@ impl Default for ModelsByFeature {
                     spec: None,
                     provider: LLMProvider::Unknown,
                     host_configs: HashMap::new(),
-                    discount_percentage: None,
                     context_window: LLMContextWindow::default(),
                 }],
                 preferred_codex_model_id: None,
@@ -527,7 +504,6 @@ impl Default for ModelsByFeature {
                     spec: None,
                     provider: LLMProvider::Unknown,
                     host_configs: HashMap::new(),
-                    discount_percentage: None,
                     context_window: LLMContextWindow::default(),
                 }],
                 preferred_codex_model_id: None,
@@ -564,33 +540,14 @@ impl LLMPreferences {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
         let models_by_feature = get_cached_models(ctx).unwrap_or_default();
 
-        ctx.subscribe_to_model(&NetworkStatus::handle(ctx), |me, event, ctx| {
-            if let NetworkStatusEvent::NetworkStatusChanged {
-                new_status: NetworkStatusKind::Online,
-            } = event
-            {
-                me.refresh_authed_models(ctx);
-            }
-        });
-
-        // TODO: Instead of querying this ad-hoc upon a successful log in, we should add the
-        // available LLMs query to the general workspace metadata query which is polled
-        // and hooked up to workspace changes. For that to work, each user would need to
-        // have a personal workspace. This is a stop-gap.
-        ctx.subscribe_to_model(&AuthManager::handle(ctx), |me, event, ctx| {
-            if let AuthManagerEvent::AuthComplete = event {
-                me.refresh_authed_models(ctx);
-            }
-        });
-
         ctx.subscribe_to_model(&UserWorkspaces::handle(ctx), |me, event, ctx| {
             if let UserWorkspacesEvent::TeamsChanged = event {
-                me.refresh_authed_models(ctx);
+                me.refresh_available_models(ctx);
             }
         });
 
         // Re-reconcile disabled model preferences when BYOK keys change, since
-        // RequiresUpgrade models may become usable or unusable.
+        // provider availability can change with local key configuration.
         ctx.subscribe_to_model(
             &ApiKeyManager::handle(ctx),
             |me, _event: &ApiKeyManagerEvent, ctx| {
@@ -910,47 +867,6 @@ impl LLMPreferences {
         *last_update.popup_visibility_state.lock() = UpdatePopupVisibilityState::Hidden;
     }
 
-    /// Fetches the latest set of models from the server for the currently logged in user, and updates the model.
-    pub fn refresh_authed_models(&self, ctx: &mut ModelContext<Self>) {
-        // Don't try to fetch auth'd models if the user is not logged in yet.
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
-            return;
-        }
-
-        let ai_api_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-        ctx.spawn(
-            async move { ai_api_client.get_feature_model_choices().await },
-            |me, result, ctx| match result {
-                Ok(update) => {
-                    if update != me.models_by_feature {
-                        me.on_server_update(update, ctx);
-                    }
-                }
-                Err(e) => {
-                    report_error!(e.context("Failed to fetch LLMs from server"));
-                }
-            },
-        );
-    }
-
-    /// No auth required (i.e. to populate the pre-login onboarding picker).
-    fn refresh_public_models(&self, ctx: &mut ModelContext<Self>) {
-        let ai_api_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-        ctx.spawn(
-            async move { ai_api_client.get_free_available_models(None).await },
-            |me, result, ctx| match result {
-                Ok(update) => {
-                    if update != me.models_by_feature {
-                        me.on_server_update(update, ctx);
-                    }
-                }
-                Err(e) => {
-                    report_error!(e.context("Failed to fetch free-tier LLMs from server"));
-                }
-            },
-        );
-    }
-
     pub fn refresh_available_models(&self, ctx: &mut ModelContext<Self>) {
         self.refresh_custom_provider_models(ctx);
     }
@@ -963,7 +879,7 @@ impl LLMPreferences {
         let custom_providers = &AISettings::as_ref(ctx).custom_providers;
 
         if custom_providers.is_empty() {
-            log::info!("local_only: no custom providers configured, using default models");
+            log::info!("local-first: no custom providers configured, using default models");
             return;
         }
 
@@ -989,21 +905,20 @@ impl LLMPreferences {
                     spec: None,
                     provider: provider.clone(),
                     host_configs: HashMap::new(),
-                    discount_percentage: None,
                     context_window: LLMContextWindow::default(),
                 });
             }
         }
 
         if all_llms.is_empty() {
-            log::info!("local_only: custom providers configured but no models defined");
+            log::info!("local-first: custom providers configured but no models defined");
             return;
         }
 
         let default_id = all_llms.first().unwrap().id.clone();
 
         let available = AvailableLLMs::new(default_id, all_llms, None).unwrap_or_else(|e| {
-            log::error!("local_only: failed to build AvailableLLMs: {e}");
+            log::error!("local-first: failed to build AvailableLLMs: {e}");
             AvailableLLMs {
                 default_id: "auto".to_owned().into(),
                 choices: vec![LLMInfo {
@@ -1021,7 +936,6 @@ impl LLMPreferences {
                     spec: None,
                     provider: LLMProvider::Unknown,
                     host_configs: HashMap::new(),
-                    discount_percentage: None,
                     context_window: LLMContextWindow::default(),
                 }],
                 preferred_codex_model_id: None,
@@ -1036,7 +950,7 @@ impl LLMPreferences {
         };
 
         // Use ctx.spawn with an immediately-resolving future so we get
-        // &mut Self access in the callback, same pattern as refresh_authed_models.
+        // &mut Self access in the callback.
         let update = models_by_feature;
         ctx.spawn(
             async move { Ok::<_, anyhow::Error>(update) },
@@ -1048,16 +962,6 @@ impl LLMPreferences {
                 }
             },
         );
-    }
-
-    pub fn update_feature_model_choices(
-        &mut self,
-        choices_result: Result<ModelsByFeature, anyhow::Error>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        if let Ok(choices) = choices_result {
-            self.on_server_update(choices, ctx);
-        }
     }
 
     fn on_server_update(&mut self, update: ModelsByFeature, ctx: &mut ModelContext<Self>) {
@@ -1104,8 +1008,7 @@ impl LLMPreferences {
     /// or effectively disabled, and clear orphaned context window limits
     /// for non-configurable or unusable models.
     ///
-    /// Called both when the model list is refreshed from the server and when
-    /// BYOK API keys change (since `RequiresUpgrade` usability is BYOK-aware).
+    /// Called both when the local model list is refreshed and when BYOK API keys change.
     fn reconcile_disabled_model_preferences(&self, ctx: &mut ModelContext<Self>) {
         let profiles_model = AIExecutionProfilesModel::handle(ctx);
         profiles_model.update(ctx, |profiles, ctx| {

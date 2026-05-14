@@ -29,7 +29,6 @@ use crate::themes::theme::AnsiColorIdentifier;
 use crate::themes::theme_chooser::ThemeChooserMode;
 use crate::workflows::{WorkflowSelectionSource, WorkflowSource, WorkflowType};
 use crate::workspace::PaneViewLocator;
-use session_sharing_protocol::common::SessionId;
 
 use ui_components::lightbox;
 use warpui::accessibility::AccessibilityVerbosity;
@@ -198,7 +197,6 @@ pub enum WorkspaceAction {
         mode: PaletteMode,
         source: PaletteSource,
     },
-    ShowUpgrade,
     ViewUserDocs,
     ViewLatestChangelog,
     ViewPrivacyPolicy,
@@ -228,16 +226,10 @@ pub enum WorkspaceAction {
     ShowCommandSearch(CommandSearchOptions),
     CreatePersonalNotebook,
     ImportToPersonalDrive,
-    ImportToTeamDrive,
-    CreateTeamNotebook,
     CreatePersonalWorkflow,
-    CreateTeamWorkflow,
     CreatePersonalFolder,
-    CreateTeamFolder,
-    CreateTeamEnvVarCollection,
     CreatePersonalEnvVarCollection,
     CreatePersonalAIPrompt,
-    CreateTeamAIPrompt,
     ToggleMouseReporting,
     ToggleScrollReporting,
     ToggleFocusReporting,
@@ -386,7 +378,6 @@ pub enum WorkspaceAction {
         /// The type of zero state prompt suggestion to start with (optional).
         zero_state_prompt_suggestion_type: Option<ZeroStatePromptSuggestionType>,
     },
-    AttemptLoginGatedAIUpgrade,
     /// Dismisses the Wayland crash recovery banner and opens a link to our docs page with more
     /// information.
     #[cfg(target_os = "linux")]
@@ -398,8 +389,6 @@ pub enum WorkspaceAction {
     },
     OpenAIFactCollection,
     OpenMCPServerCollection,
-    /// Open the Environment Management pane in Create mode.
-    OpenEnvironmentManagementPane,
     ToggleAIDocumentPane {
         document_id: AIDocumentId,
         document_version: AIDocumentVersion,
@@ -477,19 +466,6 @@ pub enum WorkspaceAction {
     },
     /// Insert the /fork slash command into the active terminal's input.
     InsertForkSlashCommand,
-    /// Open a local-to-cloud handoff pane next to the active conversation
-    /// (REMOTE-1486). Triggered by the `/move-to-cloud` slash command
-    /// and the footer chip of the same name. The dispatch site reads the
-    /// active conversation's `server_conversation_token` and gates on
-    /// `FeatureFlag::OzHandoff && FeatureFlag::HandoffLocalCloud`.
-    /// Falls through to splitting a fresh cloud-mode pane when the active
-    /// conversation isn't handoff-able (no synced server token, empty, or no
-    /// active conversation at all).
-    OpenLocalToCloudHandoffPane {
-        /// Pre-fill the new pane's prompt input (slash command captures the
-        /// trailing argument; the chip leaves this `None`).
-        initial_prompt: Option<String>,
-    },
     /// Summarize the active AI conversation in the focused pane.
     SummarizeAIConversation {
         prompt: Option<String>,
@@ -542,12 +518,6 @@ pub enum WorkspaceAction {
     ToggleGlobalSearch,
     OpenGlobalSearch,
     ToggleConversationListView,
-    /// Open the Build Plan Migration Modal (for debugging)
-    #[cfg(debug_assertions)]
-    OpenBuildPlanMigrationModal,
-    /// Reset the build plan migration modal dismissed state (for debugging)
-    #[cfg(debug_assertions)]
-    ResetBuildPlanMigrationModalState,
     /// Reset the AWS Bedrock login banner dismissed state (for debugging).
     #[cfg(debug_assertions)]
     DebugResetAwsBedrockLoginBannerDismissed,
@@ -576,9 +546,6 @@ pub enum WorkspaceAction {
         select_first: bool,
     },
     ToggleAgentManagementView,
-    ViewAgentRunsForEnvironment {
-        environment_id: String,
-    },
     /// Show the rewind confirmation dialog before rewinding an AI conversation
     ShowRewindConfirmationDialog {
         ai_block_view_id: EntityId,
@@ -595,12 +562,6 @@ pub enum WorkspaceAction {
     ExecuteDeleteConversation {
         conversation_id: AIConversationId,
         terminal_view_id: Option<EntityId>,
-    },
-    /// Open an ambient agent session by joining its shared session.
-    /// Used when the sandbox is running or when we need to view a live session.
-    OpenAmbientAgentSession {
-        session_id: SessionId,
-        task_id: AmbientAgentTaskId,
     },
     /// Load cloud conversation data into a transcript viewer.
     /// Used when CloudConversations is enabled and the sandbox is not running.
@@ -677,12 +638,6 @@ impl From<&WorkspaceAction> for LoginGatedFeature {
     fn from(val: &WorkspaceAction) -> LoginGatedFeature {
         use WorkspaceAction::*;
         match val {
-            ImportToTeamDrive => "Importing to a team drive",
-            CreateTeamNotebook => "Creating a team notebook",
-            CreateTeamWorkflow => "Creating a team workflow",
-            CreateTeamFolder => "Creating a team folder",
-            CreateTeamEnvVarCollection => "Creating a team environment variable collection",
-            CreateTeamAIPrompt => "Creating a team prompt",
             OpenShareSessionModal(_) => "Sharing a session",
             _ => "Unknown reason",
         }
@@ -692,16 +647,7 @@ impl From<&WorkspaceAction> for LoginGatedFeature {
 impl WorkspaceAction {
     pub fn blocked_for_anonymous_user(&self) -> bool {
         use WorkspaceAction::*;
-        matches!(
-            self,
-            ImportToTeamDrive
-                | CreateTeamNotebook
-                | CreateTeamWorkflow
-                | CreateTeamFolder
-                | CreateTeamEnvVarCollection
-                | CreateTeamAIPrompt
-                | OpenShareSessionModal(_)
-        )
+        matches!(self, OpenShareSessionModal(_))
     }
 
     /// Matches what actions require the app state to be saved, and which don't. We match all
@@ -784,7 +730,6 @@ impl WorkspaceAction {
             | ResetZoom
             | OpenPalette { .. }
             | TogglePalette { mode: _, source: _ }
-            | ShowUpgrade
             | ViewUserDocs
             | ViewLatestChangelog
             | ViewPrivacyPolicy
@@ -814,17 +759,11 @@ impl WorkspaceAction {
             | ToggleScrollReporting
             | ToggleFocusReporting
             | ImportToPersonalDrive
-            | ImportToTeamDrive
             | CreatePersonalNotebook
-            | CreateTeamNotebook
             | CreatePersonalWorkflow
-            | CreateTeamWorkflow
             | CreatePersonalFolder
-            | CreateTeamFolder
-            | CreateTeamEnvVarCollection
             | CreatePersonalEnvVarCollection
             | CreatePersonalAIPrompt
-            | CreateTeamAIPrompt
             | OpenInExplorer { .. }
             | DragTab { .. }
             | StartTabDrag
@@ -891,7 +830,6 @@ impl WorkspaceAction {
             | InsertInInput { .. }
             | InsertForkSlashCommand
             | QueuePromptForConversation { .. }
-            | AttemptLoginGatedAIUpgrade
             | UndoTrash(_)
             | OpenFilePath { .. }
             | ViewObjectInWarpDrive(_)
@@ -915,14 +853,12 @@ impl WorkspaceAction {
             | ToggleConversationListView
             | ToggleNotificationMailbox { .. }
             | ToggleAgentManagementView
-            | ViewAgentRunsForEnvironment { .. }
             | ToggleAIDocumentPane { .. }
             | HideAIDocumentPanes
             | OpenAIDocumentPane { .. }
             | ShowRewindConfirmationDialog { .. }
             | ExecuteRewindAIConversation { .. }
             | ExecuteDeleteConversation { .. }
-            | OpenAmbientAgentSession { .. }
             | OpenConversationTranscriptViewer { .. }
             | OpenLightbox { .. }
             | UpdateLightboxImage { .. }
@@ -937,16 +873,13 @@ impl WorkspaceAction {
             | TabConfigSidecarRemoveConfig { .. }
             | OpenSettingsFile
             | FixSettingsWithOz { .. }
-            | OpenLocalToCloudHandoffPane { .. }
             | OpenNetworkLogPane => false,
             #[cfg(debug_assertions)]
             ShowHoaOnboardingFlow => false,
             #[cfg(target_family = "wasm")]
             ToggleConversationTranscriptDetailsPanel => false,
             #[cfg(debug_assertions)]
-            OpenBuildPlanMigrationModal
-            | ResetBuildPlanMigrationModalState
-            | DebugResetAwsBedrockLoginBannerDismissed
+            DebugResetAwsBedrockLoginBannerDismissed
             | OpenOzLaunchModal
             | ResetOzLaunchModalState
             | OpenOpenWarpLaunchModal
@@ -963,7 +896,6 @@ impl WorkspaceAction {
             FileRenamed { .. } => false, // File rename doesn't change workspace state
             #[cfg(feature = "local_fs")]
             FileDeleted { .. } => false, // File deletion doesn't change workspace state
-            OpenEnvironmentManagementPane => false,
             #[cfg(target_os = "linux")]
             DismissWaylandCrashRecoveryBannerAndOpenLink => false,
             #[cfg(target_family = "wasm")]

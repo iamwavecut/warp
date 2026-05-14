@@ -174,13 +174,11 @@ pub fn output_conversation_debug_info(
         let debug_link = conversation
             .server_conversation_token()
             .map(|token| {
-                // The debug link within the container will be using host.docker.internal, but we're opening
-                // from outside the container.
-                // Eval servers write debug data remotely, so replace the in-container host
-                // with staging.warp.dev instead of localhost:8080.
+                // The debug link within the container uses host.docker.internal, but this log is
+                // read from outside the container.
                 token
                     .debug_link()
-                    .replace("host.docker.internal:8080", "staging.warp.dev")
+                    .replace("host.docker.internal:8080", "localhost:8080")
             })
             .unwrap_or("unavailable".to_owned());
         write_to_debug_file(&format!("Conversation Debug Link: {debug_link}"));

@@ -14,20 +14,7 @@ use crate::{
     server::sync_queue::QueueItem,
 };
 
-use settings::{
-    macros::define_settings_group, RespectUserSyncSetting, SupportedPlatforms, SyncToCloud,
-};
-define_settings_group!(CloudPreferencesSettings, settings: [
-   settings_sync_enabled: IsSettingsSyncEnabled {
-       type: bool,
-       default: false,
-       supported_platforms: SupportedPlatforms::ALL,
-       sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::No),
-       private: false,
-       toml_path: "account.is_settings_sync_enabled",
-       description: "Whether settings are synced across devices via the cloud.",
-   },
-]);
+use settings::SyncToCloud;
 
 pub type CloudPreference = GenericCloudObject<GenericStringObjectId, CloudPreferenceModel>;
 pub type CloudPreferenceModel = GenericStringModel<Preference, JsonSerializer>;
@@ -85,7 +72,7 @@ impl Platform {
     }
 }
 
-/// Defines the data model for a cloud synced user preference.
+/// Defines the data model for an imported legacy preference object.
 ///
 /// The expected usage is that each storage key is modeled as its own cloud preference object.
 /// This allows users to edit individual cloud preferences with less fear of an offline

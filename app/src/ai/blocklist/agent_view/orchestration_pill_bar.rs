@@ -1075,7 +1075,7 @@ fn render_hover_card(
 
     // Working directory line: pulled from the root task's first exchange
     // when available, falling back to the most recent exchange. Hidden
-    // entirely when neither is populated (e.g. cloud agents whose CWD
+    // entirely when neither is populated (e.g. ambient agents whose CWD
     // hasn't synced yet).
     //
     // Use `dirs::home_dir()` (cross-platform: `$HOME` on unix,

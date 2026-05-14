@@ -461,7 +461,8 @@ impl TypedActionView for WarpifyPageView {
                 self.remove_denylisted_ssh_host(*index, ctx);
             }
             OpenUrl(url) => {
-                ctx.open_url(url.as_str());
+                let _ = url;
+                log::info!("Ignoring hosted documentation link in local-first build");
             }
         }
     }
@@ -505,11 +506,7 @@ impl TitleWidget {
         let warpify_description = vec![
             FormattedTextFragment::plain_text(
                 "Configure whether Warp attempts to “Warpify” (add support for blocks, \
-                    input modes, etc) certain shells. ",
-            ),
-            FormattedTextFragment::hyperlink(
-                "Learn more",
-                "https://docs.warp.dev/terminal/warpify/subshells",
+                    input modes, etc) certain shells.",
             ),
         ];
 
@@ -523,7 +520,8 @@ impl TitleWidget {
         )
         .with_hyperlink_font_color(appearance.theme().accent().into_solid())
         .register_default_click_handlers(|url, _, ctx| {
-            ctx.open_url(&url.url);
+            let _ = url;
+            log::info!("Ignoring hosted documentation link in local-first build");
         })
         .finish();
 
@@ -717,9 +715,7 @@ impl SettingsWidget for SSHWidget {
                     "Use Tmux Warpification".into(),
                     Some(AdditionalInfo {
                         mouse_state: self.additional_info_mouse_state.clone(),
-                        on_click_action: Some(WarpifyPageAction::OpenUrl(
-                            "https://docs.warp.dev/terminal/warpify/ssh".into(),
-                        )),
+                        on_click_action: None,
                         secondary_text: None,
                         tooltip_override_text: None,
                     }),

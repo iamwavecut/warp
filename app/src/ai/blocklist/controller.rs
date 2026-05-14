@@ -66,7 +66,6 @@ use crate::terminal::{
     model::terminal_model::TerminalModel,
     ShellLaunchData,
 };
-use crate::workspaces::update_manager::TeamUpdateManager;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use anyhow::anyhow;
 use chrono::{DateTime, Local};
@@ -183,8 +182,6 @@ pub enum BlocklistAIControllerEvent {
     ExecuteLocalHarnessCommand {
         command: String,
     },
-
-    FreeTierLimitCheckTriggered,
 }
 
 #[derive(Debug)]
@@ -1921,122 +1918,6 @@ impl BlocklistAIController {
         )
     }
 
-    /// Builds request params for an out-of-band passive suggestions request.
-    ///
-    /// This reads conversation state read-only and does NOT create exchanges,
-    /// register response streams, or modify conversation status. The caller
-    /// is responsible for spawning the API call and handling the response.
-    ///
-    /// If `followup_conversation_id` is provided, the conversation's task context
-    /// and server token are included so the server can use prior context.
-    /// Otherwise, a new conversation is created to anchor the request.
-    /// Builds request params for an out-of-band passive suggestions request.
-    ///
-    /// This is read-only and does NOT create exchanges, register response
-    /// streams, or modify conversation history. The caller is responsible for
-    /// spawning the API call and handling the response.
-    ///
-    /// If `followup_conversation_id` is provided, the conversation's task
-    /// context and server token are included so the server can use prior
-    /// context. Otherwise a fresh, ephemeral conversation ID is generated
-    /// without touching the history model.
-    pub fn build_passive_suggestions_request_params(
-        &self,
-        followup_conversation_id: Option<AIConversationId>,
-        trigger: PassiveSuggestionTrigger,
-        supported_tools: Vec<ToolType>,
-        ctx: &ModelContext<Self>,
-    ) -> anyhow::Result<(AIConversationId, api::RequestParams)> {
-        let history_model = BlocklistAIHistoryModel::as_ref(ctx);
-
-        // Resolve conversation state. For follow-ups we read from history;
-        // for new triggers we generate a fresh ID without persisting anything.
-        let (conversation_id, task_id, conversation_data) = if let Some(conversation_id) =
-            followup_conversation_id
-        {
-            let Some(conversation) = history_model.conversation(&conversation_id) else {
-                return Err(anyhow!(
-                        "Tried to build passive suggestions request params for non-existent conversation with ID {conversation_id:?}"
-                    ));
-            };
-            let task_id = conversation.get_root_task_id().clone();
-            let conversation_data = api::ConversationData {
-                id: conversation_id,
-                tasks: conversation.compute_active_tasks(),
-                server_conversation_token: conversation.server_conversation_token().cloned(),
-                forked_from_conversation_token: conversation
-                    .forked_from_server_conversation_token()
-                    .cloned(),
-                ambient_agent_task_id: self.ambient_agent_task_id,
-                existing_suggestions: None,
-            };
-            (conversation_id, task_id, conversation_data)
-        } else if !matches!(
-            trigger,
-            PassiveSuggestionTrigger::AgentResponseCompleted { .. }
-        ) {
-            // Generate a fresh, ephemeral conversation ID without mutating history.
-            let conversation_id = AIConversationId::new();
-            let task_id = TaskId::new(uuid::Uuid::new_v4().to_string());
-            let conversation_data = api::ConversationData {
-                id: conversation_id,
-                tasks: vec![],
-                server_conversation_token: None,
-                forked_from_conversation_token: None,
-                ambient_agent_task_id: self.ambient_agent_task_id,
-                existing_suggestions: None,
-            };
-            (conversation_id, task_id, conversation_data)
-        } else {
-            return Err(anyhow!(
-                    "Tried to use agent response completed trigger to generate passive suggestions without a conversation ID"
-                ));
-        };
-
-        let inputs = vec![AIAgentInput::TriggerPassiveSuggestion {
-            context: input_context_for_request(
-                false,
-                self.context_model.as_ref(ctx),
-                self.active_session.as_ref(ctx),
-                Some(conversation_id),
-                vec![],
-                ctx,
-            ),
-            attachments: vec![],
-            trigger: trigger.clone(),
-        }];
-
-        let request_input = RequestInput::for_task(
-            inputs,
-            task_id,
-            &self.active_session,
-            self.get_current_response_initiator(),
-            conversation_id,
-            self.terminal_view_id,
-            ctx,
-        )
-        .with_supported_tools(supported_tools);
-
-        let metadata = Some(RequestMetadata {
-            is_autodetected_user_query: false,
-            entrypoint: EntrypointType::TriggerPassiveSuggestion {
-                trigger: Some((&trigger).into()),
-            },
-            is_auto_resume_after_error: false,
-        });
-
-        let request_params = api::RequestParams::new(
-            Some(self.terminal_view_id),
-            SessionContext::from_session(self.active_session.as_ref(ctx), ctx),
-            &request_input,
-            conversation_data,
-            metadata,
-            ctx,
-        );
-
-        Ok((conversation_id, request_params))
-    }
-
     pub fn send_unit_test_suggestions_request(
         &mut self,
         block_output: String,
@@ -2068,7 +1949,8 @@ impl BlocklistAIController {
                 new_conversation.id(),
                 self.terminal_view_id,
                 ctx,
-            ),
+            )
+            .with_supported_tools(vec![ToolType::SuggestPrompt]),
             Some(RequestMetadata {
                 is_autodetected_user_query: false,
                 entrypoint: EntrypointType::TriggerPassiveSuggestion {
@@ -2093,6 +1975,11 @@ impl BlocklistAIController {
         self.action_model.update(ctx, |action_model, ctx| {
             action_model.set_ambient_agent_task_id(id, ctx);
         });
+    }
+
+    #[cfg(test)]
+    pub fn ambient_agent_task_id_for_test(&self) -> Option<AmbientAgentTaskId> {
+        self.ambient_agent_task_id
     }
 
     /// Set the per-session directory for downloading file attachments.
@@ -2551,22 +2438,6 @@ impl BlocklistAIController {
                         }
                     }
                     Err(e) => {
-                        if matches!(e.as_ref(), AIApiError::QuotaLimit) {
-                            // If the error is a quota limit, we want to refresh workspace metadata
-                            // So the current state of AI overages is immediately up to date.
-                            TeamUpdateManager::handle(ctx).update(
-                                ctx,
-                                |team_update_manager, ctx| {
-                                    std::mem::drop(
-                                        team_update_manager.refresh_workspace_metadata(ctx),
-                                    );
-                                },
-                            );
-                            AIRequestUsageModel::handle(ctx).update(ctx, |model, ctx| {
-                                model.enable_buy_credits_banner(ctx);
-                            });
-                        }
-
                         let mut renderable_error: RenderableAIError = e.as_ref().into();
                         if let RenderableAIError::Other {
                             will_attempt_resume,
@@ -2739,7 +2610,7 @@ impl BlocklistAIController {
                 if self.should_refresh_available_llms_on_stream_finish {
                     self.should_refresh_available_llms_on_stream_finish = false;
                     LLMPreferences::handle(ctx).update(ctx, |llm_preferences, ctx| {
-                        llm_preferences.refresh_authed_models(ctx);
+                        llm_preferences.refresh_available_models(ctx);
                     });
                 }
                 ctx.emit(BlocklistAIControllerEvent::FinishedReceivingOutput {
@@ -2749,8 +2620,6 @@ impl BlocklistAIController {
                 AIRequestUsageModel::handle(ctx).update(ctx, |request_usage_model, ctx| {
                     request_usage_model.refresh_request_usage_async(ctx);
                 });
-
-                self.maybe_refresh_ai_overages(ctx);
             }
         }
     }
@@ -2771,38 +2640,6 @@ impl BlocklistAIController {
                 ctx,
             );
         });
-    }
-
-    /// Checks if we should refresh AI overage information after an AI request completes.
-    /// This is used to ensure the UI matches the state of the workspace,
-    /// especially because overages are not real-time communicated to clients.
-    fn maybe_refresh_ai_overages(&mut self, ctx: &mut ModelContext<Self>) {
-        let workspace = UserWorkspaces::as_ref(ctx).current_workspace();
-        let Some(workspace) = workspace else {
-            return;
-        };
-
-        // We want to minimize the number of times we ping our backend for updated usage information;
-        // doing it after every AI query finishes would be very expensive.
-
-        // If a user is below their personal limits, then we know that they won't eat into overages,
-        // so we don't need to refresh.
-        let has_no_requests_remaining = !AIRequestUsageModel::as_ref(ctx).has_requests_remaining();
-        // If overages aren't enabled, we're not going to reap the benefit of refreshing at all anyway.
-        let are_overages_enabled = workspace.are_overages_enabled();
-
-        if are_overages_enabled && has_no_requests_remaining {
-            // Give a one second delay to ensure that Stripe has been charged and the database is completely updated,
-            // before syncing new AI overages data.
-            ctx.spawn(
-                async move { Timer::after(Duration::from_secs(1)).await },
-                |_, _, ctx| {
-                    UserWorkspaces::handle(ctx).update(ctx, |user_workspaces, ctx| {
-                        user_workspaces.refresh_ai_overages(ctx);
-                    });
-                },
-            );
-        }
     }
 
     pub(super) fn handle_response_stream_finished(
@@ -2870,9 +2707,14 @@ impl BlocklistAIController {
                 });
             }
             Some(warp_multi_agent_api::response_event::stream_finished::Reason::QuotaLimit(_)) => {
+                let error_message = "The configured AI provider reported a quota or rate-limit error.";
                 history_model.update(ctx, |history_model, ctx| {
                     history_model.mark_response_stream_completed_with_error(
-                        RenderableAIError::QuotaLimit,
+                        RenderableAIError::Other {
+                            error_message: error_message.to_owned(),
+                            will_attempt_resume: false,
+                            waiting_for_network: false,
+                        },
                         stream_id,
                         conversation_id,
                         self.terminal_view_id,
@@ -2968,9 +2810,8 @@ impl BlocklistAIController {
 
         if finished_event.should_refresh_model_config {
             LLMPreferences::handle(ctx).update(ctx, |llm_preferences, ctx| {
-                llm_preferences.refresh_authed_models(ctx);
+                llm_preferences.refresh_available_models(ctx);
             });
-            ctx.emit(BlocklistAIControllerEvent::FreeTierLimitCheckTriggered);
         }
     }
 }

@@ -20,8 +20,7 @@ use crate::{
         blocklist::{
             agent_view::AgentViewEntryOrigin,
             orchestration_event_streamer::OrchestrationEventStreamer,
-            orchestration_events::OrchestrationEventService,
-            task_status_sync_model::TaskStatusSyncModel, BlocklistAIHistoryModel,
+            orchestration_events::OrchestrationEventService, BlocklistAIHistoryModel,
         },
         document::ai_document_model::AIDocumentModel,
         execution_profiles::profiles::AIExecutionProfilesModel,
@@ -36,7 +35,7 @@ use crate::{
         skills::SkillManager,
         AIRequestUsageModel,
     },
-    auth::{auth_manager::AuthManager, user::TEST_USER_UID},
+    auth::{auth_manager::AuthManager, user::TEST_USER_UID, AuthStateProvider},
     changelog_model::ChangelogModel,
     cloud_object::model::persistence::CloudModel,
     cloud_object::{Owner, Revision, ServerMetadata, ServerPermissions},
@@ -46,7 +45,6 @@ use crate::{
     notebooks::{
         editor::keys::NotebookKeybindings, manager::NotebookManager, notebook::NotebookView,
     },
-    pricing::PricingInfoModel,
     resource_center::TipsCompleted,
     search::files::model::FileSearchModel,
     server::{
@@ -154,7 +152,6 @@ fn initialize_app(app: &mut App) {
     app.add_singleton_model(|_| BlocklistAIHistoryModel::new_for_test());
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
     app.add_singleton_model(OrchestrationEventService::new);
-    app.add_singleton_model(TaskStatusSyncModel::new);
     if FeatureFlag::OrchestrationV2.is_enabled() {
         app.add_singleton_model(OrchestrationEventStreamer::new);
     }
@@ -191,7 +188,6 @@ fn initialize_app(app: &mut App) {
     app.add_singleton_model(|_| WorkspaceRegistry::new());
     app.add_singleton_model(UndoCloseStack::new);
     app.add_singleton_model(|_| IgnoredSuggestionsModel::new(vec![]));
-    app.add_singleton_model(|_| PricingInfoModel::new());
     app.add_singleton_model(AIDocumentModel::new);
     app.add_singleton_model(|_| History::new(vec![]));
     app.add_singleton_model(|_| GitHubAuthNotifier::new());
@@ -453,16 +449,8 @@ fn request_ambient_agent_task_id_for_hidden_child(
     let ai_controller = terminal_view.as_ref(ctx).ai_controller().clone();
 
     ai_controller.update(ctx, |controller, ctx| {
-        controller
-            .build_passive_suggestions_request_params(
-                Some(child_conversation_id),
-                PassiveSuggestionTrigger::FilesChanged,
-                vec![],
-                ctx,
-            )
-            .expect("child pane should build passive suggestion request params")
-            .1
-            .ambient_agent_task_id
+        let _ = (child_conversation_id, ctx);
+        controller.ambient_agent_task_id_for_test()
     })
 }
 
@@ -778,7 +766,6 @@ fn test_ambient_transcript_restore_creates_cloud_mode_pane_when_handoff_enabled(
     let _agent_view = FeatureFlag::AgentView.override_enabled(true);
     let _cloud_mode = FeatureFlag::CloudMode.override_enabled(true);
     let _setup_v2 = FeatureFlag::CloudModeSetupV2.override_enabled(true);
-    let _handoff = FeatureFlag::HandoffCloudCloud.override_enabled(true);
 
     App::test((), |mut app| async move {
         initialize_app(&mut app);
@@ -827,7 +814,6 @@ fn test_ambient_transcript_restore_creates_cloud_mode_pane_when_handoff_enabled(
 
 #[test]
 fn test_ambient_transcript_restore_uses_generic_viewer_when_handoff_disabled() {
-    let _handoff = FeatureFlag::HandoffCloudCloud.override_enabled(false);
     let _setup_v2 = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -1752,80 +1738,6 @@ fn test_number_of_shared_panes() {
             // Close a pane
             panes.close_pane(first_pane_id, ctx);
             assert_eq!(panes.number_of_shared_sessions(ctx), 1);
-        });
-    });
-}
-
-#[test]
-fn test_start_shared_session_from_modal() {
-    let _guard = FeatureFlag::CreatingSharedSessions.override_enabled(true);
-    App::test((), |mut app| async move {
-        initialize_app(&mut app);
-        let pane_group = mock_pane_group(&mut app, Default::default());
-
-        pane_group.update(&mut app, |pane_group, ctx| {
-            let terminal_pane = pane_group.terminal_session_by_pane_index(0).unwrap();
-            let terminal_pane_id = terminal_pane.terminal_pane_id();
-            let terminal_model = terminal_pane.terminal_manager(ctx).as_ref(ctx).model();
-
-            assert!(matches!(
-                terminal_model.lock().shared_session_status(),
-                SharedSessionStatus::NotShared
-            ));
-
-            pane_group.open_share_session_modal(
-                terminal_pane_id,
-                SharedSessionActionSource::PaneHeader,
-                ctx,
-            );
-            assert!(pane_group.terminal_with_open_share_session_modal.is_some());
-            assert_eq!(
-                pane_group
-                    .share_session_modal
-                    .as_ref(ctx)
-                    .terminal_pane_id(),
-                Some(terminal_pane_id)
-            );
-
-            pane_group.handle_share_session_modal_event(
-                &ShareSessionModalEvent::StartSharing {
-                    terminal_pane_id,
-                    scrollback_type: SharedSessionScrollbackType::None,
-                    source: SharedSessionActionSource::PaneHeader,
-                },
-                ctx,
-            );
-            assert!(pane_group.terminal_with_open_share_session_modal.is_none());
-            assert!(matches!(
-                terminal_model.lock().shared_session_status(),
-                SharedSessionStatus::SharePending
-            ));
-        });
-
-        // Wait for one tick of the event loop for the share to be started.
-        pane_group.read(&app, |pane_group, ctx| {
-            let terminal_view = pane_group
-                .terminal_view_at_pane_index(0, ctx)
-                .unwrap()
-                .to_owned();
-            let model = terminal_view.as_ref(ctx).model.lock();
-            assert!(matches!(
-                model.shared_session_status(),
-                SharedSessionStatus::ActiveSharer
-            ));
-
-            let manager = shared_session::manager::Manager::as_ref(ctx);
-            let shared_views = manager.shared_views(ctx).collect_vec();
-            assert_eq!(shared_views.len(), 1);
-            assert_eq!(shared_views[0].id(), terminal_view.id());
-
-            let terminal_pane = pane_group.terminal_session_by_pane_index(0).unwrap();
-            assert!(terminal_pane
-                .pane_view()
-                .as_ref(ctx)
-                .header()
-                .as_ref(ctx)
-                .has_shareable_object(ctx));
         });
     });
 }

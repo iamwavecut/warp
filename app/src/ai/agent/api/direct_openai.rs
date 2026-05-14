@@ -14,6 +14,8 @@ use crate::ai::agent::{
 };
 use crate::ai::llms::LLMId;
 use crate::server::server_api::AIApiError;
+use crate::settings::{normalize_custom_provider_env_var, CustomProviderConfig};
+use ::ai::api_keys::ApiKeys;
 
 use super::ResponseStream;
 
@@ -49,6 +51,53 @@ pub(super) fn parse_custom_model_id(model_id: &str) -> Option<CustomModelId> {
 
 pub(super) fn is_custom_model_id(model_id: &LLMId) -> bool {
     model_id.as_str().starts_with(CUSTOM_MODEL_PREFIX)
+}
+
+pub(crate) fn resolve_custom_provider_route(
+    model_id: &str,
+    providers: &[CustomProviderConfig],
+    api_keys: &ApiKeys,
+) -> Option<CustomProviderRoute> {
+    let custom_model = parse_custom_model_id(model_id)?;
+    let provider = providers
+        .iter()
+        .find(|provider| provider.name == custom_model.provider_name)?;
+
+    Some(route_for_provider_model(
+        provider,
+        custom_model.model,
+        api_keys,
+    ))
+}
+
+pub(crate) fn default_custom_provider_route(
+    providers: &[CustomProviderConfig],
+    api_keys: &ApiKeys,
+) -> Option<CustomProviderRoute> {
+    providers.iter().find_map(|provider| {
+        let model = provider.models.first()?.clone();
+        Some(route_for_provider_model(provider, model, api_keys))
+    })
+}
+
+fn route_for_provider_model(
+    provider: &CustomProviderConfig,
+    model: String,
+    api_keys: &ApiKeys,
+) -> CustomProviderRoute {
+    let secure_storage_key = api_keys.custom.get(&provider.name).cloned();
+    let env_key = provider
+        .api_key_env_var
+        .as_deref()
+        .and_then(normalize_custom_provider_env_var)
+        .and_then(|env_var| std::env::var(env_var).ok());
+
+    CustomProviderRoute {
+        provider_name: provider.name.clone(),
+        base_url: provider.base_url.clone(),
+        model,
+        api_key: secure_storage_key.or(env_key),
+    }
 }
 
 pub(super) fn chat_completions_url(base_url: &str) -> String {
@@ -355,6 +404,45 @@ pub(crate) async fn fetch_models(
         .collect();
 
     Ok(models)
+}
+
+pub(crate) async fn complete_text(
+    route: CustomProviderRoute,
+    system_prompt: String,
+    user_prompt: String,
+) -> Result<String, AIApiError> {
+    let body = ChatCompletionRequest {
+        model: route.model.clone(),
+        messages: vec![
+            ChatMessage::system(system_prompt),
+            ChatMessage::user(user_prompt),
+        ],
+        stream: false,
+        tools: vec![],
+        tool_choice: None,
+        parallel_tool_calls: None,
+    };
+
+    let response = send_chat_completion_request(&route, &body).await?;
+    let response: ChatCompletionResponse = response
+        .json()
+        .await
+        .context("failed to decode OpenAI-compatible chat completion response")?;
+    let content = response
+        .choices
+        .into_iter()
+        .find_map(|choice| choice.message.content)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    if content.is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "OpenAI-compatible provider returned an empty completion"
+        )));
+    }
+
+    Ok(content)
 }
 
 fn create_task_action(task_id: &str) -> api::ClientAction {
@@ -2180,6 +2268,67 @@ mod tests {
             models_url("http://localhost:1234/v1/"),
             "http://localhost:1234/v1/models"
         );
+    }
+
+    #[test]
+    fn resolves_default_custom_provider_route_from_local_settings() {
+        let providers = vec![CustomProviderConfig {
+            name: "local-openai".to_string(),
+            base_url: "http://localhost:1234/v1".to_string(),
+            models: vec!["qwen3-coder".to_string()],
+            api_key_env_var: Some("LOCAL_OPENAI_API_KEY".to_string()),
+            api_type: Default::default(),
+        }];
+        let mut api_keys = ApiKeys::default();
+        api_keys
+            .custom
+            .insert("local-openai".to_string(), "stored-key".to_string());
+
+        let route = default_custom_provider_route(&providers, &api_keys).unwrap();
+
+        assert_eq!(route.provider_name, "local-openai");
+        assert_eq!(route.base_url, "http://localhost:1234/v1");
+        assert_eq!(route.model, "qwen3-coder");
+        assert_eq!(route.api_key.as_deref(), Some("stored-key"));
+    }
+
+    #[tokio::test]
+    async fn completes_text_through_openai_compatible_endpoint() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_header("authorization", "Bearer test-key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [
+                        {
+                            "message": { "content": "local answer" },
+                            "finish_reason": "stop"
+                        }
+                    ]
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "test-model".to_string(),
+            api_key: Some("test-key".to_string()),
+        };
+
+        let content = complete_text(
+            route,
+            "Answer briefly.".to_string(),
+            "Say hello.".to_string(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(content, "local answer");
     }
 
     #[test]

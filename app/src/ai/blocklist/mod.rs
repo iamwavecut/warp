@@ -5,19 +5,10 @@ pub mod block;
 pub mod code_block;
 mod context_model;
 mod controller;
-#[cfg(feature = "local_fs")]
-pub(crate) mod handoff;
 
-pub(crate) fn is_local_to_cloud_handoff_available() -> bool {
-    use crate::features::FeatureFlag;
-    FeatureFlag::OzHandoff.is_enabled()
-        && FeatureFlag::HandoffLocalCloud.is_enabled()
-        && cfg!(all(feature = "local_fs", not(target_family = "wasm")))
-}
 pub(crate) mod orchestration_event_streamer;
 pub(crate) mod orchestration_events;
 mod passive_suggestions;
-pub(crate) mod task_status_sync_model;
 pub(super) use controller::RequestInput;
 pub mod history_model;
 pub mod inline_action;
@@ -62,8 +53,7 @@ pub(crate) use input_model::{
     BlocklistAIInputEvent, BlocklistAIInputModel, InputConfig, InputType,
 };
 pub(crate) use passive_suggestions::{
-    LegacyPassiveSuggestionsEvent, LegacyPassiveSuggestionsModel, MaaPassiveSuggestionsEvent,
-    MaaPassiveSuggestionsModel, PassiveSuggestionsModels,
+    LegacyPassiveSuggestionsEvent, LegacyPassiveSuggestionsModel, PassiveSuggestionsModels,
 };
 #[cfg_attr(target_family = "wasm", allow(unused))]
 pub(crate) use persistence::PersistedAIInputType;

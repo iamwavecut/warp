@@ -7,7 +7,6 @@ use crate::{
     interaction_sources::SharingDialogSource,
     pane_group::{Direction, SplitPaneState, TabBarHoverIndex},
     settings::{PaneSettings, PaneSettingsChangedEvent},
-    util::bindings::CustomAction,
 };
 
 use super::{
@@ -20,7 +19,6 @@ use warpui::{
         Border, Container, DropTarget, DropTargetData, Flex, MainAxisSize, ParentElement,
         SavePosition, Shrinkable,
     },
-    keymap::EditableBinding,
     presenter::ChildView,
     AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
     ViewHandle,
@@ -34,18 +32,8 @@ pub use header_content::{
     HeaderContent, HeaderRenderContext, StandardHeader, StandardHeaderOptions,
 };
 
-const HAS_SHARED_OBJECT_CONTEXT_KEY: &str = "PaneView_HasSharedObject";
-
 pub fn init(app: &mut AppContext) {
-    use warpui::keymap::macros::*;
-
-    app.register_editable_bindings([EditableBinding::new(
-        "pane:share_pane_contents",
-        "Share pane",
-        PaneAction::ShareContents,
-    )
-    .with_custom_action(CustomAction::SharePaneContents)
-    .with_context_predicate(id!("PaneView") & id!(HAS_SHARED_OBJECT_CONTEXT_KEY))]);
+    let _ = app;
 }
 
 pub enum PaneViewEvent {
@@ -427,9 +415,7 @@ impl<P: BackingView> View for PaneView<P> {
 
     fn keymap_context(&self, ctx: &AppContext) -> warpui::keymap::Context {
         let mut keymap_context = Self::default_keymap_context();
-        if self.header.as_ref(ctx).is_sharing_dialog_enabled(ctx) {
-            keymap_context.set.insert(HAS_SHARED_OBJECT_CONTEXT_KEY);
-        }
+        let _ = ctx;
         keymap_context
     }
 }

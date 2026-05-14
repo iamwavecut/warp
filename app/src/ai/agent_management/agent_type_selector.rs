@@ -47,7 +47,7 @@ const OPTION_DESC_FONT_SIZE: f32 = 12.;
 /// The type of agent selected by the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentType {
-    /// Cloud agent - runs autonomously in a cloud environment.
+    /// Ambient agent workspace.
     Cloud,
     /// Local agent - runs on the user's machine.
     Local,
@@ -117,7 +117,7 @@ impl AgentTypeSelector {
             cloud_agent_mouse_state: MouseStateHandle::default(),
             local_agent_mouse_state: MouseStateHandle::default(),
             dialog_mouse_state: MouseStateHandle::default(),
-            // Cloud agent is selected by default (index 0).
+            // Agent workspace is selected by default (index 0).
             selected_option_index: 0,
         }
     }
@@ -333,8 +333,8 @@ impl AgentTypeSelector {
         let cloud_agent_option = self.render_option(
             0,
             Icon::OzCloud,
-            "Cloud agent",
-            "Runs autonomously in a cloud environment you choose. Best for parallel or long-running work.",
+            "Agent workspace",
+            "Runs an agent in a dedicated local workspace. Best for longer tasks you want to track separately.",
             true,
             self.cloud_agent_mouse_state.clone(),
             AgentTypeSelectorAction::SelectCloudAgent,

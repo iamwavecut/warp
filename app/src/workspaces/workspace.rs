@@ -100,73 +100,38 @@ impl Workspace {
     }
 
     pub fn are_overages_toggleable(&self) -> bool {
-        self.billing_metadata
-            .tier
-            .usage_based_pricing_policy
-            .is_some_and(|policy| policy.toggleable)
+        false
     }
 
     pub fn are_overages_enabled(&self) -> bool {
-        self.settings.usage_based_pricing_settings.enabled
+        false
     }
 
     pub fn are_overages_remaining(&self) -> bool {
-        if self.settings.usage_based_pricing_settings.enabled {
-            if let Some(max_spend_cents) = self
-                .settings
-                .usage_based_pricing_settings
-                .max_monthly_spend_cents
-            {
-                if let Some(ai_overages) = &self.billing_metadata.ai_overages {
-                    return ai_overages.current_monthly_request_cost_cents < max_spend_cents as i32;
-                } else {
-                    // If they have the setting enabled but no overages usage so far,
-                    // that means they have no database entry, so they have overages remaining.
-                    return true;
-                }
-            }
-        }
-
         false
     }
 
     pub fn is_byo_api_key_enabled(&self) -> bool {
-        self.billing_metadata.is_byo_api_key_enabled()
+        true
     }
 
     /// Returns true if the workspace has reached or exceeded its monthly addon credits spend limit.
     pub fn is_at_addon_credits_monthly_limit(&self) -> bool {
-        if let Some(limit) = self.settings.addon_credits_settings.max_monthly_spend_cents {
-            self.bonus_grants_purchased_this_month.cents_spent >= limit
-        } else {
-            false
-        }
+        false
     }
 
     /// Returns true if purchasing addon credits at the given price would reach or exceed the monthly limit.
-    pub fn would_addon_purchase_reach_limit(&self, price_cents: i32) -> bool {
-        if let Some(limit) = self.settings.addon_credits_settings.max_monthly_spend_cents {
-            self.bonus_grants_purchased_this_month.cents_spent + price_cents > limit
-        } else {
-            false
-        }
+    pub fn would_addon_purchase_reach_limit(&self, _price_cents: i32) -> bool {
+        false
     }
 
     /// Returns the price in cents for the selected auto-reload credit denomination.
     /// Returns None if auto-reload is not configured or if the denomination can't be found in pricing options.
     pub fn get_auto_reload_price_cents(
         &self,
-        addon_credits_options: &[warp_graphql::billing::AddonCreditsOption],
+        _addon_credits_options: &[warp_graphql::billing::AddonCreditsOption],
     ) -> Option<i32> {
-        let selected_credits = self
-            .settings
-            .addon_credits_settings
-            .selected_auto_reload_credit_denomination?;
-
-        addon_credits_options
-            .iter()
-            .find(|option| option.credits == selected_credits)
-            .map(|option| option.price_usd_cents)
+        None
     }
 }
 

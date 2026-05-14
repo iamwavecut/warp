@@ -9,7 +9,6 @@ use warp_core::ui::theme::WarpTheme;
 use warpui::color::ColorU;
 
 use crate::ai::artifacts::{deserialize_artifacts, Artifact};
-use crate::server::server_api::ServerApiProvider;
 use crate::ui_components::icons::Icon;
 use crate::view_components::DismissibleToast;
 use crate::workspace::ToastStack;
@@ -241,17 +240,13 @@ pub struct AmbientAgentTask {
     #[serde(default, deserialize_with = "deserialize_artifacts")]
     pub artifacts: Vec<Artifact>,
 
-    /// The last event sequence number recorded for this run by the server.
+    /// The last event sequence number recorded for this local run.
     /// Used by orchestration event delivery to resume from the correct
-    /// cursor on restart. Populated by `GET /agent/runs/{run_id}` when the
-    /// server supports it; `None` on older servers.
+    /// cursor on restart.
     #[serde(default)]
     pub last_event_sequence: Option<i64>,
 
-    /// The server-recorded `run_id`s of direct children of this run. Used
-    /// by orchestration event-delivery restore to discover children whose
-    /// records may not exist locally (e.g. remote-worker children in the
-    /// driver case). Empty on older servers.
+    /// The locally recorded `run_id`s of direct children of this run.
     #[serde(default)]
     pub children: Vec<String>,
 }
@@ -280,15 +275,6 @@ pub struct AttachmentInput {
     pub file_name: String,
     pub mime_type: String,
     pub data: String, // base64-encoded data
-}
-
-/// Information about a task attachment retrieved from the server
-#[derive(Clone, Debug)]
-pub struct TaskAttachment {
-    pub file_id: String,
-    pub filename: String,
-    pub download_url: String,
-    pub mime_type: String,
 }
 
 impl AmbientAgentTask {
@@ -538,37 +524,19 @@ pub struct RequestUsage {
 
 /// Cancel an ambient agent task and show a toast with the result.
 pub fn cancel_task_with_toast<V: View>(task_id: AmbientAgentTaskId, ctx: &mut ViewContext<V>) {
-    let ai_client = ServerApiProvider::handle(ctx).as_ref(ctx).get_ai_client();
+    let _ = task_id;
     let window_id = ctx.window_id();
-    ctx.spawn(
-        async move { ai_client.cancel_ambient_agent_task(&task_id).await },
-        move |_view, result, ctx| {
-            let message = match result {
-                Ok(()) => "Task cancelled".to_string(),
-                Err(e) => {
-                    log::error!("Failed to cancel task: {e}");
-                    format!("Failed to cancel task: {e}")
-                }
-            };
-            ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                let toast = DismissibleToast::default(message);
-                toast_stack.add_ephemeral_toast(toast, window_id, ctx);
-            });
-        },
-    );
+    ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+        let toast = DismissibleToast::default(
+            "Hosted ambient task cancellation is disabled in this local-first build.".to_string(),
+        );
+        toast_stack.add_ephemeral_toast(toast, window_id, ctx);
+    });
 }
 
 /// Cancel an ambient agent task without surfacing a toast to the user.
 pub fn cancel_task_silently<V: View>(task_id: AmbientAgentTaskId, ctx: &mut ViewContext<V>) {
-    let ai_client = ServerApiProvider::handle(ctx).as_ref(ctx).get_ai_client();
-    ctx.spawn(
-        async move { ai_client.cancel_ambient_agent_task(&task_id).await },
-        move |_view, result, _| {
-            if let Err(e) = result {
-                log::error!("Failed to cancel task: {e}");
-            }
-        },
-    );
+    let _ = (task_id, ctx);
 }
 
 #[cfg(test)]

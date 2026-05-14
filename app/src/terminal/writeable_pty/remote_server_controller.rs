@@ -17,9 +17,7 @@ use crate::settings::PrivacySettings;
 use crate::terminal::model::session::{IsLegacySSHSession, SessionInfo};
 use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
 use crate::terminal::warpify::settings::WarpifySettings;
-use remote_server::setup::{
-    PreinstallCheckResult, PreinstallStatus, RemoteLibc, RemotePlatform, UnsupportedReason,
-};
+use remote_server::setup::{PreinstallCheckResult, PreinstallStatus};
 use remote_server::transport::Error;
 
 use super::pty_controller::{EventLoopSender, PtyController};
@@ -71,11 +69,6 @@ pub struct RemoteServerController<T: EventLoopSender> {
     state: SshInitState,
     /// Whether the binary was installed during this setup flow.
     did_install: bool,
-    /// Detected remote platform from the binary check phase, used for diagnostics.
-    remote_platform: Option<RemotePlatform>,
-    /// Outcome of the preinstall check from the binary check phase,
-    /// used for telemetry on the supported path.
-    preinstall_check: Option<PreinstallCheckResult>,
 }
 
 impl<T: EventLoopSender> Entity for RemoteServerController<T> {
@@ -106,8 +99,7 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                 preinstall_check,
                 has_old_binary,
             } => {
-                me.remote_platform = remote_platform.clone();
-                me.preinstall_check = preinstall_check.clone();
+                let _ = remote_platform;
                 me.on_binary_check_complete(
                     *session_id,
                     result.clone(),
@@ -156,8 +148,6 @@ impl<T: EventLoopSender> RemoteServerController<T> {
             model_event_dispatcher,
             state: SshInitState::Idle,
             did_install: false,
-            remote_platform: None,
-            preinstall_check: None,
         }
     }
 
@@ -204,8 +194,6 @@ impl<T: EventLoopSender> RemoteServerController<T> {
         }
         let transport = SshTransport::new(socket_path, self.build_auth_context(ctx));
         self.did_install = false;
-        self.remote_platform = None;
-        self.preinstall_check = None;
         self.state = SshInitState::AwaitingCheck {
             session_info: info,
             transport: transport.clone(),
@@ -258,7 +246,6 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                 "Remote server preinstall check classified as unsupported, falling back to legacy SSH: session={session_id:?} status={:?}",
                 check.status
             );
-            send_unsupported_telemetry(self.remote_platform.as_ref(), check, ctx);
             RemoteServerManager::handle(ctx).update(ctx, |mgr, ctx| {
                 mgr.mark_setup_unsupported(session_id, reason, ctx);
             });
@@ -389,20 +376,7 @@ impl<T: EventLoopSender> RemoteServerController<T> {
         // subsequently initializes, so it picks `RemoteServerCommandExecutor`.
         self.flush_stashed_bootstrap(session_info, ctx);
 
-        let duration_ms = Instant::now()
-            .duration_since(setup_start)
-            .as_millis()
-            .min(u64::MAX as u128) as u64;
-        let (remote_os, remote_arch) = self
-            .remote_platform
-            .as_ref()
-            .map(|p| {
-                (
-                    Some(p.os.as_str().to_owned()),
-                    Some(p.arch.as_str().to_owned()),
-                )
-            })
-            .unwrap_or((None, None));
+        let _ = setup_start;
     }
 
     /// Called when the remote server connection failed. Flushes the stashed
@@ -512,41 +486,4 @@ impl<T: EventLoopSender> RemoteServerController<T> {
             mgr.connect_session(session_id, transport, auth_context, ctx);
         });
     }
-}
-
-/// Describes a [`RemoteLibc`] as a short string for telemetry.
-fn describe_libc(libc: &RemoteLibc) -> String {
-    match libc {
-        RemoteLibc::Glibc(version) => format!("glibc {version}"),
-        RemoteLibc::NonGlibc { name } => name.clone(),
-        RemoteLibc::Unknown => "unknown".to_string(),
-    }
-}
-
-fn send_unsupported_telemetry<T: EventLoopSender>(
-    remote_platform: Option<&RemotePlatform>,
-    check: &PreinstallCheckResult,
-    ctx: &mut ModelContext<RemoteServerController<T>>,
-) {
-    let (remote_os, remote_arch) = remote_platform
-        .map(|p| {
-            (
-                Some(p.os.as_str().to_owned()),
-                Some(p.arch.as_str().to_owned()),
-            )
-        })
-        .unwrap_or((None, None));
-    let required_glibc = match &check.status {
-        PreinstallStatus::Unsupported {
-            reason: UnsupportedReason::GlibcTooOld { required, .. },
-        } => required.to_string(),
-        _ => String::new(),
-    };
-    let _ = (
-        ctx,
-        remote_os,
-        remote_arch,
-        describe_libc(&check.libc),
-        required_glibc,
-    );
 }

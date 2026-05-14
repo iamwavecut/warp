@@ -624,7 +624,7 @@ fn parallel_pendings_each_resolve_independently_via_recorded_child_id() {
 }
 
 #[test]
-fn execute_returns_error_when_remote_opencode_harness_is_requested() {
+fn execute_treats_remote_opencode_harness_as_local_child_harness() {
     App::test((), |mut app| async move {
         let _orchestration_v2 = FeatureFlag::OrchestrationV2.override_enabled(true);
         let terminal_view_id = EntityId::new();
@@ -662,7 +662,7 @@ fn execute_returns_error_when_remote_opencode_harness_is_requested() {
         assert!(matches!(
             result,
             AIAgentActionResultType::StartAgent(StartAgentResult::Error { error, version })
-                if error == "Remote child agents do not support the opencode harness yet."
+                if error == "Local harness child agents require the parent run_id to be available."
                     && version == StartAgentVersion::V2
         ));
     });

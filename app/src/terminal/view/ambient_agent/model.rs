@@ -1,38 +1,17 @@
-use std::time::Duration;
-
 use instant::Instant;
 use session_sharing_protocol::common::SessionId;
 use warp_cli::agent::Harness;
 use warp_core::features::FeatureFlag;
-use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity};
 
-use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::agent::{conversation::AIConversationId, extract_user_query_mode};
-use crate::ai::ambient_agents::spawn::{spawn_task, submit_run_followup, AmbientAgentEvent};
 use crate::ai::ambient_agents::task::HarnessConfig;
 use crate::ai::ambient_agents::AmbientAgentTaskId;
-use crate::ai::ambient_agents::{
-    OUT_OF_CREDITS_TASK_FAILURE_MESSAGE, SERVER_OVERLOADED_TASK_FAILURE_MESSAGE,
-};
-#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-use crate::ai::blocklist::handoff::touched_repos::TouchedWorkspace;
-use crate::ai::blocklist::BlocklistAIHistoryModel;
-use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
-use crate::ai::execution_profiles::{CloudAgentComputerUseState, ComputerUsePermission};
+use crate::ai::execution_profiles::{AgentComputerUseState, ComputerUsePermission};
 use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::llms::{LLMId, LLMPreferences};
-use crate::cloud_object::model::persistence::{CloudModel, CloudModelEvent};
-use crate::server::cloud_objects::update_manager::UpdateManager;
 use crate::server::ids::{ServerId, SyncId};
-#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-use crate::server::server_api::ai::InitialSnapshotToken;
-use crate::server::server_api::ai::{
-    AgentConfigSnapshot, AmbientAgentTaskState, AttachmentInput, SpawnAgentRequest,
-};
-use crate::server::server_api::{
-    AIApiError, ClientError, CloudAgentCapacityError, ServerApiProvider,
-};
+use crate::server::server_api::ai::{AgentConfigSnapshot, AttachmentInput, SpawnAgentRequest};
 use crate::terminal::view::ambient_agent::{SetupCommandGroupId, SetupCommandState};
 use crate::terminal::CLIAgent;
 
@@ -69,71 +48,10 @@ pub enum SessionStartupKind {
     Followup,
 }
 
-/// Gates `submit_handoff` against double-submits.
-#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum HandoffSubmissionState {
-    #[default]
-    Idle,
-    Starting,
-}
-
-/// Outcome of the chip-click async snapshot upload.
-#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum SnapshotUploadStatus {
-    /// Upload is still in flight, or has not started yet.
-    #[default]
-    Pending,
-    /// Touched workspace was empty so no upload happened. The cloud agent will
-    /// start with no rehydration content.
-    SkippedEmptyWorkspace,
-    /// Upload succeeded; the inner token is sent to the server on spawn.
-    Uploaded(InitialSnapshotToken),
-    /// Upload failed. The error message is surfaced as a toast via
-    /// `HandoffSnapshotUploadFailed`.
-    Failed(String),
-}
-
-#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-impl SnapshotUploadStatus {
-    /// True when the upload has settled successfully (uploaded or skipped).
-    /// Pending and Failed both block submit.
-    fn is_settled(&self) -> bool {
-        matches!(self, Self::Uploaded(_) | Self::SkippedEmptyWorkspace)
-    }
-
-    /// Returns the initial snapshot token to send on spawn, if any.
-    fn initial_snapshot_token(&self) -> Option<InitialSnapshotToken> {
-        match self {
-            Self::Uploaded(token) => Some(token.clone()),
-            Self::SkippedEmptyWorkspace | Self::Pending | Self::Failed(_) => None,
-        }
-    }
-}
-
-/// Per-pane handoff context. Seeded by the chip / slash command's open path on a
-/// fresh cloud-mode pane and consumed by `submit_handoff`. Its presence is the
-/// single source of truth for "this pane is in handoff mode" via
-/// `is_local_to_cloud_handoff()`.
-#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-#[derive(Debug, Clone)]
-pub(crate) struct PendingHandoff {
-    /// Forked conversation id minted by `POST /agent/conversations/{conversation_id}/fork`.
-    /// Sent under `conversation_id` on the subsequent `POST /agent/runs` request.
-    pub(crate) forked_conversation_id: String,
-    /// `None` until `derive_touched_workspace` completes.
-    pub(crate) touched_workspace: Option<TouchedWorkspace>,
-    /// Outcome of the async snapshot upload.
-    pub(crate) snapshot_upload: SnapshotUploadStatus,
-    /// Gates submit — prevents double-submitting while the spawn is in flight.
-    pub(crate) submission_state: HandoffSubmissionState,
-}
-
 /// Status of the ambient agent run.
 #[derive(Debug, Clone)]
 pub enum Status {
-    /// First-time environment setup for cloud agents.
+    /// First-time environment setup for agents.
     Setup,
     /// The user is composing their ambient agent prompt.
     Composing,
@@ -163,7 +81,7 @@ pub enum Status {
 pub struct AmbientAgentViewModel {
     status: Status,
 
-    /// The request with which the cloud agent was spawned, if it was spawned.
+    /// The request with which the agent was spawned, if it was spawned.
     request: Option<SpawnAgentRequest>,
 
     /// The terminal view this model is part of.
@@ -172,27 +90,23 @@ pub struct AmbientAgentViewModel {
     /// Selected cloud environment to launch the ambient agent with.
     environment_id: Option<SyncId>,
 
-    /// Handle for the periodic timer that updates progress durations.
-    progress_timer_handle: Option<SpawnedFutureHandle>,
-
     /// UI state for rendering the ambient agent progress screen.
     pub ui_state: AmbientAgentProgressUIState,
 
     setup_commands_state: SetupCommandState,
 
-    /// The task ID for the current cloud agent task, if one has been spawned.
+    /// The task ID for the current agent task, if one has been spawned.
     task_id: Option<AmbientAgentTaskId>,
 
-    /// The local conversation associated with this cloud agent run, if any.
+    /// The local conversation associated with this agent run, if any.
     /// Set for remote child agents spawned via `start_agent` so the `run_id`
     /// from the server response can be wired back to the conversation.
     conversation_id: Option<AIConversationId>,
 
-    /// Selected execution harness for the cloud agent run.
+    /// Selected execution harness for the agent run.
     /// Defaults to `Harness::Oz`. Used to populate `AgentConfigSnapshot.harness` on spawn.
     harness: Harness,
-    /// Selected worker host for the cloud agent run. Populated from the HostSelector
-    /// (which resolves env var > workspace setting) and read by `spawn_agent`.
+    /// Optional worker host value preserved for legacy task snapshots.
     worker_host: Option<String>,
     /// Whether the harness CLI (e.g. `claude`, `gemini`) has started running for a non-oz run.
     /// Used to transition the cloud-mode setup UI out of the pre-first-exchange phase when
@@ -208,28 +122,12 @@ pub struct AmbientAgentViewModel {
     last_ended_execution_session_id: Option<SessionId>,
     /// Prompt text for a follow-up that has been submitted but not yet attached to a new session.
     pending_followup_prompt: Option<String>,
-
-    /// See [`PendingHandoff`].
-    #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-    pending_handoff: Option<PendingHandoff>,
 }
 
 impl AmbientAgentViewModel {
     pub fn new(terminal_view_id: EntityId, ctx: &mut ModelContext<Self>) -> Self {
-        ctx.subscribe_to_model(&CloudModel::handle(ctx), |me, event, ctx| {
-            me.handle_cloud_model_event(event, ctx);
-        });
-
         ctx.subscribe_to_model(&HarnessAvailabilityModel::handle(ctx), |me, _event, ctx| {
             me.validate_selected_harness(ctx);
-        });
-
-        // Validate the default environment once Warp Drive sync completes.
-        // The environment ID may be restored from settings before environments are synced,
-        // so we need to validate it once the initial load is complete.
-        let initial_load_complete = UpdateManager::as_ref(ctx).initial_load_complete();
-        ctx.spawn(initial_load_complete, |me, _, ctx| {
-            me.validate_environment_after_initial_load(ctx);
         });
 
         let ui_state = AmbientAgentProgressUIState::new(ctx);
@@ -253,7 +151,6 @@ impl AmbientAgentViewModel {
             request: None,
             terminal_view_id,
             environment_id: None,
-            progress_timer_handle: None,
             ui_state,
             setup_commands_state: Default::default(),
             task_id: None,
@@ -264,8 +161,6 @@ impl AmbientAgentViewModel {
             active_execution_session_id: None,
             last_ended_execution_session_id: None,
             pending_followup_prompt: None,
-            #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-            pending_handoff: None,
         }
     }
 
@@ -320,51 +215,6 @@ impl AmbientAgentViewModel {
         self.set_setup_command_group_visibility(group_id, is_visible, ctx);
     }
 
-    /// Handles CloudModel events to keep environment_id in sync.
-    fn handle_cloud_model_event(&mut self, event: &CloudModelEvent, ctx: &mut ModelContext<Self>) {
-        match event {
-            // If the selected environment is deleted, clear the selection.
-            CloudModelEvent::ObjectTrashed { type_and_id, .. }
-            | CloudModelEvent::ObjectDeleted { type_and_id, .. } => {
-                if type_and_id.as_generic_string_object_id() == self.environment_id
-                    && self.environment_id.is_some()
-                {
-                    self.environment_id = None;
-                    ctx.emit(AmbientAgentViewModelEvent::EnvironmentSelected);
-                }
-            }
-            // When an environment syncs and gets a ServerId, update our stored ID.
-            CloudModelEvent::ObjectSynced {
-                client_id,
-                server_id,
-                ..
-            } => {
-                if let Some(current_id) = &self.environment_id {
-                    // Check if this is our environment by comparing with the ClientId
-                    if current_id == &SyncId::ClientId(*client_id) {
-                        self.environment_id = Some(SyncId::ServerId(*server_id));
-                        ctx.emit(AmbientAgentViewModelEvent::EnvironmentSelected);
-                    }
-                }
-            }
-            _ => (),
-        }
-    }
-
-    /// Validates the environment ID after Warp Drive initial load completes.
-    /// If the environment no longer exists, clears the selection.
-    fn validate_environment_after_initial_load(&mut self, ctx: &mut ModelContext<Self>) {
-        if let Some(id) = &self.environment_id {
-            if CloudAmbientAgentEnvironment::get_by_id(id, ctx).is_none() {
-                log::warn!(
-                    "Environment {id:?} no longer exists after initial load, clearing selection"
-                );
-                self.environment_id = None;
-                ctx.emit(AmbientAgentViewModelEvent::EnvironmentSelected);
-            }
-        }
-    }
-
     /// Returns the agent progress for tracking spawn steps.
     /// Returns `None` if not in the `WaitingForSession`, `Failed`, `NeedsGithubAuth`, or `Cancelled` state.
     pub fn agent_progress(&self) -> Option<&AgentProgress> {
@@ -383,32 +233,15 @@ impl AmbientAgentViewModel {
     }
 
     pub fn selected_harness(&self) -> Harness {
-        if self.is_local_to_cloud_handoff() {
-            Harness::Oz
-        } else {
-            self.harness
-        }
+        self.harness
     }
 
     pub fn set_harness(&mut self, harness: Harness, ctx: &mut ModelContext<Self>) {
-        // for local to cloud handoff, oz is the only option
-        // (we'll need to update this to lock to the correct 3p harness if/when
-        // we implement local -> cloud handoff for non-oz conversations).
-        let harness = if self.is_local_to_cloud_handoff() {
-            Harness::Oz
-        } else {
-            harness
-        };
-
         if self.harness == harness {
             return;
         }
         self.harness = harness;
         ctx.emit(AmbientAgentViewModelEvent::HarnessSelected);
-    }
-
-    pub fn set_worker_host(&mut self, worker_host: Option<String>) {
-        self.worker_host = worker_host;
     }
 
     /// True when the run is configured to use a non-Oz execution harness and the
@@ -423,102 +256,6 @@ impl AmbientAgentViewModel {
     /// selected, even before the CLI session is registered with [`CLIAgentSessionsModel`].
     pub fn selected_third_party_cli_agent(&self) -> Option<CLIAgent> {
         CLIAgent::from_harness(self.selected_harness())
-    }
-
-    /// True when this pane is a local-to-cloud handoff pane. Set when the handoff opens
-    /// the pane and stays true through and past the spawn.
-    pub(crate) fn is_local_to_cloud_handoff(&self) -> bool {
-        #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-        {
-            self.pending_handoff.is_some()
-        }
-        #[cfg(not(all(feature = "local_fs", not(target_family = "wasm"))))]
-        {
-            false
-        }
-    }
-
-    /// True when this pane is a handoff pane and the touched-workspace derivation +
-    /// snapshot upload have both settled and no submission is in flight. Used by the
-    /// input layer to gate clearing the editor buffer on submit.
-    pub(crate) fn is_handoff_ready_to_submit(&self) -> bool {
-        #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-        {
-            let Some(handoff) = self.pending_handoff.as_ref() else {
-                return false;
-            };
-            handoff.touched_workspace.is_some()
-                && handoff.snapshot_upload.is_settled()
-                && matches!(handoff.submission_state, HandoffSubmissionState::Idle)
-        }
-        #[cfg(not(all(feature = "local_fs", not(target_family = "wasm"))))]
-        {
-            false
-        }
-    }
-
-    /// Seeds the handoff context onto this pane. Called by the workspace bootstrap
-    /// after splitting in a fresh cloud-mode pane and entering agent view.
-    #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-    pub(crate) fn set_pending_handoff(
-        &mut self,
-        pending: Option<PendingHandoff>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let previous_harness = self.selected_harness();
-        self.pending_handoff = pending;
-        if self.selected_harness() != previous_harness {
-            ctx.emit(AmbientAgentViewModelEvent::HarnessSelected);
-        }
-        ctx.emit(AmbientAgentViewModelEvent::PendingHandoffChanged);
-    }
-
-    /// Updates the touched workspace once async derivation completes.
-    /// No-op when no handoff context is set.
-    #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-    pub(crate) fn set_pending_handoff_workspace(
-        &mut self,
-        workspace: TouchedWorkspace,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let Some(handoff) = self.pending_handoff.as_mut() else {
-            return;
-        };
-        handoff.touched_workspace = Some(workspace);
-        ctx.emit(AmbientAgentViewModelEvent::PendingHandoffChanged);
-    }
-
-    /// Records the outcome of the async snapshot upload. The standard success
-    /// case is `Uploaded(token)`; `SkippedEmptyWorkspace` when the workspace
-    /// had nothing to upload; `Failed` is set by `record_handoff_snapshot_upload_failed`.
-    /// No-op when no handoff context is set.
-    #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-    pub(crate) fn set_pending_handoff_snapshot_upload(
-        &mut self,
-        snapshot_upload: SnapshotUploadStatus,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let Some(handoff) = self.pending_handoff.as_mut() else {
-            return;
-        };
-        handoff.snapshot_upload = snapshot_upload;
-        ctx.emit(AmbientAgentViewModelEvent::PendingHandoffChanged);
-    }
-
-    /// Records a snapshot upload failure on the pending handoff. Sets
-    /// `snapshot_upload` to `Failed` (so submit stays gated) and emits
-    /// `HandoffSnapshotUploadFailed` so the input layer can surface a user-visible toast.
-    #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-    pub(crate) fn record_handoff_snapshot_upload_failed(
-        &mut self,
-        error_message: String,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.set_pending_handoff_snapshot_upload(
-            SnapshotUploadStatus::Failed(error_message.clone()),
-            ctx,
-        );
-        ctx.emit(AmbientAgentViewModelEvent::HandoffSnapshotUploadFailed { error_message });
     }
 
     /// Whether the harness CLI has started running. Only meaningful for non-oz runs.
@@ -541,18 +278,11 @@ impl AmbientAgentViewModel {
     }
 
     /// Sets the selected environment ID.
-    /// If the given ID does not exist in CloudModel, the environment ID is not changed.
     pub fn set_environment_id(
         &mut self,
         environment_id: Option<SyncId>,
         ctx: &mut ModelContext<Self>,
     ) {
-        if let Some(id) = &environment_id {
-            if CloudAmbientAgentEnvironment::get_by_id(id, ctx).is_none() {
-                log::warn!("Tried to select unknown environment {id:?}");
-                return;
-            }
-        }
         self.environment_id = environment_id;
         ctx.emit(AmbientAgentViewModelEvent::EnvironmentSelected);
     }
@@ -572,7 +302,7 @@ impl AmbientAgentViewModel {
         true
     }
 
-    /// Returns the task ID for the current cloud agent task, if one has been spawned.
+    /// Returns the task ID for the current agent task, if one has been spawned.
     pub fn task_id(&self) -> Option<AmbientAgentTaskId> {
         self.task_id
     }
@@ -668,45 +398,14 @@ impl AmbientAgentViewModel {
         task_id: AmbientAgentTaskId,
         ctx: &mut ModelContext<Self>,
     ) {
-        let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-
-        // Store the task ID for later use
         self.task_id = Some(task_id);
-
         self.status = Status::AgentRunning;
-
-        // Fetch the task so we can set the correct environment (instead of defaulting to the most
-        // recently-used one) and the correct harness (so non-oz viewers know to use the
-        // queued-prompt / harness-command-started flow).
-        ctx.spawn(
-            async move { ai_client.get_ambient_agent_task(&task_id).await },
-            |me, result, ctx| match result {
-                Ok(task) => {
-                    let snapshot = task.agent_config_snapshot.as_ref();
-                    let environment_id = snapshot
-                        .and_then(|s| s.environment_id.as_deref())
-                        .and_then(|id| ServerId::try_from(id).ok())
-                        .map(SyncId::ServerId);
-                    let harness = snapshot
-                        .and_then(|s| s.harness.as_ref())
-                        .map(|h| h.harness_type)
-                        .unwrap_or(Harness::Oz);
-
-                    me.set_environment_id(environment_id, ctx);
-                    me.set_harness(harness, ctx);
-                }
-                Err(err) => {
-                    log::warn!("Failed to fetch ambient agent task for shared session: {err}");
-                    me.set_environment_id(None, ctx);
-                }
-            },
-        );
+        self.set_environment_id(None, ctx);
     }
 
     /// Attach the view model to the shared session created for a follow-up prompt and notify the
     /// terminal manager to append that session's scrollback to the existing transcript.
     pub fn attach_followup_session(&mut self, session_id: SessionId, ctx: &mut ModelContext<Self>) {
-        self.stop_progress_timer();
         self.pending_followup_prompt = None;
         self.active_execution_session_id = Some(session_id);
         self.last_ended_execution_session_id = None;
@@ -722,41 +421,8 @@ impl AmbientAgentViewModel {
     }
 
     pub fn submit_cloud_followup(&mut self, prompt: String, ctx: &mut ModelContext<Self>) {
-        if !FeatureFlag::HandoffCloudCloud.is_enabled() {
-            log::warn!("Attempted to submit cloud follow-up while HandoffCloudCloud is disabled");
-            return;
-        }
-
-        let Some(task_id) = self.task_id else {
-            log::warn!("Attempted to submit cloud follow-up without an ambient task ID");
-            return;
-        };
-
-        let previous_session_id = self
-            .active_execution_session_id
-            .or(self.last_ended_execution_session_id);
-        let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-        let stream = submit_run_followup(
-            prompt.clone(),
-            task_id,
-            previous_session_id,
-            ai_client,
-            None,
-        );
-
-        self.pending_followup_prompt = Some(prompt);
-        self.status = Status::WaitingForSession {
-            progress: AgentProgress::new(),
-            kind: SessionStartupKind::Followup,
-        };
-        self.start_progress_timer(ctx);
-        ctx.emit(AmbientAgentViewModelEvent::FollowupDispatched);
-
-        ctx.spawn_stream_local(
-            stream,
-            |me, event_result, ctx| me.handle_ambient_agent_event_result(event_result, ctx),
-            |_me, _ctx| {},
-        );
+        let _ = (prompt, ctx);
+        log::warn!("Cloud follow-up submission is disabled in this local-first build");
     }
 
     pub fn status(&self) -> &Status {
@@ -778,7 +444,7 @@ impl AmbientAgentViewModel {
             )
     }
 
-    /// Reset cloud-specific prompt state so a retained cloud view can compose a new task.
+    /// Reset hosted prompt state so a retained agent view can compose a new task locally.
     pub fn reset_for_new_cloud_prompt(&mut self, ctx: &mut ModelContext<Self>) {
         self.status = Status::Composing;
         self.environment_id = None;
@@ -789,21 +455,18 @@ impl AmbientAgentViewModel {
         self.last_ended_execution_session_id = None;
         self.pending_followup_prompt = None;
         self.setup_commands_state = Default::default();
-        self.stop_progress_timer();
         ctx.notify();
     }
 
-    /// Sets the local conversation ID associated with this cloud agent run.
+    /// Sets the local conversation ID associated with this agent run.
     pub fn set_conversation_id(&mut self, id: Option<AIConversationId>) {
         self.conversation_id = id;
     }
 
-    /// Builds the default `AgentConfigSnapshot` for spawning a cloud agent from this pane.
+    /// Builds the default `AgentConfigSnapshot` for spawning a local agent from this pane.
     ///
-    /// Reads the user's preferred model, computer-use autonomy, optional self-hosted
-    /// host (`WARP_CLOUD_MODE_DEFAULT_HOST`), and the pane's currently-selected env
-    /// and harness. Shared by `spawn_agent` and the local-to-cloud handoff path so
-    /// both flows route to the same worker host and inherit the same defaults.
+    /// Reads the user's preferred model, computer-use autonomy, and the pane's
+    /// currently-selected env and harness.
     pub(crate) fn build_default_spawn_config(&self, ctx: &AppContext) -> AgentConfigSnapshot {
         let model_id = LLMPreferences::as_ref(ctx)
             .get_active_base_model(ctx, Some(self.terminal_view_id))
@@ -811,8 +474,7 @@ impl AmbientAgentViewModel {
             .to_string();
 
         // Determine computer_use_enabled based on workspace AI autonomy settings
-        let CloudAgentComputerUseState { enabled, .. } =
-            ComputerUsePermission::resolve_cloud_agent_state(ctx);
+        let AgentComputerUseState { enabled, .. } = ComputerUsePermission::resolve_agent_state(ctx);
         let computer_use_enabled = Some(enabled);
 
         let selected_harness = self.selected_harness();
@@ -852,9 +514,7 @@ impl AmbientAgentViewModel {
             runtime_skills: vec![],
             referenced_attachments: vec![],
             conversation_id: None,
-            initial_snapshot_token: None,
             agent_identity_uid: None,
-            snapshot_disabled: None,
         };
 
         self.spawn_internal(request, ctx);
@@ -891,445 +551,21 @@ impl AmbientAgentViewModel {
     /// Spawn an ambient agent given `request`.
     fn spawn_internal(&mut self, mut request: SpawnAgentRequest, ctx: &mut ModelContext<Self>) {
         request.interactive = Some(true);
-        let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
         self.request = Some(request.clone());
-        let stream = spawn_task(request, ai_client, None);
-
-        ctx.spawn_stream_local(
-            stream,
-            |me, event_result, ctx| {
-                // If we're in Cancelled or Failed state, ignore most events from the stream
-                // except for TaskSpawned (which we need to handle for early cancellation).
-                let ignore_events = matches!(me.status, Status::Cancelled { .. } | Status::Failed { .. });
-
-                match event_result {
-                Ok(event) => match event {
-                    AmbientAgentEvent::TaskSpawned { task_id, run_id } => {
-                        // Store the task ID for later use (e.g., populating details panel)
-                        me.task_id = Some(task_id);
-
-                        // If we already transitioned to Cancelled state (because user cancelled
-                        // before we received the task_id), send the cancellation to the server now.
-                        if matches!(me.status, Status::Cancelled { .. }) {
-                            log::info!(
-                                "Received task_id after cancellation, sending server cancellation for task {}",
-                                task_id
-                            );
-                            let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-                            ctx.spawn(
-                                async move {
-                                    if let Err(e) = ai_client.cancel_ambient_agent_task(&task_id).await {
-                                        log::error!("Failed to cancel ambient agent task {}: {:?}", task_id, e);
-                                    }
-                                },
-                                |_, _, _| {},
-                            );
-                            return;
-                        }
-
-                        // Wire the run_id to the associated conversation for
-                        // orchestration v2. This unblocks the parent agent's
-                        // pending start_agent tool call.
-                        if let Some(conversation_id) = me.conversation_id {
-                            let terminal_view_id = me.terminal_view_id;
-                            let spawned_task_id = Some(task_id);
-                            BlocklistAIHistoryModel::handle(ctx).update(
-                                ctx,
-                                |history, ctx| {
-                                    history.assign_run_id_for_conversation(
-                                        conversation_id,
-                                        run_id,
-                                        spawned_task_id,
-                                        terminal_view_id,
-                                        ctx,
-                                    );
-                                },
-                            );
-                        }
-
-                        // Mark this task as active immediately so it renders under the Active section
-                        // (and doesn't briefly appear under Past before the shared session join completes).
-                        ActiveAgentViewsModel::handle(ctx).update(ctx, |model, ctx| {
-                            model.register_ambient_session(me.terminal_view_id, task_id, ctx);
-                        });
-
-                        // Emit event so terminal view knows to show the info button
-                        ctx.emit(AmbientAgentViewModelEvent::ProgressUpdated);
-                    }
-                    AmbientAgentEvent::StateChanged {
-                        state,
-                        status_message,
-                    } => {
-                        // Ignore state changes if we're already in a terminal state
-                        if ignore_events {
-                            return;
-                        }
-
-                        if let Status::WaitingForSession { progress, .. } = &mut me.status {
-                            match state {
-                                AmbientAgentTaskState::Cancelled => {
-                                    me.handle_cancellation(ctx);
-                                }
-                                AmbientAgentTaskState::Queued | AmbientAgentTaskState::Pending => {
-                                    // Clear later states in case the agent failed to start and was retried.
-                                    progress.claimed_at = None;
-                                    progress.harness_started_at = None;
-                                    ctx.emit(AmbientAgentViewModelEvent::ProgressUpdated);
-                                }
-                                AmbientAgentTaskState::Claimed => {
-                                    if progress.claimed_at.is_none() {
-                                        progress.claimed_at = Some(Instant::now());
-                                        progress.harness_started_at = None;
-                                        ctx.emit(AmbientAgentViewModelEvent::ProgressUpdated);
-                                    }
-                                }
-                                AmbientAgentTaskState::InProgress => {
-                                    if progress.harness_started_at.is_none() {
-                                        progress.harness_started_at = Some(Instant::now());
-                                        ctx.emit(AmbientAgentViewModelEvent::ProgressUpdated);
-                                    }
-                                }
-                                AmbientAgentTaskState::Succeeded => {}
-                                AmbientAgentTaskState::Failed
-                                | AmbientAgentTaskState::Error
-                                | AmbientAgentTaskState::Blocked
-                                | AmbientAgentTaskState::Unknown => {
-                                    let error = status_message
-                                        .map(|msg| msg.message)
-                                        .unwrap_or_else(|| "Cloud agent failed".to_string());
-                                    me.handle_spawn_error(error, ctx);
-                                }
-                            }
-                        }
-                    }
-                    AmbientAgentEvent::SessionStarted { session_join_info } => {
-                        // Ignore session started if we're already in a terminal state
-                        if ignore_events {
-                            return;
-                        }
-
-                        if let Some(session_id) = session_join_info.session_id {
-                            me.stop_progress_timer();
-                            let event = if matches!(me.status, Status::AgentRunning) {
-                                AmbientAgentViewModelEvent::FollowupSessionReady { session_id }
-                            } else {
-                                AmbientAgentViewModelEvent::SessionReady { session_id }
-                            };
-                            me.status = Status::AgentRunning;
-                            ctx.emit(event);
-                        }
-                    }
-                    AmbientAgentEvent::AtCapacity => {
-                        if ignore_events {
-                            return;
-                        }
-
-                        if matches!(me.status, Status::WaitingForSession { .. }) {
-                            ctx.emit(AmbientAgentViewModelEvent::ShowCloudAgentCapacityModal);
-                        }
-                    }
-                    AmbientAgentEvent::TimedOut => {}
-                },
-                Err(err) => {
-                    // Ignore errors if we're already in a terminal state
-                    if ignore_events {
-                        return;
-                    }
-                    let error_message = err.to_string();
-
-
-                    // Check if this is a ClientError with an auth_url
-                    use crate::server::server_api::ClientError;
-                    if let Some(client_error) = err.downcast_ref::<ClientError>() {
-                        if let Some(auth_url) = &client_error.auth_url {
-                            me.handle_needs_github_auth(
-                                auth_url.clone(),
-                                client_error.error.clone(),
-                                ctx,
-                            );
-                            return;
-                        }
-                    }
-                    if let Some(capacity_error) = err.downcast_ref::<CloudAgentCapacityError>() {
-                        me.handle_spawn_error(capacity_error.error.clone(), ctx);
-                        ctx.emit(AmbientAgentViewModelEvent::ShowCloudAgentCapacityModal);
-                        return;
-                    }
-                    if let Some(ai_api_error) = err.downcast_ref::<AIApiError>() {
-                        match ai_api_error {
-                            AIApiError::QuotaLimit => {
-                                me.handle_spawn_error(
-                                    OUT_OF_CREDITS_TASK_FAILURE_MESSAGE.to_string(),
-                                    ctx,
-                                );
-                                ctx.emit(AmbientAgentViewModelEvent::ShowAICreditModal);
-                                return;
-                            }
-                            AIApiError::ServerOverloaded => {
-                                me.handle_spawn_error(
-                                    SERVER_OVERLOADED_TASK_FAILURE_MESSAGE.to_string(),
-                                    ctx,
-                                );
-                                return;
-                            }
-                            _ => {}
-                        }
-                    }
-                    me.handle_spawn_error(error_message, ctx);
-                }
-            }
-            },
-            |_me, _ctx| {},
-        );
-
         self.status = Status::WaitingForSession {
             progress: AgentProgress::new(),
             kind: SessionStartupKind::InitialRun,
         };
-        self.start_progress_timer(ctx);
         ctx.emit(AmbientAgentViewModelEvent::DispatchedAgent);
-    }
-
-    fn handle_ambient_agent_event_result(
-        &mut self,
-        event_result: Result<AmbientAgentEvent, anyhow::Error>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let ignore_events = matches!(
-            self.status,
-            Status::Cancelled { .. } | Status::Failed { .. }
+        self.handle_spawn_error(
+            "Hosted ambient agents are disabled in this local-first build. Use local Agent Mode with an OpenAI-compatible provider or a local CLI harness instead."
+                .to_string(),
+            ctx,
         );
-
-        match event_result {
-            Ok(event) => self.handle_ambient_agent_event(event, ignore_events, ctx),
-            Err(err) => {
-                if ignore_events {
-                    return;
-                }
-                self.handle_ambient_agent_stream_error(err, ctx);
-            }
-        }
-    }
-
-    fn handle_ambient_agent_event(
-        &mut self,
-        event: AmbientAgentEvent,
-        ignore_events: bool,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        match event {
-            AmbientAgentEvent::TaskSpawned { task_id, run_id } => {
-                self.task_id = Some(task_id);
-
-                if matches!(self.status, Status::Cancelled { .. }) {
-                    log::info!(
-                        "Received task_id after cancellation, sending server cancellation for task {}",
-                        task_id
-                    );
-                    let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-                    ctx.spawn(
-                        async move {
-                            if let Err(e) = ai_client.cancel_ambient_agent_task(&task_id).await {
-                                log::error!(
-                                    "Failed to cancel ambient agent task {}: {:?}",
-                                    task_id,
-                                    e
-                                );
-                            }
-                        },
-                        |_, _, _| {},
-                    );
-                    return;
-                }
-
-                if let Some(conversation_id) = self.conversation_id {
-                    let terminal_view_id = self.terminal_view_id;
-                    let spawned_task_id = Some(task_id);
-                    BlocklistAIHistoryModel::handle(ctx).update(ctx, |history, ctx| {
-                        history.assign_run_id_for_conversation(
-                            conversation_id,
-                            run_id,
-                            spawned_task_id,
-                            terminal_view_id,
-                            ctx,
-                        );
-                    });
-                }
-
-                ActiveAgentViewsModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.register_ambient_session(self.terminal_view_id, task_id, ctx);
-                });
-
-                ctx.emit(AmbientAgentViewModelEvent::ProgressUpdated);
-            }
-            AmbientAgentEvent::StateChanged {
-                state,
-                status_message,
-            } => {
-                if ignore_events {
-                    return;
-                }
-
-                if let Status::WaitingForSession { progress, .. } = &mut self.status {
-                    match state {
-                        AmbientAgentTaskState::Cancelled => {
-                            self.handle_cancellation(ctx);
-                        }
-                        AmbientAgentTaskState::Queued | AmbientAgentTaskState::Pending => {
-                            progress.claimed_at = None;
-                            progress.harness_started_at = None;
-                            ctx.emit(AmbientAgentViewModelEvent::ProgressUpdated);
-                        }
-                        AmbientAgentTaskState::Claimed => {
-                            if progress.claimed_at.is_none() {
-                                progress.claimed_at = Some(Instant::now());
-                                progress.harness_started_at = None;
-                                ctx.emit(AmbientAgentViewModelEvent::ProgressUpdated);
-                            }
-                        }
-                        AmbientAgentTaskState::InProgress => {
-                            if progress.harness_started_at.is_none() {
-                                progress.harness_started_at = Some(Instant::now());
-                                ctx.emit(AmbientAgentViewModelEvent::ProgressUpdated);
-                            }
-                        }
-                        AmbientAgentTaskState::Succeeded => {}
-                        AmbientAgentTaskState::Failed
-                        | AmbientAgentTaskState::Error
-                        | AmbientAgentTaskState::Blocked
-                        | AmbientAgentTaskState::Unknown => {
-                            let error = status_message
-                                .map(|msg| msg.message)
-                                .unwrap_or_else(|| "Cloud agent failed".to_string());
-                            self.handle_spawn_error(error, ctx);
-                        }
-                    }
-                }
-            }
-            AmbientAgentEvent::SessionStarted { session_join_info } => {
-                if ignore_events {
-                    return;
-                }
-
-                if let Some(session_id) = session_join_info.session_id {
-                    self.stop_progress_timer();
-                    let event_session_id = session_id;
-                    let event = match &self.status {
-                        Status::WaitingForSession {
-                            kind: SessionStartupKind::InitialRun,
-                            ..
-                        } => AmbientAgentViewModelEvent::SessionReady {
-                            session_id: event_session_id,
-                        },
-                        Status::WaitingForSession {
-                            kind: SessionStartupKind::Followup,
-                            ..
-                        }
-                        | Status::AgentRunning => {
-                            AmbientAgentViewModelEvent::FollowupSessionReady {
-                                session_id: event_session_id,
-                            }
-                        }
-                        Status::Setup
-                        | Status::Composing
-                        | Status::Failed { .. }
-                        | Status::NeedsGithubAuth { .. }
-                        | Status::Cancelled { .. } => return,
-                    };
-                    self.active_execution_session_id = Some(session_id);
-                    self.last_ended_execution_session_id = None;
-                    self.pending_followup_prompt = None;
-                    self.status = Status::AgentRunning;
-                    ctx.emit(event);
-                }
-            }
-            AmbientAgentEvent::AtCapacity => {
-                if ignore_events {
-                    return;
-                }
-
-                if matches!(self.status, Status::WaitingForSession { .. }) {
-                    ctx.emit(AmbientAgentViewModelEvent::ShowCloudAgentCapacityModal);
-                }
-            }
-            AmbientAgentEvent::TimedOut => {}
-        }
-    }
-
-    fn handle_ambient_agent_stream_error(
-        &mut self,
-        err: anyhow::Error,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let error_message = err.to_string();
-        let _ = ctx;
-
-        if let Some(client_error) = err.downcast_ref::<ClientError>() {
-            if let Some(auth_url) = &client_error.auth_url {
-                self.handle_needs_github_auth(auth_url.clone(), client_error.error.clone(), ctx);
-                return;
-            }
-        }
-        if let Some(capacity_error) = err.downcast_ref::<CloudAgentCapacityError>() {
-            self.handle_spawn_error(capacity_error.error.clone(), ctx);
-            ctx.emit(AmbientAgentViewModelEvent::ShowCloudAgentCapacityModal);
-            return;
-        }
-        if let Some(ai_api_error) = err.downcast_ref::<AIApiError>() {
-            match ai_api_error {
-                AIApiError::QuotaLimit => {
-                    self.handle_spawn_error(OUT_OF_CREDITS_TASK_FAILURE_MESSAGE.to_string(), ctx);
-                    ctx.emit(AmbientAgentViewModelEvent::ShowAICreditModal);
-                    return;
-                }
-                AIApiError::ServerOverloaded => {
-                    self.handle_spawn_error(
-                        SERVER_OVERLOADED_TASK_FAILURE_MESSAGE.to_string(),
-                        ctx,
-                    );
-                    return;
-                }
-                _ => {}
-            }
-        }
-        self.handle_spawn_error(error_message, ctx);
-    }
-
-    /// Starts the periodic timer that updates the progress UI while waiting for a session.
-    fn start_progress_timer(&mut self, ctx: &mut ModelContext<Self>) {
-        // Don't start a new timer if one is already running.
-        if self.progress_timer_handle.is_some() {
-            return;
-        }
-
-        let handle = ctx.spawn(
-            async move {
-                Timer::after(Duration::from_millis(200)).await;
-            },
-            |me, _unit, ctx| {
-                me.progress_timer_handle = None;
-
-                // Check if still waiting for session.
-                if matches!(me.status, Status::WaitingForSession { .. }) {
-                    ctx.emit(AmbientAgentViewModelEvent::ProgressUpdated);
-                    me.start_progress_timer(ctx);
-                }
-            },
-        );
-
-        self.progress_timer_handle = Some(handle);
-    }
-
-    fn stop_progress_timer(&mut self) {
-        if let Some(handle) = self.progress_timer_handle.take() {
-            handle.abort();
-        }
     }
 
     /// Handles a spawn error by transitioning to the Failed state.
     fn handle_spawn_error(&mut self, error_message: String, ctx: &mut ModelContext<Self>) {
-        self.stop_progress_timer();
-
         let now = Instant::now();
 
         // Extract or create progress tracking.
@@ -1356,47 +592,8 @@ impl AmbientAgentViewModel {
         ctx.emit(AmbientAgentViewModelEvent::Failed { error_message });
     }
 
-    /// Handles the need for GitHub authentication by transitioning to the NeedsGithubAuth state.
-    fn handle_needs_github_auth(
-        &mut self,
-        auth_url: String,
-        error_message: String,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.stop_progress_timer();
-
-        let now = Instant::now();
-
-        // Extract or create progress tracking.
-        let progress = if let Status::WaitingForSession { mut progress, .. } =
-            std::mem::replace(&mut self.status, Status::Composing)
-        {
-            progress.stopped_at = Some(now);
-            progress
-        } else {
-            // If not in WaitingForSession, create a new progress with current time.
-            AgentProgress {
-                spawned_at: now,
-                claimed_at: None,
-                harness_started_at: None,
-                stopped_at: Some(now),
-            }
-        };
-
-        self.status = Status::NeedsGithubAuth {
-            progress,
-            error_message,
-            auth_url,
-        };
-        self.pending_followup_prompt = None;
-
-        ctx.emit(AmbientAgentViewModelEvent::NeedsGithubAuth);
-    }
-
     /// Handles cancellation by transitioning to the Cancelled state.
     fn handle_cancellation(&mut self, ctx: &mut ModelContext<Self>) {
-        self.stop_progress_timer();
-
         let now = Instant::now();
 
         // Extract or create progress tracking.
@@ -1421,103 +618,13 @@ impl AmbientAgentViewModel {
         ctx.emit(AmbientAgentViewModelEvent::Cancelled);
     }
 
-    /// Drive the local-to-cloud handoff submission for this pane. Reads the cached
-    /// forked conversation id and snapshot upload result off the pending handoff,
-    /// then routes through `spawn_agent_with_request`. Caller must check
-    /// `is_handoff_ready_to_submit`.
-    #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-    pub(crate) fn submit_handoff(
-        &mut self,
-        prompt: String,
-        attachments: Vec<AttachmentInput>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let Some(handoff) = self.pending_handoff.as_mut() else {
-            log::warn!("submit_handoff called without pending_handoff set; ignoring");
-            return;
-        };
-        if matches!(handoff.submission_state, HandoffSubmissionState::Starting) {
-            // Double-submit guard: spawn already in flight.
-            return;
-        }
-        if handoff.touched_workspace.is_none() {
-            log::warn!("submit_handoff called before touched-workspace derivation completed");
-            return;
-        }
-        if !handoff.snapshot_upload.is_settled() {
-            log::warn!(
-                "submit_handoff called with unsettled snapshot_upload: {:?}",
-                handoff.snapshot_upload
-            );
-            return;
-        }
-        let initial_snapshot_token = handoff.snapshot_upload.initial_snapshot_token();
-        let forked_conversation_id = handoff.forked_conversation_id.clone();
-        handoff.submission_state = HandoffSubmissionState::Starting;
-        ctx.emit(AmbientAgentViewModelEvent::PendingHandoffChanged);
-
-        // Build the spawn config so the env selector chip + `/plan` / `/orchestrate`
-        // mode prefix propagate into the request, matching a regular cloud-mode spawn.
-        let config = Some(self.build_default_spawn_config(ctx));
-        let (prompt, mode) = extract_user_query_mode(prompt);
-        let request = SpawnAgentRequest {
-            prompt,
-            mode,
-            config,
-            title: None,
-            team: None,
-            skill: None,
-            attachments,
-            interactive: None,
-            parent_run_id: None,
-            runtime_skills: vec![],
-            referenced_attachments: vec![],
-            conversation_id: Some(forked_conversation_id),
-            initial_snapshot_token,
-            agent_identity_uid: None,
-            snapshot_disabled: None,
-        };
-        self.spawn_agent_with_request(request, ctx);
-    }
-
-    #[cfg(not(all(feature = "local_fs", not(target_family = "wasm"))))]
-    pub(crate) fn submit_handoff(
-        &mut self,
-        prompt: String,
-        attachments: Vec<AttachmentInput>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.spawn_agent(prompt, attachments, ctx);
-    }
-
     /// Cancels the ambient agent task if one is currently running.
-    /// Sends a cancellation request to the server (if task_id is available) and transitions to the Cancelled state.
     pub fn cancel_task(&mut self, ctx: &mut ModelContext<Self>) {
         if !self.is_waiting_for_session() {
             log::warn!("Attempted to cancel ambient agent task but not in WaitingForSession state");
             return;
         }
 
-        // If we have a task_id, send cancellation request to the server
-        if let Some(task_id) = self.task_id {
-            let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-            ctx.spawn(
-                async move { ai_client.cancel_ambient_agent_task(&task_id).await },
-                |_me, result, _ctx| {
-                    if let Err(err) = result {
-                        log::error!("Failed to cancel ambient agent task: {err}");
-                    }
-                },
-            );
-        } else {
-            // No task_id yet, but we can still cancel locally.
-            // The spawn stream will handle the cancellation when it receives the TaskSpawned event
-            // and sees we're no longer in WaitingForSession state.
-            log::info!("Cancelling ambient agent task before task_id was received");
-        }
-
-        // Always transition to cancelled state immediately, regardless of whether we have a task_id.
-        // This provides immediate UI feedback to the user.
         self.handle_cancellation(ctx);
     }
 }
@@ -1549,30 +656,16 @@ pub enum AmbientAgentViewModelEvent {
     Failed {
         error_message: String,
     },
-    /// Request to show the cloud agent concurrency/capacity modal.
-    ShowCloudAgentCapacityModal,
-    /// Request to show the cloud agent AI credits modal.
-    ShowAICreditModal,
     /// The ambient agent needs GitHub authentication.
     NeedsGithubAuth,
     /// The ambient agent was cancelled.
     Cancelled,
     /// The selected execution harness (Oz / Claude Code) changed.
     HarnessSelected,
-    /// The selected worker host changed via the HostSelector.
-    HostSelected,
     /// The harness CLI (for non-oz runs) has started executing in the shared session.
     /// Fires once per run and signals the transition out of the pre-first-exchange phase
     /// for claude / gemini / other third-party harnesses.
     HarnessCommandStarted,
-    /// The pane's `pending_handoff` was updated.
-    PendingHandoffChanged,
-    /// The async handoff snapshot upload failed. The input layer subscribes to
-    /// surface the error as a toast.
-    HandoffSnapshotUploadFailed {
-        error_message: String,
-    },
-
     UpdatedSetupCommandVisibility,
 }
 

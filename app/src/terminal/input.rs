@@ -55,7 +55,6 @@ use crate::interaction_sources::{
 use crate::suggestions::ignored_suggestions_model::{
     IgnoredSuggestionsModel, IgnoredSuggestionsModelEvent, SuggestionType,
 };
-use crate::terminal::buy_credits_banner::{BuyCreditsBanner, BuyCreditsBannerEvent};
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::PluginModalKind;
 use crate::terminal::cli_agent_sessions::{
@@ -107,7 +106,7 @@ use crate::ai::attachment_utils::MAX_ATTACHMENT_SIZE_BYTES;
 use crate::ai::block_context::BlockContext;
 use crate::ai::blocklist::AttachmentType;
 use crate::ai::mcp::TemplatableMCPServerManager;
-use crate::server::server_api::ai::{AttachmentFileInfo, AttachmentInput};
+use crate::server::server_api::ai::AttachmentInput;
 use crate::{
     ai::{
         agent::{AIAgentContext, EntrypointType},
@@ -244,8 +243,6 @@ use string_offset::CharOffset;
 use vec1::Vec1;
 use vim::vim::{VimHandler, VimMode};
 use warp_completer::util::parse_current_commands_and_tokens;
-#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-use warpui::r#async::FutureExt as _;
 
 use warp_completer::{
     completer::{
@@ -341,7 +338,7 @@ use crate::ai::blocklist::agent_view::{
     AgentInputFooter, AgentInputFooterEvent, AgentViewController,
 };
 use crate::terminal::view::ambient_agent::{
-    HarnessSelector, HarnessSelectorEvent, HostSelector, HostSelectorEvent, NakedHeaderButtonTheme,
+    HarnessSelector, HarnessSelectorEvent, NakedHeaderButtonTheme,
 };
 use async_channel::Sender;
 use futures::stream::AbortHandle;
@@ -382,7 +379,7 @@ pub(super) const CLI_AGENT_RICH_INPUT_EDITOR_TOP_PADDING: f32 = 10.;
 pub(super) const CLI_AGENT_RICH_INPUT_EDITOR_BOTTOM_PADDING: f32 = 8.;
 pub(super) const CLI_AGENT_RICH_INPUT_HINT_TEXT: &str = "Tell the agent what to build...";
 
-const CLOUD_MODE_V2_HINT_TEXT: &str = "Kick off a cloud agent";
+const CLOUD_MODE_V2_HINT_TEXT: &str = "Kick off an agent";
 const SHORT_CIRCUIT_HIGHLIGHTING_ACTIONS: [Option<PlainTextEditorViewAction>; 7] = [
     Some(PlainTextEditorViewAction::Space),
     Some(PlainTextEditorViewAction::NonExpandingSpace),
@@ -943,7 +940,6 @@ pub enum Event {
     OpenViewMCPPane,
     OpenAddMCPPane,
     OpenProjectRulesPane,
-    OpenEnvironmentManagementPane,
     OpenFilesPalette {
         source: PaletteSource,
     },
@@ -959,9 +955,6 @@ pub enum Event {
         document_id: AIDocumentId,
         document_version: AIDocumentVersion,
     },
-    OpenAutoReloadModal {
-        purchased_credits: i32,
-    },
     ShowToast {
         message: String,
         flavor: ToastFlavor,
@@ -976,7 +969,7 @@ pub enum Event {
         initial_prompt: Option<String>,
     },
     CreateDockerSandbox,
-    /// Exit cloud mode (ambient agent) and start a new *local* agent conversation in the root terminal.
+    /// Exit ambient agent mode and start a new local agent conversation in the root terminal.
     ///
     /// If `initial_prompt` is `Some`, it should prefill the local agent prompt but not auto-send.
     ExitCloudModeAndStartLocalAgent {
@@ -985,15 +978,10 @@ pub enum Event {
     ScrollToExchange {
         exchange_id: AIAgentExchangeId,
     },
-    /// Trigger environment setup flow with optional repository arguments
-    TriggerEnvironmentSetup {
-        repos: Vec<String>,
-    },
     RegisterPluginListener(CLIAgent),
     #[cfg(not(target_family = "wasm"))]
     OpenPluginInstructionsPane(CLIAgent, PluginModalKind),
     OpenShareSessionModal,
-    StartRemoteControl,
 }
 
 pub enum InputState {
@@ -1547,7 +1535,7 @@ pub struct Input {
     prompt_suggestions_view: ViewHandle<PromptSuggestionsView>,
 
     inline_slash_commands_view: ViewHandle<InlineSlashCommandView>,
-    cloud_mode_v2_slash_commands_view: Option<ViewHandle<CloudModeV2SlashCommandView>>,
+    ambient_agent_v2_slash_commands_view: Option<ViewHandle<CloudModeV2SlashCommandView>>,
     slash_command_data_source: ModelHandle<SlashCommandDataSource>,
 
     /// Inline conversation menu for selecting AI conversations.
@@ -1582,7 +1570,7 @@ pub struct Input {
     /// Inline history menu for up-arrow with conversations and commands.
     inline_history_menu_view: ViewHandle<InlineHistoryMenuView>,
 
-    pub(super) cloud_mode_v2_history_menu_view: Option<ViewHandle<CloudModeV2HistoryMenuView>>,
+    pub(super) ambient_agent_v2_history_menu_view: Option<ViewHandle<CloudModeV2HistoryMenuView>>,
 
     inline_terminal_menu_positioner: ModelHandle<InlineMenuPositioner>,
 
@@ -1599,7 +1587,6 @@ pub struct Input {
     /// Weak handle to this input view for drop target data
     weak_view_handle: WeakViewHandle<Input>,
 
-    buy_credits_banner: ViewHandle<BuyCreditsBanner>,
     agent_status_view: ViewHandle<BlocklistAIStatusBar>,
     agent_view_controller: ModelHandle<AgentViewController>,
     agent_shortcut_view_model: ModelHandle<AgentShortcutViewModel>,
@@ -1616,7 +1603,6 @@ struct AmbientAgentViewState {
     view_model: ModelHandle<AmbientAgentViewModel>,
     #[allow(dead_code)]
     harness_selector: ViewHandle<HarnessSelector>,
-    host_selector: Option<ViewHandle<HostSelector>>,
 }
 
 impl AmbientAgentViewState {
@@ -1707,8 +1693,7 @@ pub fn init(app: &mut AppContext) {
                 & !id!("WorkflowInfoBox")
                 & !id!("ProfileModelSelectorOpen")
                 & !id!("PromptChipMenuOpen")
-                & !id!("AIContextMenuOpen")
-                & !id!("BuyCreditsBannerOpen"),
+                & !id!("AIContextMenuOpen"),
         ),
     ]);
 
@@ -2094,21 +2079,6 @@ impl Input {
                         });
                     }
                 });
-                // Surface async snapshot upload failures as a toast.
-                if let AmbientAgentViewModelEvent::HandoffSnapshotUploadFailed { error_message } =
-                    event
-                {
-                    let window_id = ctx.window_id();
-                    let toast_message = format!("Failed to prepare cloud handoff: {error_message}");
-                    ToastStack::handle(ctx).update(ctx, |ts, ctx| {
-                        ts.add_ephemeral_toast(
-                            DismissibleToast::error(toast_message),
-                            window_id,
-                            ctx,
-                        );
-                    });
-                }
-
                 // Re-render on status-footer transitions and on status-affecting events that
                 // decide whether the input is in its composing shape.
                 let should_notify = handle.as_ref(ctx).should_show_status_footer()
@@ -2122,8 +2092,6 @@ impl Input {
                             | AmbientAgentViewModelEvent::Cancelled
                             | AmbientAgentViewModelEvent::NeedsGithubAuth
                             | AmbientAgentViewModelEvent::HarnessSelected
-                            | AmbientAgentViewModelEvent::PendingHandoffChanged
-                            | AmbientAgentViewModelEvent::HandoffSnapshotUploadFailed { .. }
                     );
 
                 if should_notify {
@@ -2188,11 +2156,9 @@ impl Input {
                                 selector.set_button_theme(NakedHeaderButtonTheme, ctx);
                             });
                         }
-                        // Mirror the V2 model selector / host selector refocus path: when the
-                        // harness selector menu closes (item picked or dismissed via Esc /
-                        // click-outside), restore focus to the input editor so typing resumes
-                        // immediately. This powers the "input is focused after the harness
-                        // selector closes" UX for the `/harness` slash command.
+                        // Mirror the V2 model selector refocus path: when the harness selector
+                        // menu closes (item picked or dismissed via Esc / click-outside), restore
+                        // focus to the input editor so typing resumes immediately.
                         ctx.subscribe_to_view(&harness_selector, |me, _, event, ctx| {
                             let HarnessSelectorEvent::MenuVisibilityChanged { open } = event;
                             if !*open {
@@ -2200,86 +2166,6 @@ impl Input {
                             }
                         });
                         harness_selector
-                    },
-                    host_selector: if FeatureFlag::CloudModeInputV2.is_enabled() {
-                        let view = ctx.add_typed_action_view(|ctx| {
-                            HostSelector::new(menu_positioning_provider.clone(), ctx)
-                        });
-                        // Env var takes priority over workspace setting for developer testing.
-                        let effective_host = std::env::var("WARP_CLOUD_MODE_DEFAULT_HOST")
-                            .ok()
-                            .filter(|s| !s.is_empty())
-                            .or_else(|| {
-                                UserWorkspaces::as_ref(ctx)
-                                    .default_host_slug()
-                                    .map(String::from)
-                            });
-                        if let Some(slug) = &effective_host {
-                            view.update(ctx, |selector, ctx| {
-                                selector.set_default_host(slug.clone(), ctx);
-                            });
-                        }
-                        if let Some(slug) = effective_host {
-                            view_model.update(ctx, |model, _ctx| {
-                                model.set_worker_host(Some(slug));
-                            });
-                        }
-                        // When the host selector menu closes (item picked or dismissed via
-                        // Esc / click-outside), restore focus to the input editor so typing
-                        // resumes immediately.
-                        ctx.subscribe_to_view(&view, |me, _, event, ctx| {
-                            if matches!(
-                                event,
-                                HostSelectorEvent::MenuVisibilityChanged { open: false }
-                            ) {
-                                me.focus_input_box(ctx);
-                            }
-                        });
-                        // Propagate host selection changes to the view model when a host is
-                        // explicitly selected, rather than on menu close, to avoid a race
-                        // where the menu closes before the selection updates.
-                        let vm_for_host = view_model.clone();
-                        ctx.subscribe_to_view(&view, move |_me, handle, event, ctx| {
-                            if matches!(event, HostSelectorEvent::HostSelected) {
-                                let selected = handle.as_ref(ctx).selected().clone();
-                                vm_for_host.update(ctx, |model, _ctx| {
-                                    model.set_worker_host(selected.worker_host_value());
-                                });
-                            }
-                        });
-                        // Keep the host selector and view model in sync when workspace
-                        // metadata refreshes (e.g. admin changes default_host_slug).
-                        let view_for_ws = view.clone();
-                        let vm_for_ws = view_model.clone();
-                        ctx.subscribe_to_model(
-                            &UserWorkspaces::handle(ctx),
-                            move |_me, _, event, ctx| {
-                                if !matches!(event, UserWorkspacesEvent::TeamsChanged) {
-                                    return;
-                                }
-                                let effective_host = std::env::var("WARP_CLOUD_MODE_DEFAULT_HOST")
-                                    .ok()
-                                    .filter(|s| !s.is_empty())
-                                    .or_else(|| {
-                                        UserWorkspaces::as_ref(ctx)
-                                            .default_host_slug()
-                                            .map(String::from)
-                                    });
-                                if let Some(slug) = &effective_host {
-                                    view_for_ws.update(ctx, |selector, ctx| {
-                                        selector.set_default_host(slug.clone(), ctx);
-                                    });
-                                }
-                                if let Some(slug) = effective_host {
-                                    vm_for_ws.update(ctx, |model, _ctx| {
-                                        model.set_worker_host(Some(slug));
-                                    });
-                                }
-                            },
-                        );
-                        Some(view)
-                    } else {
-                        None
                     },
                 });
         ctx.subscribe_to_view(&agent_input_footer, |me, _, event, ctx| {
@@ -2293,10 +2179,6 @@ impl Input {
                 }
                 AgentInputFooterEvent::OpenRichInput | AgentInputFooterEvent::HideRichInput => {
                     ctx.emit(Event::Escape);
-                }
-                AgentInputFooterEvent::StartRemoteControl
-                | AgentInputFooterEvent::StopRemoteControl => {
-                    // Handled by UseAgentToolbar's subscription, not here.
                 }
                 // WriteToPty, InsertIntoCLIRichInput, ToggleCodeReviewPane, and ToggleFileExplorer
                 // are handled by UseAgentToolbar's subscription, not here.
@@ -2319,8 +2201,7 @@ impl Input {
                 AgentInputFooterEvent::ModelSelectorOpened => {
                     me.close_overlays(false, ctx);
                 }
-                AgentInputFooterEvent::ModelSelectorClosed
-                | AgentInputFooterEvent::EnvironmentSelectorClosed => {
+                AgentInputFooterEvent::ModelSelectorClosed => {
                     me.focus_input_box(ctx);
                 }
                 AgentInputFooterEvent::ToggleInlineModelSelector { initial_tab } => {
@@ -2372,22 +2253,12 @@ impl Input {
                         position_offset_from_prompt: offset,
                     });
                 }
-                AgentInputFooterEvent::OpenEnvironmentManagementPane => {
-                    ctx.emit(Event::OpenEnvironmentManagementPane);
-                }
                 AgentInputFooterEvent::PluginInstalled(agent) => {
                     ctx.emit(Event::RegisterPluginListener(*agent));
                 }
                 #[cfg(not(target_family = "wasm"))]
                 AgentInputFooterEvent::OpenPluginInstructionsPane(agent, kind) => {
                     ctx.emit(Event::OpenPluginInstructionsPane(*agent, *kind));
-                }
-                AgentInputFooterEvent::OpenHandoffPane { initial_prompt } => {
-                    ctx.dispatch_typed_action(
-                        &crate::workspace::WorkspaceAction::OpenLocalToCloudHandoffPane {
-                            initial_prompt: initial_prompt.clone(),
-                        },
-                    );
                 }
             }
         });
@@ -2696,7 +2567,7 @@ impl Input {
         }
         let inline_history_model = inline_history_menu_view.as_ref(ctx).model().clone();
 
-        let cloud_mode_v2_history_menu_view = if FeatureFlag::CloudModeInputV2.is_enabled() {
+        let ambient_agent_v2_history_menu_view = if FeatureFlag::CloudModeInputV2.is_enabled() {
             let view = ctx.add_view({
                 let active_session = active_session.clone();
                 let buffer_model = buffer_model.clone();
@@ -3068,7 +2939,7 @@ impl Input {
                 terminal_view_id,
                 ambient_agent_view_model: ambient_agent_view_model.clone(),
             };
-            Some(ctx.add_model(|ctx| SlashCommandDataSource::for_cloud_mode_v2(args, ctx)))
+            Some(ctx.add_model(|ctx| SlashCommandDataSource::for_ambient_agent_v2(args, ctx)))
         } else {
             None
         };
@@ -3233,7 +3104,7 @@ impl Input {
             me.handle_slash_commands_menu_event(event, ctx);
         });
 
-        let cloud_mode_v2_slash_commands_view =
+        let ambient_agent_v2_slash_commands_view =
             if let Some(v2_data_source) = v2_slash_command_data_source {
                 let view = ctx.add_typed_action_view(|ctx| {
                     CloudModeV2SlashCommandView::new(
@@ -3275,27 +3146,6 @@ impl Input {
         });
         ctx.observe(&ai_req_usage_model, |_, _, ctx| {
             ctx.notify();
-        });
-
-        let buy_credits_banner = ctx.add_typed_action_view(BuyCreditsBanner::new);
-        ctx.subscribe_to_view(&buy_credits_banner, |me, _, event, ctx| match event {
-            BuyCreditsBannerEvent::OpenBillingAndUsage => {
-                ctx.emit(Event::OpenSettings(SettingsSection::BillingAndUsage));
-            }
-            BuyCreditsBannerEvent::RefocusInput => {
-                ctx.focus(&me.editor);
-            }
-            BuyCreditsBannerEvent::OpenAutoReloadModal { purchased_credits } => {
-                ctx.emit(Event::OpenAutoReloadModal {
-                    purchased_credits: *purchased_credits,
-                });
-            }
-            BuyCreditsBannerEvent::ShowAutoReloadError { error_message } => {
-                ctx.emit(Event::ShowToast {
-                    message: error_message.to_string(),
-                    flavor: ToastFlavor::Error,
-                });
-            }
         });
 
         let agent_status_view = ctx.add_typed_action_view(|ctx| {
@@ -3388,7 +3238,7 @@ impl Input {
             prompt_suggestions_view,
             slash_command_model,
             inline_slash_commands_view,
-            cloud_mode_v2_slash_commands_view,
+            ambient_agent_v2_slash_commands_view,
             inline_conversation_menu_view,
             inline_plan_menu_view,
             inline_repos_menu_view,
@@ -3400,12 +3250,11 @@ impl Input {
             user_query_menu_view,
             rewind_menu_view,
             inline_history_menu_view,
-            cloud_mode_v2_history_menu_view,
+            ambient_agent_v2_history_menu_view,
             inline_terminal_menu_positioner,
             cached_agent_mode_hint_text: None,
             is_editor_empty_on_last_edit: is_editor_empty,
             weak_view_handle: ctx.handle(),
-            buy_credits_banner,
             agent_status_view,
             agent_view_controller,
             agent_input_footer,
@@ -3496,38 +3345,6 @@ impl Input {
         self.ambient_agent_view_state
             .as_ref()
             .map(|state| &state.harness_selector)
-    }
-
-    fn host_selector(&self) -> Option<&ViewHandle<HostSelector>> {
-        self.ambient_agent_view_state
-            .as_ref()
-            .and_then(|state| state.host_selector.as_ref())
-    }
-
-    /// Opens the V2 cloud-mode host selector popover, if the feature is enabled and the
-    /// selector is constructed. No-op otherwise. Used by the `/host` slash command to
-    /// programmatically open the same popover that the V2 footer's host button toggles.
-    pub(super) fn open_v2_host_selector(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(host_selector) = self.host_selector().cloned() else {
-            return;
-        };
-        host_selector.update(ctx, |selector, ctx| selector.open_menu(ctx));
-    }
-
-    /// Opens the V2 cloud-mode harness selector popover, if the feature is enabled and the
-    /// selector is constructed. No-op otherwise. Used by the `/harness` slash command to
-    /// programmatically open the same popover that the V2 footer's harness button toggles.
-    pub(super) fn open_v2_harness_selector(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(harness_selector) = self.harness_selector().cloned() else {
-            return;
-        };
-        harness_selector.update(ctx, |selector, ctx| selector.open_menu(ctx));
-    }
-
-    pub(super) fn open_v2_environment_selector(&mut self, ctx: &mut ViewContext<Self>) {
-        self.agent_input_footer
-            .clone()
-            .update(ctx, |footer, ctx| footer.open_v2_environment_selector(ctx));
     }
 
     /// Update the at button's disabled state based on whether AI context menu should render
@@ -4430,7 +4247,7 @@ impl Input {
                 }
             }
             inline_history::InlineHistoryMenuEvent::NoResults => {
-                // Both the regular inline view and the cloud-mode V2 wrapper
+                // Both the regular inline view and the ambient-agent V2 wrapper
                 // render their own "No results" placeholder UI when the
                 // mixer query produces zero rows. This handler is therefore
                 // a no-op; the user dismisses via Escape.
@@ -4882,7 +4699,7 @@ impl Input {
             .count();
 
         // Image context is available whenever the feature flag is enabled and we're in AI input
-        // mode, including cloud mode
+        // mode, including ambient agent
         let image_context_options = if FeatureFlag::ImageAsContext.is_enabled()
             && matches!(ai_input_model.input_type(), InputType::AI)
         {
@@ -5421,16 +5238,8 @@ impl Input {
                     entrypoint: AnonymousUserSignupEntrypoint::SignUpAIPrompt,
                 });
             }
-            PromptAlertEvent::OpenBillingAndUsagePage => {
-                ctx.emit(Event::OpenSettings(SettingsSection::BillingAndUsage));
-            }
             PromptAlertEvent::OpenPrivacyPage => {
                 ctx.emit(Event::OpenSettings(SettingsSection::Privacy));
-            }
-            PromptAlertEvent::OpenBillingPortal { team_uid } => {
-                UserWorkspaces::handle(ctx).update(ctx, |user_workspaces, ctx| {
-                    user_workspaces.generate_stripe_billing_portal_link(*team_uid, ctx);
-                });
             }
         }
     }
@@ -5846,7 +5655,7 @@ impl Input {
             }
             AISettingsChangedEvent::AIAutoDetectionEnabled { .. }
             | AISettingsChangedEvent::NLDInTerminalEnabled { .. } => {
-                // NLD is irrelevant in cloud mode v2 — the input is always AI.
+                // NLD is irrelevant in ambient agent v2 — the input is always AI.
                 if self.is_cloud_mode_input_v2_composing(ctx) {
                     return;
                 }
@@ -7568,7 +7377,7 @@ impl Input {
             }
             InputSuggestionsMode::SlashCommands => {
                 if self.is_cloud_mode_input_v2_composing(ctx) {
-                    if let Some(view) = self.cloud_mode_v2_slash_commands_view.clone() {
+                    if let Some(view) = self.ambient_agent_v2_slash_commands_view.clone() {
                         view.update(ctx, |view, ctx| {
                             view.select_up(ctx);
                         });
@@ -7630,7 +7439,7 @@ impl Input {
             }
             InputSuggestionsMode::InlineHistoryMenu { .. } => {
                 if self.is_cloud_mode_input_v2_composing(ctx) {
-                    if let Some(view) = self.cloud_mode_v2_history_menu_view.clone() {
+                    if let Some(view) = self.ambient_agent_v2_history_menu_view.clone() {
                         view.update(ctx, |view, ctx| {
                             view.select_up(ctx);
                         });
@@ -7865,7 +7674,7 @@ impl Input {
             }
             InputSuggestionsMode::SlashCommands => {
                 if self.is_cloud_mode_input_v2_composing(ctx) {
-                    if let Some(view) = self.cloud_mode_v2_slash_commands_view.clone() {
+                    if let Some(view) = self.ambient_agent_v2_slash_commands_view.clone() {
                         view.update(ctx, |view, ctx| {
                             view.select_down(ctx);
                         });
@@ -7953,7 +7762,7 @@ impl Input {
             .is_inline_history_menu()
         {
             if self.is_cloud_mode_input_v2_composing(ctx) {
-                if let Some(view) = self.cloud_mode_v2_history_menu_view.clone() {
+                if let Some(view) = self.ambient_agent_v2_history_menu_view.clone() {
                     view.update(ctx, |view, ctx| {
                         view.select_down(ctx);
                     });
@@ -8700,7 +8509,7 @@ impl Input {
                     .as_ref(ctx)
                     .is_inline_menu_open();
 
-                // NLD autodetection is irrelevant in cloud mode v2 — the input is always AI.
+                // NLD autodetection is irrelevant in ambient agent v2 — the input is always AI.
                 let should_run_ai_input_detection = if self.is_cloud_mode_input_v2_composing(ctx) {
                     false
                 } else {
@@ -9097,7 +8906,7 @@ impl Input {
                     }
                     InputSuggestionsMode::InlineHistoryMenu { .. } => {
                         let mismatched = if self.is_cloud_mode_input_v2_composing(ctx) {
-                            self.cloud_mode_v2_history_menu_view
+                            self.ambient_agent_v2_history_menu_view
                                 .as_ref()
                                 .and_then(|view| view.as_ref(ctx).selected_query_text(ctx))
                                 .is_some_and(|selected_text| {
@@ -9685,7 +9494,7 @@ impl Input {
             return;
         }
 
-        // Shared session viewers cannot attach images unless in cloud mode
+        // Shared session viewers cannot attach images unless in ambient agent
         let is_viewer = self.model.lock().shared_session_status().is_viewer();
         let is_cloud_mode_with_images = FeatureFlag::CloudModeImageContext.is_enabled()
             && self
@@ -9748,7 +9557,7 @@ impl Input {
 
     /// Check if we can attach on filepaths paste or drag-drop
     fn can_attach_on_filepaths_paste_or_dragdrop(&self, ctx: &mut ViewContext<Self>) -> bool {
-        // Shared session viewers cannot attach images unless in cloud mode
+        // Shared session viewers cannot attach images unless in ambient agent
         // with the CloudModeImageContext feature enabled.
         let is_viewer = self.model.lock().shared_session_status().is_viewer();
         let is_cloud_mode_with_images = FeatureFlag::CloudModeImageContext.is_enabled()
@@ -11659,11 +11468,11 @@ impl Input {
             .is_inline_history_menu()
             && self.is_cloud_mode_input_v2_composing(ctx)
             && self
-                .cloud_mode_v2_history_menu_view
+                .ambient_agent_v2_history_menu_view
                 .as_ref()
                 .is_some_and(|view| view.as_ref(ctx).has_selection(ctx))
         {
-            if let Some(view) = self.cloud_mode_v2_history_menu_view.clone() {
+            if let Some(view) = self.ambient_agent_v2_history_menu_view.clone() {
                 view.update(ctx, |view, ctx| view.accept_selected(ctx));
             }
             return;
@@ -11692,7 +11501,7 @@ impl Input {
             return;
         } else if self.suggestions_mode_model.as_ref(ctx).is_slash_commands() {
             if self.is_cloud_mode_input_v2_composing(ctx) {
-                if let Some(view) = self.cloud_mode_v2_slash_commands_view.clone() {
+                if let Some(view) = self.ambient_agent_v2_slash_commands_view.clone() {
                     view.update(ctx, |view, ctx| {
                         view.accept_selected_item(false, ctx);
                     });
@@ -11746,7 +11555,7 @@ impl Input {
                         ToastStack::handle(ctx).update(ctx, |ts, ctx| {
                             ts.add_ephemeral_toast(
                                 DismissibleToast::error(
-                                    "No agent harnesses are available. Contact your team admin."
+                                    "No agent harnesses are available. Check local agent settings."
                                         .to_string(),
                                 ),
                                 window_id,
@@ -11829,32 +11638,6 @@ impl Input {
                     vec![]
                 };
 
-                // For local-to-cloud handoff panes, gate the buffer clear on the
-                // async `derive_touched_workspace` derivation having completed and
-                // no orchestrator already being in flight. If we cleared early and
-                // then bailed inside `submit_handoff`, the user's prompt and
-                // pending attachments would be silently dropped. Surface a toast
-                // so the user gets some feedback instead of seeing the submit do
-                // nothing — the prompt and attachments are intentionally left
-                // intact so the next submit picks them back up.
-                if let Some(ambient_agent_view_model) = self.ambient_agent_view_model() {
-                    let model = ambient_agent_view_model.as_ref(ctx);
-                    if model.is_local_to_cloud_handoff() && !model.is_handoff_ready_to_submit() {
-                        let window_id = ctx.window_id();
-                        ToastStack::handle(ctx).update(ctx, |ts, ctx| {
-                            ts.add_ephemeral_toast(
-                                DismissibleToast::default(
-                                    "Preparing handoff — try again in a moment.".to_owned(),
-                                )
-                                .with_object_id("local-to-cloud-handoff-not-ready".to_owned()),
-                                window_id,
-                                ctx,
-                            );
-                        });
-                        return;
-                    }
-                }
-
                 // Clear the buffer and pending attachments after collecting them.
                 self.editor.update(ctx, |editor, ctx| {
                     editor.clear_buffer(ctx);
@@ -11865,11 +11648,7 @@ impl Input {
 
                 if let Some(ambient_agent_view_model) = self.ambient_agent_view_model() {
                     ambient_agent_view_model.update(ctx, |state, ctx| {
-                        if state.is_local_to_cloud_handoff() {
-                            state.submit_handoff(prompt, attachments, ctx);
-                        } else {
-                            state.spawn_agent(prompt, attachments, ctx);
-                        }
+                        state.spawn_agent(prompt, attachments, ctx);
                     });
                 }
                 return;
@@ -11962,11 +11741,6 @@ impl Input {
             self.model.lock().set_is_input_dirty(false);
         }
 
-        AISettings::handle(ctx).update(ctx, |ai_settings, ctx| {
-            // Don't show the quota banner once a user has run a command or AI query.
-            ai_settings.mark_quota_banner_as_dismissed(ctx);
-            ctx.notify();
-        });
     }
 
     fn input_cmd_enter(&mut self, ctx: &mut ViewContext<Self>) {
@@ -12016,7 +11790,7 @@ impl Input {
                 {
                     return;
                 }
-                // In cloud mode (ambient agent), Cmd+Enter should exit cloud mode entirely and start a
+                // In ambient agent (ambient agent), Cmd+Enter should exit ambient agent entirely and start a
                 // new *local* agent conversation in the root terminal. This should work whether the
                 // buffer is empty (blank convo) or non-empty (prefill draft, but don't auto-send).
                 if self
@@ -12399,13 +12173,6 @@ impl Input {
 
         let has_requests_remaining = AIRequestUsageModel::as_ref(ctx).has_requests_remaining();
 
-        let has_any_ai = AIRequestUsageModel::as_ref(ctx).has_any_ai_remaining(ctx);
-        if !has_any_ai {
-            AIRequestUsageModel::handle(ctx).update(ctx, |model, ctx| {
-                model.enable_buy_credits_banner(ctx);
-            });
-        }
-
         if PromptAlertView::does_alert_block_ai_requests(ctx) {
             if !has_requests_remaining {}
 
@@ -12562,185 +12329,19 @@ impl Input {
             .cloned()
             .collect();
 
-        let has_uploads = (!pending_images.is_empty() || !pending_files.is_empty())
-            && FeatureFlag::CloudModeImageContext.is_enabled();
-
-        if let Some(task_id) = ambient_agent_task_id.filter(|_| has_uploads) {
-            // Upload files first, then send prompt with file references in callback
-            Self::upload_files_then_send_prompt(
-                task_id,
-                server_conversation_token,
-                prompt,
-                attachments,
-                &pending_images,
-                &pending_files,
-                ctx,
+        if !pending_images.is_empty() || !pending_files.is_empty() {
+            log::warn!(
+                "Skipping hosted attachment upload for ambient-agent follow-up in local-first build"
             );
-        } else {
-            // No files to upload, send prompt immediately
-            if !pending_images.is_empty() || !pending_files.is_empty() {
-                log::warn!("Cannot upload files: no task_id available");
-            }
-            ctx.emit(Event::SendAgentPrompt {
-                server_conversation_token,
-                prompt,
-                attachments,
-            });
         }
+        let _ = ambient_agent_task_id;
+        ctx.emit(Event::SendAgentPrompt {
+            server_conversation_token,
+            prompt,
+            attachments,
+        });
 
         true
-    }
-
-    /// Uploads image and file attachments via presigned URLs, then emits `SendAgentPrompt`
-    /// with the resulting `FileReference` attachments appended.
-    fn upload_files_then_send_prompt(
-        task_id: crate::ai::ambient_agents::AmbientAgentTaskId,
-        server_conversation_token: Option<
-            session_sharing_protocol::common::ServerConversationToken,
-        >,
-        prompt: String,
-        base_attachments: Vec<AgentAttachment>,
-        pending_images: &[crate::ai::agent::ImageContext],
-        pending_files: &[crate::ai::blocklist::PendingFile],
-        ctx: &mut ViewContext<Self>,
-    ) {
-        let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-        let server_api = ServerApiProvider::as_ref(ctx).get();
-
-        // Decode all images upfront; drop any that fail so that file_infos
-        // and files_to_upload stay in sync (they're zipped later).
-        let mut files_to_upload: Vec<(String, String, Vec<u8>)> = pending_images
-            .iter()
-            .filter_map(|img| {
-                base64::engine::general_purpose::STANDARD
-                    .decode(&img.data)
-                    .map(|bytes| (img.file_name.clone(), img.mime_type.clone(), bytes))
-                    .map_err(|e| {
-                        log::error!("Failed to decode base64 image {}: {e}", img.file_name)
-                    })
-                    .ok()
-            })
-            .collect();
-
-        // Also read non-image files from disk and add them to the upload list.
-        for file in pending_files {
-            match std::fs::read(&file.file_path) {
-                Ok(bytes) => {
-                    if bytes.len() > MAX_ATTACHMENT_SIZE_BYTES {
-                        log::warn!(
-                            "Skipping file {} ({} bytes) — exceeds 10MB limit",
-                            file.file_name,
-                            bytes.len()
-                        );
-                        continue;
-                    }
-                    files_to_upload.push((file.file_name.clone(), file.mime_type.clone(), bytes));
-                }
-                Err(e) => {
-                    log::error!("Failed to read file {}: {e}", file.file_path.display());
-                }
-            }
-        }
-
-        let file_infos: Vec<AttachmentFileInfo> = files_to_upload
-            .iter()
-            .map(|(name, mime, _)| AttachmentFileInfo {
-                filename: name.clone(),
-                mime_type: mime.clone(),
-            })
-            .collect();
-
-        ctx.spawn(
-            async move {
-                let response = match ai_client
-                    .prepare_attachments_for_upload(&task_id, &file_infos)
-                    .await
-                {
-                    Ok(resp) => resp,
-                    Err(e) => {
-                        log::error!(
-                            "Failed to prepare attachment uploads for task {task_id}: {e:?}"
-                        );
-                        return None;
-                    }
-                };
-
-                let mut uploaded = Vec::new();
-                for ((file_name, mime_type, file_bytes), upload_info) in
-                    files_to_upload.iter().zip(response.attachments.iter())
-                {
-                    let result = server_api
-                        .http_client()
-                        .put(&upload_info.upload_url)
-                        .header("Content-Type", mime_type.as_str())
-                        .body(file_bytes.clone())
-                        .send()
-                        .await;
-
-                    match result {
-                        Ok(resp) if resp.status().is_success() => {
-                            uploaded.push(AgentAttachment::FileReference {
-                                attachment_id: upload_info.attachment_id.clone(),
-                                file_name: file_name.clone(),
-                            });
-                        }
-                        Ok(resp) => {
-                            log::error!(
-                                "Failed to upload attachment {}: HTTP {}",
-                                file_name,
-                                resp.status()
-                            );
-                        }
-                        Err(e) => {
-                            log::error!("Failed to upload attachment {file_name}: {e:?}");
-                        }
-                    }
-                }
-
-                if uploaded.len() < files_to_upload.len() {
-                    log::warn!(
-                        "Only {}/{} attachments uploaded successfully",
-                        uploaded.len(),
-                        files_to_upload.len()
-                    );
-                }
-
-                Some(uploaded)
-            },
-            move |input, maybe_uploaded, ctx| {
-                let Some(uploaded_files) = maybe_uploaded else {
-                    // Prepare request failed (e.g. attachment limit exceeded).
-                    // Keep pending attachments so the user can retry, unfreeze input,
-                    // and show an error toast.
-                    input.unfreeze_and_clear_agent_input(ctx);
-                    let window_id = ctx.window_id();
-                    ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                        toast_stack.add_ephemeral_toast(
-                            DismissibleToast::error(
-                                "Too many attachments for this conversation.".to_string(),
-                            ),
-                            window_id,
-                            ctx,
-                        );
-                    });
-                    return;
-                };
-
-                // Upload succeeded — clear pending attachments now.
-                input.ai_context_model.update(ctx, |context_model, ctx| {
-                    context_model.clear_pending_attachments(ctx);
-                });
-
-                let mut all_attachments = base_attachments;
-                all_attachments.extend(uploaded_files);
-
-                ctx.emit(Event::SendAgentPrompt {
-                    server_conversation_token,
-                    prompt,
-                    attachments: all_attachments,
-                });
-            },
-        );
     }
 
     /// Returns true if toggling the input mode is disabled.
@@ -13801,16 +13402,8 @@ impl Input {
             PromptSuggestionsEvent::SignupAnonymousUser => ctx.emit(Event::SignupAnonymousUser {
                 entrypoint: AnonymousUserSignupEntrypoint::SignUpAIPrompt,
             }),
-            PromptSuggestionsEvent::OpenBillingAndUsagePage => {
-                ctx.emit(Event::OpenSettings(SettingsSection::BillingAndUsage))
-            }
             PromptSuggestionsEvent::OpenPrivacyPage => {
                 ctx.emit(Event::OpenSettings(SettingsSection::Privacy))
-            }
-            PromptSuggestionsEvent::OpenBillingPortal { team_uid } => {
-                UserWorkspaces::handle(ctx).update(ctx, |user_workspaces, ctx| {
-                    user_workspaces.generate_stripe_billing_portal_link(*team_uid, ctx);
-                });
             }
         }
     }
@@ -14146,22 +13739,13 @@ impl View for Input {
             .agent_input_footer
             .as_ref(app)
             .is_v2_model_selector_open(app);
-        let is_v2_host_selector_open = self
-            .host_selector()
-            .is_some_and(|view| view.as_ref(app).is_menu_open());
         let is_v2_harness_selector_open = self
             .harness_selector()
             .is_some_and(|view| view.as_ref(app).is_menu_open());
-        let is_v2_environment_selector_open = self
-            .agent_input_footer
-            .as_ref(app)
-            .is_v2_environment_selector_open(app);
         if is_profile_model_selector_open
             || is_agent_footer_model_selector_open
             || is_v2_model_selector_open
-            || is_v2_host_selector_open
             || is_v2_harness_selector_open
-            || is_v2_environment_selector_open
         {
             ctx.set.insert("ProfileModelSelectorOpen");
         }
@@ -14198,14 +13782,6 @@ impl View for Input {
             .is_conversation_menu()
         {
             ctx.set.insert(flags::OPEN_INLINE_CONVERSATION_MENU);
-        }
-
-        if self
-            .buy_credits_banner
-            .as_ref(app)
-            .is_denomination_dropdown_open(app)
-        {
-            ctx.set.insert("BuyCreditsBannerOpen");
         }
 
         let model_lock = self.model.lock();

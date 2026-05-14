@@ -10,7 +10,7 @@ use std::{
 use ai::skills::{provider_rank, ParsedSkill};
 use warp_cli::skill::SkillSpec;
 
-use crate::ai::cloud_environments::GithubRepo;
+use crate::ai::agent_environments::GithubRepo;
 
 /// Parse raw skill spec strings and resolve the unique set of GitHub repos they reference.
 ///

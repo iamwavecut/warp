@@ -3,8 +3,8 @@ use std::{fmt, path::PathBuf};
 use clap::{Args, Subcommand, ValueEnum};
 
 use crate::{
-    config_file::ConfigFileArgs, environment::EnvironmentCreateArgs, mcp::MCPSpec,
-    model::ModelArgs, scope::ObjectScope, share::ShareArgs, skill::SkillSpec,
+    config_file::ConfigFileArgs, mcp::MCPSpec, model::ModelArgs, scope::ObjectScope,
+    share::ShareArgs, skill::SkillSpec,
 };
 
 /// Output format for agent results.
@@ -268,7 +268,6 @@ pub struct RunAgentArgs {
     ///
     /// When used with --prompt, the skill provides the base context and the prompt is the task.
     ///
-    /// To automate a skill on a schedule, use `oz schedule create --skill <SPEC>`.
     #[arg(long = "skill", value_name = "SPEC")]
     pub skill: Option<SkillSpec>,
 
@@ -295,10 +294,6 @@ pub struct RunAgentArgs {
     /// LEGACY: MCP servers to start before executing the agent, identified by UUID.
     #[arg(long = "mcp-server", value_name = "UUID", hide = true)]
     pub mcp_servers: Vec<uuid::Uuid>,
-    /// Cloud environment to use, identified by ID.
-    #[arg(long = "environment", short = 'e', value_name = "ID")]
-    pub environment: Option<String>,
-
     /// Keep the agent's session open after the conversation completes.
     ///
     /// This is useful when you want to keep the session alive for follow-up interactions.
@@ -324,10 +319,6 @@ pub struct RunAgentArgs {
     /// Whether we are running the agent in a sandboxed environment.
     #[arg(long = "sandboxed", hide = true)]
     pub sandboxed: bool,
-    /// IAM role ARN to use for federated AWS Bedrock credentials for this run.
-    #[arg(long = "bedrock-inference-role", value_name = "ROLE_ARN", hide = true)]
-    pub bedrock_inference_role: Option<String>,
-
     #[command(flatten)]
     pub computer_use: HiddenComputerUseArgs,
 
@@ -388,7 +379,6 @@ pub struct RunCloudArgs {
     ///
     /// When used with --prompt, the skill provides the base context and the prompt is the task.
     ///
-    /// To automate a skill on a schedule, use `oz schedule create --skill <SPEC>`.
     #[arg(long = "skill", value_name = "SPEC")]
     pub skill: Option<SkillSpec>,
 
@@ -406,9 +396,6 @@ pub struct RunCloudArgs {
     #[arg(long = "mcp", value_name = "SPEC")]
     pub mcp_specs: Vec<MCPSpec>,
 
-    /// The environment to run this ambient agent in.
-    #[command(flatten)]
-    pub environment: EnvironmentCreateArgs,
     /// Open the agent's session in Warp once it's available.
     #[arg(long = "open")]
     pub open: bool,
@@ -460,12 +447,12 @@ pub struct RunCloudArgs {
 /// Arguments for listing available agents.
 #[derive(Debug, Clone, Args)]
 pub struct ListAgentConfigsArgs {
-    /// List skills from a specific GitHub repository.
+    /// List skills from a specific local repository checkout.
     ///
-    /// Format: `owner/repo` or `https://github.com/owner/repo`
+    /// Format: local path, `owner/repo`, or `https://github.com/owner/repo`.
     ///
-    /// When provided, lists skills from this repo instead of from your environments.
-    /// Any environments that include this repo will still be shown in the results.
+    /// Slugs and GitHub URLs are resolved only to already-present local checkout
+    /// directories under the current directory.
     #[arg(long = "repo", short = 'r', value_name = "REPO")]
     pub repo: Option<String>,
 }

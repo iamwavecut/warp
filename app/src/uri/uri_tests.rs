@@ -1,6 +1,9 @@
 use self::parse_url_paths::{get_item_data_from_warp_link, WarpWebLink};
 use super::*;
+use crate::cloud_object::ObjectType;
+use crate::drive::{OpenWarpDriveObjectArgs, OpenWarpDriveObjectSettings};
 use crate::launch_configs::launch_config::make_mock_single_window_launch_config;
+use crate::server::ids::ServerId;
 use crate::ChannelState;
 
 #[test]
@@ -207,61 +210,37 @@ fn test_warp_web_link_failure() {
 }
 
 #[test]
-fn test_action_create_environment_parse() {
+fn test_action_create_environment_parse_is_disabled() {
     let url = Url::parse(&format!(
         "{}://action/create_environment?repo=foo&repo=bar",
         ChannelState::url_scheme()
     ))
     .unwrap();
 
-    let action = Action::parse(&url).unwrap();
-    match action {
-        Action::CreateEnvironment { repos } => {
-            assert_eq!(repos, vec!["foo".to_owned(), "bar".to_owned()]);
-        }
-        _ => panic!("unexpected action: {action:?}"),
-    }
+    assert!(Action::parse(&url).is_err());
 }
 
 #[test]
-fn test_action_focus_cloud_mode_parse() {
+fn test_action_focus_cloud_mode_parse_is_disabled() {
     let url = Url::parse(&format!(
         "{}://action/focus_cloud_mode",
         ChannelState::url_scheme()
     ))
     .unwrap();
 
-    let action = Action::parse(&url).unwrap();
-    assert!(matches!(action, Action::FocusCloudMode));
+    assert!(Action::parse(&url).is_err());
 }
 
 #[test]
-fn test_action_create_environment_parse_no_repos() {
+fn test_action_new_agent_workspace_parse() {
     let url = Url::parse(&format!(
-        "{}://action/create_environment",
+        "{}://action/new_agent_workspace",
         ChannelState::url_scheme()
     ))
     .unwrap();
 
     let action = Action::parse(&url).unwrap();
-    match action {
-        Action::CreateEnvironment { repos } => {
-            assert!(repos.is_empty());
-        }
-        _ => panic!("unexpected action: {action:?}"),
-    }
-}
-
-#[test]
-fn test_action_new_cloud_agent_conversation_parse() {
-    let url = Url::parse(&format!(
-        "{}://action/new_cloud_agent_conversation",
-        ChannelState::url_scheme()
-    ))
-    .unwrap();
-
-    let action = Action::parse(&url).unwrap();
-    assert!(matches!(action, Action::NewCloudAgentConversation));
+    assert!(matches!(action, Action::NewAgentWorkspace));
 }
 
 #[test]

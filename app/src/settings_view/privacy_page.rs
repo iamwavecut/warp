@@ -39,13 +39,11 @@ use crate::ui_components::buttons::icon_button;
 use crate::view_components::{Dropdown, DropdownItem};
 use crate::{
     appearance::Appearance,
-    auth::auth_manager::AuthManager,
     channel::ChannelState,
     report_if_error,
     settings::PrivacySettings,
     terminal::safe_mode_settings::{SafeModeEnabled, SafeModeSettings},
     ui_components::icons::Icon,
-    util::links::PRIVACY_POLICY_URL,
     workspaces::user_workspaces::UserWorkspaces,
 };
 
@@ -82,17 +80,10 @@ const DATA_MANAGEMENT_DESCRIPTION: &str =
 const DATA_MANAGEMENT_LINK_TEXT: &str = "Visit the data management page";
 
 const PRIVACY_POLICY_TITLE: &str = "Privacy policy";
-const PRIVACY_POLICY_LINK_TEXT: &str = "Read Warp's privacy policy";
 
 pub fn data_management_url(custom_token: Option<&str>) -> String {
-    match custom_token {
-        Some(token) => format!(
-            "{}/data_management?customToken={}",
-            ChannelState::server_root_url(),
-            token
-        ),
-        None => format!("{}/data_management", ChannelState::server_root_url(),),
-    }
+    let _ = custom_token;
+    "about:blank".to_string()
 }
 
 pub struct PrivacyPageView {
@@ -522,10 +513,8 @@ impl TypedActionView for PrivacyPageView {
                 self.queue_regex_removal(*idx, ctx);
             }
             PrivacyPageAction::OpenDataManagementWebpage => {
-                AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                    auth_manager
-                        .open_url_maybe_with_anonymous_token(ctx, Box::new(data_management_url));
-                });
+                let _ = data_management_url;
+                log::info!("Skipping remote data-management URL in local workflow");
             }
             PrivacyPageAction::AddAllRecommendedRegexes => {
                 // First process any pending removals
@@ -1468,9 +1457,7 @@ impl SettingsWidget for DataManagementWidget {
 }
 
 #[derive(Default)]
-struct PrivacyPolicyWidget {
-    link_mouse_state: MouseStateHandle,
-}
+struct PrivacyPolicyWidget;
 
 impl SettingsWidget for PrivacyPolicyWidget {
     type View = PrivacyPageView;
@@ -1496,24 +1483,6 @@ impl SettingsWidget for PrivacyPolicyWidget {
                 Empty::new().finish(),
                 None,
             ))
-            .with_child(
-                Align::new(
-                    appearance
-                        .ui_builder()
-                        .link(
-                            PRIVACY_POLICY_LINK_TEXT.into(),
-                            Some(PRIVACY_POLICY_URL.into()),
-                            None,
-                            self.link_mouse_state.clone(),
-                        )
-                        .soft_wrap(false)
-                        .build()
-                        .with_margin_bottom(styles::DESCRIPTION_MARGIN_BOTTOM)
-                        .finish(),
-                )
-                .left()
-                .finish(),
-            )
             .finish()
     }
 }

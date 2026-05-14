@@ -73,8 +73,8 @@ impl RemoteServerSetupState {
 pub struct PreinstallCheckResult {
     pub status: PreinstallStatus,
     pub libc: RemoteLibc,
-    /// Verbatim, trimmed script stdout. Forwarded to telemetry for
-    /// diagnosing `Unknown` outcomes on exotic distros.
+    /// Verbatim, trimmed script stdout. Kept locally for diagnosing `Unknown`
+    /// outcomes on exotic distros.
     pub raw: String,
 }
 
@@ -465,14 +465,9 @@ pub fn install_script(staging_tarball_path: Option<&str>) -> String {
         .replace("{staging_tarball_path}", staging_tarball_path.unwrap_or(""))
 }
 
-/// Construct the download URL from the server root URL.
-///
-/// For example, given `https://app.warp.dev`, returns
-/// `https://app.warp.dev/download/cli`.
+/// Remote Warp binary downloads are disabled in the local-first fork.
 fn download_url() -> String {
-    let base = ChannelState::server_root_url();
-    let base = base.trim_end_matches('/');
-    format!("{base}/download/cli")
+    String::new()
 }
 
 /// Maps the client's [`Channel`] to the server's download channel parameter.

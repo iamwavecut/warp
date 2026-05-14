@@ -157,7 +157,6 @@ impl TryFrom<PaneNodeSnapshot> for PaneTemplateType {
                 | LeafContents::NetworkLog
                 | LeafContents::Welcome { .. }
                 | LeafContents::AIDocument(_)
-                | LeafContents::EnvironmentManagement(_)
                 | LeafContents::AmbientAgent(_) => {
                     // TODO: Handle AIDocument in launch config
                     Err(())

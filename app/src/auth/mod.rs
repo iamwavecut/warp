@@ -11,11 +11,8 @@ mod login_error_modal;
 mod login_failure_notification;
 pub mod login_slide;
 pub mod needs_sso_link_view;
-pub mod paste_auth_token_modal;
 pub mod user;
 pub mod user_uid;
-#[cfg(target_family = "wasm")]
-pub mod web_handoff;
 
 use crate::ai::agent_conversations_model::AgentConversationsModel;
 use crate::ai::blocklist::BlocklistAIHistoryModel;
@@ -26,7 +23,7 @@ use crate::env_vars::manager::EnvVarCollectionManager;
 use crate::notebooks::manager::NotebookManager;
 use crate::terminal::general_settings::GeneralSettings;
 use crate::workflows::manager::WorkflowManager;
-use ::settings::{Setting, SettingsManager, ToggleableSetting};
+use ::settings::{Setting, ToggleableSetting};
 use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
 pub use auth_manager::AuthManager;
 pub use auth_state::AuthStateProvider;
@@ -45,7 +42,7 @@ use crate::palette::PaletteMode;
 use crate::server::cloud_objects::update_manager::UpdateManager;
 use crate::server::sync_queue::SyncQueue;
 use crate::session_management::{RunningSessionSummary, SessionNavigationData};
-use crate::settings::{CloudPreferencesSettings, PrivacySettings};
+use crate::settings::PrivacySettings;
 use crate::terminal::shared_session::manager::Manager as SharedSessionManager;
 use crate::workspace::{Workspace, WorkspaceAction};
 use crate::workspaces::update_manager::TeamUpdateManager;
@@ -56,7 +53,6 @@ pub fn init(app: &mut AppContext) {
     auth_view_body::init(app);
     auth_override_warning_body::init(app);
     login_slide::init(app);
-    paste_auth_token_modal::init(app);
 }
 
 /// If the app has running processes or dirty objects, we'll show a confirmation modal before logging out.
@@ -143,8 +139,8 @@ pub fn maybe_log_out(app: &mut AppContext) {
                 "object"
             };
             info_text_vec.push(format!(
-                "You have {num_unsaved_objects} unsynced Warp Drive {plural}. \
-            Logging out will cause you to lose the {plural}."
+                "You have {num_unsaved_objects} unsynced local {plural}. \
+            Closing the session will cause you to lose the {plural}."
             ));
         }
 
@@ -228,7 +224,7 @@ pub fn log_out(app: &mut AppContext) {
     TeamUpdateManager::handle(app).update(app, |manager, _| {
         manager.stop_polling_for_workspace_metadata_updates();
     });
-    remove_cloud_persisted_settings(app);
+    reset_local_logout_state(app);
     NotebookManager::handle(app).update(app, |manager, _| manager.reset());
     EnvVarCollectionManager::handle(app).update(app, |manager, _| manager.reset());
     WorkflowManager::handle(app).update(app, |manager, _| manager.reset());
@@ -258,21 +254,7 @@ pub fn log_out(app: &mut AppContext) {
     crate::platform::wasm::emit_event(crate::platform::wasm::WarpEvent::LoggedOut);
 }
 
-// Remove the cloud persisted settings from user defaults.
-// When a user signs out, we remove cloud persisted settings of their account.
-// This is so they do not experience the old settings when they log in with a different account.
-// Partial deletion of user defaults is a stopgap for Logout v0. The correct solution is:
-fn remove_cloud_persisted_settings(app: &mut AppContext) {
-    let is_settings_sync_enabled = *CloudPreferencesSettings::as_ref(app).settings_sync_enabled;
-    if is_settings_sync_enabled {
-        SettingsManager::handle(app).update(app, |settings_manager, ctx| {
-            let errors = settings_manager.clear_cloud_settings_local_state(ctx);
-            for e in errors {
-                log::error!("Failed to remove cloud synced setting from user defaults: {e:?}");
-            }
-        });
-    }
-
+fn reset_local_logout_state(app: &mut AppContext) {
     if let Err(e) = app
         .private_user_preferences()
         .remove_value(REQUEST_LIMIT_INFO_CACHE_KEY)

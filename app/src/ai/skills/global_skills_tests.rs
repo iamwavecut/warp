@@ -7,7 +7,7 @@ use ai::skills::{get_provider_for_path, ParsedSkill, SkillProvider, SkillScope};
 use warp_cli::skill::SkillSpec;
 
 use super::{filter_skills_by_spec, resolve_skill_repos};
-use crate::ai::cloud_environments::GithubRepo;
+use crate::ai::agent_environments::GithubRepo;
 
 #[test]
 fn resolve_skill_repos_returns_empty_for_empty_input() {

@@ -369,14 +369,6 @@ pub enum AgentModeSetupCodebaseContextActionType {
     ViewIndexStatus,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum AgentModeSetupCreateEnvironmentActionType {
-    #[serde(rename = "create_environment")]
-    CreateEnvironment,
-    #[serde(rename = "skip_environment")]
-    SkipEnvironment,
-}
-
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum AgentModeAutoDetectionSettingOrigin {
     #[serde(rename = "banner")]

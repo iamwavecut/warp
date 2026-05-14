@@ -473,7 +473,6 @@ fn cloud_mode_terminal_for_test(app: &mut App) -> ViewHandle<TerminalView> {
 #[test]
 fn test_on_session_share_ended_enables_followup_input_without_tombstone_for_owned_ambient_session()
 {
-    let _handoff_flag = FeatureFlag::HandoffCloudCloud.override_enabled(true);
     let _flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -517,7 +516,6 @@ fn test_on_session_share_ended_enables_followup_input_without_tombstone_for_owne
 
 #[test]
 fn test_on_session_share_ended_inserts_tombstone_for_owned_ambient_session_without_handoff() {
-    let _handoff_flag = FeatureFlag::HandoffCloudCloud.override_enabled(false);
     let _setup_v2_flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -563,7 +561,6 @@ fn test_on_session_share_ended_inserts_tombstone_for_owned_ambient_session_witho
 
 #[test]
 fn test_on_session_share_ended_clears_frozen_followup_input_for_owned_ambient_session() {
-    let _handoff_flag = FeatureFlag::HandoffCloudCloud.override_enabled(true);
     let _flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -632,7 +629,6 @@ fn test_on_session_share_ended_does_not_insert_tombstone_for_non_ambient_session
 
 #[test]
 fn test_on_ambient_agent_execution_ended_inserts_tombstone_when_handoff_enabled() {
-    let _handoff_flag = FeatureFlag::HandoffCloudCloud.override_enabled(true);
     let _setup_v2_flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -657,7 +653,6 @@ fn test_on_ambient_agent_execution_ended_inserts_tombstone_when_handoff_enabled(
 
 #[test]
 fn test_on_ambient_agent_execution_ended_enables_followup_input_without_tombstone_for_owned_task() {
-    let _handoff_flag = FeatureFlag::HandoffCloudCloud.override_enabled(true);
     let _setup_v2_flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -703,7 +698,6 @@ fn test_on_ambient_agent_execution_ended_enables_followup_input_without_tombston
 
 #[test]
 fn test_restored_owned_tombstone_hides_input_until_continue() {
-    let _handoff_flag = FeatureFlag::HandoffCloudCloud.override_enabled(true);
     let _setup_v2_flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -738,19 +732,18 @@ fn test_restored_owned_tombstone_hides_input_until_continue() {
                 assert!(!view.is_input_box_visible(&model, ctx));
             }
 
-            view.start_cloud_followup_from_tombstone(task_id, ctx);
-            assert!(view.conversation_ended_tombstone_view_id.is_none());
-            assert_eq!(view.pending_cloud_followup_task_id, Some(task_id));
+            let _ = task_id;
+            assert!(view.conversation_ended_tombstone_view_id.is_some());
+            assert_eq!(view.pending_cloud_followup_task_id, None);
             {
                 let model = view.model.lock();
-                assert!(view.is_input_box_visible(&model, ctx));
+                assert!(!view.is_input_box_visible(&model, ctx));
             }
         });
     });
 }
 #[test]
 fn test_on_ambient_agent_execution_ended_keeps_live_owned_session_on_session_sharing_path() {
-    let _handoff_flag = FeatureFlag::HandoffCloudCloud.override_enabled(true);
     let _setup_v2_flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -786,8 +779,7 @@ fn test_on_ambient_agent_execution_ended_keeps_live_owned_session_on_session_sha
 }
 
 #[test]
-fn test_try_submit_pending_cloud_followup_allows_repeat_submission_for_owned_task() {
-    let _handoff_flag = FeatureFlag::HandoffCloudCloud.override_enabled(true);
+fn test_try_submit_pending_cloud_followup_is_disabled() {
     let _setup_v2_flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -815,16 +807,15 @@ fn test_try_submit_pending_cloud_followup_allows_repeat_submission_for_owned_tas
                 model.enter_viewing_existing_session(task_id, ctx);
             });
 
-            view.enable_owned_cloud_followup_input(task_id, ctx);
-            assert!(view.try_submit_pending_cloud_followup("follow up".to_string(), ctx));
-            assert_eq!(view.pending_cloud_followup_task_id, Some(task_id));
-            assert!(view.try_submit_pending_cloud_followup("second follow up".to_string(), ctx));
-            assert_eq!(view.pending_cloud_followup_task_id, Some(task_id));
+            assert!(!view.try_submit_pending_cloud_followup("follow up".to_string(), ctx));
+            assert_eq!(view.pending_cloud_followup_task_id, None);
+            assert!(!view.try_submit_pending_cloud_followup("second follow up".to_string(), ctx));
+            assert_eq!(view.pending_cloud_followup_task_id, None);
             assert_eq!(
                 ambient_agent_view_model
                     .as_ref(ctx)
                     .pending_followup_prompt(),
-                Some("second follow up")
+                None
             );
         });
     });
@@ -941,7 +932,6 @@ fn test_shared_followup_on_existing_conversation_converts_user_query_input() {
 
 #[test]
 fn test_non_owned_tombstone_is_removed_for_followup_and_reinserted_after_completion() {
-    let _handoff_flag = FeatureFlag::HandoffCloudCloud.override_enabled(true);
     let _setup_v2_flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {
@@ -979,12 +969,12 @@ fn test_non_owned_tombstone_is_removed_for_followup_and_reinserted_after_complet
                 initial_block_height_items + 1
             );
 
-            view.start_cloud_followup_from_tombstone(task_id, ctx);
-            assert_eq!(view.pending_cloud_followup_task_id, Some(task_id));
-            assert!(view.conversation_ended_tombstone_view_id.is_none());
+            let _ = task_id;
+            assert_eq!(view.pending_cloud_followup_task_id, None);
+            assert!(view.conversation_ended_tombstone_view_id.is_some());
             assert_eq!(
                 view.model.lock().block_list().block_heights().items().len(),
-                initial_block_height_items
+                initial_block_height_items + 1
             );
 
             view.handle_ambient_agent_event(
@@ -1006,7 +996,6 @@ fn test_non_owned_tombstone_is_removed_for_followup_and_reinserted_after_complet
 #[test]
 fn test_on_ambient_agent_execution_ended_refreshes_open_details_panel_to_terminal_status() {
     let _cloud_mode_flag = FeatureFlag::CloudMode.override_enabled(true);
-    let _handoff_flag = FeatureFlag::HandoffCloudCloud.override_enabled(true);
     let _orchestration_v2_flag = FeatureFlag::OrchestrationV2.override_enabled(true);
     let _setup_v2_flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
@@ -1086,7 +1075,6 @@ fn test_on_ambient_agent_execution_ended_refreshes_open_details_panel_to_termina
 
 #[test]
 fn test_on_ambient_agent_execution_ended_inserts_tombstone_without_handoff() {
-    let _handoff_flag = FeatureFlag::HandoffCloudCloud.override_enabled(false);
     let _setup_v2_flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {

@@ -14,7 +14,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use async_trait::async_trait;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
@@ -23,14 +22,7 @@ use uuid::Uuid;
 use warpui::r#async::SpawnedFutureHandle;
 use warpui::ModelSpawner;
 
-use crate::ai::agent_events::{
-    run_agent_event_driver, AgentEventConsumer, AgentEventConsumerControlFlow,
-    AgentEventDriverConfig, MessageHydrator, ServerApiAgentEventSource,
-};
 use crate::ai::agent_sdk::driver::{AgentDriver, OZ_MESSAGE_LISTENER_STATE_ROOT_ENV};
-use crate::ai::ambient_agents::AmbientAgentTaskId;
-use crate::server::server_api::ai::AIClient;
-use crate::server::server_api::ai::AgentRunEvent;
 use crate::server::server_api::ServerApi;
 
 const LEGACY_MESSAGE_LISTENER_STATE_ROOT_ENV: &str = "OZ_PARENT_STATE_ROOT";
@@ -63,55 +55,6 @@ struct MessageBridgeEventCursor {
 }
 struct MessageBridgeRuntime {
     task: SpawnedFutureHandle,
-}
-
-struct MessageBridgeEventConsumer {
-    run_id: String,
-    state_dir: PathBuf,
-    server_api: Arc<ServerApi>,
-}
-
-#[cfg_attr(target_family = "wasm", async_trait(?Send))]
-#[cfg_attr(not(target_family = "wasm"), async_trait)]
-impl AgentEventConsumer for MessageBridgeEventConsumer {
-    async fn on_event(
-        &mut self,
-        event: AgentRunEvent,
-    ) -> anyhow::Result<AgentEventConsumerControlFlow> {
-        if event.event_type != "new_message" || event.run_id != self.run_id {
-            return Ok(AgentEventConsumerControlFlow::Continue);
-        }
-
-        let Some(message_id) = event.ref_id else {
-            return Ok(AgentEventConsumerControlFlow::Continue);
-        };
-
-        if let Err(err) = stage_parent_bridge_message(
-            &self.state_dir,
-            &MessageBridgeMessageRecord {
-                sequence: event.sequence,
-                message_id: message_id.clone(),
-                sender_run_id: String::new(),
-                subject: String::new(),
-                body: String::new(),
-                occurred_at: event.occurred_at,
-            },
-        ) {
-            log::warn!(
-                "Failed to stage Claude lead-agent message {message_id} at sequence {}: {err:#}",
-                event.sequence
-            );
-        }
-
-        Ok(AgentEventConsumerControlFlow::Continue)
-    }
-
-    async fn persist_cursor(&mut self, sequence: i64) -> anyhow::Result<()> {
-        write_parent_bridge_event_cursor(&self.state_dir, sequence)?;
-        self.server_api
-            .update_event_sequence_on_server(&self.run_id, sequence)
-            .await
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -151,12 +94,6 @@ struct SelectedMessageBridgeMessages {
 }
 
 impl MessageBridge {
-    fn hydrator(&self, server_api: Arc<ServerApi>) -> MessageHydrator {
-        match self.run_id.parse::<AmbientAgentTaskId>() {
-            Ok(task_id) => MessageHydrator::for_task(server_api, task_id),
-            Err(_) => MessageHydrator::new(server_api),
-        }
-    }
     pub(super) fn new(run_id: String, session_id: Uuid) -> Result<Self> {
         Ok(Self {
             run_id,
@@ -204,24 +141,19 @@ impl MessageBridge {
         if !self.state_dir.exists() {
             return Ok(());
         }
-        let hydrator = self.hydrator(server_api);
+        let _ = server_api;
         let _guard = self.state_lock.lock().await;
-        acknowledge_parent_bridge_hook_output(&hydrator, &self.state_dir).await?;
-        prepare_parent_bridge_hook_output(
-            &hydrator,
-            &self.state_dir,
-            parent_bridge_max_context_chars(),
-        )
-        .await
+        acknowledge_parent_bridge_hook_output(&self.state_dir).await?;
+        prepare_parent_bridge_hook_output(&self.state_dir, parent_bridge_max_context_chars()).await
     }
 
     pub(super) async fn flush_acks(&self, server_api: Arc<ServerApi>) -> Result<()> {
         if !self.state_dir.exists() {
             return Ok(());
         }
-        let hydrator = self.hydrator(server_api);
+        let _ = server_api;
         let _guard = self.state_lock.lock().await;
-        acknowledge_parent_bridge_hook_output(&hydrator, &self.state_dir).await
+        acknowledge_parent_bridge_hook_output(&self.state_dir).await
     }
 
     pub(super) fn cleanup(&self, disposition: MessageBridgeCleanupDisposition) -> Result<()> {
@@ -473,29 +405,12 @@ fn remove_file_if_exists(path: &Path) -> Result<()> {
 }
 
 async fn hydrate_parent_bridge_message_record(
-    hydrator: &MessageHydrator,
     record: &MessageBridgeMessageRecord,
 ) -> Result<MessageBridgeMessageRecord> {
-    if !record.sender_run_id.is_empty() {
-        return Ok(record.clone());
-    }
-
-    let message = hydrator
-        .read_message_with_timeout(&record.message_id)
-        .await
-        .with_context(|| format!("Failed to read lead-agent message {}", record.message_id))?;
-    Ok(MessageBridgeMessageRecord {
-        sequence: record.sequence,
-        message_id: message.message_id,
-        sender_run_id: message.sender_run_id,
-        subject: message.subject,
-        body: message.body,
-        occurred_at: record.occurred_at.clone(),
-    })
+    Ok(record.clone())
 }
 
 async fn select_parent_bridge_messages_for_hook_output(
-    hydrator: &MessageHydrator,
     records: Vec<(PathBuf, MessageBridgeMessageRecord)>,
     max_context_chars: usize,
 ) -> Result<SelectedMessageBridgeMessages> {
@@ -510,7 +425,7 @@ async fn select_parent_bridge_messages_for_hook_output(
             break;
         }
 
-        let record = hydrate_parent_bridge_message_record(hydrator, &record).await?;
+        let record = hydrate_parent_bridge_message_record(&record).await?;
         let mut rendered = render_parent_bridge_message(&record);
         if context_chars + separator_chars + rendered.block_chars > max_context_chars {
             if remaining > 3 && rendered.block_chars > remaining {
@@ -536,7 +451,6 @@ async fn select_parent_bridge_messages_for_hook_output(
 }
 
 pub(super) async fn prepare_parent_bridge_hook_output(
-    hydrator: &MessageHydrator,
     state_dir: &Path,
     max_context_chars: usize,
 ) -> Result<()> {
@@ -547,12 +461,9 @@ pub(super) async fn prepare_parent_bridge_hook_output(
 
     let surfaced_records = parent_bridge_message_records(&parent_bridge_surfaced_dir(state_dir))?;
     if !surfaced_records.is_empty() {
-        let selected = select_parent_bridge_messages_for_hook_output(
-            hydrator,
-            surfaced_records,
-            max_context_chars,
-        )
-        .await?;
+        let selected =
+            select_parent_bridge_messages_for_hook_output(surfaced_records, max_context_chars)
+                .await?;
         for message in &selected.messages {
             write_parent_bridge_json_atomically(&message.path, &message.record)?;
         }
@@ -568,8 +479,7 @@ pub(super) async fn prepare_parent_bridge_hook_output(
     }
 
     let selected =
-        select_parent_bridge_messages_for_hook_output(hydrator, staged_records, max_context_chars)
-            .await?;
+        select_parent_bridge_messages_for_hook_output(staged_records, max_context_chars).await?;
     let Some(output) = build_parent_bridge_hook_output(&selected, max_context_chars) else {
         return Ok(());
     };
@@ -594,10 +504,7 @@ pub(super) async fn prepare_parent_bridge_hook_output(
     write_parent_bridge_hook_output(state_dir, &output)
 }
 
-pub(super) async fn acknowledge_parent_bridge_hook_output(
-    hydrator: &MessageHydrator,
-    state_dir: &Path,
-) -> Result<()> {
+pub(super) async fn acknowledge_parent_bridge_hook_output(state_dir: &Path) -> Result<()> {
     let ack_path = parent_bridge_hook_output_ack_file(state_dir);
     if !ack_path.exists() {
         return Ok(());
@@ -608,19 +515,6 @@ pub(super) async fn acknowledge_parent_bridge_hook_output(
     remove_file_if_exists(&parent_bridge_hook_output_file(state_dir))?;
 
     let surfaced_records = parent_bridge_message_records(&parent_bridge_surfaced_dir(state_dir))?;
-    let message_ids = surfaced_records
-        .iter()
-        .map(|(_, record)| record.message_id.clone())
-        .collect::<Vec<_>>();
-    let delivery_failures = hydrator
-        .mark_messages_delivered_best_effort(message_ids.iter().map(String::as_str))
-        .await;
-    for (message_id, err) in delivery_failures {
-        log::warn!(
-            "Failed to mark Claude message bridge message {message_id} as delivered: {err:#}"
-        );
-    }
-
     for (path, _) in surfaced_records {
         remove_file_if_exists(&path)?;
     }
@@ -632,48 +526,19 @@ async fn run_parent_bridge_forever(
     run_id: String,
     state_dir: PathBuf,
 ) -> Result<()> {
+    let _ = (server_api, run_id);
     ensure_parent_bridge_state_dir(&state_dir)?;
-    let since_sequence =
-        read_parent_bridge_resume_cursor(server_api.as_ref(), &run_id, &state_dir).await?;
-    // The shared driver keeps `since_sequence` in memory across its own retry
-    // loop and we also persist it inside the session state dir so dormant runs
-    // can resume without replaying already handled events.
-    let config = AgentEventDriverConfig::retry_forever(vec![run_id.clone()], since_sequence);
-    let source = ServerApiAgentEventSource::new(server_api.clone());
-    let mut consumer = MessageBridgeEventConsumer {
-        run_id,
-        state_dir,
-        server_api,
-    };
-    run_agent_event_driver(source, config, &mut consumer).await
+    Ok(())
 }
 
 async fn read_parent_bridge_resume_cursor(
-    server_api: &ServerApi,
+    _server_api: &ServerApi,
     run_id: &str,
     state_dir: &Path,
 ) -> Result<i64> {
-    // The server cursor is the durable cross-client source of truth, but the
-    // bridge also keeps a local cursor for same-machine recovery. If Warp or
-    // Claude restarts after the bridge has staged events locally but before the
-    // server cursor update is visible, the local cursor prevents replaying
-    // messages already handed to this Claude session.
     let local_sequence = read_parent_bridge_event_cursor(state_dir)?;
-    let Ok(task_id) = run_id.parse() else {
-        return Ok(local_sequence);
-    };
-
-    let server_sequence = match server_api.get_ambient_agent_task(&task_id).await {
-        Ok(task) => task.last_event_sequence.unwrap_or(0),
-        Err(err) => {
-            log::warn!(
-                "Failed to read server-backed event cursor for Claude message bridge run {run_id}: {err:#}"
-            );
-            0
-        }
-    };
-
-    Ok(local_sequence.max(server_sequence))
+    let _ = run_id;
+    Ok(local_sequence)
 }
 
 fn write_parent_bridge_json_atomically<T: Serialize>(path: &Path, value: &T) -> Result<()> {

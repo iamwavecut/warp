@@ -14,7 +14,7 @@ define_settings_group!(WarpDriveSettings, settings: [
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         private: false,
         toml_path: "warp_drive.sorting_choice",
-        description: "The sort order for items in Warp Drive.",
+        description: "The sort order for local library items.",
     },
     sharing_onboarding_block_shown: WarpDriveSharingOnboardingBlockShown {
         type: bool,
@@ -23,20 +23,20 @@ define_settings_group!(WarpDriveSettings, settings: [
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         private: true,
     },
-    // Controls whether Warp Drive appears in the tools panel, command palette, and command search.
+    // Hosted drive panel entry points are disabled in this local-first build.
     enable_warp_drive: EnableWarpDrive {
         type: bool,
-        default: true,
+        default: false,
         supported_platforms: SupportedPlatforms::ALL,
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         private: false,
         toml_path: "warp_drive.enabled",
-        description: "Whether Warp Drive is enabled.",
+        description: "Whether hosted drive UI is enabled.",
     },
 ]);
 
 impl WarpDriveSettings {
-    /// Returns whether Warp Drive should be considered enabled.
+    /// Returns whether hosted drive UI should be considered enabled.
     /// Returns `false` when the user is anonymous or fully logged out,
     /// regardless of the user setting.
     pub fn is_warp_drive_enabled(app: &warpui::AppContext) -> bool {

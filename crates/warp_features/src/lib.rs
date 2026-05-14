@@ -188,9 +188,6 @@ pub enum FeatureFlag {
     /// Enables validation of autosuggestions.
     ValidateAutosuggestions,
 
-    /// Enables prompt suggestions sourced via MAA.
-    PromptSuggestionsViaMAA,
-
     /// Enables using `esc` to clear autosuggestions.
     ClearAutosuggestionOnEscape,
 
@@ -258,8 +255,6 @@ pub enum FeatureFlag {
     ReloadStaleConversationFiles,
 
     /// Auto generate the title when creating a shared block.
-    SharedBlockTitleGeneration,
-
     /// Retry truncated file edit responses from the coding agent.
     RetryTruncatedCodeResponses,
 
@@ -438,20 +433,11 @@ pub enum FeatureFlag {
     /// Enables inline code review functionality
     InlineCodeReview,
 
-    /// Enables cloud environments management via CLI.
-    CloudEnvironments,
-
-    /// Enables the /create-environment slash command for setting up Warp Environments
-    CreateEnvironmentSlashCommand,
-
     /// Enables the local docker sandbox entrypoints in the client.
     LocalDockerSandbox,
 
     /// Enables the /compact slash command.
     SummarizationConversationCommand,
-
-    /// Enables the artifact command for uploading and downloading CLI artifacts.
-    ArtifactCommand,
 
     /// Groups MCP tools and resources by their originating server when sending context to the AI backend.
     MCPGroupedServerContext,
@@ -504,9 +490,6 @@ pub enum FeatureFlag {
     /// Agent Management Details View - enables new details panel on card click.
     AgentManagementDetailsView,
 
-    /// Enables scheduled ambient agents.
-    ScheduledAmbientAgents,
-
     AgentView,
 
     /// Enables block context functionality in Agent View.
@@ -523,12 +506,6 @@ pub enum FeatureFlag {
 
     /// Enables starting cloud mode from a local session.
     CloudModeFromLocalSession,
-
-    /// Enables host selection in cloud mode.
-    CloudModeHostSelector,
-
-    /// Enables Warp Managed Secrets functionality.
-    WarpManagedSecrets,
 
     /// Enables support for AM file diffs backed by the V4A patch format.
     V4AFileDiffs,
@@ -603,9 +580,6 @@ pub enum FeatureFlag {
     /// Skills are loaded from `.agents/skills/`, `.warp/skills/`, `.claude/skills/`, and `.codex/skills/`
     /// directories to provide base prompts for agent runs.
     OzPlatformSkills,
-    /// Enables Oz identity federation commands.
-    OzIdentityFederation,
-
     /// Gates populating/reading oz updates from channel versions in the changelog model.
     OzChangelogUpdates,
 
@@ -618,7 +592,7 @@ pub enum FeatureFlag {
     /// Enables loading and returning bundled skills in the SkillManager.
     BundledSkills,
 
-    /// Enables the Oz launch modal for introducing cloud agent features.
+    /// Enables the Oz launch modal for introducing agent features.
     OzLaunchModal,
 
     /// Enables the OpenWarp launch modal announcing Warp going open-source.
@@ -719,8 +693,6 @@ pub enum FeatureFlag {
     /// Enables workspace handoff between agent runs and the local Warp client.
     /// When enabled:
     /// - Subsequent executions download the prior execution's handoff snapshot attachments.
-    OzHandoff,
-
     /// Enables the upgraded CLI agent session tracking and notifications infrastructure.
     HOANotifications,
 
@@ -736,16 +708,8 @@ pub enum FeatureFlag {
     /// Requires HOANotifications to also be enabled.
     GeminiNotifications,
 
-    /// When enabled, the "Skip for now" login flow does not create a Firebase
-    /// anonymous user. The user remains fully logged out (no credentials) and
-    /// login-gated features are disabled until they sign in.
-    SkipFirebaseAnonymousUser,
-
     /// Enables tab configs — user-definable TOML templates for launching custom tab layouts.
     TabConfigs,
-
-    /// When enabled, free-tier users are blocked from AI features (no-AI experiment arm).
-    FreeUserNoAi,
 
     /// Enables the ask_user_question tool allowing the agent to ask clarifying questions.
     AskUserQuestion,
@@ -756,18 +720,12 @@ pub enum FeatureFlag {
     /// Replaces the in-block warpification banner with a warpify footer.
     WarpifyFooter,
 
-    /// Enables conversation retrieval via the CLI (oz run conversation get, oz run get --conversation).
-    ConversationApi,
-
     /// Guided onboarding flow for existing users introducing HOA features
     /// (vertical tabs, agent inbox, tab configs).
     HOAOnboardingFlow,
 
     /// Enables commit, push, and create-PR actions in the code review panel.
     GitOperationsInCodeReview,
-
-    /// Gates the remote control chip and `/remote-control` slash command in the CLI agent footer.
-    HOARemoteControl,
 
     /// Trims trailing blank rows from CLI agent block output so unused vertical
     /// space is not rendered while the agent is running.
@@ -792,15 +750,6 @@ pub enum FeatureFlag {
     /// `base_model_context_window_limit` is not sent on outbound requests, so
     /// the server falls back to its default.
     ConfigurableContextWindow,
-    /// Enables continuing cloud mode conversations in the cloud after an execution ends.
-    HandoffCloudCloud,
-
-    /// Enables the local-to-cloud Oz handoff entry points (footer chip and
-    /// `/move-to-cloud` slash command) that fork the active local Oz
-    /// conversation into a fresh cloud agent run with the current workspace
-    /// snapshot attached. Requires `OzHandoff` to also be enabled.
-    HandoffLocalCloud,
-
     /// Enables creating API keys scoped to named agents in the API key
     /// management UI. When enabled the "Team" option in the key-type
     /// selector is replaced with "Agent" and users can pick which agent
@@ -851,7 +800,6 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::ContextLineReviewComments,
     FeatureFlag::RunGeneratorsWithCmdExe,
     FeatureFlag::Projects,
-    FeatureFlag::ArtifactCommand,
     FeatureFlag::MarkdownImages,
     FeatureFlag::FileAndDiffSetComments,
     FeatureFlag::FileGlobV2Warnings,
@@ -873,8 +821,6 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::EditableMarkdownMermaid,
     FeatureFlag::CodeReviewScrollPreservation,
     FeatureFlag::AgentHarness,
-    FeatureFlag::OzHandoff,
-    FeatureFlag::ConversationApi,
     FeatureFlag::RememberFastForwardState,
     FeatureFlag::HOANotifications,
     FeatureFlag::GeminiNotifications,
@@ -883,10 +829,8 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     #[cfg(not(windows))]
     FeatureFlag::SshRemoteServer,
     FeatureFlag::CloudModeInputV2,
-    FeatureFlag::HandoffLocalCloud,
     FeatureFlag::DragTabsToWindows,
     FeatureFlag::NamedAgents,
-    FeatureFlag::HandoffCloudCloud,
     FeatureFlag::HarnessSessionHeader,
 ];
 
@@ -978,15 +922,11 @@ impl FeatureFlag {
         // very least, the feature flag should be removed from the Preview changelog by removing it from PREVIEW_FLAGS.
         // ** ONLY Preview-exclusive features should be added to this list! **
         match self {
-            AgentSharedSessions => {
-                Some("Enables viewing agent conversations within shared sessions.")
-            }
+            AgentSharedSessions => Some("Hosted agent shared sessions are disabled locally."),
             CodeReviewFind => Some("Enables the find bar in the code review pane."),
             BlocklistMarkdownImages => {
                 Some("Enables rendering markdown images inline in AI block list responses.")
             }
-            CloudEnvironments => Some("Enables creating and managing Warp Environments via the CLI."),
-            CreateEnvironmentSlashCommand => Some("Enables the /create environment slash command for setting up Warp Environments with custom configurations."),
             GlobalSearch => Some("Enables global search in the left panel"),
             BlocklistMarkdownTableRendering => {
                 Some("Enables rendering markdown tables inline in AI block list responses.")

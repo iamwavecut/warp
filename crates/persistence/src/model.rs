@@ -1044,9 +1044,8 @@ pub struct AgentConversationData {
     /// agent executing on a remote worker.
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_remote_child: bool,
-    /// The server-assigned run identifier (`ai_tasks.id`) for v2 orchestration.
-    /// For local agents this arrives via StreamInit; for cloud agents it will
-    /// come from SpawnAgentResponse once the local→cloud spawn path is wired.
+    /// The run identifier for v2 orchestration. For local agents this arrives
+    /// via StreamInit or is assigned when a local child run is attached.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

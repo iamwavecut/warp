@@ -113,9 +113,5 @@ pub fn mock_server_api() -> MockObjectClient {
     mock_object_client
         .expect_fetch_changed_objects()
         .returning(|_, _| Err(anyhow::anyhow!("Ignoring background refresh in tests")));
-    // Mock environment timestamps fetch - return empty by default.
-    mock_object_client
-        .expect_fetch_environment_last_task_run_timestamps()
-        .returning(|| Ok(HashMap::new()));
     mock_object_client
 }

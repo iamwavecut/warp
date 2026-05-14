@@ -166,8 +166,8 @@ pub struct AIConversation {
     /// conversation, used for v2 orchestration.
     ///
     /// For local conversations, parsed from `StreamInit.run_id` on the first
-    /// response. For remote child agents spawned via `POST /agent/run`, set
-    /// from `SpawnAgentResponse.task_id`.
+    /// response. Local child agents can set this directly when they are
+    /// attached to a parent conversation.
     ///
     /// Used for messaging API, events API, poller self-filtering, lifecycle
     /// reports, parent↔child agent identity, and task status reporting.
@@ -191,7 +191,7 @@ pub struct AIConversation {
     /// The per-conversation override on the user's usual autonomy settings.
     autoexecute_override: AIConversationAutoexecuteMode,
 
-    /// Map of new exchanges added keyed by ID of response stream corresponding to the MAA API
+    /// Map of new exchanges added keyed by ID of response stream corresponding to the agent
     /// request.
     added_exchanges_by_response: HashMap<ResponseStreamId, Vec1<AddedExchange>>,
 
@@ -760,7 +760,7 @@ impl AIConversation {
         self.task_id
     }
 
-    /// Sets the task ID directly (used for child agents spawned via `SpawnAgentResponse`).
+    /// Sets the task ID directly for local child-agent runs.
     pub fn set_task_id(&mut self, id: AmbientAgentTaskId) {
         self.task_id = Some(id);
     }
@@ -1307,7 +1307,7 @@ impl AIConversation {
         });
     }
 
-    /// Updates the notebook_uid for a plan artifact when it's synced to Warp Drive.
+    /// Updates the notebook_uid for a plan artifact when it is saved locally.
     pub fn update_plan_notebook_uid(
         &mut self,
         document_uid: AIDocumentId,
@@ -3820,21 +3820,6 @@ pub enum AIAgentHarness {
     Gemini,
     Codex,
     Unknown,
-}
-
-/// Describes the format of the conversation transcript data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AIAgentSerializedBlockFormat {
-    JsonV1,
-}
-
-/// Describes the format capabilities of a conversation.
-#[derive(Debug, Clone)]
-pub struct AIAgentConversationFormat {
-    /// Whether there is a Warp MAA task list available for this conversation.
-    pub has_task_list: bool,
-    /// The format of the TUI serialized block, if available.
-    pub block_snapshot: Option<AIAgentSerializedBlockFormat>,
 }
 
 /// Metadata for an AI conversation, containing all information from the GraphQL API

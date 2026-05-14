@@ -105,10 +105,10 @@ pub enum ComputerUsePermission {
     Unknown,
 }
 
-/// Result of resolving the cloud agent computer use setting.
+/// Result of resolving the local agent computer use setting.
 /// Contains both the effective value and whether it's forced by organization policy.
-pub struct CloudAgentComputerUseState {
-    /// Whether computer use is enabled for cloud agents.
+pub struct AgentComputerUseState {
+    /// Whether computer use is enabled for local agents.
     pub enabled: bool,
     /// Whether this value is forced by organization settings (true = user cannot change it).
     pub is_forced_by_org: bool,
@@ -138,11 +138,11 @@ impl ComputerUsePermission {
         matches!(self, Self::AlwaysAllow)
     }
 
-    /// Resolves the effective cloud agent computer use state by reading the workspace
+    /// Resolves the effective local agent computer use state by reading the workspace
     /// autonomy setting and user's local preference from their respective singletons.
-    pub fn resolve_cloud_agent_state(ctx: &AppContext) -> CloudAgentComputerUseState {
+    pub fn resolve_agent_state(ctx: &AppContext) -> AgentComputerUseState {
         if !FeatureFlag::AgentModeComputerUse.is_enabled() {
-            return CloudAgentComputerUseState {
+            return AgentComputerUseState {
                 enabled: false,
                 is_forced_by_org: false,
             };
@@ -154,11 +154,11 @@ impl ComputerUsePermission {
         let user_preference = *AISettings::as_ref(ctx).cloud_agent_computer_use_enabled;
 
         match autonomy_setting {
-            Some(ComputerUsePermission::Never) => CloudAgentComputerUseState {
+            Some(ComputerUsePermission::Never) => AgentComputerUseState {
                 enabled: false,
                 is_forced_by_org: true,
             },
-            Some(ComputerUsePermission::AlwaysAllow) => CloudAgentComputerUseState {
+            Some(ComputerUsePermission::AlwaysAllow) => AgentComputerUseState {
                 enabled: true,
                 is_forced_by_org: true,
             },
@@ -166,11 +166,11 @@ impl ComputerUsePermission {
             // AlwaysAsk variant isn't accessible in the admin console. We need to figure
             // out how to handle it when it eventually becomes available. For now, I'm
             // treating this conservatively and marking computer use as disabled.
-            Some(ComputerUsePermission::AlwaysAsk) => CloudAgentComputerUseState {
+            Some(ComputerUsePermission::AlwaysAsk) => AgentComputerUseState {
                 enabled: false,
                 is_forced_by_org: true,
             },
-            Some(ComputerUsePermission::Unknown) | None => CloudAgentComputerUseState {
+            Some(ComputerUsePermission::Unknown) | None => AgentComputerUseState {
                 enabled: user_preference,
                 is_forced_by_org: false,
             },
@@ -260,7 +260,7 @@ pub struct AIExecutionProfile {
 
     pub context_window_limit: Option<u32>,
 
-    /// Whether plans created by the agent should be automatically synced to Warp Drive
+    /// Legacy cloud-sync setting. Local-first profiles keep this disabled.
     pub autosync_plans_to_warp_drive: bool,
 
     /// Whether the agent may use web search when helpful for completing tasks
@@ -289,7 +289,7 @@ impl Default for AIExecutionProfile {
             cli_agent_model: None,
             computer_use_model: None,
             context_window_limit: None,
-            autosync_plans_to_warp_drive: true,
+            autosync_plans_to_warp_drive: false,
             web_search_enabled: true,
         }
     }
@@ -396,7 +396,7 @@ impl AIExecutionProfile {
             cli_agent_model: None,
             computer_use_model: None,
             context_window_limit: None,
-            autosync_plans_to_warp_drive: FeatureFlag::SyncAmbientPlans.is_enabled(),
+            autosync_plans_to_warp_drive: false,
             web_search_enabled: true,
         }
     }

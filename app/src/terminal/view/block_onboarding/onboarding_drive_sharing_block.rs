@@ -22,8 +22,7 @@ use crate::{
     workspace::WorkspaceAction,
 };
 
-/// A rich onboarding block that prompts the user to share a newly-created personal Warp Drive
-/// object.
+/// A rich onboarding block for newly-created local objects.
 pub struct OnboardingDriveSharingBlock {
     object_id: CloudObjectTypeAndId,
     share_button: MouseStateHandle,
@@ -51,10 +50,10 @@ impl Entity for OnboardingDriveSharingBlock {
     type Event = ();
 }
 
-const TITLE_TEXT: &str = "Sharing in Warp Drive";
+const TITLE_TEXT: &str = "Saved locally";
 const BODY_TEXT: &[&str] = &[
-    "You can now share drive objects, in Warp or on the web, with anyone - Warp user or not. Click Share in the Warp Drive menu or the pane header to share via link or email.",
-    "You’ll be able to modify the access permissions any time.",
+    "Hosted object sharing is disabled in this local-first build.",
+    "The object remains available in this local profile.",
 ];
 
 const BLOCK_PADDING: f32 = 16.;
@@ -100,8 +99,8 @@ impl View for OnboardingDriveSharingBlock {
         }
 
         let button_label = match CloudModel::as_ref(app).get_by_uid(&self.object_id.uid()) {
-            Some(object) => format!("Share {}", object.display_name()),
-            None => format!("Share this {}", self.object_id.object_type()),
+            Some(object) => format!("Open {}", object.display_name()),
+            None => format!("Open this {}", self.object_id.object_type()),
         };
         let object_id = self.object_id;
         let button = appearance
@@ -118,7 +117,7 @@ impl View for OnboardingDriveSharingBlock {
                 TextAndIcon::new(
                     TextAndIconAlignment::IconFirst,
                     button_label,
-                    Icon::Share.to_warpui_icon(appearance.theme().background()),
+                    Icon::Folder.to_warpui_icon(appearance.theme().background()),
                     MainAxisSize::Min,
                     MainAxisAlignment::SpaceEvenly,
                     vec2f(BUTTON_FONT_SIZE, BUTTON_FONT_SIZE),
@@ -127,12 +126,6 @@ impl View for OnboardingDriveSharingBlock {
             )
             .build()
             .with_cursor(Cursor::PointingHand)
-            .on_click(move |ctx, _, _| {
-                ctx.dispatch_typed_action(WorkspaceAction::OpenObjectSharingSettings {
-                    object_id,
-                    source: SharingDialogSource::OnboardingBlock,
-                });
-            })
             .finish();
         content.add_child(button);
 

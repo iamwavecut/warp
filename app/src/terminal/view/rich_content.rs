@@ -15,7 +15,6 @@ use crate::{
         view::{
             ambient_agent::AmbientAgentEntryBlock,
             block_onboarding::onboarding_agentic_suggestions_block::OnboardingAgenticSuggestionsBlock,
-            init_environment::InitEnvironmentBlock,
             ssh_remote_server_choice_view::SshRemoteServerChoiceView,
             ssh_remote_server_failed_banner::SshRemoteServerFailedBanner,
         },
@@ -225,9 +224,6 @@ pub enum RichContentMetadata {
     InitStep {
         step_kind: InitStepKind,
         block_handle: ViewHandle<InitStepBlock>,
-    },
-    InitEnvironment {
-        block_handle: ViewHandle<InitEnvironmentBlock>,
     },
     OnboardingAgenticSuggestions {
         agentic_suggestions_block_handle: ViewHandle<OnboardingAgenticSuggestionsBlock>,

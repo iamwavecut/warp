@@ -32,8 +32,6 @@ use warpui::{
     ViewHandle,
 };
 
-use crate::server::server_api::ServerApiProvider;
-
 /// Metadata collected for display in the tombstone.
 #[derive(Default)]
 struct TombstoneDisplayData {
@@ -57,12 +55,6 @@ struct TombstoneDisplayData {
     /// Execution harness for the task. None until the task is loaded.
     #[cfg(not(target_family = "wasm"))]
     harness: Option<Harness>,
-}
-
-#[derive(Debug, Clone)]
-pub enum ConversationEndedTombstoneEvent {
-    #[cfg(not(target_family = "wasm"))]
-    ContinueInCloud { task_id: AmbientAgentTaskId },
 }
 
 impl TombstoneDisplayData {
@@ -213,7 +205,7 @@ impl ConversationEndedTombstoneView {
         let failed_before_task_creation =
             display_data.is_error && task_id.is_none() && !display_data.conversation_is_transcript;
         if failed_before_task_creation {
-            display_data.title = Some("Cloud agent failed to start".to_string());
+            display_data.title = Some("Agent failed to start".to_string());
             display_data.credits = None;
             display_data.hide_continue_actions = true;
         }
@@ -221,19 +213,7 @@ impl ConversationEndedTombstoneView {
         let artifact_buttons_view =
             ctx.add_typed_action_view(|ctx| ArtifactButtonsRow::new(&display_data.artifacts, ctx));
         #[cfg(not(target_family = "wasm"))]
-        let continue_in_cloud_button = task_id
-            .filter(|_| FeatureFlag::HandoffCloudCloud.is_enabled())
-            .map(|task_id| {
-                ctx.add_typed_action_view(move |_| {
-                    ActionButton::new("Continue", PrimaryTheme)
-                        .with_tooltip("Continue this task in Cloud Mode")
-                        .on_click(move |ctx| {
-                            ctx.dispatch_typed_action(
-                                ConversationEndedTombstoneAction::ContinueInCloud { task_id },
-                            );
-                        })
-                })
-            });
+        let continue_in_cloud_button: Option<ViewHandle<ActionButton>> = None;
 
         #[cfg(not(target_family = "wasm"))]
         let continue_locally_button = if failed_before_task_creation {
@@ -311,27 +291,7 @@ impl ConversationEndedTombstoneView {
             }
         });
 
-        // Fetch AmbientAgentTask for additional metadata (source, skill, artifacts, etc.)
-        if let Some(task_id) = task_id {
-            let ai_client = ServerApiProvider::handle(ctx).as_ref(ctx).get_ai_client();
-            ctx.spawn(
-                async move { ai_client.get_ambient_agent_task(&task_id).await },
-                |me, result, ctx| match result {
-                    Ok(task) => {
-                        me.display_data.enrich_from_task(task);
-                        me.artifact_buttons_view.update(ctx, |row, ctx| {
-                            row.update_artifacts(&me.display_data.artifacts, ctx);
-                        });
-                        ctx.notify();
-                    }
-                    Err(err) => {
-                        log::warn!(
-                            "Failed to fetch AmbientAgentTask for tombstone metadata: {err}"
-                        );
-                    }
-                },
-            );
-        }
+        let _ = task_id;
 
         view
     }
@@ -548,14 +508,12 @@ impl ConversationEndedTombstoneView {
     }
 
     pub(in crate::terminal::view) fn has_continue_in_cloud_button_for_test(&self) -> bool {
-        !self.display_data.hide_continue_actions && self.continue_in_cloud_button.is_some()
+        false
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum ConversationEndedTombstoneAction {
-    #[cfg(not(target_family = "wasm"))]
-    ContinueInCloud { task_id: AmbientAgentTaskId },
     #[cfg(not(target_family = "wasm"))]
     ContinueLocally(AIConversationId),
     #[cfg(target_family = "wasm")]
@@ -631,7 +589,7 @@ impl View for ConversationEndedTombstoneView {
 }
 
 impl Entity for ConversationEndedTombstoneView {
-    type Event = ConversationEndedTombstoneEvent;
+    type Event = ();
 }
 
 impl TypedActionView for ConversationEndedTombstoneView {
@@ -640,10 +598,6 @@ impl TypedActionView for ConversationEndedTombstoneView {
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
             #[cfg(not(target_family = "wasm"))]
-            ConversationEndedTombstoneAction::ContinueInCloud { task_id } => {
-                ctx.emit(ConversationEndedTombstoneEvent::ContinueInCloud { task_id: *task_id });
-            }
-            #[cfg(not(target_family = "wasm"))]
             ConversationEndedTombstoneAction::ContinueLocally(conversation_id) => {
                 ctx.dispatch_typed_action(&WorkspaceAction::ContinueConversationLocally {
                     conversation_id: *conversation_id,
@@ -651,24 +605,8 @@ impl TypedActionView for ConversationEndedTombstoneView {
             }
             #[cfg(target_family = "wasm")]
             ConversationEndedTombstoneAction::OpenInWarp(conversation_id) => {
-                let conversation = BlocklistAIHistoryModel::handle(ctx)
-                    .as_ref(ctx)
-                    .conversation(conversation_id);
-
-                if let Some(conversation) = conversation {
-                    if let Some(token) = conversation.server_conversation_token() {
-                        let url_string = token.conversation_link();
-                        if let Ok(url) = url::Url::parse(&url_string) {
-                            ctx.dispatch_typed_action(&WorkspaceAction::OpenLinkOnDesktop(url));
-                        } else {
-                            log::error!("Failed to parse conversation URL: {}", url_string);
-                        }
-                    } else {
-                        log::warn!("No server conversation token available for conversation");
-                    }
-                } else {
-                    log::error!("Conversation not found in history model");
-                }
+                let _ = conversation_id;
+                log::warn!("Hosted conversation links are disabled in this local-first build");
             }
         }
     }

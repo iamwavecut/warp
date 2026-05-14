@@ -28,7 +28,6 @@ use warpui::{
     ViewHandle,
 };
 
-use crate::auth::UserUid;
 use crate::{
     appearance::Appearance,
     cloud_object::{
@@ -49,7 +48,7 @@ use crate::{
     network::NetworkStatus,
     server::{
         cloud_objects::update_manager::UpdateManager,
-        ids::{ClientId, ServerId, SyncId},
+        ids::{ClientId, SyncId},
         server_api::ai::AIClient,
     },
     themes::theme::AnsiColorIdentifier,
@@ -195,7 +194,6 @@ pub enum WorkflowModalEvent {
     Close,
     UpdatedWorkflow(SyncId),
     AiAssistError(String),
-    AiAssistUpgradeError(Option<ServerId>, UserUid),
     ViewInWarpDrive(WarpDriveItemId),
 }
 

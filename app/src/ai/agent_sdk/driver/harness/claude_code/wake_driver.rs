@@ -3,17 +3,13 @@ use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::ai::agent::conversation::{AIConversation, ConversationStatus};
 use anyhow::{Context, Result};
 use shell_words::quote as shell_quote;
 use uuid::Uuid;
 use warp_cli::agent::Harness;
-use warp_graphql::ai::AgentTaskState;
 
-use crate::ai::agent_events::MessageHydrator;
-use crate::ai::ambient_agents::{AmbientAgentTaskId, AmbientAgentTaskState};
-use crate::server::server_api::ai::AIClient;
-use crate::server::server_api::harness_support::ResolvePromptRequest;
+use crate::ai::agent::conversation::AIConversation;
+use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::server::server_api::ServerApi;
 use crate::terminal::CLIAgent;
 
@@ -41,12 +37,6 @@ pub(super) struct ClaudeWakeRemoteContext {
     pub(super) wake_prompt: String,
 }
 
-struct ClaudeWakeCandidate {
-    task_id: AmbientAgentTaskId,
-    parent_run_id: Option<String>,
-    working_dir: Option<PathBuf>,
-}
-
 impl ClaudeHarness {
     pub(crate) async fn wake_dormant_session(
         server_api: Arc<ServerApi>,
@@ -54,126 +44,8 @@ impl ClaudeHarness {
         parent_conversation: Option<AIConversation>,
         working_dir: Option<PathBuf>,
     ) -> Result<Option<String>> {
-        let Some(candidate) =
-            Self::local_wake_candidate(&conversation, parent_conversation.as_ref(), working_dir)
-        else {
-            return Ok(None);
-        };
-        let ClaudeWakeCandidate {
-            task_id,
-            parent_run_id,
-            working_dir,
-        } = candidate;
-
-        let task = server_api.get_ambient_agent_task(&task_id).await?;
-        let harness = task
-            .agent_config_snapshot
-            .as_ref()
-            .and_then(|snapshot| snapshot.harness.as_ref())
-            .map(|config| config.harness_type);
-        log::info!(
-            "Evaluating dormant Claude wake: task_id={task_id} server_task_state={:?} harness={harness:?}",
-            task.state
-        );
-        if !is_local_wake_task_state_ready(task.state.clone()) || harness != Some(Harness::Claude) {
-            log::info!(
-                "Skipping dormant Claude wake: task_id={task_id} server_task_state={:?} harness={harness:?}",
-                task.state
-            );
-            return Ok(None);
-        }
-
-        let remote = Self::fetch_local_wake_remote_context(task_id, server_api.clone()).await?;
-        let command = Self::prepare_local_wake_command(
-            server_api.clone(),
-            task_id,
-            parent_run_id,
-            working_dir,
-            remote,
-        )
-        .await?;
-
-        let _ = (server_api, task_id, AgentTaskState::InProgress);
-
-        Ok(Some(command))
-    }
-
-    fn local_wake_candidate(
-        conversation: &AIConversation,
-        parent_conversation: Option<&AIConversation>,
-        working_dir: Option<PathBuf>,
-    ) -> Option<ClaudeWakeCandidate> {
-        let conversation_id = conversation.id();
-        if !matches!(conversation.status(), ConversationStatus::Success) {
-            log::info!(
-                "Skipping dormant Claude wake candidate: conversation_id={conversation_id:?} reason=not_success status={:?}",
-                conversation.status()
-            );
-            return None;
-        }
-        if !conversation.is_child_agent_conversation() || conversation.is_remote_child() {
-            log::info!(
-                "Skipping dormant Claude wake candidate: conversation_id={conversation_id:?} reason=not_local_child is_child_agent_conversation={} is_remote_child={}",
-                conversation.is_child_agent_conversation(),
-                conversation.is_remote_child()
-            );
-            return None;
-        }
-        let Some(task_id) = conversation.task_id() else {
-            log::info!(
-                "Skipping dormant Claude wake candidate: conversation_id={conversation_id:?} reason=missing_task_id"
-            );
-            return None;
-        };
-        let parent_run_id = conversation
-            .parent_agent_id()
-            .map(str::to_owned)
-            .or_else(|| parent_conversation.and_then(AIConversation::run_id));
-
-        Some(ClaudeWakeCandidate {
-            task_id,
-            parent_run_id,
-            working_dir,
-        })
-    }
-
-    async fn fetch_local_wake_remote_context(
-        task_id: AmbientAgentTaskId,
-        server_api: Arc<ServerApi>,
-    ) -> Result<ClaudeWakeRemoteContext> {
-        let resolved = server_api
-            .resolve_prompt_for_task(
-                &task_id,
-                ResolvePromptRequest {
-                    skill: None,
-                    attachments_dir: None,
-                },
-            )
-            .await
-            .with_context(|| format!("Failed to resolve Claude wake prompt for task {task_id}"))?;
-        let bytes = server_api
-            .fetch_transcript_for_task(&task_id)
-            .await
-            .with_context(|| format!("Failed to fetch Claude transcript for task {task_id}"))?;
-        let envelope: ClaudeTranscriptEnvelope =
-            serde_json::from_slice(&bytes).with_context(|| {
-                format!("Failed to deserialize Claude transcript for wake task {task_id}")
-            })?;
-        let wake_prompt = match resolved.resumption_prompt {
-            Some(resumption_prompt) if !resumption_prompt.is_empty() => {
-                format!(
-                    "{resumption_prompt}
-
-{CLAUDE_WAKE_PROMPT}"
-                )
-            }
-            _ => CLAUDE_WAKE_PROMPT.to_string(),
-        };
-        Ok(ClaudeWakeRemoteContext {
-            session_id: envelope.uuid,
-            envelope,
-            wake_prompt,
-        })
+        let _ = (server_api, conversation, parent_conversation, working_dir);
+        Ok(None)
     }
 
     pub(super) async fn prepare_local_wake_command(
@@ -198,8 +70,8 @@ impl ClaudeHarness {
 
         let state_dir = parent_bridge_root()?.join(remote.session_id.to_string());
         ensure_parent_bridge_state_dir(&state_dir)?;
-        let hydrator = MessageHydrator::for_task(server_api, task_id);
-        acknowledge_parent_bridge_hook_output(&hydrator, &state_dir).await?;
+        let _ = server_api;
+        acknowledge_parent_bridge_hook_output(&state_dir).await?;
         let prompt_path = state_dir.join(CLAUDE_WAKE_PROMPT_FILE_NAME);
         std::fs::write(&prompt_path, remote.wake_prompt.as_bytes())
             .with_context(|| format!("Failed to write {}", prompt_path.display()))?;
@@ -235,26 +107,6 @@ fn local_wake_task_env_vars(
     env_vars
 }
 
-fn is_local_wake_task_state_ready(state: AmbientAgentTaskState) -> bool {
-    match state {
-        AmbientAgentTaskState::Succeeded => true,
-        // The local conversation status is already gated on `Success` before
-        // this function is called. The server task update is fire-and-forget,
-        // so it can still report `InProgress` for a short window after the
-        // local Claude process has actually stopped. Treat that stale server
-        // state as wakeable for local children.
-        AmbientAgentTaskState::InProgress => true,
-        AmbientAgentTaskState::Queued
-        | AmbientAgentTaskState::Pending
-        | AmbientAgentTaskState::Claimed
-        | AmbientAgentTaskState::Failed
-        | AmbientAgentTaskState::Error
-        | AmbientAgentTaskState::Blocked
-        | AmbientAgentTaskState::Cancelled
-        | AmbientAgentTaskState::Unknown => false,
-    }
-}
-
 fn prefix_command_with_env_vars(command: String, env_vars: HashMap<OsString, OsString>) -> String {
     if env_vars.is_empty() {
         return command;
@@ -278,32 +130,4 @@ fn prefix_command_with_env_vars(command: String, env_vars: HashMap<OsString, OsS
         .join(" ");
 
     format!("env {assignments} {command}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn local_wake_task_state_ready_allows_success_and_stale_in_progress() {
-        assert!(is_local_wake_task_state_ready(
-            AmbientAgentTaskState::Succeeded
-        ));
-        assert!(is_local_wake_task_state_ready(
-            AmbientAgentTaskState::InProgress
-        ));
-
-        for state in [
-            AmbientAgentTaskState::Queued,
-            AmbientAgentTaskState::Pending,
-            AmbientAgentTaskState::Claimed,
-            AmbientAgentTaskState::Failed,
-            AmbientAgentTaskState::Error,
-            AmbientAgentTaskState::Blocked,
-            AmbientAgentTaskState::Cancelled,
-            AmbientAgentTaskState::Unknown,
-        ] {
-            assert!(!is_local_wake_task_state_ready(state));
-        }
-    }
 }

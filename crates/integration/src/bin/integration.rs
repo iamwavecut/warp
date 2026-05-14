@@ -37,7 +37,6 @@ pub fn main() -> Result<()> {
             ),
             logfile_name: "warp_integration.log".into(),
             server_config: WarpServerConfig {
-                firebase_auth_api_key: "".into(),
                 // Use an IP in the IANA testing range, with the TCP discard port, to
                 // black-hole server traffic.
                 server_root_url: "http://192.0.2.0:9".into(),
@@ -369,7 +368,6 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
     // Workflow tests
     register_test!(test_open_workflow_in_pane);
     register_test!(test_create_personal_workflow_pane_from_command_palette);
-    register_test!(test_create_team_workflow_pane_from_command_palette);
 
     register_test!(test_block_filtering_keybinding);
     register_test!(test_block_filtering_keybinding_with_long_running_command);

@@ -35,7 +35,7 @@ pub enum ThemePickerSlideAction {
     NextClicked,
 }
 
-const TOS_URL: &str = "https://www.warp.dev/terms-of-service";
+const TOS_URL: &str = "about:blank";
 
 #[derive(Debug, Clone)]
 struct ThemeOption {
@@ -539,32 +539,10 @@ impl ThemePickerSlide {
             font_size: Some(12.),
             ..Default::default()
         };
-        let link_styles = UiComponentStyles {
-            font_size: Some(12.),
-            ..Default::default()
-        };
-
-        let tos_line = Flex::row()
-            .with_child(
-                ui_builder
-                    .span("By continuing, you agree to Warp's ")
-                    .with_style(disclaimer_styles)
-                    .build()
-                    .finish(),
-            )
-            .with_child(
-                ui_builder
-                    .link(
-                        "Terms of Service".into(),
-                        Some(TOS_URL.into()),
-                        None,
-                        self.tos_mouse_state.clone(),
-                    )
-                    .soft_wrap(false)
-                    .with_style(link_styles)
-                    .build()
-                    .finish(),
-            )
+        let tos_line = ui_builder
+            .span("No Warp account is required in this local-first build.")
+            .with_style(disclaimer_styles)
+            .build()
             .finish();
 
         Container::new(

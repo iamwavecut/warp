@@ -1,20 +1,11 @@
 use serde::{Deserialize, Serialize};
 use warp_cli::agent::Harness;
 use warp_core::features::FeatureFlag;
-use warp_core::user_preferences::GetUserPreferences;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::ai::harness_display;
-use crate::auth::auth_manager::{AuthManager, AuthManagerEvent};
-use crate::auth::AuthStateProvider;
-use crate::network::{NetworkStatus, NetworkStatusEvent, NetworkStatusKind};
-use crate::report_error;
-use crate::server::server_api::ServerApiProvider;
-use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 
-const CACHE_KEY: &str = "AvailableHarnesses";
-
-/// Server-resolved harness availability entry.
+/// Locally resolved harness availability entry.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HarnessModelInfo {
     pub id: String,
@@ -30,9 +21,7 @@ pub struct HarnessAvailability {
     pub available_models: Vec<HarnessModelInfo>,
 }
 
-/// Default fallback used before the server responds.
-/// Oz is enabled by default so the UI is usable pre-fetch; the server
-/// list (which respects admin overrides) replaces this once available.
+/// Default local harness list.
 fn default_harnesses() -> Vec<HarnessAvailability> {
     vec![HarnessAvailability {
         harness: Harness::Oz,
@@ -52,32 +41,10 @@ pub struct HarnessAvailabilityModel {
 
 impl HarnessAvailabilityModel {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
-        let harnesses = get_cached(ctx).unwrap_or_else(default_harnesses);
-
-        ctx.subscribe_to_model(&NetworkStatus::handle(ctx), |me, event, ctx| {
-            if let NetworkStatusEvent::NetworkStatusChanged {
-                new_status: NetworkStatusKind::Online,
-            } = event
-            {
-                me.refresh(ctx);
-            }
-        });
-
-        ctx.subscribe_to_model(&AuthManager::handle(ctx), |me, event, ctx| {
-            if let AuthManagerEvent::AuthComplete = event {
-                me.refresh(ctx);
-            }
-        });
-
-        ctx.subscribe_to_model(&UserWorkspaces::handle(ctx), |me, event, ctx| {
-            if let UserWorkspacesEvent::TeamsChanged = event {
-                me.refresh(ctx);
-            }
-        });
-
-        let me = Self { harnesses };
-        me.refresh(ctx);
-        me
+        let _ = ctx;
+        Self {
+            harnesses: default_harnesses(),
+        }
     }
 
     pub fn available_harnesses(&self) -> &[HarnessAvailability] {
@@ -118,47 +85,8 @@ impl HarnessAvailabilityModel {
     }
 
     pub fn refresh(&self, ctx: &mut ModelContext<Self>) {
-        // The endpoint queries `user`, which requires auth.
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
-            return;
-        }
-
-        let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-        ctx.spawn(
-            async move { ai_client.get_available_harnesses().await },
-            |me, result, ctx| match result {
-                Ok(new_harnesses) => {
-                    if new_harnesses != me.harnesses {
-                        me.harnesses = new_harnesses;
-                        me.cache(ctx);
-                        ctx.emit(HarnessAvailabilityEvent::Changed);
-                    }
-                }
-                Err(e) => {
-                    report_error!(e.context("Failed to fetch available harnesses"));
-                }
-            },
-        );
+        let _ = ctx;
     }
-
-    fn cache(&self, ctx: &ModelContext<Self>) {
-        if let Ok(serialized) = serde_json::to_string(&self.harnesses) {
-            if let Err(e) = ctx
-                .private_user_preferences()
-                .write_value(CACHE_KEY, serialized)
-            {
-                report_error!(anyhow::anyhow!(e).context("Failed to cache available harnesses"));
-            }
-        }
-    }
-}
-
-fn get_cached(ctx: &ModelContext<HarnessAvailabilityModel>) -> Option<Vec<HarnessAvailability>> {
-    let raw = ctx
-        .private_user_preferences()
-        .read_value(CACHE_KEY)
-        .ok()??;
-    serde_json::from_str::<Vec<HarnessAvailability>>(&raw).ok()
 }
 
 impl Entity for HarnessAvailabilityModel {

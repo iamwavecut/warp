@@ -577,15 +577,6 @@ pub fn init(app: &mut AppContext) {
             id!("Terminal") & id!("TerminalView_NonEmptyBlockList") & !id!("AltScreen"),
         ),
         EditableBinding::new(
-            "terminal:open_share_block_modal",
-            "Share selected block",
-            TerminalAction::OpenShareModal,
-        )
-        .with_custom_action(CustomAction::CreateBlockPermalink)
-        .with_context_predicate(
-            id!("Terminal") & eq!("TerminalView_BlockSelectionCardinality", "One"),
-        ),
-        EditableBinding::new(
             "terminal:bookmark_selected_block",
             "Bookmark selected block",
             TerminalAction::BookmarkSelectedBlock,
@@ -1108,7 +1099,7 @@ pub fn init(app: &mut AppContext) {
     .with_group(bindings::BindingGroup::WarpAi.as_str())
     .with_context_predicate(id!("Terminal") & id!(CAN_SHOW_CONVERSATION_DETAILS_KEY))]);
 
-    // Register bindings for starting a new cloud agent conversation.
+    // Register bindings for starting a new local agent workspace conversation.
     {
         app.register_fixed_bindings([FixedBinding::new_per_platform(
             PerPlatformKeystroke {
@@ -1118,11 +1109,7 @@ pub fn init(app: &mut AppContext) {
             TerminalAction::EnterCloudAgentView,
             id!("Terminal") & id!(flags::IS_ANY_AI_ENABLED),
         )
-        .with_enabled(|| {
-            FeatureFlag::AgentView.is_enabled()
-                && FeatureFlag::CloudMode.is_enabled()
-                && FeatureFlag::CloudModeFromLocalSession.is_enabled()
-        })
+        .with_enabled(|| FeatureFlag::AgentView.is_enabled())
         .with_group(bindings::BindingGroup::WarpAi.as_str())]);
         if cfg!(target_os = "macos") {
             // On MacOS, if the user has the 'Option as meta' setting enabled, the cmd-alt-enter

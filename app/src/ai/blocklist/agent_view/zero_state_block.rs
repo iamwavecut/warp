@@ -25,7 +25,7 @@ use crate::{
             agent_view::{
                 agent_view_bg_color, AgentViewController, AgentViewEntryOrigin,
                 ENTER_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE,
-                ENTER_CLOUD_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE,
+                ENTER_AMBIENT_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE,
             },
             history_model::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel},
         },
@@ -180,15 +180,7 @@ impl AgentViewZeroStateBlock {
                     return;
                 }
 
-                // Hide the zero state when this pane becomes a local-to-cloud handoff
-                // pane (REMOTE-1486). The fresh cloud-mode banner is suppressed because
-                // the pane is actually pre-loaded with a forked source conversation, not
-                // a brand-new one.
-                if matches!(event, AmbientAgentViewModelEvent::PendingHandoffChanged)
-                    && model.as_ref(ctx).is_local_to_cloud_handoff()
-                {
-                    me.should_hide = true;
-                } else if FeatureFlag::CloudModeSetupV2.is_enabled() {
+                if FeatureFlag::CloudModeSetupV2.is_enabled() {
                     if matches!(
                         event,
                         AmbientAgentViewModelEvent::DispatchedAgent
@@ -211,8 +203,6 @@ impl AgentViewZeroStateBlock {
 
         let has_parent_terminal =
             cloud_agent_view_model.is_none_or(|model| !model.as_ref(ctx).is_ambient_agent());
-        let is_local_to_cloud_handoff = cloud_agent_view_model
-            .is_some_and(|model| model.as_ref(ctx).is_local_to_cloud_handoff());
         let changelog_model = ChangelogModel::handle(ctx);
         ctx.subscribe_to_model(&changelog_model, |me, changelog_model, event, ctx| {
             if let changelog_model::Event::ChangelogRequestComplete { .. } = event {
@@ -269,8 +259,7 @@ impl AgentViewZeroStateBlock {
             terminal_model,
             current_working_directory,
             cached_recent_conversations,
-            should_hide: matches!(origin, AgentViewEntryOrigin::AcceptedPassiveCodeDiff)
-                || is_local_to_cloud_handoff,
+            should_hide: matches!(origin, AgentViewEntryOrigin::AcceptedPassiveCodeDiff),
             should_show_init_callout,
             has_parent_terminal,
             state_handles,
@@ -405,7 +394,7 @@ impl View for AgentViewZeroStateBlock {
 
         let header_props = if self.origin.is_cloud_agent() {
             HeaderProps {
-                title: "New Oz cloud agent conversation".into(),
+                title: "New Oz agent workspace".into(),
                 description: AgentViewDescription::CloudModeWithDocsLink,
                 icon: Icon::OzCloud,
             }
@@ -698,7 +687,7 @@ fn render_body(props: ZeroStateBodyProps<'_>, app: &AppContext) -> Vec<Box<dyn E
         state_handles,
     } = props;
 
-    // Cloud agent mode doesn't show keyboard shortcuts.
+    // Ambient agent mode doesn't show keyboard shortcuts.
     if origin.is_cloud_agent() {
         return vec![];
     }
@@ -732,9 +721,9 @@ fn render_body(props: ZeroStateBodyProps<'_>, app: &AppContext) -> Vec<Box<dyn E
                 Message::new(vec![MessageItem::clickable(
                     vec![
                         MessageItem::keystroke(
-                            ENTER_CLOUD_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE.clone(),
+                            ENTER_AMBIENT_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE.clone(),
                         ),
-                        MessageItem::text("start a new cloud agent conversation"),
+                        MessageItem::text("start a new agent workspace"),
                     ],
                     |ctx| {
                         ctx.dispatch_typed_action(TerminalAction::EnterCloudAgentView);
@@ -1098,7 +1087,7 @@ fn render_oz_updates(props: OzUpdatesProps<'_>, app: &AppContext) -> Option<Box<
                                 .with_child(
                                     Container::new(
                                         Text::new(
-                                            "View changelog",
+                                            "Changelog",
                                             appearance.ui_font_family(),
                                             appearance.monospace_font_size() - 2.,
                                         )
@@ -1108,26 +1097,8 @@ fn render_oz_updates(props: OzUpdatesProps<'_>, app: &AppContext) -> Option<Box<
                                     .with_margin_right(4.)
                                     .finish(),
                                 )
-                                .with_child(
-                                    ConstrainedBox::new(
-                                        Icon::Share3
-                                            .to_warpui_icon(
-                                                theme.sub_text_color(theme.background()),
-                                            )
-                                            .finish(),
-                                    )
-                                    .with_width(appearance.monospace_font_size() - 2.)
-                                    .with_height(appearance.monospace_font_size() - 2.)
-                                    .finish(),
-                                )
                                 .finish()
                         })
-                        .with_reset_cursor_after_click()
-                        .on_click(|_, app, _| {
-                            const CHANGELOG_URL: &str = "https://docs.warp.dev/changelog";
-                            app.open_url(CHANGELOG_URL);
-                        })
-                        .with_cursor(Cursor::PointingHand)
                         .finish(),
                     )
                     .right()
@@ -1202,33 +1173,6 @@ fn render_oz_updates(props: OzUpdatesProps<'_>, app: &AppContext) -> Option<Box<
     )
 }
 
-/// Renders the ambient credits banner showing free cloud credits.
-/// If `link_mouse_state` is provided, a "Launch cloud agent" link is shown.
-pub fn render_ambient_credits_banner(credits: i32, app: &AppContext) -> Box<dyn Element> {
-    let appearance = Appearance::as_ref(app);
-    let theme = appearance.theme();
-    let font_family = appearance.ui_font_family();
-    let font_size = styles::CREDITS_BANNER_FONT_SIZE;
-
-    // Use ANSI terminal colors for the pill styling.
-    let text_color = theme.terminal_colors().normal.blue;
-
-    let credits_text = format!("{credits} free cloud agent credits");
-    let text = Text::new(credits_text, font_family, font_size)
-        .with_color(text_color.into())
-        .with_style(Properties::default().weight(Weight::Semibold))
-        .soft_wrap(false)
-        .finish();
-
-    Container::new(text)
-        .with_border(Border::all(1.).with_border_color(text_color.into()))
-        .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
-        .with_vertical_padding(2.)
-        .with_horizontal_padding(6.)
-        .with_margin_left(8.)
-        .finish()
-}
-
 mod styles {
     use warp_core::ui::appearance::Appearance;
 
@@ -1236,8 +1180,6 @@ mod styles {
     pub const TITLE_MARGIN_BOTTOM: f32 = 8.;
     pub const SECTION_HEADER_MARGIN_BOTTOM: f32 = 8.;
     pub const DESCRIPTION_LINE_MARGIN_BOTTOM: f32 = 6.;
-    pub const CREDITS_BANNER_FONT_SIZE: f32 = 12.;
-
     pub fn title_font_size(appearance: &Appearance) -> f32 {
         appearance.monospace_font_size() + 6.
     }

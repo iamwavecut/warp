@@ -2,11 +2,7 @@ use std::{collections::HashMap, ffi::OsString, fs, path::Path, sync::Arc, time::
 
 use futures::channel::oneshot;
 use warp_cli::agent::Harness;
-use warp_cli::{
-    OZ_CLI_ENV, OZ_HARNESS_ENV, OZ_PARENT_RUN_ID_ENV, OZ_RUN_ID_ENV, SERVER_ROOT_URL_OVERRIDE_ENV,
-    SESSION_SHARING_SERVER_URL_OVERRIDE_ENV, WS_SERVER_URL_OVERRIDE_ENV,
-};
-use warp_core::channel::ChannelState;
+use warp_cli::{OZ_CLI_ENV, OZ_HARNESS_ENV, OZ_PARENT_RUN_ID_ENV, OZ_RUN_ID_ENV};
 
 use repo_metadata::{DirectoryWatcher, RepoMetadataEvent, RepoMetadataModel, RepositoryIdentifier};
 use tempfile::TempDir;
@@ -26,7 +22,7 @@ use crate::ai::agent::{
 use crate::ai::mcp::parsing::normalize_mcp_json;
 use crate::ai::{agent_sdk::task_env_vars, ambient_agents::AmbientAgentTaskId};
 use crate::{
-    ai::{cloud_environments::GithubRepo, skills::SkillManager},
+    ai::{agent_environments::GithubRepo, skills::SkillManager},
     test_util::terminal::{add_window_with_terminal, initialize_app_for_terminal_view},
 };
 use warp_managed_secrets::ManagedSecretValue;
@@ -192,7 +188,6 @@ fn idle_timeout_sender_later_send_after_supersedes_earlier() {
 fn task_env_vars_include_parent_run_id_when_present() {
     let task_id: AmbientAgentTaskId = "550e8400-e29b-41d4-a716-446655440000".parse().unwrap();
     let env_vars = task_env_vars(Some(&task_id), Some("parent-run-123"), Harness::Claude);
-    let overrides_allowed = ChannelState::channel().allows_server_url_overrides();
 
     assert_eq!(
         env_vars.get(&OsString::from(OZ_RUN_ID_ENV)),
@@ -219,48 +214,12 @@ fn task_env_vars_include_parent_run_id_when_present() {
     assert!(env_vars
         .get(&OsString::from(OZ_CLI_ENV))
         .is_some_and(|value| !value.is_empty()));
-
-    let server_root_url = ChannelState::server_root_url().into_owned();
-    if overrides_allowed && !server_root_url.is_empty() {
-        assert_eq!(
-            env_vars.get(&OsString::from(SERVER_ROOT_URL_OVERRIDE_ENV)),
-            Some(&OsString::from(server_root_url))
-        );
-    } else {
-        assert!(!env_vars.contains_key(&OsString::from(SERVER_ROOT_URL_OVERRIDE_ENV)));
-    }
-
-    let ws_server_url = ChannelState::ws_server_url().into_owned();
-    if overrides_allowed && !ws_server_url.is_empty() {
-        assert_eq!(
-            env_vars.get(&OsString::from(WS_SERVER_URL_OVERRIDE_ENV)),
-            Some(&OsString::from(ws_server_url))
-        );
-    } else {
-        assert!(!env_vars.contains_key(&OsString::from(WS_SERVER_URL_OVERRIDE_ENV)));
-    }
-
-    if overrides_allowed {
-        match ChannelState::session_sharing_server_url() {
-            Some(url) if !url.is_empty() => assert_eq!(
-                env_vars.get(&OsString::from(SESSION_SHARING_SERVER_URL_OVERRIDE_ENV)),
-                Some(&OsString::from(url.into_owned()))
-            ),
-            _ => {
-                assert!(!env_vars
-                    .contains_key(&OsString::from(SESSION_SHARING_SERVER_URL_OVERRIDE_ENV)))
-            }
-        }
-    } else {
-        assert!(!env_vars.contains_key(&OsString::from(SESSION_SHARING_SERVER_URL_OVERRIDE_ENV)));
-    }
 }
 
 #[test]
 fn task_env_vars_omit_parent_run_id_when_absent() {
     let task_id: AmbientAgentTaskId = "550e8400-e29b-41d4-a716-446655440001".parse().unwrap();
     let env_vars = task_env_vars(Some(&task_id), None, Harness::Oz);
-    let overrides_allowed = ChannelState::channel().allows_server_url_overrides();
 
     assert_eq!(
         env_vars.get(&OsString::from(OZ_RUN_ID_ENV)),
@@ -275,14 +234,6 @@ fn task_env_vars_omit_parent_run_id_when_absent() {
     assert!(!env_vars.contains_key(&OsString::from(
         LEGACY_OZ_PARENT_LISTENER_MANAGED_EXTERNALLY_ENV
     )));
-    assert_eq!(
-        env_vars.contains_key(&OsString::from(SERVER_ROOT_URL_OVERRIDE_ENV)),
-        overrides_allowed && !ChannelState::server_root_url().is_empty()
-    );
-    assert_eq!(
-        env_vars.contains_key(&OsString::from(WS_SERVER_URL_OVERRIDE_ENV)),
-        overrides_allowed && !ChannelState::ws_server_url().is_empty()
-    );
 }
 
 #[test]
@@ -678,7 +629,7 @@ fn split_loading_env_loads_all_global_loads_subset() {
         done_rx.await.expect("loading task should complete");
 
         // Verify SkillManager contains the right skills.
-        // is_cloud_environment=true (set by both loaders), so get_skills_for_working_directory
+        // is_agent_environment=true (set by both loaders), so get_skills_for_working_directory
         // with cwd=None returns all registered skills.
         let skill_names = SkillManager::handle(&app).read(&app, |manager: &SkillManager, ctx| {
             manager

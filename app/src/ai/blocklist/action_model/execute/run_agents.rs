@@ -138,14 +138,6 @@ impl RunAgentsExecutor {
                     continue;
                 }
             };
-            if matches!(run_execution_mode, RunAgentsExecutionMode::Remote { .. })
-                && parent_run_id.is_none()
-            {
-                slots.push(ChildSlot::Failed(
-                    "Remote child agents require the parent run_id to be available.".to_string(),
-                ));
-                continue;
-            }
             let recv = self.start_agent_executor.update(ctx, |executor, exec_ctx| {
                 executor.dispatch(
                     cfg.name.clone(),
@@ -221,15 +213,7 @@ impl RunAgentsExecutor {
                     .collect();
                 let launched_mode = match &run_execution_mode_for_aggr {
                     RunAgentsExecutionMode::Local => RunAgentsLaunchedExecutionMode::Local,
-                    RunAgentsExecutionMode::Remote {
-                        environment_id,
-                        worker_host,
-                        computer_use_enabled,
-                    } => RunAgentsLaunchedExecutionMode::Remote {
-                        environment_id: environment_id.clone(),
-                        worker_host: worker_host.clone(),
-                        computer_use_enabled: *computer_use_enabled,
-                    },
+                    RunAgentsExecutionMode::Remote { .. } => RunAgentsLaunchedExecutionMode::Local,
                 };
                 let result = RunAgentsResult::Launched {
                     model_id: run_model_id,
@@ -342,13 +326,6 @@ fn validate_request(request: &RunAgentsRequest) -> Result<(), String> {
     if request.agent_run_configs.is_empty() {
         return Err("orchestrate: empty agent_run_configs".to_string());
     }
-    if matches!(
-        request.execution_mode,
-        RunAgentsExecutionMode::Remote { .. }
-    ) && request.harness_type.eq_ignore_ascii_case("opencode")
-    {
-        return Err("Remote child agents do not support the opencode harness yet.".to_string());
-    }
     Ok(())
 }
 
@@ -366,53 +343,21 @@ pub fn compose_run_agents_child_prompt(base_prompt: &str, per_agent_prompt: &str
 }
 
 /// Translates run-wide config into a per-child
-/// [`StartAgentExecutionMode`]. Returns `Err` for rejected
-/// combinations (e.g. OpenCode+Remote).
+/// [`StartAgentExecutionMode`].
 pub fn run_agents_to_start_agent_mode(
     run_execution_mode: &RunAgentsExecutionMode,
     run_harness_type: &str,
     run_model_id: &str,
-    run_skills: &[SkillReference],
-    cfg: &RunAgentsAgentRunConfig,
+    _run_skills: &[SkillReference],
+    _cfg: &RunAgentsAgentRunConfig,
 ) -> Result<StartAgentExecutionMode, String> {
     match run_execution_mode {
-        RunAgentsExecutionMode::Local => {
-            let trimmed = run_harness_type.trim();
-            // Propagate run-wide model selection for local launches.
-            let trimmed_model_id = run_model_id.trim();
-            let model_id = (!trimmed_model_id.is_empty()).then(|| trimmed_model_id.to_string());
-            if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("oz") {
-                Ok(StartAgentExecutionMode::Local {
-                    harness_type: None,
-                    model_id,
-                })
-            } else {
-                Ok(StartAgentExecutionMode::Local {
-                    harness_type: Some(trimmed.to_string()),
-                    model_id,
-                })
-            }
-        }
-        RunAgentsExecutionMode::Remote {
-            environment_id,
-            worker_host,
-            computer_use_enabled,
-        } => {
-            // OpenCode is unsupported on Remote.
-            if run_harness_type.eq_ignore_ascii_case("opencode") {
-                return Err(
-                    "Remote child agents do not support the opencode harness yet.".to_string(),
-                );
-            }
-            Ok(StartAgentExecutionMode::Remote {
-                environment_id: environment_id.clone(),
-                skill_references: run_skills.to_vec(),
-                model_id: run_model_id.to_string(),
-                computer_use_enabled: *computer_use_enabled,
-                worker_host: worker_host.clone(),
-                harness_type: run_harness_type.to_string(),
-                title: cfg.title.clone(),
-            })
-        }
+        RunAgentsExecutionMode::Local => Ok(StartAgentExecutionMode::local_from_hosted_fields(
+            run_harness_type,
+            run_model_id,
+        )),
+        RunAgentsExecutionMode::Remote { .. } => Ok(
+            StartAgentExecutionMode::local_from_hosted_fields(run_harness_type, run_model_id),
+        ),
     }
 }

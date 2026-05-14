@@ -31,8 +31,6 @@ use warp_cli::agent::Harness;
 use warp_core::channel::{Channel, ChannelState};
 use warp_core::ui::theme::Fill;
 
-use crate::ai::cloud_agent_settings::CloudAgentSettings;
-use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
 use crate::ai::execution_profiles::model_menu_items::available_model_menu_items;
 use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::harness_display;
@@ -40,7 +38,6 @@ use crate::appearance::Appearance;
 use crate::menu::{MenuItem, MenuItemFields};
 use crate::ui_components::blended_colors;
 use crate::view_components::dropdown::{Dropdown, DropdownAction, DropdownStyle};
-use crate::view_components::FilterableDropdown;
 use crate::LLMPreferences;
 
 // ── Shared constants ────────────────────────────────────────────────
@@ -62,11 +59,8 @@ const DEFAULT_MODEL_LABEL: &str = "Default model";
 /// `OrchestrationConfigBlockAction` implement so the shared picker
 /// creation and render helpers can produce the correct action variant.
 pub trait OrchestrationControlAction: Clone + Debug + Send + Sync + 'static {
-    fn execution_mode_toggled(is_remote: bool) -> Self;
     fn model_changed(model_id: String) -> Self;
     fn harness_changed(harness_type: String) -> Self;
-    fn environment_changed(environment_id: String) -> Self;
-    fn worker_host_changed(worker_host: String) -> Self;
 }
 
 // ── Shared edit state ───────────────────────────────────────────────
@@ -86,84 +80,26 @@ impl OrchestrationEditState {
     pub fn from_run_agents_fields(
         model_id: &str,
         harness_type: &str,
-        execution_mode: &RunAgentsExecutionMode,
+        _execution_mode: &RunAgentsExecutionMode,
     ) -> Self {
         Self {
             model_id: model_id.to_string(),
             harness_type: harness_type.to_string(),
-            execution_mode: execution_mode.clone(),
+            execution_mode: RunAgentsExecutionMode::Local,
         }
     }
 
     pub fn from_orchestration_config(config: &OrchestrationConfig) -> Self {
-        let execution_mode = match &config.execution_mode {
-            OrchestrationExecutionMode::Local => RunAgentsExecutionMode::Local,
-            OrchestrationExecutionMode::Remote {
-                environment_id,
-                worker_host,
-            } => RunAgentsExecutionMode::Remote {
-                environment_id: environment_id.clone(),
-                worker_host: worker_host.clone(),
-                computer_use_enabled: false,
-            },
-        };
         Self {
             model_id: config.model_id.clone(),
             harness_type: config.harness_type.clone(),
-            execution_mode,
-        }
-    }
-
-    /// Toggle Local ↔ Cloud. Resets OpenCode to Oz when switching
-    /// to Cloud (unsupported combination).
-    pub fn toggle_execution_mode_to_remote(&mut self, is_remote: bool) {
-        if is_remote {
-            if self.harness_type.eq_ignore_ascii_case("opencode") {
-                self.harness_type = "oz".to_string();
-            }
-            if !self.execution_mode.is_remote() {
-                self.execution_mode = RunAgentsExecutionMode::Remote {
-                    environment_id: String::new(),
-                    worker_host: ORCHESTRATION_WARP_WORKER_HOST.to_string(),
-                    computer_use_enabled: false,
-                };
-            }
-        } else {
-            self.execution_mode = RunAgentsExecutionMode::Local;
-        }
-    }
-
-    pub fn set_environment_id(&mut self, environment_id: String) {
-        if let RunAgentsExecutionMode::Remote {
-            environment_id: id, ..
-        } = &mut self.execution_mode
-        {
-            *id = environment_id;
-        }
-    }
-
-    pub fn set_worker_host(&mut self, worker_host: String) {
-        if let RunAgentsExecutionMode::Remote {
-            worker_host: wh, ..
-        } = &mut self.execution_mode
-        {
-            *wh = worker_host;
+            execution_mode: RunAgentsExecutionMode::Local,
         }
     }
 
     /// Returns `Some(reason)` if Accept / Apply must be disabled.
-    /// Only hard block: OpenCode + Cloud.
     pub fn accept_disabled_reason(&self) -> Option<&'static str> {
-        match &self.execution_mode {
-            RunAgentsExecutionMode::Remote { .. }
-                if self.harness_type.eq_ignore_ascii_case("opencode") =>
-            {
-                Some(
-                    "OpenCode is not supported on Cloud yet. Switch to Local or pick a different harness.",
-                )
-            }
-            RunAgentsExecutionMode::Local | RunAgentsExecutionMode::Remote { .. } => None,
-        }
+        None
     }
 
     /// Fills in empty fields from the approved orchestration config.
@@ -178,9 +114,6 @@ impl OrchestrationEditState {
         if self.model_id.is_empty() && !config.model_id.is_empty() {
             self.model_id = config.model_id.clone();
         }
-        if !self.execution_mode.is_remote() && config.execution_mode.is_remote() {
-            self.execution_mode = Self::from_orchestration_config(config).execution_mode;
-        }
     }
 
     /// Unconditionally overrides model, harness, and execution mode
@@ -188,54 +121,18 @@ impl OrchestrationEditState {
     /// user-approved source of truth — the LLM's run_agents call may
     /// omit or set these differently, but the config always wins.
     ///
-    /// `computer_use_enabled` is preserved from the current state when
-    /// both sides are Remote, since it is a per-call flag set by the LLM.
     pub fn override_from_approved_config(&mut self, config: &OrchestrationConfig) {
         self.model_id = config.model_id.clone();
         self.harness_type = config.harness_type.clone();
-
-        let preserve_computer_use = match (&self.execution_mode, &config.execution_mode) {
-            (
-                RunAgentsExecutionMode::Remote {
-                    computer_use_enabled,
-                    ..
-                },
-                OrchestrationExecutionMode::Remote { .. },
-            ) => Some(*computer_use_enabled),
-            _ => None,
-        };
-
-        self.execution_mode = Self::from_orchestration_config(config).execution_mode;
-
-        if let (
-            Some(cue),
-            RunAgentsExecutionMode::Remote {
-                computer_use_enabled,
-                ..
-            },
-        ) = (preserve_computer_use, &mut self.execution_mode)
-        {
-            *computer_use_enabled = cue;
-        }
+        self.execution_mode = RunAgentsExecutionMode::Local;
     }
 
     /// Converts to a native `OrchestrationConfig` for storage / match.
     pub fn to_orchestration_config(&self) -> OrchestrationConfig {
-        let execution_mode = match &self.execution_mode {
-            RunAgentsExecutionMode::Local => OrchestrationExecutionMode::Local,
-            RunAgentsExecutionMode::Remote {
-                environment_id,
-                worker_host,
-                ..
-            } => OrchestrationExecutionMode::Remote {
-                environment_id: environment_id.clone(),
-                worker_host: worker_host.clone(),
-            },
-        };
         OrchestrationConfig {
             model_id: self.model_id.clone(),
             harness_type: self.harness_type.clone(),
-            execution_mode,
+            execution_mode: OrchestrationExecutionMode::Local,
         }
     }
 }
@@ -248,10 +145,6 @@ impl OrchestrationEditState {
 pub struct OrchestrationPickerHandles<A: OrchestrationControlAction> {
     pub model_picker: Option<ViewHandle<Dropdown<A>>>,
     pub harness_picker: Option<ViewHandle<Dropdown<A>>>,
-    pub environment_picker: Option<ViewHandle<FilterableDropdown<A>>>,
-    pub host_picker: Option<ViewHandle<Dropdown<A>>>,
-    pub local_toggle: MouseStateHandle,
-    pub cloud_toggle: MouseStateHandle,
 }
 
 impl<A: OrchestrationControlAction> Default for OrchestrationPickerHandles<A> {
@@ -259,10 +152,6 @@ impl<A: OrchestrationControlAction> Default for OrchestrationPickerHandles<A> {
         Self {
             model_picker: None,
             harness_picker: None,
-            environment_picker: None,
-            host_picker: None,
-            local_toggle: MouseStateHandle::default(),
-            cloud_toggle: MouseStateHandle::default(),
         }
     }
 }
@@ -559,95 +448,6 @@ pub fn populate_harness_picker<A: OrchestrationControlAction, V: View>(
     });
 }
 
-pub fn create_environment_picker<A: OrchestrationControlAction, V: View>(
-    initial_env_id: &str,
-    styles: &UiComponentStyles,
-    ctx: &mut ViewContext<V>,
-) -> ViewHandle<FilterableDropdown<A>> {
-    let initial_env = initial_env_id.to_string();
-    let styles = *styles;
-    let dropdown_handle = ctx.add_typed_action_view(move |ctx_dropdown| {
-        let mut dropdown = FilterableDropdown::<A>::new(ctx_dropdown);
-        dropdown.set_use_overlay_layer(false, ctx_dropdown);
-        dropdown.set_main_axis_size(MainAxisSize::Max, ctx_dropdown);
-        dropdown.set_button_variant(ButtonVariant::Secondary);
-        dropdown.set_style(styles);
-        dropdown.set_top_bar_height(ORCHESTRATION_PICKER_HEIGHT, ctx_dropdown);
-        dropdown.set_top_bar_max_width(f32::INFINITY);
-        dropdown
-    });
-    dropdown_handle.update(ctx, |dropdown, ctx_dropdown| {
-        dropdown.set_menu_width(280.0, ctx_dropdown);
-        let all_envs = CloudAmbientAgentEnvironment::get_all(ctx_dropdown);
-        let mut sorted_envs: Vec<(String, String)> = all_envs
-            .iter()
-            .map(|env| (env.id.uid(), env.model().string_model.name.clone()))
-            .collect();
-        sorted_envs.sort_by(|a, b| a.1.cmp(&b.1));
-
-        let mut items: Vec<MenuItem<DropdownAction<A>>> = Vec::new();
-        let mut selected_name: Option<String> = None;
-        items.push(MenuItem::Item(
-            MenuItemFields::new(ORCHESTRATION_ENV_NONE_LABEL).with_on_select_action(
-                DropdownAction::SelectActionAndClose(A::environment_changed(String::new())),
-            ),
-        ));
-        if initial_env.is_empty() {
-            selected_name = Some(ORCHESTRATION_ENV_NONE_LABEL.to_string());
-        }
-        for (env_id, env_name) in &sorted_envs {
-            if env_id == &initial_env {
-                selected_name = Some(env_name.clone());
-            }
-            let env_id_for_item = env_id.clone();
-            items.push(MenuItem::Item(
-                MenuItemFields::new(env_name).with_on_select_action(
-                    DropdownAction::SelectActionAndClose(A::environment_changed(env_id_for_item)),
-                ),
-            ));
-        }
-        dropdown.set_rich_items(items, ctx_dropdown);
-        if let Some(name) = selected_name {
-            dropdown.set_selected_by_name(&name, ctx_dropdown);
-        }
-    });
-    dropdown_handle
-}
-
-pub fn populate_host_picker<A: OrchestrationControlAction, V: View>(
-    dropdown: &ViewHandle<Dropdown<A>>,
-    initial_host: &str,
-    ctx: &mut ViewContext<V>,
-) {
-    let initial_host = if initial_host.is_empty() {
-        ORCHESTRATION_WARP_WORKER_HOST.to_string()
-    } else {
-        initial_host.to_string()
-    };
-    dropdown.update(ctx, |dropdown, ctx_dropdown| {
-        let hosts: &[&str] = if matches!(ChannelState::channel(), Channel::Local) {
-            &["warp", "local-dev"]
-        } else {
-            &["warp"]
-        };
-        let mut items: Vec<MenuItem<DropdownAction<A>>> = Vec::new();
-        let mut selected_idx = None;
-        for (idx, &host) in hosts.iter().enumerate() {
-            let fields = MenuItemFields::new(host).with_on_select_action(
-                DropdownAction::SelectActionAndClose(A::worker_host_changed(host.to_string())),
-            );
-            if host.eq_ignore_ascii_case(&initial_host) {
-                selected_idx = Some(idx);
-            }
-            items.push(MenuItem::Item(fields));
-        }
-        dropdown.set_rich_items(items, ctx_dropdown);
-        if let Some(idx) = selected_idx {
-            dropdown.set_selected_by_index(idx, ctx_dropdown);
-        }
-    });
-}
-
 /// Normalizes a harness_type string for use as a HashMap key in
 /// per-harness model memory. Empty string (the wire representation
 /// of Oz) is mapped to "oz" so saves and lookups are consistent.
@@ -656,57 +456,6 @@ pub fn harness_save_key(harness_type: &str) -> &str {
         "oz"
     } else {
         harness_type
-    }
-}
-
-// ── Default environment resolution ──────────────────────────────────
-
-/// Resolves a default environment ID using the same logic as the
-/// `/cloud-agent` environment selector: first tries the user's
-/// last-selected environment from settings, then falls back to the
-/// most recently used environment.
-pub fn resolve_default_environment_id(ctx: &AppContext) -> Option<String> {
-    if let Some(env_id) = *CloudAgentSettings::as_ref(ctx)
-        .last_selected_environment_id
-        .value()
-    {
-        if CloudAmbientAgentEnvironment::get_by_id(&env_id, ctx).is_some() {
-            return Some(env_id.uid());
-        }
-    }
-    let mut envs = CloudAmbientAgentEnvironment::get_all(ctx);
-    envs.sort_by(|a, b| {
-        b.metadata
-            .last_task_run_ts
-            .cmp(&a.metadata.last_task_run_ts)
-            .then_with(|| {
-                a.model()
-                    .string_model
-                    .name
-                    .cmp(&b.model().string_model.name)
-            })
-    });
-    envs.first().map(|e| e.id.uid())
-}
-
-/// Persists the user's environment selection to settings so it can
-/// be restored as the default next time. Shared by both the plan
-/// card and confirmation card `EnvironmentChanged` handlers.
-pub fn persist_environment_selection<V: View>(environment_id: &str, ctx: &mut ViewContext<V>) {
-    if environment_id.is_empty() {
-        return;
-    }
-    let all_envs = CloudAmbientAgentEnvironment::get_all(ctx);
-    if let Some(env) = all_envs.iter().find(|e| e.id.uid() == environment_id) {
-        let sync_id = env.id;
-        CloudAgentSettings::handle(ctx).update(ctx, |settings, ctx| {
-            if let Err(e) = settings
-                .last_selected_environment_id
-                .set_value(Some(sync_id), ctx)
-            {
-                log::warn!("Failed to persist environment selection: {e:?}");
-            }
-        });
     }
 }
 
@@ -733,7 +482,7 @@ pub fn apply_harness_change<A: OrchestrationControlAction, V: View>(
     memory.insert(old_key, state.model_id.clone());
     state.harness_type = new_harness_type.to_string();
 
-    let is_local = !state.execution_mode.is_remote();
+    let is_local = true;
     // Try to restore a previously saved model for this harness.
     let new_key = harness_save_key(new_harness_type);
     let restored = memory
@@ -756,48 +505,6 @@ pub fn apply_harness_change<A: OrchestrationControlAction, V: View>(
     }
 }
 
-/// Handles an execution-mode toggle for both card views: toggles the
-/// mode, revalidates/resets the model_id if invalid for the new mode,
-/// repopulates the model picker, and syncs all picker selections.
-pub fn apply_execution_mode_change<A: OrchestrationControlAction, V: View>(
-    state: &mut OrchestrationEditState,
-    handles: &OrchestrationPickerHandles<A>,
-    is_remote: bool,
-    fallback_base_model_id: impl FnOnce(&mut ViewContext<V>) -> Option<String>,
-    ctx: &mut ViewContext<V>,
-) {
-    state.toggle_execution_mode_to_remote(is_remote);
-    // When switching to Cloud with no environment set, pre-fill with
-    // the user's last-selected or most recently used environment.
-    if is_remote {
-        if let RunAgentsExecutionMode::Remote { environment_id, .. } = &state.execution_mode {
-            if environment_id.is_empty() {
-                if let Some(default_env) = resolve_default_environment_id(ctx) {
-                    state.set_environment_id(default_env);
-                }
-            }
-        }
-    }
-    let is_local = !state.execution_mode.is_remote();
-    if !is_model_in_filtered_choices(&state.model_id, &state.harness_type, is_local, ctx) {
-        let reset_id = fallback_base_model_id(ctx)
-            .filter(|id| is_model_in_filtered_choices(id, &state.harness_type, is_local, ctx))
-            .or_else(|| first_filtered_model_id(&state.harness_type, ctx))
-            .unwrap_or_default();
-        state.model_id = reset_id;
-    }
-    if let Some(handle) = &handles.model_picker {
-        populate_model_picker_for_harness(
-            handle,
-            &state.model_id,
-            &state.harness_type,
-            is_local,
-            ctx,
-        );
-    }
-    sync_picker_selections(state, handles, ctx);
-}
-
 // ── Picker repopulation + selection sync ──
 
 /// Repopulates both the harness and model pickers from the current
@@ -814,7 +521,7 @@ pub fn repopulate_all_pickers<A: OrchestrationControlAction, V: View>(
     }
     // Revalidate model_id: if the previously selected model is no longer
     // in the catalog (e.g. server removed it), reset to default.
-    let is_local = !state.execution_mode.is_remote();
+    let is_local = true;
     if !is_model_in_filtered_choices(&state.model_id, &state.harness_type, is_local, ctx) {
         if let Some(first_id) = first_filtered_model_id(&state.harness_type, ctx) {
             state.model_id = first_id;
@@ -879,31 +586,6 @@ pub fn sync_picker_selections<A: OrchestrationControlAction, V: View>(
                 .display_name_for(target)
                 .to_string();
             dropdown.set_selected_by_name(&display, ctx_dropdown);
-        });
-    }
-    if let Some(environment_picker) = handles.environment_picker.clone() {
-        let env_id = match &state.execution_mode {
-            RunAgentsExecutionMode::Remote { environment_id, .. } => environment_id.clone(),
-            RunAgentsExecutionMode::Local => String::new(),
-        };
-        environment_picker.update(ctx, |dropdown, ctx_dropdown| {
-            if env_id.is_empty() {
-                dropdown.set_selected_by_name(ORCHESTRATION_ENV_NONE_LABEL, ctx_dropdown);
-                return;
-            }
-            let all_envs = CloudAmbientAgentEnvironment::get_all(ctx_dropdown);
-            if let Some(env) = all_envs.iter().find(|e| e.id.uid() == env_id) {
-                dropdown.set_selected_by_name(&env.model().string_model.name, ctx_dropdown);
-            }
-        });
-    }
-    if let Some(host_picker) = handles.host_picker.clone() {
-        let worker_host = match &state.execution_mode {
-            RunAgentsExecutionMode::Remote { worker_host, .. } => worker_host.clone(),
-            RunAgentsExecutionMode::Local => ORCHESTRATION_WARP_WORKER_HOST.to_string(),
-        };
-        host_picker.update(ctx, |dropdown, ctx_dropdown| {
-            dropdown.set_selected_by_name(&worker_host, ctx_dropdown);
         });
     }
 }
@@ -1049,115 +731,6 @@ impl Element for AdaptivePickerRow {
 
 // ── Render helpers ──────────────────────────────────────────────────
 
-pub fn render_mode_toggle<A: OrchestrationControlAction>(
-    is_remote: bool,
-    handles: &OrchestrationPickerHandles<A>,
-    appearance: &Appearance,
-    active_segment_bg: Option<Fill>,
-    full_width: bool,
-) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let label = Text::new(
-        "Agent location".to_string(),
-        appearance.ui_font_family(),
-        appearance.monospace_font_size() - 1.,
-    )
-    .with_color(blended_colors::text_disabled(theme, theme.surface_1()))
-    .finish();
-
-    let local_segment = render_segment_button::<A>(
-        "Local",
-        !is_remote,
-        A::execution_mode_toggled(false),
-        handles.local_toggle.clone(),
-        appearance,
-        active_segment_bg,
-    );
-    let cloud_segment = render_segment_button::<A>(
-        "Cloud",
-        is_remote,
-        A::execution_mode_toggled(true),
-        handles.cloud_toggle.clone(),
-        appearance,
-        active_segment_bg,
-    );
-
-    let segment_outer_bg = warp_core::ui::theme::color::internal_colors::fg_overlay_2(theme);
-    let segments_row = Flex::row()
-        .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-        .with_main_axis_alignment(MainAxisAlignment::Start)
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_child(Expanded::new(1.0, cloud_segment).finish())
-        .with_child(Expanded::new(1.0, local_segment).finish())
-        .finish();
-    let segmented_control = Container::new(segments_row)
-        .with_padding_top(4.)
-        .with_padding_bottom(4.)
-        .with_padding_left(4.)
-        .with_padding_right(4.)
-        .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
-        .with_background(segment_outer_bg)
-        .finish();
-    let segmented_control = if full_width {
-        segmented_control
-    } else {
-        ConstrainedBox::new(segmented_control)
-            .with_width(ORCHESTRATION_PICKER_MAX_WIDTH)
-            .finish()
-    };
-
-    let cross_axis = if full_width {
-        CrossAxisAlignment::Stretch
-    } else {
-        CrossAxisAlignment::Start
-    };
-    Flex::column()
-        .with_cross_axis_alignment(cross_axis)
-        .with_child(Container::new(label).with_margin_bottom(6.).finish())
-        .with_child(segmented_control)
-        .finish()
-}
-
-fn render_segment_button<A: OrchestrationControlAction>(
-    label: &str,
-    is_active: bool,
-    on_click: A,
-    mouse_state: MouseStateHandle,
-    appearance: &Appearance,
-    active_bg_override: Option<Fill>,
-) -> Box<dyn Element> {
-    let theme = appearance.theme();
-    let label_owned = label.to_string();
-    let font_family = appearance.ui_font_family();
-    let font_size = appearance.monospace_font_size() + 1.;
-    let active_text_color = blended_colors::text_main(theme, theme.surface_1());
-    let inactive_text_color = blended_colors::text_disabled(theme, theme.surface_1());
-    let segment_active_bg = active_bg_override
-        .unwrap_or_else(|| warp_core::ui::theme::color::internal_colors::fg_overlay_4(theme));
-    Hoverable::new(mouse_state, move |_| {
-        let text = Text::new(label_owned.clone(), font_family, font_size)
-            .with_color(if is_active {
-                active_text_color
-            } else {
-                inactive_text_color
-            })
-            .finish();
-        let centered = warpui::elements::Align::new(text).finish();
-        let mut container = Container::new(centered)
-            .with_vertical_padding(6.)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
-        if is_active {
-            container = container.with_background(segment_active_bg);
-        }
-        container.finish()
-    })
-    .on_click(move |ctx, _, _| {
-        ctx.dispatch_typed_action(on_click.clone());
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
-}
-
 pub fn render_picker_row<A: OrchestrationControlAction>(
     state: &OrchestrationEditState,
     handles: &OrchestrationPickerHandles<A>,
@@ -1174,8 +747,6 @@ pub fn render_picker_row_with_layout<A: OrchestrationControlAction>(
     appearance: &Appearance,
     vertical: bool,
 ) -> Box<dyn Element> {
-    let is_remote = state.execution_mode.is_remote();
-
     if vertical {
         let mut column = Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
@@ -1193,24 +764,6 @@ pub fn render_picker_row_with_layout<A: OrchestrationControlAction>(
                 .as_ref()
                 .map(|p| ChildView::new(p).finish()),
         );
-        if is_remote {
-            add(
-                &mut column,
-                "Host",
-                handles
-                    .host_picker
-                    .as_ref()
-                    .map(|p| ChildView::new(p).finish()),
-            );
-            add(
-                &mut column,
-                "Environment",
-                handles
-                    .environment_picker
-                    .as_ref()
-                    .map(|p| ChildView::new(p).finish()),
-            );
-        }
         add(
             &mut column,
             "Base model",
@@ -1240,24 +793,6 @@ pub fn render_picker_row_with_layout<A: OrchestrationControlAction>(
                 .as_ref()
                 .map(|p| ChildView::new(p).finish()),
         );
-        if is_remote {
-            add_picker(
-                &mut row,
-                "Host",
-                handles
-                    .host_picker
-                    .as_ref()
-                    .map(|p| ChildView::new(p).finish()),
-            );
-            add_picker(
-                &mut row,
-                "Environment",
-                handles
-                    .environment_picker
-                    .as_ref()
-                    .map(|p| ChildView::new(p).finish()),
-            );
-        }
         add_picker(
             &mut row,
             "Base model",
@@ -1309,30 +844,4 @@ pub fn render_validation_error(
     )
     .with_margin_bottom(8.)
     .finish()
-}
-
-pub fn empty_env_recommendation_message(
-    execution_mode: &RunAgentsExecutionMode,
-    app: &AppContext,
-) -> Option<String> {
-    let RunAgentsExecutionMode::Remote {
-        environment_id,
-        worker_host,
-        ..
-    } = execution_mode
-    else {
-        return None;
-    };
-    if !environment_id.trim().is_empty() {
-        return None;
-    }
-    if !worker_host.eq_ignore_ascii_case(ORCHESTRATION_WARP_WORKER_HOST) {
-        return None;
-    }
-    let env_count = CloudAmbientAgentEnvironment::get_all(app).len();
-    Some(if env_count > 0 {
-        "We recommend selecting an environment for cloud agents.".to_string()
-    } else {
-        "We recommend creating an environment for cloud agents.".to_string()
-    })
 }

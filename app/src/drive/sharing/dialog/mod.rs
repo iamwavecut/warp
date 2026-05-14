@@ -1,12 +1,11 @@
 use std::borrow::Cow;
 
-use crate::ai::blocklist::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel};
 use crate::auth::AuthStateProvider;
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::cloud_object::model::persistence::CloudModelEvent;
 use crate::cloud_object::model::view::CloudViewModel;
 use crate::cloud_object::Owner;
-use crate::cloud_object::{CloudObject, ServerGuestSubject};
+use crate::cloud_object::CloudObject;
 use crate::editor::PropagateAndNoOpNavigationKeys;
 use crate::interaction_sources::SharingDialogSource;
 use crate::menu::{self, Menu, MenuItem, MenuItemFields};
@@ -233,13 +232,6 @@ impl SharingDialog {
             },
         );
 
-        ctx.subscribe_to_model(
-            &BlocklistAIHistoryModel::handle(ctx),
-            |me, _, event, ctx| {
-                me.handle_ai_history_event(event, ctx);
-            },
-        );
-
         let invite_form = EmailInviteForm {
             email_editor: ctx.add_typed_action_view(|ctx| {
                 let mut view = WordBlockEditorView::new(
@@ -342,24 +334,6 @@ impl SharingDialog {
         }
     }
 
-    fn handle_ai_history_event(
-        &mut self,
-        event: &BlocklistAIHistoryEvent,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        if let BlocklistAIHistoryEvent::UpdatedConversationMetadata {
-            conversation_id, ..
-        } = event
-        {
-            // Check if this event is for the conversation we're currently showing
-            if let Some(ShareableObject::AIConversation(target_id)) = &self.target {
-                if target_id == conversation_id {
-                    self.refresh_object_permission_states(ctx);
-                }
-            }
-        }
-    }
-
     /// Sets the target object whose ACLs are shown.
     pub fn set_target(&mut self, target: Option<ShareableObject>, ctx: &mut ViewContext<Self>) {
         self.target = target;
@@ -378,24 +352,17 @@ impl SharingDialog {
             .is_some_and(|target| matches!(target, ShareableObject::Session { .. }))
     }
 
-    /// Returns `true` if the target is an AI conversation that cannot be shared.
-    /// This happens when the conversation hasn't been synced to the cloud.
+    /// Returns `true` if the target cannot be shared.
     pub fn is_unsharable_conversation(&self, app: &AppContext) -> bool {
-        if let Some(ShareableObject::AIConversation(id)) = &self.target {
-            !BlocklistAIHistoryModel::as_ref(app).can_conversation_be_shared(id)
-        } else {
-            false
-        }
+        let _ = app;
+        false
     }
 
     /// The Warp Drive server ID for the target object. `None` if the target is not a Warp Drive
-    /// object or AI conversation.
+    /// object.
     fn target_cloud_object_id(&self, app: &AppContext) -> Option<ServerId> {
         match self.target.as_ref() {
             Some(ShareableObject::WarpDriveObject(id)) => Some(*id),
-            Some(ShareableObject::AIConversation(id)) => BlocklistAIHistoryModel::as_ref(app)
-                .get_server_conversation_metadata(id)
-                .map(|m| ServerId::from_string_lossy(m.metadata.uid.uid())),
             _ => None,
         }
     }
@@ -415,7 +382,6 @@ impl SharingDialog {
                     .get_by_uid(&server_id.uid())
                     .map(|object| object.display_name()),
                 ShareableObject::Session { .. } => Some("session".to_string()),
-                ShareableObject::AIConversation(_) => Some("conversation".to_string()),
             })
             .unwrap_or_else(|| "unknown".to_string())
     }
@@ -444,8 +410,6 @@ impl SharingDialog {
             Some(ShareableObject::WarpDriveObject(id)) => {
                 CloudViewModel::as_ref(app).object_editability(&id.uid(), app)
             }
-            // Always treat AI conversations as "editable," so that the sharing dialog is shown.
-            Some(ShareableObject::AIConversation(_)) => ContentEditability::Editable,
             None => ContentEditability::ReadOnly,
         }
     }
@@ -455,55 +419,6 @@ impl SharingDialog {
         match self.target.as_ref() {
             Some(ShareableObject::WarpDriveObject(id)) => {
                 CloudViewModel::as_ref(app).access_level(&id.uid(), app)
-            }
-            Some(ShareableObject::AIConversation(id)) => {
-                // Get access level from conversation metadata permissions
-                match BlocklistAIHistoryModel::as_ref(app).get_server_conversation_metadata(id) {
-                    Some(server_metadata) => {
-                        let permissions = &server_metadata.permissions;
-                        // Conversation has server metadata, check permissions
-                        AuthStateProvider::as_ref(app)
-                            .get()
-                            .user_id()
-                            .and_then(|user_uid| {
-                                // Check if user is owner
-                                if let Owner::User {
-                                    user_uid: owner_uid,
-                                } = permissions.space
-                                {
-                                    if owner_uid == user_uid {
-                                        return Some(SharingAccessLevel::Full);
-                                    }
-                                }
-                                // Check if user is on the owning team (for team-owned conversations)
-                                if let Owner::Team { team_uid } = permissions.space {
-                                    if UserWorkspaces::as_ref(app).current_team_uid()
-                                        == Some(team_uid)
-                                    {
-                                        return Some(SharingAccessLevel::Full);
-                                    }
-                                }
-                                // Check if user is in guests
-                                let user_firebase_uid = user_uid.to_string();
-                                permissions.guests.iter().find_map(|guest| {
-                                    if let ServerGuestSubject::User { firebase_uid } =
-                                        &guest.subject
-                                    {
-                                        if firebase_uid == &user_firebase_uid {
-                                            return Some(guest.access_level.into());
-                                        }
-                                    }
-                                    None
-                                })
-                            })
-                            .unwrap_or(SharingAccessLevel::View)
-                    }
-                    None => {
-                        // No server metadata yet - conversation hasn't been shared
-                        // The owner (logged in user) should have full access
-                        SharingAccessLevel::Full
-                    }
-                }
             }
             Some(ShareableObject::Session { ref handle, .. }) => {
                 // Sharer always has Full access.
@@ -621,12 +536,6 @@ impl SharingDialog {
                             .map(UserKind::Account)
                     })
                     .map(Subject::User)
-            }
-            ShareableObject::AIConversation(id) => {
-                // Get owner from conversation's server metadata
-                BlocklistAIHistoryModel::as_ref(app)
-                    .get_server_conversation_metadata(id)
-                    .map(|m| Subject::from_owner(m.permissions.space))
             }
         }
     }
@@ -746,70 +655,6 @@ impl SharingDialog {
             return;
         }
 
-        // Handle AI conversations separately
-        if let Some(ShareableObject::AIConversation(conversation_id)) = &self.target {
-            // Use the helper that checks both loaded conversations and historical metadata
-            if let Some(server_metadata) = BlocklistAIHistoryModel::as_ref(ctx)
-                .get_server_conversation_metadata(conversation_id)
-            {
-                let permissions = &server_metadata.permissions;
-                // Populate guest states from conversation's server permissions
-                self.guest_states = permissions
-                    .guests
-                    .iter()
-                    .filter_map(|guest| {
-                        // Convert ServerGuestSubject to Subject
-                        let subject = match &guest.subject {
-                            ServerGuestSubject::User { firebase_uid } => {
-                                let user_uid = crate::auth::UserUid::new(firebase_uid);
-                                Some(super::Subject::User(super::UserKind::Account(user_uid)))
-                            }
-                            ServerGuestSubject::PendingUser { email } => {
-                                Some(super::Subject::PendingUser {
-                                    email: email.clone(),
-                                })
-                            }
-                            ServerGuestSubject::Team { team_uid } => {
-                                Some(super::Subject::Team(super::TeamKind::Team {
-                                    team_uid: *team_uid,
-                                }))
-                            }
-                        }?;
-
-                        Some(GuestState {
-                            menu_button_handle: Default::default(),
-                            subject,
-                            current_access_level: guest.access_level.into(),
-                            tooltip_handle: Default::default(),
-                            inheritance: None, // AI conversations don't support inheritance yet
-                        })
-                    })
-                    .collect();
-
-                // Handle link sharing state
-                self.link_sharing_state = match &permissions.anyone_link_sharing {
-                    Some(link_sharing) => LinkSharingState {
-                        access_level: Some(link_sharing.access_level.into()),
-                        tooltip_handle: Default::default(),
-                        inheritance: None,
-                    },
-                    None => Default::default(),
-                };
-
-                self.guest_states
-                    .sort_by_cached_key(|guest| guest.subject.name(ctx));
-                ctx.notify();
-                return;
-            }
-            // If permissions not found, clear states
-            self.guest_states.clear();
-            self.guest_states.shrink_to_fit();
-            self.link_sharing_state = Default::default();
-            self.team_sharing_state = Default::default();
-            ctx.notify();
-            return;
-        }
-
         match self.target_cloud_object(ctx) {
             Some(object) => {
                 let object_id = object.sync_id();
@@ -896,8 +741,6 @@ impl SharingDialog {
         if let Some(guest) = self.guest_states.get(guest_index) {
             let current_access_level = guest.current_access_level;
             let inherited_access = guest.inheritance.is_some();
-            let is_ai_conversation =
-                matches!(self.target, Some(ShareableObject::AIConversation(_)));
             // Check if this is a team guest - team removal is only supported for non-session targets
             let is_team_guest = matches!(guest.subject, Subject::Team(_));
             let is_session = matches!(self.target, Some(ShareableObject::Session { .. }));
@@ -912,23 +755,19 @@ impl SharingDialog {
                     )
                     .into_item()];
 
-                // Only add Edit option if not an AI conversation
-                if !is_ai_conversation {
-                    items.push(
-                        MenuItemFields::new(SharingAccessLevel::Edit.label())
-                            .with_on_select_action(SharingDialogAction::SetGuestAccessLevel(
-                                SharingAccessLevel::Edit,
-                            ))
-                            .with_disabled(
-                                inherited_access
-                                    && current_access_level >= SharingAccessLevel::Edit,
-                            )
-                            .into_item(),
-                    );
-                }
+                items.push(
+                    MenuItemFields::new(SharingAccessLevel::Edit.label())
+                        .with_on_select_action(SharingDialogAction::SetGuestAccessLevel(
+                            SharingAccessLevel::Edit,
+                        ))
+                        .with_disabled(
+                            inherited_access && current_access_level >= SharingAccessLevel::Edit,
+                        )
+                        .into_item(),
+                );
 
                 // Add Remove option for non-team guests, or for team guests in non-session contexts
-                // (team removal is supported for WarpDrive objects and AI conversations, but not sessions)
+                // (team removal is supported for Warp Drive objects, but not sessions)
                 if !is_team_guest || !is_session {
                     items.push(MenuItem::Separator);
                     items.push(
@@ -943,13 +782,7 @@ impl SharingDialog {
                 menu.set_selected_by_index(
                     match current_access_level {
                         SharingAccessLevel::View => 0,
-                        SharingAccessLevel::Edit => {
-                            if is_ai_conversation {
-                                0
-                            } else {
-                                1
-                            }
-                        }
+                        SharingAccessLevel::Edit => 1,
                         // Not yet supported, so default to view.
                         SharingAccessLevel::Full => 0,
                     },
@@ -985,9 +818,6 @@ impl SharingDialog {
             }
             Some(ShareableObject::Session { handle, .. }) => {
                 self.remove_targeted_guest_for_session(idx, handle.clone(), ctx);
-            }
-            Some(ShareableObject::AIConversation(conversation_id)) => {
-                self.remove_targeted_guest_for_conversation(idx, *conversation_id, ctx);
             }
             None => (),
         }
@@ -1048,14 +878,6 @@ impl SharingDialog {
             }
             Some(ShareableObject::Session { handle, .. }) => {
                 self.set_targeted_guest_access_for_session(idx, access_level, handle.clone(), ctx);
-            }
-            Some(ShareableObject::AIConversation(conversation_id)) => {
-                self.set_targeted_guest_access_for_conversation(
-                    idx,
-                    access_level,
-                    *conversation_id,
-                    ctx,
-                );
             }
             None => (),
         };
@@ -1133,131 +955,13 @@ impl SharingDialog {
         self.set_open_menu(OpenMenuState::None, ctx);
     }
 
-    fn remove_targeted_guest_for_conversation(
-        &mut self,
-        guest_idx: usize,
-        conversation_id: crate::ai::agent::conversation::AIConversationId,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        let Some(guest) = self.guest_states.get(guest_idx) else {
-            return;
-        };
-
-        // Get the conversation's server_id from metadata
-        let server_id = match BlocklistAIHistoryModel::as_ref(ctx)
-            .get_server_conversation_metadata(&conversation_id)
-            .map(|m| ServerId::from_string_lossy(m.metadata.uid.uid()))
-        {
-            Some(id) => id,
-            None => {
-                log::warn!(
-                    "AI conversation {:?} has no server_id for permission update",
-                    conversation_id
-                );
-                return;
-            }
-        };
-
-        let guest_identifier = guest.subject.to_guest_identifier(ctx);
-        let Some(guest_identifier) = guest_identifier else {
-            return;
-        };
-
-        // Call UpdateManager to remove the guest
-        UpdateManager::handle(ctx).update(ctx, |update_manager, ctx| {
-            update_manager.remove_ai_conversation_guest(
-                server_id,
-                conversation_id,
-                guest_identifier,
-                ctx,
-            );
-        });
-    }
-
-    fn set_targeted_guest_access_for_conversation(
-        &mut self,
-        guest_idx: usize,
-        access_level: SharingAccessLevel,
-        conversation_id: crate::ai::agent::conversation::AIConversationId,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        let guest_email = match self.guest_states.get(guest_idx) {
-            Some(guest) => match guest.subject.email(ctx) {
-                Some(email) => email.to_owned(),
-                None => return,
-            },
-            None => return,
-        };
-
-        // Get the conversation's server_id from metadata
-        let server_id = match BlocklistAIHistoryModel::as_ref(ctx)
-            .get_server_conversation_metadata(&conversation_id)
-            .map(|m| ServerId::from_string_lossy(m.metadata.uid.uid()))
-        {
-            Some(id) => id,
-            None => {
-                log::warn!(
-                    "AI conversation {:?} has no server_id for permission update",
-                    conversation_id
-                );
-                return;
-            }
-        };
-
-        // Call UpdateManager to update the guest's access level
-        UpdateManager::handle(ctx).update(ctx, |update_manager, ctx| {
-            update_manager.update_ai_conversation_guests(
-                server_id,
-                conversation_id,
-                vec![guest_email],
-                access_level.into(),
-                ctx,
-            );
-        });
-    }
-
-    fn add_guests_for_conversation(
-        &mut self,
-        guest_emails: Vec<String>,
-        access_level: SharingAccessLevel,
-        conversation_id: crate::ai::agent::conversation::AIConversationId,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        // Get the conversation's server_id from metadata
-        let server_id = match BlocklistAIHistoryModel::as_ref(ctx)
-            .get_server_conversation_metadata(&conversation_id)
-            .map(|m| ServerId::from_string_lossy(m.metadata.uid.uid()))
-        {
-            Some(id) => id,
-            None => {
-                log::warn!(
-                    "AI conversation {:?} has no server_id for permission update",
-                    conversation_id
-                );
-                return;
-            }
-        };
-
-        // Call UpdateManager to add guests
-        UpdateManager::handle(ctx).update(ctx, |update_manager, ctx| {
-            update_manager.add_ai_conversation_guests(
-                server_id,
-                conversation_id,
-                guest_emails,
-                access_level.into(),
-                ctx,
-            );
-        });
-    }
-
     /// Create the access level selector dropdown for the email invitation form.
     fn build_invite_access_level_menu(
         ctx: &mut ViewContext<Self>,
     ) -> ViewHandle<Menu<SharingDialogAction>> {
         let menu = ctx.add_typed_action_view(|_| {
             let mut menu = Menu::new();
-            // Note: Items will be updated dynamically in reset_invite_access_level_menu
-            // based on whether the target is an AI conversation
+            // Note: Items are refreshed in reset_invite_access_level_menu when the target changes.
             menu.add_items([
                 MenuItemFields::new(SharingAccessLevel::View.label())
                     .with_on_select_action(SharingDialogAction::SetInviteAccessLevel(
@@ -1281,8 +985,6 @@ impl SharingDialog {
 
     /// Reset the invite access level menu based on the current target.
     fn reset_invite_access_level_menu(&mut self, ctx: &mut ViewContext<Self>) {
-        let is_ai_conversation = matches!(self.target, Some(ShareableObject::AIConversation(_)));
-
         self.invite_form.access_level_menu.update(ctx, |menu, ctx| {
             let mut items = vec![MenuItemFields::new(SharingAccessLevel::View.label())
                 .with_on_select_action(SharingDialogAction::SetInviteAccessLevel(
@@ -1290,29 +992,19 @@ impl SharingDialog {
                 ))
                 .into_item()];
 
-            // Only add Edit option if not an AI conversation
-            if !is_ai_conversation {
-                items.push(
-                    MenuItemFields::new(SharingAccessLevel::Edit.label())
-                        .with_on_select_action(SharingDialogAction::SetInviteAccessLevel(
-                            SharingAccessLevel::Edit,
-                        ))
-                        .into_item(),
-                );
-            }
+            items.push(
+                MenuItemFields::new(SharingAccessLevel::Edit.label())
+                    .with_on_select_action(SharingDialogAction::SetInviteAccessLevel(
+                        SharingAccessLevel::Edit,
+                    ))
+                    .into_item(),
+            );
 
             menu.set_items(items, ctx);
-            // Always select View (index 0) for AI conversations
             menu.set_selected_by_index(
                 match self.invite_form.selected_access_level {
                     SharingAccessLevel::View => 0,
-                    SharingAccessLevel::Edit => {
-                        if is_ai_conversation {
-                            0
-                        } else {
-                            1
-                        }
-                    }
+                    SharingAccessLevel::Edit => 1,
                     SharingAccessLevel::Full => 0,
                 },
                 ctx,
@@ -1550,14 +1242,6 @@ impl SharingDialog {
                         ctx,
                     );
                 });
-            }
-            Some(ShareableObject::AIConversation(conversation_id)) => {
-                self.add_guests_for_conversation(
-                    form_state.invitee_emails,
-                    self.invite_form.selected_access_level,
-                    *conversation_id,
-                    ctx,
-                );
             }
             None => return,
         }
@@ -1942,7 +1626,6 @@ impl SharingDialog {
     fn reset_link_sharing_menu(&mut self, ctx: &mut ViewContext<Self>) {
         let inherited_access = self.link_sharing_state.inheritance.is_some();
         let current_access_level = self.link_sharing_state.access_level;
-        let is_ai_conversation = matches!(self.target, Some(ShareableObject::AIConversation(_)));
 
         let mut items = vec![
             MenuItemFields::new("Only people invited")
@@ -1965,19 +1648,16 @@ impl SharingDialog {
                 .into_item(),
         ];
 
-        // Only add Edit option if not an AI conversation
-        if !is_ai_conversation {
-            items.push(
-                MenuItemFields::new(SharingAccessLevel::Edit.label())
-                    .with_on_select_action(SharingDialogAction::SetLinkPermissions(Some(
-                        SharingAccessLevel::Edit,
-                    )))
-                    .with_disabled(
-                        inherited_access && current_access_level >= Some(SharingAccessLevel::Edit),
-                    )
-                    .into_item(),
-            );
-        }
+        items.push(
+            MenuItemFields::new(SharingAccessLevel::Edit.label())
+                .with_on_select_action(SharingDialogAction::SetLinkPermissions(Some(
+                    SharingAccessLevel::Edit,
+                )))
+                .with_disabled(
+                    inherited_access && current_access_level >= Some(SharingAccessLevel::Edit),
+                )
+                .into_item(),
+        );
 
         self.link_sharing_menu.update(ctx, |menu, ctx| {
             menu.set_items(items, ctx);
@@ -1985,13 +1665,7 @@ impl SharingDialog {
                 match current_access_level {
                     None => 0,
                     Some(SharingAccessLevel::View) => 3,
-                    Some(SharingAccessLevel::Edit) => {
-                        if is_ai_conversation {
-                            3
-                        } else {
-                            4
-                        }
-                    }
+                    Some(SharingAccessLevel::Edit) => 4,
                     Some(SharingAccessLevel::Full) => 3,
                 },
                 ctx,
@@ -2517,28 +2191,6 @@ impl TypedActionView for SharingDialog {
                         view.update(ctx, |view, ctx| {
                             view.update_session_link_permissions(role, ctx)
                         });
-                    }
-                } else if let Some(ShareableObject::AIConversation(conversation_id)) =
-                    self.target.as_ref()
-                {
-                    // Get the conversation's server_id from metadata
-                    if let Some(server_id) = BlocklistAIHistoryModel::as_ref(ctx)
-                        .get_server_conversation_metadata(conversation_id)
-                        .map(|m| ServerId::from_string_lossy(m.metadata.uid.uid()))
-                    {
-                        UpdateManager::handle(ctx).update(ctx, move |update_manager, ctx| {
-                            update_manager.set_ai_conversation_link_permissions(
-                                server_id,
-                                *conversation_id,
-                                *access_level,
-                                ctx,
-                            );
-                        });
-                    } else {
-                        log::warn!(
-                            "AI conversation {:?} has no server_id for link permission update",
-                            conversation_id
-                        );
                     }
                 }
                 ctx.notify();

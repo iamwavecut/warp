@@ -31,8 +31,6 @@ pub struct WarpServerConfig {
     /// The URL for the session sharing server, or [`None`] if session sharing is not
     /// supported.
     pub session_sharing_server_url: Option<Cow<'static, str>>,
-    /// The API key to use when making requests to Firebase Authentication endpoints.
-    pub firebase_auth_api_key: Cow<'static, str>,
 }
 
 impl WarpServerConfig {
@@ -41,7 +39,6 @@ impl WarpServerConfig {
             server_root_url: "http://127.0.0.1:9".into(),
             rtc_server_url: "ws://127.0.0.1:9/graphql/v2".into(),
             session_sharing_server_url: None,
-            firebase_auth_api_key: "".into(),
         }
     }
 }

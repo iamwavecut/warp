@@ -30,31 +30,8 @@ use crate::{
     appearance::Appearance,
     changelog_model::ChangelogModel,
     ui_components::icons,
-    util::links,
     workspace::{WorkspaceAction, PANEL_HEADER_HEIGHT},
 };
-
-// Footer icons
-const DOCS_SVG_PATH: &str = "bundled/svg/gitbook-logo.svg";
-
-#[derive(Debug, Clone, Copy)]
-pub enum ResourceCenterFooterItem {
-    Docs,
-}
-
-impl ResourceCenterFooterItem {
-    pub fn ui_label(&self) -> &'static str {
-        match self {
-            ResourceCenterFooterItem::Docs => "Docs",
-        }
-    }
-
-    pub fn svg_path(&self) -> &'static str {
-        match self {
-            ResourceCenterFooterItem::Docs => DOCS_SVG_PATH,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResourceCenterPage {
@@ -100,7 +77,6 @@ pub struct ResourceCenterView {
 pub enum ResourceCenterAction {
     Close,
     NavigatePage(ResourceCenterPage),
-    FooterItemClick(ResourceCenterFooterItem),
 }
 
 impl ResourceCenterView {
@@ -238,16 +214,6 @@ impl ResourceCenterView {
             main_handle.update(ctx, |main_view, ctx| {
                 main_view.set_action_target(window_id, input_id, ctx);
             });
-        }
-    }
-
-    fn footer_item_click_action(
-        &mut self,
-        item: &ResourceCenterFooterItem,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        match item {
-            ResourceCenterFooterItem::Docs => ctx.open_url(links::USER_DOCS_URL),
         }
     }
 
@@ -392,51 +358,8 @@ impl ResourceCenterView {
         )
     }
 
-    fn render_footer_button(
-        &self,
-        item: ResourceCenterFooterItem,
-        appearance: &Appearance,
-    ) -> Box<dyn Element> {
-        let mouse_state = match item {
-            ResourceCenterFooterItem::Docs => self.button_mouse_states.view_user_docs.clone(),
-        };
-
-        let icon = ConstrainedBox::new(
-            Icon::new(
-                item.svg_path(),
-                appearance.theme().active_ui_detail().into_solid(),
-            )
-            .finish(),
-        )
-        .with_height(FOOTER_ICON_SIZE)
-        .with_width(FOOTER_ICON_SIZE);
-
-        let button = appearance
-            .ui_builder()
-            .button(ButtonVariant::Text, mouse_state)
-            .with_text_label(item.ui_label().to_string())
-            .with_style(
-                UiComponentStyles::default().set_padding(Coords::default().left(SCROLLBAR_OFFSET)),
-            )
-            .build()
-            .on_click(move |ctx, _, _| {
-                ctx.dispatch_typed_action(ResourceCenterAction::FooterItemClick(item));
-            })
-            .with_cursor(Cursor::PointingHand)
-            .finish();
-
-        Flex::row()
-            .with_child(Align::new(icon.finish()).finish())
-            .with_child(button)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .finish()
-    }
-
     fn render_footer(&self, appearance: &Appearance) -> Box<dyn Element> {
-        let docs_button = self.render_footer_button(ResourceCenterFooterItem::Docs, appearance);
-
         let footer = Flex::row()
-            .with_child(docs_button)
             .with_main_axis_size(MainAxisSize::Max)
             .with_main_axis_alignment(MainAxisAlignment::SpaceEvenly)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -462,7 +385,6 @@ impl TypedActionView for ResourceCenterView {
         match action {
             Close => self.close(ctx),
             NavigatePage(new_page) => self.set_current_page(*new_page, ctx),
-            FooterItemClick(item) => self.footer_item_click_action(item, ctx),
         }
     }
 }

@@ -173,7 +173,7 @@ impl View for WasmNUXDialog {
                         .with_child(
                             appearance
                                 .ui_builder()
-                                .span("Warp is the intelligent terminal with AI and your dev team's knowledge built-in.")
+                                .span("Warp is the intelligent terminal with local AI and BYOK provider support.")
                                 .with_style(UiComponentStyles {
                                     font_weight: Some(Weight::Thin),
                                     font_color: Some(
@@ -218,8 +218,8 @@ impl View for WasmNUXDialog {
                 ))
         } else {
             let object_kind = match web_intent_parser::current_web_intent() {
-                Some(WebIntent::DriveObject(_)) => "Warp Drive objects",
-                Some(WebIntent::SessionView(_)) => "shared sessions",
+                Some(WebIntent::DriveObject(_)) => "local objects",
+                Some(WebIntent::SessionView(_)) => "disabled hosted shared sessions",
                 _ => "Warp links",
             };
 
@@ -278,12 +278,11 @@ impl TypedActionView for WasmNUXDialog {
                 }
             }
             WasmNUXDialogAction::OpenDownloadDesktopAppLink => {
-                ctx.open_url("https://app.warp.dev/get_warp");
-                self.requested_download = true;
+                log::info!("Hosted desktop download link is disabled in the local-first build.");
                 ctx.notify();
             }
             WasmNUXDialogAction::LearnMore => {
-                ctx.open_url("https://www.warp.dev");
+                log::info!("Hosted marketing link is disabled in the local-first build.");
             }
         }
     }

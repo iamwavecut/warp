@@ -10,13 +10,12 @@ use crate::workspaces::user_profiles::UserProfiles;
 use chrono::{DateTime, Utc};
 use session_sharing_protocol::common::SessionId;
 use warp_cli::agent::Harness;
-use warp_core::features::FeatureFlag;
 use warpui::{AppContext, SingletonEntity};
 
 use super::{
     artifacts_match_filter, AgentManagementFilters, AgentRunDisplayStatus, ArtifactFilter,
-    ConversationMetadata, CreatedOnFilter, CreatorFilter, EnvironmentFilter, HarnessFilter,
-    OwnerFilter, SessionStatus, SourceFilter, StatusFilter,
+    ConversationMetadata, CreatedOnFilter, CreatorFilter, HarnessFilter, OwnerFilter,
+    SessionStatus, SourceFilter, StatusFilter,
 };
 
 const SESSION_EXPIRATION_TIME: chrono::Duration = chrono::Duration::weeks(1);
@@ -140,7 +139,6 @@ pub struct AgentConversationPrincipal {
 pub enum AgentConversationProvenance {
     LocalInteractive,
     AmbientRun,
-    CloudSyncedConversation,
 }
 
 /// Availability flags for the source data that contributed to an entry.
@@ -174,7 +172,6 @@ impl AgentConversationEntry {
             && self.matches_source(&filters.source)
             && self.matches_created_on(&filters.created_on)
             && self.matches_artifact(&filters.artifact)
-            && self.matches_environment(&filters.environment)
             && self.matches_harness(&filters.harness)
     }
 
@@ -246,14 +243,6 @@ impl AgentConversationEntry {
         artifacts_match_filter(&self.display.artifacts, artifact_filter)
     }
 
-    fn matches_environment(&self, environment_filter: &EnvironmentFilter) -> bool {
-        match environment_filter {
-            EnvironmentFilter::All => true,
-            EnvironmentFilter::NoEnvironment => self.display.environment_id.is_none(),
-            EnvironmentFilter::Specific(id) => self.display.environment_id.as_ref() == Some(id),
-        }
-    }
-
     fn matches_harness(&self, harness_filter: &HarnessFilter) -> bool {
         match harness_filter {
             HarnessFilter::All => true,
@@ -310,14 +299,6 @@ fn task_session_id(task: &AmbientAgentTask) -> Option<SessionId> {
 }
 
 fn task_session_status(task: &AmbientAgentTask) -> SessionStatus {
-    if FeatureFlag::CloudConversations.is_enabled() {
-        return if task.active_run_execution().session_link.is_some() {
-            SessionStatus::Available
-        } else {
-            SessionStatus::Unavailable
-        };
-    }
-
     if task.active_run_execution().session_id.is_some() {
         SessionStatus::Available
     } else if (Utc::now() - task.created_at) > SESSION_EXPIRATION_TIME {
@@ -423,11 +404,10 @@ pub(super) fn entry_for_task(
         .is_some();
     let can_open = has_open_ambient_session
         || has_active_session_id
-        || local_conversation_id.is_some()
-        || server_conversation_token.is_some();
+        || local_conversation_id.is_some();
     let can_copy_link = task.has_active_execution()
         && task.active_run_execution().session_link.is_some()
-        || server_conversation_token.is_some();
+        && has_active_session_id;
 
     AgentConversationEntry {
         id: AgentConversationEntryId::AmbientRun(task.task_id),
@@ -485,9 +465,7 @@ pub(super) fn entry_for_task(
         capabilities: AgentConversationCapabilities {
             can_open,
             can_copy_link,
-            can_share: task.conversation_id().is_some()
-                || local_conversation_id
-                    .is_some_and(|id| history_model.can_conversation_be_shared(&id)),
+            can_share: false,
             can_delete: false,
             can_fork_locally: local_conversation_id.is_some(),
             can_cancel: status.is_cancellable(),
@@ -538,12 +516,6 @@ fn entry_for_conversation_parts(
             history_model,
         )
         .is_some();
-    let provenance = if has_cloud_data {
-        AgentConversationProvenance::CloudSyncedConversation
-    } else {
-        AgentConversationProvenance::LocalInteractive
-    };
-
     AgentConversationEntry {
         id: AgentConversationEntryId::Conversation(conversation_id),
         identity: AgentConversationIdentity {
@@ -558,7 +530,7 @@ fn entry_for_conversation_parts(
             ),
             session_id: None,
         },
-        provenance,
+        provenance: AgentConversationProvenance::LocalInteractive,
         display: AgentConversationDisplayData {
             title: conversation_title(&metadata, history_model),
             initial_query: metadata.nav_data.initial_query.clone(),
@@ -595,14 +567,9 @@ fn entry_for_conversation_parts(
                 .is_some_and(AIConversationMetadata::is_ambient_agent_conversation),
         },
         capabilities: AgentConversationCapabilities {
-            can_open: has_local_persisted_data || has_cloud_data,
-            can_copy_link: server_conversation_token_for_conversation(
-                conversation_id,
-                Some(&metadata.nav_data),
-                history_model,
-            )
-            .is_some(),
-            can_share: history_model.can_conversation_be_shared(&conversation_id),
+            can_open: has_local_persisted_data,
+            can_copy_link: false,
+            can_share: false,
             can_delete: has_local_persisted_data,
             can_fork_locally: has_local_persisted_data,
             can_cancel: status.is_cancellable(),

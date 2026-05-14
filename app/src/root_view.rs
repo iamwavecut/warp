@@ -7,8 +7,7 @@ use crate::auth::auth_state::AuthState;
 use crate::auth::auth_view_modal::AuthRedirectPayload;
 use crate::auth::login_slide::{LoginSlideEvent, LoginSlideSource, LoginSlideView};
 use crate::auth::needs_sso_link_view::NeedsSsoLinkView;
-use crate::auth::paste_auth_token_modal::{PasteAuthTokenModalEvent, PasteAuthTokenModalView};
-use crate::auth::{AuthStateProvider, LoginFailureReason};
+use crate::auth::AuthStateProvider;
 use crate::autoupdate::{AutoupdateState, AutoupdateStateEvent};
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::cloud_object::{GenericStringObjectFormat, JsonObjectType, ObjectType};
@@ -20,9 +19,6 @@ use crate::interval_timer::IntervalTimer;
 use crate::launch_configs::launch_config;
 use crate::notebooks::manager::NotebookSource;
 use crate::settings::apply_onboarding_settings;
-use crate::settings::cloud_preferences_syncer::{
-    CloudPreferencesSyncer, CloudPreferencesSyncerEvent,
-};
 use crate::settings::AISettings;
 use crate::workspace::tab_settings::TabSettings;
 use onboarding::{
@@ -33,7 +29,6 @@ use crate::interaction_sources::LaunchConfigUiLocation;
 use crate::persistence::ModelEvent;
 use crate::report_if_error;
 use crate::server::cloud_objects::update_manager::UpdateManager;
-use crate::server::experiments::is_free_user_no_ai_experiment_active;
 use crate::server::ids::SyncId;
 use crate::server::server_api::auth::UserAuthenticationError;
 use crate::server::server_api::ServerApiProvider;
@@ -42,13 +37,12 @@ use crate::settings::QuakeModeSettings;
 use crate::settings::ThemeSettings;
 use crate::settings_view::flags;
 use crate::settings_view::mcp_servers_page::MCPServersSettingsPage;
-use crate::settings_view::OpenTeamsSettingsModalArgs;
 use crate::settings_view::SettingsSection;
 use crate::terminal::available_shells::AvailableShell;
 use crate::terminal::general_settings::GeneralSettings;
 use crate::terminal::keys_settings::KeysSettings;
 use crate::terminal::shell::ShellType;
-use crate::terminal::view::{cell_size_and_padding, TerminalAction};
+use crate::terminal::view::cell_size_and_padding;
 use crate::themes::onboarding_theme_picker_themes;
 use crate::themes::theme::{AnsiColorIdentifier, Blend, Fill, ThemeKind, WarpThemeConfig};
 use crate::uri::OpenMCPSettingsArgs;
@@ -82,7 +76,6 @@ use parking_lot::Mutex;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde::{Deserialize, Serialize};
-use session_sharing_protocol::common::SessionId;
 use settings::Setting as _;
 use std::path::Path;
 use std::sync::mpsc::SyncSender;
@@ -96,9 +89,7 @@ use warpui::keymap::{EditableBinding, FixedBinding};
 use warpui::windowing::WindowManager;
 
 use crate::ai::llms::{LLMPreferences, LLMPreferencesEvent};
-use crate::ai::onboarding::{build_onboarding_models, current_onboarding_auth_state};
-use crate::pricing::{PricingInfoModel, PricingInfoModelEvent};
-use warp_graphql::billing::StripeSubscriptionPlan;
+use crate::ai::onboarding::build_onboarding_models;
 
 use warpui::elements::{
     Border, ChildAnchor, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Stack,
@@ -111,9 +102,6 @@ use warpui::{
     AppContext, Element, Entity, TypedActionView, View, ViewContext, ViewHandle, WindowId,
 };
 use warpui::{FocusContext, NextNewWindowsHasThisWindowsBoundsUponClose};
-
-#[cfg(target_family = "wasm")]
-use crate::auth::web_handoff::{WebHandoffEvent, WebHandoffView};
 
 const WINDOW_TITLE: &str = "Warp";
 
@@ -231,42 +219,6 @@ pub struct SubshellCommandArg {
     pub shell_type: Option<ShellType>,
 }
 
-// Arguments for creating an ambient agent environment.
-pub struct CreateEnvironmentArg {
-    pub repos: Vec<String>,
-}
-
-impl CreateEnvironmentArg {
-    /// Formats the `/create-environment` slash command invocation.
-    pub fn to_query(&self) -> String {
-        // Filter repos to accept either valid URLs or POSIX portable pathnames for security.
-        //
-        // Note: we also allow *absolute* POSIX paths (e.g., /Users/me/repo) as long as every
-        // component is portable. This is important for local indexed repos.
-        let safe_repos = self
-            .repos
-            .iter()
-            .filter(|repo| {
-                // Accept valid URLs (e.g., https://github.com/user/repo)
-                Url::parse(repo).is_ok()
-                    // Or valid POSIX portable pathnames (e.g., user/repo)
-                    || warp_util::path::is_posix_portable_pathname(repo)
-                    // Or absolute POSIX paths with portable components (e.g., /Users/me/repo)
-                    || repo
-                        .strip_prefix('/')
-                        .is_some_and(warp_util::path::is_posix_portable_pathname)
-            })
-            .join(" ");
-
-        if safe_repos.is_empty() {
-            // Include a trailing space to trigger slash command syntax highlighting and ghost text.
-            "/create-environment ".to_string()
-        } else {
-            format!("/create-environment {}", safe_repos)
-        }
-    }
-}
-
 pub fn init(app: &mut AppContext) {
     app.register_binding_validator::<RootView>(is_binding_pty_compliant);
 
@@ -311,14 +263,6 @@ pub fn init(app: &mut AppContext) {
         RootView::add_session_at_path,
     );
     app.add_action(
-        "root_view:handle_team_intent_link_action",
-        RootView::handle_team_intent_link_action,
-    );
-    app.add_action(
-        "root_view:open_team_settings_page",
-        RootView::open_team_settings_page,
-    );
-    app.add_action(
         "root_view:handle_notification_click",
         RootView::handle_notification_click,
     );
@@ -338,17 +282,6 @@ pub fn init(app: &mut AppContext) {
     );
     app.add_action("root_view:toggle_fullscreen", RootView::toggle_fullscreen);
 
-    if FeatureFlag::ViewingSharedSessions.is_enabled() {
-        app.add_global_action(
-            "root_view:join_shared_session",
-            open_shared_session_as_viewer,
-        );
-        app.add_action(
-            "root_view:join_shared_session_in_existing_window",
-            RootView::join_shared_session_in_existing_window,
-        );
-    }
-
     app.add_global_action(
         "root_view:open_conversation_viewer",
         open_conversation_viewer,
@@ -358,19 +291,6 @@ pub fn init(app: &mut AppContext) {
         RootView::open_cloud_conversation_in_existing_window,
     );
 
-    app.add_global_action("root_view:create_environment", create_environment);
-    app.add_global_action(
-        "root_view:create_environment_and_run",
-        create_environment_and_run,
-    );
-    app.add_action(
-        "root_view:create_environment_in_existing_window",
-        RootView::create_environment_in_existing_window,
-    );
-    app.add_action(
-        "root_view:create_environment_in_existing_window_and_run",
-        RootView::create_environment_in_existing_window_and_run,
-    );
     app.add_global_action(
         "root_view:open_drive_object_new_window",
         open_warp_drive_object,
@@ -380,14 +300,6 @@ pub fn init(app: &mut AppContext) {
         RootView::open_warp_drive_object_in_existing_window,
     );
 
-    app.add_global_action(
-        "root_view:open_team_settings_with_email_invite_in_new_window",
-        open_team_settings_with_email_invite_in_new_window,
-    );
-    app.add_action(
-        "root_view:open_team_settings_with_email_invite_in_existing_window",
-        RootView::open_team_settings_with_email_invite_in_existing_window,
-    );
 
     app.add_global_action(
         "root_view:open_settings_page_in_new_window",
@@ -832,16 +744,6 @@ pub(crate) fn open_new_from_path(
     )
 }
 
-/// Opens a new window and tries to join session identified by the session ID.
-fn open_shared_session_as_viewer(session_id: &SessionId, ctx: &mut AppContext) {
-    open_new_with_workspace_source(
-        NewWorkspaceSource::SharedSessionAsViewer {
-            session_id: *session_id,
-        },
-        ctx,
-    );
-}
-
 /// Opens a new window to view a persisted view-only cloud conversation.
 /// The conversation data is loaded via GraphQL API.
 fn open_conversation_viewer(conversation_id: &ServerConversationToken, ctx: &mut AppContext) {
@@ -853,91 +755,6 @@ fn open_conversation_viewer(conversation_id: &ServerConversationToken, ctx: &mut
         },
         ctx,
     );
-}
-
-/// Opens a new window and starts the guided `/create-environment` setup flow.
-fn create_environment(arg: &CreateEnvironmentArg, ctx: &mut AppContext) {
-    let repos = arg.repos.clone();
-    let (window_id, root_handle) = open_new_with_workspace_source(
-        NewWorkspaceSource::Session {
-            options: Box::default(),
-        },
-        ctx,
-    );
-
-    root_handle.update(ctx, |root_view, ctx| {
-        if let AuthOnboardingState::Terminal(workspace_handle) = &root_view.auth_onboarding_state {
-            workspace_handle.update(ctx, |workspace, ctx| {
-                workspace
-                    .active_tab_pane_group()
-                    .update(ctx, |pane_group, ctx| {
-                        pane_group.set_title("Create Environment", ctx);
-
-                        if let Some(terminal_view) = pane_group.active_session_view(ctx) {
-                            terminal_view.update(ctx, |_, ctx| {
-                                ctx.dispatch_typed_action_deferred(
-                                    TerminalAction::SetupCloudEnvironment(repos.clone()),
-                                );
-                            });
-                        }
-                    });
-            });
-        }
-    });
-
-    ctx.windows().show_window_and_focus_app(window_id);
-}
-
-/// Opens a new window and starts the guided `/create-environment` setup flow immediately.
-fn create_environment_and_run(arg: &CreateEnvironmentArg, ctx: &mut AppContext) {
-    let repos = arg.repos.clone();
-    let (window_id, root_handle) = open_new_with_workspace_source(
-        NewWorkspaceSource::Session {
-            options: Box::default(),
-        },
-        ctx,
-    );
-
-    root_handle.update(ctx, |root_view, ctx| {
-        if let AuthOnboardingState::Terminal(workspace_handle) = &root_view.auth_onboarding_state {
-            workspace_handle.update(ctx, |workspace, ctx| {
-                workspace
-                    .active_tab_pane_group()
-                    .update(ctx, |pane_group, ctx| {
-                        pane_group.set_title("Create Environment", ctx);
-
-                        if let Some(terminal_view) = pane_group.active_session_view(ctx) {
-                            terminal_view.update(ctx, |_, ctx| {
-                                ctx.dispatch_typed_action_deferred(
-                                    TerminalAction::SetupCloudEnvironmentAndStart(repos.clone()),
-                                );
-                            });
-                        }
-                    });
-            });
-        }
-    });
-
-    ctx.windows().show_window_and_focus_app(window_id);
-}
-fn open_team_settings_with_email_invite_in_new_window(
-    arg: &OpenTeamsSettingsModalArgs,
-    ctx: &mut AppContext,
-) {
-    let root_handle = open_new_window_get_handles(None, ctx).1;
-    root_handle.update(ctx, |root_view, ctx| {
-        if let AuthOnboardingState::Terminal(workspace_view_handle) =
-            &root_view.auth_onboarding_state
-        {
-            let initial_load_complete = UpdateManager::as_ref(ctx).initial_load_complete();
-            let email_invite = arg.invite_email.clone();
-            workspace_view_handle.update(ctx, |_, ctx| {
-                let _ = ctx.spawn(initial_load_complete, move |workspace, _, ctx| {
-                    workspace.show_team_settings_page_with_email_invite(email_invite.as_ref(), ctx)
-                });
-            });
-        }
-    });
 }
 
 fn open_settings_page_in_new_window(section: &SettingsSection, ctx: &mut AppContext) {
@@ -1431,9 +1248,6 @@ pub enum NewWorkspaceSource {
     Session {
         options: Box<NewTerminalOptions>,
     },
-    SharedSessionAsViewer {
-        session_id: SessionId,
-    },
     FromCloudConversationId {
         conversation_id: ServerConversationToken,
     },
@@ -1537,9 +1351,6 @@ fn mark_local_onboarding_completed(ctx: &AppContext) {
 enum AuthOnboardingState {
     Auth(Box<WorkspaceArgs>),
     ConfirmIncomingAuth(Box<WorkspaceArgs>),
-    /// The client is importing auth state from the host application.
-    #[cfg(target_family = "wasm")]
-    WebImport(AuthOnboardingTarget),
     NeedsSsoLink(AuthOnboardingTarget),
     Onboarding {
         onboarding_view: ViewHandle<AgentOnboardingView>,
@@ -1560,8 +1371,6 @@ pub struct RootView {
     auth_view: ViewHandle<AuthView>,
     auth_override_view: ViewHandle<AuthOverrideWarningModal>,
     needs_sso_link_view: ViewHandle<NeedsSsoLinkView>,
-    #[cfg(target_family = "wasm")]
-    web_handoff_view: ViewHandle<WebHandoffView>,
     pub server_api: Arc<ServerApi>,
     pub model_event_sender: Option<SyncSender<ModelEvent>>,
     mouse_states: TrafficLightMouseStates,
@@ -1573,9 +1382,8 @@ pub struct RootView {
     /// Stores the tutorial from onboarding when the user needs to log in before
     /// the guided tour can start. Consumed after auth completes.
     pending_tutorial: Option<OnboardingTutorial>,
-    /// settings to apply after a new user login / initial cloud load completes
+    /// Settings to apply after the login slide hands off to the terminal.
     pending_post_auth_onboarding_settings: Option<SelectedSettings>,
-    paste_auth_token_modal: Option<ViewHandle<PasteAuthTokenModalView>>,
 }
 
 impl RootView {
@@ -1590,10 +1398,6 @@ impl RootView {
 
         ctx.subscribe_to_model(&AuthManager::handle(ctx), |me, _, event, ctx| {
             me.handle_auth_manager_event(event, ctx);
-        });
-
-        ctx.subscribe_to_model(&CloudPreferencesSyncer::handle(ctx), |me, _, event, ctx| {
-            me.handle_cloud_preferences_syncer_event(event, ctx);
         });
 
         let auth_view =
@@ -1620,28 +1424,18 @@ impl RootView {
 
         let needs_sso_link_view = ctx.add_typed_action_view(|_| NeedsSsoLinkView::new());
 
-        #[cfg(target_family = "wasm")]
-        let web_handoff_view = {
-            let view = ctx.add_view(WebHandoffView::new);
-            ctx.subscribe_to_view(&view, Self::handle_web_handoff_event);
-            view
-        };
-
         let root_view = Self {
             auth_onboarding_state,
             server_time: None,
             auth_view,
             auth_override_view,
             needs_sso_link_view,
-            #[cfg(target_family = "wasm")]
-            web_handoff_view,
             server_api: server_api.clone(),
             model_event_sender,
             mouse_states: Default::default(),
             window_id: ctx.window_id(),
             pending_tutorial: None,
             pending_post_auth_onboarding_settings: None,
-            paste_auth_token_modal: None,
         };
 
         match &root_view.auth_onboarding_state {
@@ -1670,12 +1464,6 @@ impl RootView {
                             .write_value("ApplePressAndHoldEnabled", "false".to_owned());
                     }
                 }
-            }
-            #[cfg(target_family = "wasm")]
-            AuthOnboardingState::WebImport(_) => {
-                root_view
-                    .web_handoff_view
-                    .update(ctx, |view, ctx| view.import_user(ctx));
             }
             _ => {}
         }
@@ -1786,17 +1574,6 @@ impl RootView {
         true
     }
 
-    /// Hand off the authenticated user from the host web application.
-    #[cfg(target_family = "wasm")]
-    fn web_handoff(&mut self, ctx: &mut ViewContext<Self>) {
-        log::debug!("Starting handoff from host application");
-        self.web_handoff_view
-            .update(ctx, |view, ctx| view.import_user(ctx));
-        self.auth_onboarding_state.show_web_handoff_view();
-        ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
-        ctx.notify();
-    }
-
     fn close_window(&mut self, _: &(), ctx: &mut ViewContext<Self>) -> bool {
         if ContextFlag::CloseWindow.is_enabled() {
             ctx.close_window();
@@ -1817,12 +1594,6 @@ impl RootView {
         true
     }
 
-    fn build_plan_yearly_price_cents(ctx: &AppContext) -> Option<i32> {
-        PricingInfoModel::as_ref(ctx)
-            .plan_pricing(&StripeSubscriptionPlan::Build)
-            .map(|p| p.yearly_plan_price_per_month_usd_cents)
-    }
-
     fn create_agent_onboarding_view(
         ctx: &mut ViewContext<Self>,
     ) -> ViewHandle<AgentOnboardingView> {
@@ -1839,10 +1610,6 @@ impl RootView {
                 .ai_autonomy_settings()
                 .has_any_overrides();
 
-            let agent_price_cents = Self::build_plan_yearly_price_cents(ctx);
-
-            let auth_state = current_onboarding_auth_state(ctx);
-
             AgentOnboardingView::new(
                 themes.clone(),
                 false, // Always use unskippable onboarding.
@@ -1850,26 +1617,9 @@ impl RootView {
                 default_model_id,
                 workspace_enforces_autonomy,
                 FeatureFlag::AgentView.is_enabled(),
-                is_free_user_no_ai_experiment_active(ctx),
-                agent_price_cents,
-                auth_state,
                 ctx,
             )
         });
-
-        // Subscribe to pricing updates so the badge stays current.
-        let onboarding_view_for_pricing = onboarding_view.clone();
-        ctx.subscribe_to_model(
-            &PricingInfoModel::handle(ctx),
-            move |_, _, event, ctx| match event {
-                PricingInfoModelEvent::PricingInfoUpdated => {
-                    let cents = Self::build_plan_yearly_price_cents(ctx);
-                    onboarding_view_for_pricing.update(ctx, |view, ctx| {
-                        view.set_agent_price_cents(cents, ctx);
-                    });
-                }
-            },
-        );
 
         let onboarding_view_clone = onboarding_view.clone();
         ctx.subscribe_to_model(
@@ -1888,71 +1638,22 @@ impl RootView {
             },
         );
 
-        // Subscribe to workspace changes to update autonomy enforcement state and detect upgrades.
-        // TeamsChanged fires whenever the workspace/billing metadata poll returns, which is also
-        // when a free→paid upgrade would be reflected (customer_type changes).
+        // Subscribe to workspace changes to update autonomy enforcement state.
         let onboarding_view_for_workspaces = onboarding_view.clone();
         ctx.subscribe_to_model(
             &UserWorkspaces::handle(ctx),
-            move |_, user_workspaces, event, ctx| {
-                match event {
-                    UserWorkspacesEvent::UpdateWorkspaceSettingsSuccess => {
-                        let workspace_enforces_autonomy = user_workspaces
-                            .as_ref(ctx)
-                            .ai_autonomy_settings()
-                            .has_any_overrides();
-                        onboarding_view_for_workspaces.update(ctx, |onboarding_view, ctx| {
-                            onboarding_view
-                                .set_workspace_enforces_autonomy(workspace_enforces_autonomy, ctx);
-                        });
-                    }
-                    UserWorkspacesEvent::TeamsChanged => {
-                        let new_locked = is_free_user_no_ai_experiment_active(ctx);
-                        let was_locked = onboarding_view_for_workspaces
-                            .as_ref(ctx)
-                            .free_user_no_ai_experiment(ctx);
-                        if was_locked && !new_locked {
-                            // User upgraded — skip the intention slide.
-                            onboarding_view_for_workspaces.update(ctx, |view, ctx| {
-                                view.set_free_user_no_ai_experiment(false, ctx);
-                                view.advance_to_agent_step(ctx);
-                            });
-                        } else {
-                            onboarding_view_for_workspaces.update(ctx, |view, ctx| {
-                                view.set_free_user_no_ai_experiment(new_locked, ctx);
-                            });
-                        }
-                    }
-                    _ => {}
-                }
-                let auth_state = current_onboarding_auth_state(ctx);
-                onboarding_view_for_workspaces.update(ctx, |onboarding_view, ctx| {
-                    onboarding_view.set_auth_state(auth_state, ctx);
-                });
-            },
-        );
-
-        let onboarding_view_for_auth = onboarding_view.clone();
-        ctx.subscribe_to_model(
-            &AuthManager::handle(ctx),
-            move |_, _auth_manager, event, ctx| {
-                if matches!(
-                    event,
-                    AuthManagerEvent::AuthComplete | AuthManagerEvent::SkippedLogin
-                ) {
-                    let auth_state = current_onboarding_auth_state(ctx);
-                    onboarding_view_for_auth.update(ctx, |onboarding_view, ctx| {
-                        onboarding_view.set_auth_state(auth_state, ctx);
+            move |_, user_workspaces, event, ctx| match event {
+                UserWorkspacesEvent::TeamsChanged => {
+                    let workspace_enforces_autonomy = user_workspaces
+                        .as_ref(ctx)
+                        .ai_autonomy_settings()
+                        .has_any_overrides();
+                    onboarding_view_for_workspaces.update(ctx, |onboarding_view, ctx| {
+                        onboarding_view
+                            .set_workspace_enforces_autonomy(workspace_enforces_autonomy, ctx);
                     });
-                    if matches!(event, AuthManagerEvent::AuthComplete) {
-                        LLMPreferences::handle(ctx).update(ctx, |prefs, ctx| {
-                            prefs.refresh_available_models(ctx);
-                        });
-                        TeamUpdateManager::handle(ctx).update(ctx, |manager, ctx| {
-                            drop(manager.refresh_workspace_metadata(ctx));
-                        });
-                    }
                 }
+                _ => {}
             },
         );
 
@@ -2185,33 +1886,6 @@ impl RootView {
                 self.start_autoupdate_polling(ctx);
                 ctx.notify();
             }
-            AgentOnboardingEvent::UpgradeRequested => {
-                let upgrade_url = AuthManager::handle(ctx)
-                    .update(ctx, |auth_manager, _| auth_manager.upgrade_url());
-                ctx.open_url(&upgrade_url);
-            }
-            AgentOnboardingEvent::UpgradeCopyUrlRequested => {
-                let upgrade_url = AuthManager::handle(ctx)
-                    .update(ctx, |auth_manager, _| auth_manager.upgrade_url());
-                ctx.clipboard().write(ClipboardContent {
-                    plain_text: upgrade_url.clone(),
-                    paths: Some(vec![upgrade_url]),
-                    ..Default::default()
-                });
-            }
-            AgentOnboardingEvent::UpgradePasteTokenFromClipboardRequested => {
-                let modal = ctx.add_typed_action_view(PasteAuthTokenModalView::new);
-                ctx.subscribe_to_view(&modal, |me, _, event, ctx| match event {
-                    PasteAuthTokenModalEvent::Cancelled => {
-                        me.paste_auth_token_modal = None;
-                        me.focus(ctx);
-                        ctx.notify();
-                    }
-                });
-                ctx.focus(&modal);
-                self.paste_auth_token_modal = Some(modal);
-                ctx.notify();
-            }
             AgentOnboardingEvent::LoginFromWelcomeRequested => {
                 let AuthOnboardingState::Onboarding {
                     target,
@@ -2230,12 +1904,6 @@ impl RootView {
                     .name()
                     .unwrap_or_else(|| "Dark".to_string());
                 let use_vertical_tabs = *TabSettings::as_ref(ctx).use_vertical_tabs;
-
-                // Open the sign-in URL in the browser for existing users.
-                AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                    let sign_in_url = auth_manager.sign_in_url();
-                    ctx.open_url(&sign_in_url);
-                });
 
                 let login_slide_view = ctx.add_typed_action_view(|ctx| {
                     LoginSlideView::new(
@@ -2263,8 +1931,7 @@ impl RootView {
                 ctx.notify();
             }
             AgentOnboardingEvent::AppBecameActive => {
-                // fetch the models / workspace metadata when the user tabs/intents back
-                // into the app during onboarding after potentially upgrading
+                // Refresh local model/workspace data when the user returns to onboarding.
                 LLMPreferences::handle(ctx).update(ctx, |prefs, ctx| {
                     prefs.refresh_available_models(ctx);
                 });
@@ -2334,21 +2001,8 @@ impl RootView {
 
     #[allow(clippy::ptr_arg)]
     fn handle_incoming_auth_url(&mut self, url: &Url, ctx: &mut ViewContext<Self>) -> bool {
-        match AuthRedirectPayload::from_url(url.clone()) {
-            Ok(redirect_payload) => {
-                AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                    auth_manager.initialize_user_from_auth_payload(redirect_payload, true, ctx);
-                });
-            }
-            Err(error) => {
-                log::error!("Unable to parse AuthResult from url: {error}");
-                self.auth_view.update(ctx, |view, ctx| {
-                    view.last_login_failure_reason =
-                        Some(LoginFailureReason::InvalidRedirectUrl { was_pasted: false });
-                    ctx.notify()
-                });
-            }
-        }
+        let _ = (url, ctx);
+        log::info!("Ignoring incoming remote auth URL in local workflow");
         true
     }
 
@@ -2373,22 +2027,6 @@ impl RootView {
             log::warn!("Auth not complete before trying to add new session at path");
         }
         true
-    }
-
-    pub fn open_team_settings_with_email_invite_in_existing_window(
-        &mut self,
-        arg: &OpenTeamsSettingsModalArgs,
-        ctx: &mut ViewContext<Self>,
-    ) -> bool {
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
-            handle.update(ctx, |workspace, ctx| {
-                workspace.show_team_settings_page_with_email_invite(arg.invite_email.as_ref(), ctx)
-            });
-            return true;
-        } else {
-            log::warn!("Auth not complete before trying to open settings pane");
-        }
-        false
     }
 
     pub fn open_warp_drive_object_in_existing_window(
@@ -2483,25 +2121,6 @@ impl RootView {
         true
     }
 
-    pub fn join_shared_session_in_existing_window(
-        &mut self,
-        session_id: &SessionId,
-        ctx: &mut ViewContext<Self>,
-    ) -> bool {
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
-            handle.update(ctx, |workspace, ctx| {
-                workspace.add_tab_for_joining_shared_session(*session_id, ctx);
-            });
-            let window_id = ctx.window_id();
-            ctx.windows().show_window_and_focus_app(window_id);
-            ctx.notify();
-            true
-        } else {
-            log::warn!("Auth not complete before trying to join shared session");
-            false
-        }
-    }
-
     /// Opens a cloud conversation in an existing window.
     /// If the user owns the conversation, restores or navigates to it directly.
     /// Otherwise, opens a read-only transcript viewer.
@@ -2522,91 +2141,6 @@ impl RootView {
             log::warn!("Auth not complete before trying to open conversation viewer");
             false
         }
-    }
-
-    /// Adds a tab and starts the guided `/create-environment` setup flow.
-    fn create_environment_in_existing_window(
-        &mut self,
-        arg: &CreateEnvironmentArg,
-        ctx: &mut ViewContext<Self>,
-    ) -> bool {
-        if let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state {
-            let repos = arg.repos.clone();
-
-            handle.update(ctx, |workspace, ctx| {
-                workspace.add_tab_with_pane_layout(
-                    PanesLayout::SingleTerminal(Box::default()),
-                    Arc::new(HashMap::new()),
-                    None,
-                    ctx,
-                );
-
-                workspace
-                    .active_tab_pane_group()
-                    .update(ctx, |pane_group, ctx| {
-                        pane_group.set_title("Create Environment", ctx);
-
-                        if let Some(terminal_view) = pane_group.active_session_view(ctx) {
-                            terminal_view.update(ctx, |_, ctx| {
-                                ctx.dispatch_typed_action_deferred(
-                                    TerminalAction::SetupCloudEnvironment(repos.clone()),
-                                );
-                            });
-                        }
-                    });
-            });
-            let window_id = ctx.window_id();
-            ctx.windows().show_window_and_focus_app(window_id);
-            ctx.notify();
-            true
-        } else {
-            log::warn!("Auth not complete before trying to create environment");
-            false
-        }
-    }
-
-    /// Adds a tab and starts the guided `/create-environment` setup flow immediately.
-    fn create_environment_in_existing_window_and_run(
-        &mut self,
-        arg: &CreateEnvironmentArg,
-        ctx: &mut ViewContext<Self>,
-    ) -> bool {
-        let AuthOnboardingState::Terminal(handle) = &self.auth_onboarding_state else {
-            log::warn!("Auth not complete before trying to create environment");
-            return false;
-        };
-
-        let repos = arg.repos.clone();
-
-        handle.update(ctx, |workspace, ctx| {
-            workspace.add_tab_with_pane_layout(
-                PanesLayout::SingleTerminal(Box::default()),
-                Arc::new(HashMap::new()),
-                None,
-                ctx,
-            );
-
-            workspace
-                .active_tab_pane_group()
-                .update(ctx, |pane_group, ctx| {
-                    pane_group.set_title("Create Environment", ctx);
-
-                    if let Some(terminal_view) = pane_group.active_session_view(ctx) {
-                        terminal_view.update(ctx, |_, ctx| {
-                            ctx.dispatch_typed_action_deferred(
-                                crate::terminal::view::TerminalAction::SetupCloudEnvironmentAndStart(
-                                    repos.clone(),
-                                ),
-                            );
-                        });
-                    }
-                });
-        });
-
-        let window_id = ctx.window_id();
-        ctx.windows().show_window_and_focus_app(window_id);
-        ctx.notify();
-        true
     }
 
     pub fn add_file_pane(&mut self, path: &PathBuf, ctx: &mut ViewContext<Self>) -> bool {
@@ -2644,18 +2178,6 @@ impl RootView {
         } else {
             log::warn!("Auth not complete before trying to fill input");
         }
-        true
-    }
-
-    /// Shows the user the settings view of their newly joined team
-    /// within the app.
-    pub fn handle_team_intent_link_action(&mut self, _: &(), ctx: &mut ViewContext<Self>) -> bool {
-        let _ = ctx;
-        true
-    }
-
-    pub fn open_team_settings_page(&mut self, _: &(), ctx: &mut ViewContext<Self>) -> bool {
-        let _ = ctx;
         true
     }
 
@@ -2739,13 +2261,9 @@ impl RootView {
 
         match event {
             AuthManagerEvent::AuthComplete => {
-                self.paste_auth_token_modal = None;
-
-                // If onboarding was completed pre-login, sync the server-side flag now
-                // that the user is authenticated. This must happen regardless of the
-                // current `auth_onboarding_state` so we also cover users who skipped
-                // login during onboarding and later signed up from a different
-                // entrypoint (i.e. we're already in the `Terminal` state).
+                // If onboarding was completed before the local user became active,
+                // keep the local onboarding state consistent regardless of the
+                // current `auth_onboarding_state`.
                 Self::sync_local_onboarding_to_server(&auth_state, ctx);
 
                 // If the user needs SSO after auth is complete, no matter what their current state is,
@@ -2766,6 +2284,11 @@ impl RootView {
                         .complete_auth_and_create_workspace(ctx);
                     self.start_pending_tutorial(ctx);
                 } else if let AuthOnboardingState::LoginSlide { .. } = &self.auth_onboarding_state {
+                    if let Some(selected_settings) =
+                        self.pending_post_auth_onboarding_settings.take()
+                    {
+                        apply_onboarding_settings(&selected_settings, ctx);
+                    }
                     self.auth_onboarding_state
                         .complete_auth_and_create_workspace(ctx);
                     self.start_pending_tutorial(ctx);
@@ -2776,11 +2299,6 @@ impl RootView {
                     if auth_state.needs_sso_link() == Some(false) {
                         self.auth_onboarding_state.complete_sso_link(ctx);
                     }
-                }
-
-                #[cfg(target_family = "wasm")]
-                if let AuthOnboardingState::WebImport(_) = &self.auth_onboarding_state {
-                    self.auth_onboarding_state.complete_web_import(ctx);
                 }
 
                 // Skip onboarding survey if in Variant One.
@@ -2794,32 +2312,13 @@ impl RootView {
             }
             AuthManagerEvent::AuthFailed(err) => match err {
                 UserAuthenticationError::DeniedAccessToken(_) => {
-                    // On the web, re-import the token from the host application, which should
-                    // still be valid.
-                    // On native, we show a banner in the app nudging them to do so, but don't
-                    // actually log them out.
-                    // That is handled in the workspace view.
-                    #[cfg(target_family = "wasm")]
-                    self.web_handoff(ctx);
-                }
-                UserAuthenticationError::UserAccountDisabled(_) => {
-                    cfg_if! {
-                        if #[cfg(target_family = "wasm")] {
-                            // On the web, replace the invalid account with the one from the host
-                            // application, which ought to be valid.
-                            self.web_handoff(ctx);
-                        } else {
-                            // On native, force sign them out, as they should not be able to continue
-                            // to use Warp. Instead, they can sign in or up with a valid account.
-                            crate::auth::log_out(ctx);
-                        }
-                    }
+                    log::warn!(
+                        "Ignoring denied hosted access token; hosted auth is disabled in this local-first build"
+                    );
                 }
                 UserAuthenticationError::Unexpected(err) => {
                     log::error!("Encountered unexpected error when trying to fetch user: {err:#}");
                 }
-                UserAuthenticationError::InvalidStateParameter => {}
-                UserAuthenticationError::MissingStateParameter => {}
             },
             AuthManagerEvent::SkippedLogin => {
                 if let AuthOnboardingState::Auth(_) | AuthOnboardingState::ConfirmIncomingAuth(_) =
@@ -2905,57 +2404,13 @@ impl RootView {
         });
     }
 
-    /// This is called when importing authentication state from the host app completes.
-    #[cfg(target_family = "wasm")]
-    fn handle_web_handoff_event(
-        &mut self,
-        _view: ViewHandle<WebHandoffView>,
-        event: &WebHandoffEvent,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            WebHandoffEvent::Unsupported => {
-                log::warn!("Web auth handoff is unavailable");
-                if let AuthOnboardingState::WebImport(target) = &self.auth_onboarding_state {
-                    self.auth_onboarding_state = match target {
-                        AuthOnboardingTarget::Workspace(args) => {
-                            AuthOnboardingState::Auth(args.clone())
-                        }
-                        AuthOnboardingTarget::Terminal(view) => {
-                            // If we're in this state, it means that refreshing the user's stored
-                            // token failed _and_ handoff is unavailable. Return to the workspace
-                            // view with an error banner.
-                            AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                                auth_manager.set_needs_reauth(true, ctx);
-                            });
-                            AuthOnboardingState::Terminal(view.clone())
-                        }
-                    };
-                    ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
-                } else {
-                    log::error!("Received web handoff event in unexpected state");
-                }
-                self.focus(ctx);
-            }
-        }
-    }
-
     pub fn focus(&mut self, ctx: &mut ViewContext<Self>) -> bool {
-        if let Some(modal) = &self.paste_auth_token_modal {
-            ctx.focus(modal);
-            ctx.notify();
-            return true;
-        }
         match &self.auth_onboarding_state {
             AuthOnboardingState::Auth(_) => {
                 ctx.focus(&self.auth_view);
             }
             AuthOnboardingState::ConfirmIncomingAuth(_) => {
                 ctx.focus(&self.auth_override_view);
-            }
-            #[cfg(target_family = "wasm")]
-            AuthOnboardingState::WebImport(_) => {
-                ctx.focus(&self.web_handoff_view);
             }
             AuthOnboardingState::NeedsSsoLink { .. } => {
                 ctx.focus(&self.needs_sso_link_view);
@@ -3017,29 +2472,6 @@ impl RootView {
             }
         }
         true
-    }
-
-    /// If onboarding stashed `SelectedSettings` to be applied after auth + the
-    /// initial cloud-pref sync, drain the stash and apply now.
-    ///
-    /// Mirrors `start_pending_tutorial` in shape but triggers on a later event:
-    /// `CloudPreferencesSyncerEvent::InitialLoadCompleted` fires once
-    /// `handle_initial_load` has finished reconciling cloud→local, so any
-    /// writes we make here are the last writes and won't be clobbered by that
-    /// pass. By this point the user is also logged in, so AIExecutionProfile
-    /// edits can successfully create cloud objects via `edit_profile_internal`.
-    fn handle_cloud_preferences_syncer_event(
-        &mut self,
-        event: &CloudPreferencesSyncerEvent,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        if !matches!(event, CloudPreferencesSyncerEvent::InitialLoadCompleted) {
-            return;
-        }
-        let Some(selected_settings) = self.pending_post_auth_onboarding_settings.take() else {
-            return;
-        };
-        apply_onboarding_settings(&selected_settings, ctx);
     }
 
     /// If onboarding stored a pending tutorial (because login was required first),
@@ -3104,8 +2536,6 @@ impl View for RootView {
     fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {
         if focus_ctx.is_self_focused() {
             self.focus(ctx);
-        } else if self.paste_auth_token_modal.is_some() {
-            // Modal is open — focus belongs to the editor inside it.
         } else if matches!(
             self.auth_onboarding_state,
             AuthOnboardingState::Onboarding { .. }
@@ -3132,8 +2562,6 @@ impl View for RootView {
             AuthOnboardingState::ConfirmIncomingAuth(_) => {
                 ChildView::new(&self.auth_override_view).finish()
             }
-            #[cfg(target_family = "wasm")]
-            AuthOnboardingState::WebImport(_) => ChildView::new(&self.web_handoff_view).finish(),
             AuthOnboardingState::NeedsSsoLink { .. } => {
                 ChildView::new(&self.needs_sso_link_view).finish()
             }
@@ -3148,10 +2576,6 @@ impl View for RootView {
 
         let mut stack = Stack::new();
         stack.add_child(child);
-
-        if let Some(modal) = &self.paste_auth_token_modal {
-            stack.add_child(ChildView::new(modal).finish());
-        }
 
         if let Some(traffic_light_data) = self.traffic_light_data(app) {
             let theme = Appearance::as_ref(app).theme();
@@ -3316,35 +2740,6 @@ impl AuthOnboardingState {
         }
     }
 
-    #[cfg(target_family = "wasm")]
-    fn show_web_handoff_view(&mut self) {
-        match self {
-            AuthOnboardingState::Auth(args) | AuthOnboardingState::ConfirmIncomingAuth(args) => {
-                *self =
-                    AuthOnboardingState::WebImport(AuthOnboardingTarget::Workspace(args.clone()));
-            }
-            AuthOnboardingState::WebImport(_) => (),
-            AuthOnboardingState::NeedsSsoLink(target) => {
-                *self = AuthOnboardingState::WebImport(target.clone())
-            }
-            AuthOnboardingState::Onboarding { .. } | AuthOnboardingState::LoginSlide { .. } => {
-                // For onboarding/login slide, we don't have a workspace yet, so we can't convert to web import
-                // This case shouldn't normally occur
-            }
-            AuthOnboardingState::Terminal(view) => {
-                *self = AuthOnboardingState::WebImport(AuthOnboardingTarget::Terminal(view.clone()))
-            }
-        }
-    }
-
-    #[cfg(target_family = "wasm")]
-    fn complete_web_import(&mut self, ctx: &mut ViewContext<RootView>) {
-        if let AuthOnboardingState::WebImport(target) = self {
-            *self = AuthOnboardingState::Terminal(target.to_workspace(ctx));
-            ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
-        }
-    }
-
     fn show_needs_sso_link_view(&mut self) {
         match self {
             AuthOnboardingState::Auth(workspace_args)
@@ -3352,12 +2747,6 @@ impl AuthOnboardingState {
                 *self = AuthOnboardingState::NeedsSsoLink(AuthOnboardingTarget::Workspace(
                     workspace_args.clone(),
                 ))
-            }
-            #[cfg(target_family = "wasm")]
-            AuthOnboardingState::WebImport(_) => {
-                // This case _shouldn't_ be possible - if SSO were required, it should be handled
-                // in the host app.
-                log::error!("SSO link required after web user import");
             }
             AuthOnboardingState::NeedsSsoLink { .. } => (),
             AuthOnboardingState::Onboarding { .. } | AuthOnboardingState::LoginSlide { .. } => {
@@ -3378,11 +2767,6 @@ impl AuthOnboardingState {
             AuthOnboardingState::ConfirmIncomingAuth(workspace_args) => {
                 *self = AuthOnboardingState::Auth(workspace_args.clone());
                 ctx.emit(RootViewEvent::AuthOnboardingStateChanged);
-            }
-            #[cfg(target_family = "wasm")]
-            AuthOnboardingState::WebImport(_) => {
-                // TODO(ben): Eventually, we could support logout here by logging out of the JS
-                // Firebase client.
             }
             AuthOnboardingState::NeedsSsoLink(needs_sso_link_mode) => match needs_sso_link_mode {
                 AuthOnboardingTarget::Workspace(args) => {

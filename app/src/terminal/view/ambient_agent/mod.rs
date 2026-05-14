@@ -1,7 +1,6 @@
 mod block;
 mod footer;
 mod harness_selector;
-mod host_selector;
 mod loading_screen;
 mod model;
 mod model_selector;
@@ -12,121 +11,23 @@ mod view_impl;
 
 pub use block::*;
 pub use footer::{render_error_footer, render_loading_footer};
-pub use harness_selector::{HarnessSelector, HarnessSelectorAction, HarnessSelectorEvent};
-pub use host_selector::{
-    Host, HostSelector, HostSelectorAction, HostSelectorEvent, NakedHeaderButtonTheme,
+pub use harness_selector::{
+    HarnessSelector, HarnessSelectorAction, HarnessSelectorEvent, NakedHeaderButtonTheme,
 };
 pub use loading_screen::{render_cloud_mode_error_screen, render_cloud_mode_loading_screen};
-#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-pub(crate) use model::PendingHandoff;
 pub use model::{AgentProgress, AmbientAgentViewModel, AmbientAgentViewModelEvent, Status};
-#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
-pub use model::{HandoffSubmissionState, SnapshotUploadStatus};
 pub use model_selector::{ModelSelector, ModelSelectorAction, ModelSelectorEvent};
 pub use progress::{render_progress, ProgressProps, ProgressStep, ProgressStepState};
 pub use progress_ui_state::AmbientAgentProgressUIState;
-use std::sync::Arc;
 pub use tips::{get_agent_loading_tips, AgentLoadingTip};
 
-use parking_lot::FairMutex;
 use warp_core::features::FeatureFlag;
-use warpui::geometry::vector::Vector2F;
-use warpui::{AppContext, ModelHandle, ViewHandle, WindowId};
+use warpui::{AppContext, ModelHandle};
 
 use crate::ai::blocklist::agent_view::{AgentViewController, AgentViewState};
-use crate::pane_group::TerminalViewResources;
-use crate::terminal::shared_session;
-use crate::terminal::TerminalManager;
 use crate::terminal::TerminalModel;
-use crate::terminal::TerminalView;
 
-/// Creates a cloud mode terminal view and manager for ambient agent sessions.
-///
-/// This is used when pushing a new ambient agent view onto an existing pane's navigation stack,
-/// or when creating a standalone ambient agent pane.
-pub fn create_cloud_mode_view(
-    resources: TerminalViewResources,
-    view_bounds_size: Vector2F,
-    window_id: WindowId,
-    ctx: &mut AppContext,
-) -> (
-    ViewHandle<TerminalView>,
-    ModelHandle<Box<dyn TerminalManager>>,
-) {
-    // In Cloud Mode, ambient agent prompts are composed in an uninitialized session-sharing
-    // viewer pane. This lets us reuse the terminal input without a backing session, and
-    // then join the ambient agent session once it's ready.
-    let terminal_manager: ModelHandle<Box<dyn TerminalManager>> = ctx.add_model(|ctx| {
-        Box::new(shared_session::viewer::TerminalManager::new_deferred(
-            resources,
-            view_bounds_size,
-            window_id,
-            ctx,
-        )) as Box<dyn TerminalManager>
-    });
-
-    let terminal_view = terminal_manager.as_ref(ctx).view();
-
-    // Subscribe to the ambient agent view model to join the session once it's ready.
-    // This ensures that we use the manager corresponding to this specific view.
-    let Some(view_model) = terminal_view
-        .as_ref(ctx)
-        .ambient_agent_view_model()
-        .cloned()
-    else {
-        log::warn!("Cloud mode view was created without an ambient agent view model");
-        return (terminal_view, terminal_manager);
-    };
-    let view_model_for_subscription = view_model.clone();
-    terminal_manager.update(ctx, |_, ctx| {
-        ctx.subscribe_to_model(&view_model, move |manager, event, ctx| {
-            let Some(manager) = manager
-                .as_any_mut()
-                .downcast_mut::<shared_session::viewer::TerminalManager>()
-            else {
-                return;
-            };
-            match event {
-                AmbientAgentViewModelEvent::SessionReady { session_id } => {
-                    // Local-to-cloud handoff panes pre-populate the forked
-                    // conversation on chip click. Use append-mode scrollback
-                    // + replay suppression so the cloud agent's replay doesn't
-                    // duplicate the blocks we already have.
-                    let append_followup_scrollback = view_model_for_subscription
-                        .as_ref(ctx)
-                        .is_local_to_cloud_handoff();
-                    if manager.connect_to_session(*session_id, append_followup_scrollback, ctx) {
-                        manager.start_cloud_mode_setup_command_tracking();
-                    }
-                }
-                AmbientAgentViewModelEvent::FollowupSessionReady { session_id } => {
-                    manager.attach_followup_session(*session_id, ctx);
-                }
-                AmbientAgentViewModelEvent::EnteredSetupState
-                | AmbientAgentViewModelEvent::EnteredComposingState
-                | AmbientAgentViewModelEvent::DispatchedAgent
-                | AmbientAgentViewModelEvent::FollowupDispatched
-                | AmbientAgentViewModelEvent::ProgressUpdated
-                | AmbientAgentViewModelEvent::EnvironmentSelected
-                | AmbientAgentViewModelEvent::Failed { .. }
-                | AmbientAgentViewModelEvent::ShowCloudAgentCapacityModal
-                | AmbientAgentViewModelEvent::ShowAICreditModal
-                | AmbientAgentViewModelEvent::NeedsGithubAuth
-                | AmbientAgentViewModelEvent::Cancelled
-                | AmbientAgentViewModelEvent::HarnessSelected
-                | AmbientAgentViewModelEvent::HostSelected
-                | AmbientAgentViewModelEvent::HarnessCommandStarted
-                | AmbientAgentViewModelEvent::PendingHandoffChanged
-                | AmbientAgentViewModelEvent::HandoffSnapshotUploadFailed { .. }
-                | AmbientAgentViewModelEvent::UpdatedSetupCommandVisibility => {}
-            }
-        });
-    });
-
-    (terminal_view, terminal_manager)
-}
-
-/// Returns `true` when a cloud agent shared session is in any pre-first-exchange phase —
+/// Returns `true` when an agent shared session is in any pre-first-exchange phase —
 /// either still spawning (loading screen) or running setup commands before the first
 /// agent turn. In this state, we hide the interactive input and render a loading footer.
 pub fn is_cloud_agent_pre_first_exchange(
@@ -158,10 +59,7 @@ pub fn is_cloud_agent_pre_first_exchange(
         return false;
     };
 
-    // Handoff panes enter agent view with `RestoreExistingConversation` because they restore the
-    // forked conversation, not `CloudAgent`. The `is_local_to_cloud_handoff` flag is the
-    // authoritative "this is a cloud agent pane" signal for that path, so accept either.
-    if !origin.is_cloud_agent() && !view_model.is_local_to_cloud_handoff() {
+    if !origin.is_cloud_agent() {
         return false;
     }
 

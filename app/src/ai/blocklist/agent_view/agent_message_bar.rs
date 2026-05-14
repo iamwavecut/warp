@@ -16,7 +16,6 @@ use crate::ai::agent::{
     AIAgentExchangeId, AIAgentOutputStatus, FinishedAIAgentOutput, RenderableAIError,
 };
 use crate::ai::blocklist::agent_view::shortcuts::AgentShortcutViewModel;
-use crate::ai::blocklist::agent_view::zero_state_block::render_ambient_credits_banner;
 use crate::ai::blocklist::agent_view::{
     agent_view_bg_fill, AgentViewController, AgentViewControllerEvent,
 };
@@ -339,21 +338,7 @@ impl View for AgentMessageBar {
             return Empty::new().finish();
         };
 
-        // Show credits banner when user has ambient credits remaining.
-        use crate::ai::request_usage_model::AMBIENT_AGENT_TRIAL_CREDIT_THRESHOLD;
-        let right_element = if cfg!(target_family = "wasm") {
-            None
-        } else if let Some(credits) =
-            AIRequestUsageModel::as_ref(app).ambient_only_credits_remaining()
-        {
-            if credits >= AMBIENT_AGENT_TRIAL_CREDIT_THRESHOLD {
-                Some(render_ambient_credits_banner(credits, app))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let right_element = None;
 
         // Append a Figma MCP chip to the message if applicable.
         match self.figma_button_status(app) {
@@ -711,12 +696,9 @@ fn should_fork_from_last_known_good_state(
     };
 
     match error {
-        RenderableAIError::QuotaLimit
-        | RenderableAIError::ServerOverloaded
-        | RenderableAIError::ContextWindowExceeded(_)
+        RenderableAIError::ContextWindowExceeded(_)
         | RenderableAIError::InvalidApiKey { .. }
         | RenderableAIError::AwsBedrockCredentialsExpiredOrInvalid { .. } => false,
-        RenderableAIError::InternalWarpError => true,
         RenderableAIError::Other {
             will_attempt_resume,
             ..
@@ -737,11 +719,7 @@ impl MessageProvider<AgentMessageArgs<'_>> for ForkSlashCommandMessageProducer {
         let is_fork_family = command_name == commands::FORK.name
             || command_name == commands::FORK_FROM.name
             || command_name == commands::FORK_AND_COMPACT.name;
-        #[cfg(not(target_family = "wasm"))]
-        let is_continue_locally = command_name == commands::CONTINUE_LOCALLY.name;
-        #[cfg(target_family = "wasm")]
-        let is_continue_locally = false;
-        if !is_fork_family && !is_continue_locally {
+        if !is_fork_family {
             return None;
         }
         let modifier_keystroke = if cfg!(target_os = "macos") {
@@ -759,10 +737,10 @@ impl MessageProvider<AgentMessageArgs<'_>> for ForkSlashCommandMessageProducer {
             }
         };
 
-        // `/fork` and `/continue-locally` open in a new pane with Enter and a new tab with
-        // Cmd/Ctrl+Enter. Other fork-like commands open in the current pane with Enter and a new
-        // pane with Cmd/Ctrl+Enter.
-        let primary_to_new_pane = command_name == commands::FORK.name || is_continue_locally;
+        // `/fork` opens in a new pane with Enter and a new tab with
+        // Cmd/Ctrl+Enter. Other fork-like commands open in the current pane
+        // with Enter and a new pane with Cmd/Ctrl+Enter.
+        let primary_to_new_pane = command_name == commands::FORK.name;
         let (primary_label, secondary_label) = if primary_to_new_pane {
             (" new pane", " new tab")
         } else {

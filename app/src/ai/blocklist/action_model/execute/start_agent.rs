@@ -299,7 +299,8 @@ impl StartAgentExecutor {
         let prompt = prompt.clone();
         let version = *version;
         let parent_conversation_id = input.conversation_id;
-        let (execution_mode, parent_run_id) = match execution_mode.clone() {
+        let requested_execution_mode = execution_mode.clone().local_first();
+        let (execution_mode, parent_run_id) = match requested_execution_mode {
             StartAgentExecutionMode::Local {
                 harness_type: None,
                 model_id,
@@ -366,74 +367,9 @@ impl StartAgentExecutor {
                     Some(parent_run_id),
                 )
             }
-            StartAgentExecutionMode::Remote {
-                environment_id,
-                skill_references,
-                model_id,
-                computer_use_enabled,
-                worker_host,
-                harness_type,
-                title,
-            } => {
-                if !FeatureFlag::OrchestrationV2.is_enabled() {
-                    return ActionExecution::Sync(AIAgentActionResultType::StartAgent(
-                        StartAgentResult::Error {
-                            error: "Remote child agents require orchestration v2.".to_string(),
-                            version,
-                        },
-                    ));
-                }
-
-                let harness_type = Harness::parse_orchestration_harness(&harness_type)
-                    .map(|harness| harness.to_string())
-                    .unwrap_or(harness_type);
-                if Harness::parse_orchestration_harness(&harness_type) == Some(Harness::OpenCode) {
-                    return ActionExecution::Sync(AIAgentActionResultType::StartAgent(
-                        StartAgentResult::Error {
-                            error: "Remote child agents do not support the opencode harness yet."
-                                .to_string(),
-                            version,
-                        },
-                    ));
-                }
-
-                // An empty environment_id is allowed and means the child will be spawned with an
-                // empty environment (no preconfigured repositories, secrets, or integrations).
-                // Callers are discouraged from relying on this, but we intentionally do not reject
-                // it here so that agent authors can opt into running without an environment.
-                if environment_id.trim().is_empty() {
-                    log::warn!(
-                        "Starting remote child agent with empty environment_id; the child will run \
-                         with an empty environment."
-                    );
-                }
-
-                let parent_run_id = BlocklistAIHistoryModel::as_ref(ctx)
-                    .conversation(&parent_conversation_id)
-                    .and_then(|conversation| conversation.run_id());
-                let Some(parent_run_id) = parent_run_id else {
-                    return ActionExecution::Sync(AIAgentActionResultType::StartAgent(
-                        StartAgentResult::Error {
-                            error: "Remote child agents require the parent run_id to be available."
-                                .to_string(),
-                            version,
-                        },
-                    ));
-                };
-
-                (
-                    StartAgentExecutionMode::Remote {
-                        environment_id,
-                        skill_references,
-                        model_id,
-                        computer_use_enabled,
-                        worker_host,
-                        harness_type,
-                        title,
-                    },
-                    Some(parent_run_id),
-                )
-            }
+            StartAgentExecutionMode::Remote { .. } => unreachable!(
+                "StartAgentExecutionMode::local_first must convert hosted child agents to local"
+            ),
         };
 
         let (sender, receiver) = async_channel::bounded(1);

@@ -1,22 +1,15 @@
 use super::*;
-use anyhow::Result;
-use warp_graphql::queries::get_user::FirebaseProfile;
 
 #[test]
-fn test_parse_user_profile() -> Result<()> {
-    let response: FirebaseProfile = serde_json::from_str(
-        r#"{
-            "uid": "test_local_id",
-            "email": "test_user@example.com",
-            "displayName": "Test User",
-            "photoUrl": "https://photourl.example.com/1234",
-            "needsSsoLink": true
-        }"#,
-    )?;
+fn test_user_profile_metadata() {
     let user = User {
         is_onboarded: true,
         local_id: UserUid::new("test_local_id"),
-        metadata: response.into(),
+        metadata: UserMetadata {
+            email: "test_user@example.com".to_string(),
+            display_name: Some("Test User".to_string()),
+            photo_url: Some("https://photourl.example.com/1234".to_string()),
+        },
         needs_sso_link: true,
         anonymous_user_type: None,
         is_on_work_domain: false,
@@ -32,8 +25,6 @@ fn test_parse_user_profile() -> Result<()> {
         Some("https://photourl.example.com/1234")
     );
     assert!(user.needs_sso_link);
-
-    Ok(())
 }
 
 #[test]

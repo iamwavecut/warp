@@ -305,91 +305,6 @@ impl TerminalManager {
         terminal_manager
     }
 
-    /// Create a new terminal manager for eventually viewing a cloud mode shared session that is
-    /// not yet available.
-    pub fn new_deferred(
-        resources: TerminalViewResources,
-        initial_size: Vector2F,
-        window_id: WindowId,
-        ctx: &mut AppContext,
-    ) -> Self {
-        Self::new_internal(resources, initial_size, window_id, true, ctx)
-    }
-
-    /// Connects a deferred terminal manager to a shared session.
-    /// This can only be called on a TerminalManager created with `new_deferred`.
-    /// Returns `true` if the connection was initiated, `false` if already connected.
-    ///
-    /// `append_followup_scrollback` controls whether the initial join uses
-    /// `AppendFollowupScrollback` mode instead of `ReplaceFromSessionScrollback`.
-    /// Local-to-cloud handoff panes set this to `true` so the pre-populated
-    /// forked conversation is not replaced by the cloud session's replay
-    /// scrollback.
-    pub fn connect_to_session(
-        &mut self,
-        session_id: SessionId,
-        append_followup_scrollback: bool,
-        ctx: &mut AppContext,
-    ) -> bool {
-        let load_mode = if append_followup_scrollback {
-            SharedSessionInitialLoadMode::AppendFollowupScrollback
-        } else {
-            SharedSessionInitialLoadMode::ReplaceFromSessionScrollback
-        };
-        match self.network_state {
-            NetworkState::Idle => {
-                self.connect_session(session_id, load_mode, ctx);
-                true
-            }
-            NetworkState::Connecting => {
-                log::warn!("connect_to_session called while already connecting to shared session");
-                false
-            }
-            NetworkState::Active(_) => false,
-        }
-    }
-
-    pub fn attach_followup_session(&mut self, session_id: SessionId, ctx: &mut AppContext) -> bool {
-        match std::mem::replace(&mut self.network_state, NetworkState::Connecting) {
-            NetworkState::Active(network) => {
-                network.update(ctx, |network, _| {
-                    network.close_without_reconnection();
-                });
-                self.model
-                    .lock()
-                    .clear_write_to_pty_events_for_shared_session_tx();
-                *self.current_network.lock() = None;
-                self.network_state = NetworkState::Idle;
-            }
-            NetworkState::Idle => {
-                self.network_state = NetworkState::Idle;
-            }
-            NetworkState::Connecting => {
-                self.network_state = NetworkState::Connecting;
-                log::warn!(
-                    "attach_followup_session called while already connecting to shared session"
-                );
-                return false;
-            }
-        }
-        self.connect_session(
-            session_id,
-            SharedSessionInitialLoadMode::AppendFollowupScrollback,
-            ctx,
-        );
-        self.start_cloud_mode_setup_command_tracking();
-        true
-    }
-
-    pub fn start_cloud_mode_setup_command_tracking(&mut self) {
-        if FeatureFlag::CloudModeSetupV2.is_enabled() {
-            self.model
-                .lock()
-                .block_list_mut()
-                .set_is_executing_oz_environment_startup_commands(true);
-        }
-    }
-
     /// Connects this terminal manager to a shared session.
     /// This method sets up the network model and all associated event handlers.
     fn connect_session(
@@ -1591,28 +1506,24 @@ impl TerminalManager {
         model
             .lock()
             .clear_write_to_pty_events_for_shared_session_tx();
-        if FeatureFlag::HandoffCloudCloud.is_enabled() {
-            terminal_view.update(ctx, |terminal_view, ctx| {
-                // Owned ambient tasks remain editable Cloud Mode panes after their live shared
-                // session ends; non-owners are still read-only viewers of a finished session.
-                let owns_ambient_task = terminal_view.owned_ambient_agent_task_id(ctx).is_some();
-                model
-                    .lock()
-                    .set_shared_session_status(if owns_ambient_task {
-                        SharedSessionStatus::NotShared
-                    } else {
-                        SharedSessionStatus::FinishedViewer
-                    });
-                if let Some(ambient_agent_view_model) =
-                    terminal_view.ambient_agent_view_model().cloned()
-                {
-                    ambient_agent_view_model.update(ctx, |model, _| {
-                        model.record_ambient_execution_ended(ended_session_id);
-                    });
-                }
-                terminal_view.on_ambient_agent_execution_ended(ctx);
-            });
-        }
+        terminal_view.update(ctx, |terminal_view, ctx| {
+            let owns_ambient_task = terminal_view.owned_ambient_agent_task_id(ctx).is_some();
+            model
+                .lock()
+                .set_shared_session_status(if owns_ambient_task {
+                    SharedSessionStatus::NotShared
+                } else {
+                    SharedSessionStatus::FinishedViewer
+                });
+            if let Some(ambient_agent_view_model) =
+                terminal_view.ambient_agent_view_model().cloned()
+            {
+                ambient_agent_view_model.update(ctx, |model, _| {
+                    model.record_ambient_execution_ended(ended_session_id);
+                });
+            }
+            terminal_view.on_ambient_agent_execution_ended(ctx);
+        });
         if Self::current_network(current_network)
             .is_some_and(|network| network.as_ref(ctx).session_id() == ended_session_id)
         {

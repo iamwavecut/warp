@@ -14,7 +14,7 @@ pub struct OnboardingKeybindings {
     pub toggle_input_mode: String,
     /// Display string for submitting to local agent (e.g., "⌘⏎")
     pub submit_to_local_agent: String,
-    /// Display string for submitting to cloud agent (e.g., "⌘⌥⏎")
+    /// Display string for submitting to an alternate agent action (e.g., "⌘⌥⏎")
     pub submit_to_cloud_agent: String,
 }
 
@@ -119,7 +119,7 @@ fn get_agent_modality_callout_options(
             Some(CalloutOptions {
                 title,
                 text: format!(
-                    "Run commands from the terminal, or use {} or {} to start or send to a local or cloud agent respectively.",
+                    "Run commands from the terminal, or use {} or {} to start or send to a local agent respectively.",
                     keybindings.submit_to_local_agent,
                     keybindings.submit_to_cloud_agent
                 ),

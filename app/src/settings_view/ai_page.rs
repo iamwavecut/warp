@@ -13,8 +13,6 @@ use crate::ai::execution_profiles::{AIExecutionProfile, ActionPermission, WriteT
 use crate::ai::llms::{LLMContextWindow, LLMId, LLMPreferences, LLMPreferencesEvent};
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::ai::paths::host_native_absolute_path;
-use crate::auth::auth_manager::{AuthManager, LoginGatedFeature};
-use crate::auth::auth_view_modal::AuthViewVariant;
 use crate::auth::AuthStateProvider;
 use crate::cloud_object::model::persistence::{CloudModel, CloudModelEvent};
 use crate::cloud_object::GenericStringObjectFormat::Json;
@@ -28,14 +26,13 @@ use crate::settings::{
     ranked_custom_provider_model_suggestions, AIAutoDetectionEnabled, AICommandDenylist,
     AISettingsChangedEvent, AgentModeCodingPermissionsType, AgentModeCommandExecutionDenylist,
     AgentModeCommandExecutionPredicate, AgentModeQuerySuggestionsEnabled, AwsBedrockAutoLogin,
-    AwsBedrockCredentialsEnabled, CanUseWarpCreditsWithByok, CodeSettings, CodebaseContextEnabled,
-    CustomApiType, CustomProviderConfig, FileBasedMcpEnabled, GitOperationsAutogenEnabled,
+    AwsBedrockCredentialsEnabled, CodeSettings, CodebaseContextEnabled, CustomApiType,
+    CustomProviderConfig, FileBasedMcpEnabled, GitOperationsAutogenEnabled,
     IncludeAgentCommandsInHistory, IntelligentAutosuggestionsEnabled, MemoryEnabled,
     NLDInTerminalEnabled, NaturalLanguageAutosuggestionsEnabled, OrchestrationEnabled,
-    RuleSuggestionsEnabled, SharedBlockTitleGenerationEnabled, ShouldRenderCLIAgentToolbar,
+    RuleSuggestionsEnabled, ShouldRenderCLIAgentToolbar,
     ShouldRenderUseAgentToolbarForUserCommands, ShouldShowOzUpdatesInZeroState, ShowAgentTips,
     ShowConversationHistory, ShowHintText, ThinkingDisplayMode, VoiceInputEnabled,
-    WarpDriveContextEnabled,
 };
 use crate::terminal::session_settings::{SessionSettings, SessionSettingsChangedEvent};
 use crate::terminal::CLIAgent;
@@ -44,13 +41,12 @@ use crate::view_components::{
     FilterableDropdown, SubmittableTextInput, SubmittableTextInputEvent,
 };
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
-use ::ai::api_keys::{ApiKeyManager, ApiKeys};
+use ::ai::api_keys::ApiKeyManager;
 use enum_iterator::all;
 use itertools::Itertools;
 use regex::Regex;
 use settings::{Setting, ToggleableSetting};
 use strum::IntoEnumIterator;
-use warp_core::channel::ChannelState;
 use warp_core::context_flag::ContextFlag;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
@@ -128,7 +124,7 @@ use crate::interaction_sources::{
 use crate::menu::{MenuItem, MenuItemFields};
 use crate::ui_components::{buttons::icon_button, icons::Icon};
 use crate::view_components::dropdown::DropdownAction;
-use crate::workspaces::workspace::{AdminEnablementSetting, CustomerType};
+use crate::workspaces::workspace::AdminEnablementSetting;
 use crate::{
     appearance::Appearance,
     editor::Event as EditorEvent,
@@ -161,8 +157,6 @@ const PROMPT_SUGGESTIONS_DESCRIPTION: &str = "Let AI suggest natural language pr
 const SUGGESTED_CODE_BANNERS_DESCRIPTION: &str = "Let AI suggest code diffs and queries as inline banners in the blocklist, based on recent commands and their outputs.";
 const NATURAL_LANGUAGE_AUTOSUGGESTIONS: &str =
     "Let AI suggest natural language autosuggestions, based on recent commands and their outputs.";
-const SHARED_BLOCK_TITLE_GENERATION_DESCRIPTION: &str =
-    "Let AI generate a title for your shared block based on the command and output.";
 const GIT_OPERATIONS_AUTOGEN_DESCRIPTION: &str =
     "Let AI generate commit messages and pull request titles and descriptions.";
 const WISPR_FLOW_URL: &str = "https://wisprflow.ai/";
@@ -338,19 +332,6 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
         )
         .with_group(bindings::BindingGroup::WarpAi)
         .with_enabled(|| FeatureFlag::PredictAMQueries.is_enabled())],
-        app,
-    );
-    ToggleSettingActionPair::add_toggle_setting_action_pairs_as_bindings(
-        vec![ToggleSettingActionPair::new(
-            "shared block title generation",
-            builder(SettingsAction::AI(
-                AISettingsPageAction::ToggleSharedTitleGeneration,
-            )),
-            &(context.clone() & id!(flags::IS_ACTIVE_AI_ENABLED)),
-            flags::SHARED_BLOCK_TITLE_GENERATION_FLAG,
-        )
-        .with_group(bindings::BindingGroup::WarpAi)
-        .with_enabled(|| FeatureFlag::SharedBlockTitleGeneration.is_enabled())],
         app,
     );
     ToggleSettingActionPair::add_toggle_setting_action_pairs_as_bindings(
@@ -1474,9 +1455,6 @@ impl AISettingsPageView {
             None => {
                 // Full page: all widgets (legacy behavior)
                 widgets.push(Box::new(GlobalAIWidget::default()));
-                if !FeatureFlag::UsageBasedPricing.is_enabled() {
-                    widgets.push(Box::new(UsageWidget::default()));
-                }
                 if ai_settings
                     .intelligent_autosuggestions_enabled_internal
                     .is_supported_on_current_platform()
@@ -1486,10 +1464,6 @@ impl AISettingsPageView {
                     || (FeatureFlag::PredictAMQueries.is_enabled()
                         && ai_settings
                             .natural_language_autosuggestions_enabled_internal
-                            .is_supported_on_current_platform())
-                    || (FeatureFlag::SharedBlockTitleGeneration.is_enabled()
-                        && ai_settings
-                            .shared_block_title_generation_enabled_internal
                             .is_supported_on_current_platform())
                     || (FeatureFlag::GitOperationsInCodeReview.is_enabled()
                         && ai_settings
@@ -1534,10 +1508,6 @@ impl AISettingsPageView {
                         && ai_settings
                             .natural_language_autosuggestions_enabled_internal
                             .is_supported_on_current_platform())
-                    || (FeatureFlag::SharedBlockTitleGeneration.is_enabled()
-                        && ai_settings
-                            .shared_block_title_generation_enabled_internal
-                            .is_supported_on_current_platform())
                     || (FeatureFlag::GitOperationsInCodeReview.is_enabled()
                         && ai_settings
                             .git_operations_autogen_enabled_internal
@@ -1563,9 +1533,6 @@ impl AISettingsPageView {
                 widgets.push(Box::new(LLMProvidersWidget::new(ctx)));
             }
             Some(AISubpage::Profiles) => {
-                if !FeatureFlag::UsageBasedPricing.is_enabled() {
-                    widgets.push(Box::new(UsageWidget::default()));
-                }
                 widgets.push(Box::new(AgentsWidget::default()));
             }
             Some(AISubpage::Knowledge) => {
@@ -2215,21 +2182,18 @@ pub enum AISettingsPageAction {
     TogglePromptSuggestions,
     ToggleCodeSuggestions,
     ToggleNaturalLanguageAutosuggestions,
-    ToggleSharedTitleGeneration,
     ToggleGitOperationsAutogen,
     ToggleAIInputAutoDetection,
     ToggleNLDInTerminal,
     ToggleCLIAgentToolbar,
     ToggleUseAgentToolbar,
     ToggleVoiceInput,
-    ToggleCanUseWarpCreditsWithByok,
     HyperlinkClick(HyperlinkUrl),
     ToggleCodebaseContext,
     ToggleShowInputHintText,
     ToggleShowAgentTips,
     ToggleShowOzUpdatesInZeroState,
     SetThinkingDisplayMode(ThinkingDisplayMode),
-    AttemptLoginGatedUpgrade,
     RemoveCLIAgentToolbarEnabledCommand(String),
     RemoveFromCommandExecutionAllowlist(AgentModeCommandExecutionPredicate),
     RemoveFromCommandExecutionDenylist(AgentModeCommandExecutionPredicate),
@@ -2249,7 +2213,6 @@ pub enum AISettingsPageAction {
     RemoveDirectoryFromCodeReadAllowlist(PathBuf),
     ToggleRules,
     ToggleRuleSuggestions,
-    ToggleWarpDriveContext,
     SetApplyCodeDiffs(ActionPermission),
     SetReadFiles(ActionPermission),
     SetExecuteCommands(ActionPermission),
@@ -2285,16 +2248,6 @@ pub enum AISettingsPageAction {
         pattern: String,
         agent: Option<CLIAgent>,
     },
-}
-
-impl From<&AISettingsPageAction> for LoginGatedFeature {
-    fn from(val: &AISettingsPageAction) -> LoginGatedFeature {
-        use AISettingsPageAction::*;
-        match val {
-            AttemptLoginGatedUpgrade => "Upgrade AI Usage",
-            _ => "Unknown reason",
-        }
-    }
 }
 
 impl TypedActionView for AISettingsPageView {
@@ -2390,21 +2343,6 @@ impl TypedActionView for AISettingsPageView {
                     Err(e) => {
                         log::warn!(
                             "Failed to set value for Natural Language Autosuggestions setting: {e:?}"
-                        );
-                    }
-                }
-                ctx.notify();
-            }
-            AISettingsPageAction::ToggleSharedTitleGeneration => {
-                match AISettings::handle(ctx).update(ctx, |settings, ctx| {
-                    settings
-                        .shared_block_title_generation_enabled_internal
-                        .toggle_and_save_value(ctx)
-                }) {
-                    Ok(_new_value) => {}
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to set value for Shared Block Title Generation setting: {e:?}"
                         );
                     }
                 }
@@ -2524,14 +2462,6 @@ impl TypedActionView for AISettingsPageView {
                 }
                 ctx.notify();
             }
-            AISettingsPageAction::ToggleCanUseWarpCreditsWithByok => {
-                AISettings::handle(ctx).update(ctx, |settings, ctx| {
-                    report_if_error!(settings
-                        .can_use_warp_credits_with_byok
-                        .toggle_and_save_value(ctx));
-                });
-                ctx.notify();
-            }
             AISettingsPageAction::HyperlinkClick(hyperlink) => {
                 ctx.notify();
                 ctx.open_url(&hyperlink.url);
@@ -2566,19 +2496,6 @@ impl TypedActionView for AISettingsPageView {
                     report_if_error!(settings.thinking_display_mode.set_value(*mode, ctx));
                 });
                 ctx.notify();
-            }
-            AISettingsPageAction::AttemptLoginGatedUpgrade => {
-                if true {
-                    return;
-                }
-
-                AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                    auth_manager.attempt_login_gated_feature(
-                        action.into(),
-                        AuthViewVariant::RequireLoginCloseable,
-                        ctx,
-                    )
-                });
             }
             AISettingsPageAction::RemoveCLIAgentToolbarEnabledCommand(command) => {
                 AISettings::handle(ctx).update(ctx, |settings, ctx| {
@@ -2728,14 +2645,6 @@ impl TypedActionView for AISettingsPageView {
                 AISettings::handle(ctx).update(ctx, |settings, ctx| {
                     let _ = settings
                         .rule_suggestions_enabled_internal
-                        .toggle_and_save_value(ctx);
-                });
-                ctx.notify();
-            }
-            AISettingsPageAction::ToggleWarpDriveContext => {
-                AISettings::handle(ctx).update(ctx, |settings, ctx| {
-                    let _ = settings
-                        .warp_drive_context_enabled
                         .toggle_and_save_value(ctx);
                 });
                 ctx.notify();
@@ -2925,9 +2834,6 @@ impl TypedActionView for AISettingsPageView {
                 ctx.notify();
             }
             AISettingsPageAction::ToggleAgentAttribution => {
-                // The updated value syncs to warp-server automatically via
-                // `CloudPreferencesSyncer` as a `JsonPreference` GSO keyed
-                // `Global_AgentAttributionEnabled`; no bespoke server call needed.
                 AISettings::handle(ctx).update(ctx, |settings, ctx| {
                     report_if_error!(settings
                         .agent_attribution_enabled
@@ -3219,7 +3125,7 @@ impl SettingsWidget for GlobalAIWidget {
                     .with_child(
                         Container::new(
                             Text::new_inline(
-                                "To use AI features, please create an account.",
+                                "AI features use local or BYOK providers in this build.",
                                 appearance.ui_font_family(),
                                 14.,
                             )
@@ -3250,13 +3156,8 @@ impl SettingsWidget for GlobalAIWidget {
                                     }),
                                     ..Default::default()
                                 })
-                                .with_text_label("Sign up".to_owned())
+                                .with_text_label("Local only".to_owned())
                                 .build()
-                                .on_click(move |ctx, _, _| {
-                                    ctx.dispatch_typed_action(
-                                        AISettingsPageAction::SignupAnonymousUser,
-                                    );
-                                })
                                 .finish(),
                         )
                         .with_padding_right(TOGGLE_BUTTON_RIGHT_PADDING)
@@ -3288,307 +3189,12 @@ impl SettingsWidget for GlobalAIWidget {
 }
 
 #[derive(Default)]
-struct UsageWidget {
-    requests_highlight_index: HighlightedHyperlink,
-}
-
-impl UsageWidget {
-    fn render_request_usage_count(
-        &self,
-        used: usize,
-        limit: usize,
-        is_unlimited: bool,
-        workspace_is_delinquent_due_to_payment_issue: bool,
-        appearance: &Appearance,
-    ) -> Box<dyn warpui::Element> {
-        let mut row = Flex::row();
-        if used >= limit || workspace_is_delinquent_due_to_payment_issue {
-            row.add_child(
-                ConstrainedBox::new(
-                    Icon::AlertTriangle
-                        .to_warpui_icon(appearance.theme().ui_error_color().into())
-                        .finish(),
-                )
-                .with_height(16.)
-                .with_width(16.)
-                .finish(),
-            )
-        }
-
-        let request_count_label = if workspace_is_delinquent_due_to_payment_issue {
-            "Restricted due to billing issue".to_string()
-        } else if is_unlimited {
-            "Unlimited".to_string()
-        } else {
-            format!("{used}/{limit}")
-        };
-
-        row.add_child(
-            appearance
-                .ui_builder()
-                .paragraph(request_count_label)
-                .with_style(UiComponentStyles {
-                    font_color: {
-                        if used >= limit {
-                            Some(appearance.theme().ui_error_color())
-                        } else {
-                            Some(blended_colors::text_sub(
-                                appearance.theme(),
-                                appearance.theme().surface_1(),
-                            ))
-                        }
-                    },
-                    font_size: Some(16.),
-                    margin: Some(Coords {
-                        top: 0.,
-                        bottom: 0.,
-                        left: 8.,
-                        right: 0.,
-                    }),
-                    ..Default::default()
-                })
-                .build()
-                .finish(),
-        );
-
-        row.finish()
-    }
-
-    /// Renders a row of what is being limited, along with the current used/limit.
-    #[allow(clippy::too_many_arguments)]
-    fn render_ai_usage_limit_row(
-        &self,
-        header: impl Into<Cow<'static, str>>,
-        description: impl Into<Cow<'static, str>>,
-        used: usize,
-        limit: usize,
-        is_unlimited: bool,
-        workspace_is_delinquent_due_to_payment_issue: bool,
-        appearance: &Appearance,
-    ) -> Box<dyn warpui::Element> {
-        let request_usage_details = Flex::column()
-            .with_cross_axis_alignment(CrossAxisAlignment::End)
-            .with_child(self.render_request_usage_count(
-                used,
-                limit,
-                is_unlimited,
-                workspace_is_delinquent_due_to_payment_issue,
-                appearance,
-            ));
-
-        let request_usage_description = FormattedTextElement::from_str(
-            description,
-            appearance.ui_font_family(),
-            appearance.ui_font_size(),
-        )
-        .with_color(blended_colors::text_sub(
-            appearance.theme(),
-            appearance.theme().surface_1(),
-        ));
-
-        Flex::row()
-            .with_child(
-                Shrinkable::new(
-                    2.,
-                    Container::new(
-                        Flex::column()
-                            .with_child(
-                                appearance
-                                    .ui_builder()
-                                    .paragraph(header)
-                                    .with_style(UiComponentStyles {
-                                        font_color: Some(blended_colors::text_main(
-                                            appearance.theme(),
-                                            appearance.theme().surface_1(),
-                                        )),
-                                        margin: Some(Coords {
-                                            top: 0.,
-                                            bottom: 4.,
-                                            left: 0.,
-                                            right: 0.,
-                                        }),
-                                        ..Default::default()
-                                    })
-                                    .build()
-                                    .finish(),
-                            )
-                            .with_child(request_usage_description.finish())
-                            .finish(),
-                    )
-                    .with_margin_bottom(16.)
-                    .finish(),
-                )
-                .finish(),
-            )
-            .with_child(
-                Shrinkable::new(
-                    1.,
-                    Container::new(request_usage_details.finish())
-                        .with_margin_bottom(16.)
-                        .finish(),
-                )
-                .finish(),
-            )
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-            .with_main_axis_size(MainAxisSize::Max)
-            .finish()
-    }
-}
-
-impl SettingsWidget for UsageWidget {
-    type View = AISettingsPageView;
-
-    fn search_terms(&self) -> &str {
-        "a.i. ai usage limit plan"
-    }
-
-    fn should_render(&self, _app: &AppContext) -> bool {
-        false
-    }
-
-    fn render(
-        &self,
-        _view: &Self::View,
-        appearance: &Appearance,
-        app: &AppContext,
-    ) -> Box<dyn Element> {
-        let ai_request_usage_model = AIRequestUsageModel::as_ref(app);
-        let next_refresh_time = ai_request_usage_model.next_refresh_time();
-        let formatted_next_refresh_time = next_refresh_time.format("%b %d").to_string();
-        let workspace_is_delinquent_due_to_payment_issue = UserWorkspaces::as_ref(app)
-            .current_team()
-            .map(|team| team.billing_metadata.is_delinquent_due_to_payment_issue())
-            .unwrap_or_default();
-
-        let usage_header = Container::new(
-            Flex::row()
-                .with_main_axis_size(MainAxisSize::Max)
-                .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
-                .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                .with_child(
-                    build_sub_header(
-                        appearance,
-                        "Usage",
-                        Some(styles::header_font_color(true, app)),
-                    )
-                    .finish(),
-                )
-                .with_child(
-                    appearance
-                        .ui_builder()
-                        .paragraph(format!("Resets {formatted_next_refresh_time}"))
-                        .with_style(UiComponentStyles {
-                            font_color: Some(blended_colors::text_sub(
-                                appearance.theme(),
-                                appearance.theme().surface_1(),
-                            )),
-                            ..Default::default()
-                        })
-                        .build()
-                        .finish(),
-                )
-                .finish(),
-        )
-        .with_padding_bottom(HEADER_PADDING)
-        .finish();
-
-        let request_limit_description = format!(
-            "This is the {} limit of AI credits for your account.",
-            ai_request_usage_model.refresh_duration_to_string()
-        );
-
-        let request_usage_row = self.render_ai_usage_limit_row(
-            "Credits",
-            request_limit_description,
-            ai_request_usage_model.requests_used(),
-            ai_request_usage_model.request_limit(),
-            ai_request_usage_model.is_unlimited(),
-            workspace_is_delinquent_due_to_payment_issue,
-            appearance,
-        );
-
-        let auth_state = AuthStateProvider::as_ref(app).get();
-        let upgrade_cta_text_fragments =
-            if let Some(team) = UserWorkspaces::as_ref(app).current_team() {
-                let current_user_email = auth_state.user_email().unwrap_or_default();
-                let has_admin_permissions = team.has_admin_permissions(&current_user_email);
-                if team.billing_metadata.can_upgrade_to_higher_tier_plan() {
-                    let upgrade_url = UserWorkspaces::upgrade_link_for_team(team.uid);
-                    if has_admin_permissions {
-                        vec![
-                            FormattedTextFragment::hyperlink("Upgrade", upgrade_url),
-                            FormattedTextFragment::plain_text(" to get more AI usage."),
-                        ]
-                    } else {
-                        // The /upgrade page says to contact their administrator.
-                        vec![
-                            FormattedTextFragment::hyperlink("Compare plans", upgrade_url),
-                            FormattedTextFragment::plain_text(" for more AI usage."),
-                        ]
-                    }
-                } else {
-                    vec![FormattedTextFragment::plain_text(
-                        "Hosted plan support is unavailable in the local-first build.",
-                    )]
-                }
-            } else {
-                let user_id = auth_state.user_id().unwrap_or_default();
-                let upgrade_url = UserWorkspaces::upgrade_link(user_id);
-                vec![
-                    FormattedTextFragment::hyperlink("Upgrade", upgrade_url),
-                    FormattedTextFragment::plain_text(" to get more AI usage."),
-                ]
-            };
-
-        let mut upgrade_cta = FormattedTextElement::new(
-            FormattedText::new([FormattedTextLine::Line(upgrade_cta_text_fragments)]),
-            appearance.ui_font_size(),
-            appearance.ui_font_family(),
-            appearance.ui_font_family(),
-            blended_colors::text_sub(appearance.theme(), appearance.theme().surface_1()),
-            self.requests_highlight_index.clone(),
-        )
-        .with_hyperlink_font_color(appearance.theme().accent().into_solid());
-
-        if AuthStateProvider::as_ref(app)
-            .get()
-            .is_anonymous_or_logged_out()
-        {
-            upgrade_cta = upgrade_cta.register_default_click_handlers(|_, ctx, _| {
-                ctx.dispatch_typed_action(AISettingsPageAction::AttemptLoginGatedUpgrade);
-            });
-        } else {
-            upgrade_cta = upgrade_cta.register_default_click_handlers(|url, ctx, _| {
-                ctx.dispatch_typed_action(AISettingsPageAction::HyperlinkClick(url));
-            })
-        }
-
-        let mut children = vec![
-            render_separator(appearance),
-            usage_header,
-            request_usage_row,
-        ];
-        if false {
-            children.push(
-                Container::new(upgrade_cta.finish())
-                    .with_margin_bottom(16.)
-                    .finish(),
-            );
-        }
-
-        Flex::column().with_children(children).finish()
-    }
-}
-
-#[derive(Default)]
 struct ActiveAIWidget {
     active_ai_toggle: SwitchStateHandle,
     intelligent_autosuggestions_toggle: SwitchStateHandle,
     prompt_suggestions_toggle: SwitchStateHandle,
     code_suggestions_toggle: SwitchStateHandle,
     natural_language_autosuggestions_toggle: SwitchStateHandle,
-    shared_block_title_generation_toggle: SwitchStateHandle,
     git_operations_autogen_toggle: SwitchStateHandle,
 }
 
@@ -3620,22 +3226,6 @@ impl ActiveAIWidget {
             && AISettings::as_ref(app)
                 .natural_language_autosuggestions_enabled_internal
                 .is_supported_on_current_platform()
-    }
-
-    // TODO: Check if the user's enterprise billing policy allows toggling this feature.
-    fn is_shared_block_title_generation_toggleable(&self, app: &AppContext) -> bool {
-        FeatureFlag::SharedBlockTitleGeneration.is_enabled()
-            && AISettings::as_ref(app)
-                .shared_block_title_generation_enabled_internal
-                .is_supported_on_current_platform()
-            && (!UserWorkspaces::as_ref(app)
-                .current_team()
-                .is_some_and(|team| {
-                    team.billing_metadata.customer_type == CustomerType::Enterprise
-                })
-                // Override the enterprise check for dogfood builds, as our dogfood team
-                // is an enterprise team.
-                || ChannelState::channel().is_dogfood())
     }
 
     fn is_git_operations_autogen_toggleable(&self, app: &AppContext) -> bool {
@@ -3755,33 +3345,6 @@ impl ActiveAIWidget {
             .finish()
     }
 
-    fn render_shared_block_title_generation_section(
-        &self,
-        view: &AISettingsPageView,
-        app: &warpui::AppContext,
-    ) -> Box<dyn warpui::Element> {
-        let ai_settings = AISettings::as_ref(app);
-        let is_toggleable = ai_settings.is_active_ai_enabled(app);
-        Flex::column()
-            .with_child(
-                render_ai_setting_toggle::<SharedBlockTitleGenerationEnabled>(
-                    "Shared Block Title Generation",
-                    AISettingsPageAction::ToggleSharedTitleGeneration,
-                    *ai_settings.shared_block_title_generation_enabled_internal,
-                    is_toggleable,
-                    self.shared_block_title_generation_toggle.clone(),
-                    &view.local_only_icon_tooltip_states,
-                    app,
-                ),
-            )
-            .with_child(render_ai_setting_description(
-                SHARED_BLOCK_TITLE_GENERATION_DESCRIPTION,
-                is_toggleable,
-                app,
-            ))
-            .finish()
-    }
-
     fn render_git_operations_autogen_section(
         &self,
         view: &AISettingsPageView,
@@ -3820,7 +3383,6 @@ impl SettingsWidget for ActiveAIWidget {
             || self.is_prompt_suggestions_toggleable(app)
             || self.is_suggested_code_banners_toggleable(app)
             || self.is_natural_language_autosuggestions_toggleable(app)
-            || self.is_shared_block_title_generation_toggleable(app)
             || self.is_git_operations_autogen_toggleable(app)
     }
 
@@ -3878,10 +3440,6 @@ impl SettingsWidget for ActiveAIWidget {
 
         if self.is_natural_language_autosuggestions_toggleable(app) {
             column.add_child(self.render_natural_language_autosuggestions_section(view, app));
-        }
-
-        if self.is_shared_block_title_generation_toggleable(app) {
-            column.add_child(self.render_shared_block_title_generation_section(view, app));
         }
 
         if self.is_git_operations_autogen_toggleable(app) {
@@ -4615,11 +4173,7 @@ impl AgentsWidget {
 
         let codebase_context_description = vec![
             FormattedTextFragment::plain_text(
-                "Allow the Warp Agent to generate an outline of your codebase that can be used for context. No code is ever stored on our servers. ",
-            ),
-            FormattedTextFragment::hyperlink(
-                "Learn more",
-                "https://docs.warp.dev/agent-platform/capabilities/codebase-context",
+                "Allow the Warp Agent to generate an outline of your codebase that can be used for local context.",
             ),
         ];
         let description = Container::new(
@@ -4694,11 +4248,7 @@ impl AgentsWidget {
                     "Add a server",
                     AISettingsPageAction::OpenMCPServerCollection,
                 ),
-                FormattedTextFragment::plain_text(" or "),
-                FormattedTextFragment::hyperlink(
-                    "learn more about MCPs.",
-                    "https://docs.warp.dev/agent-platform/capabilities/mcp",
-                ),
+                FormattedTextFragment::plain_text("."),
             ];
 
             Container::new(
@@ -4991,13 +4541,9 @@ impl AIInputWidget {
         if FeatureFlag::AgentView.is_enabled() {
             static AUTODETECTION_DESCRIPTION_FRAGMENTS: LazyLock<Vec<FormattedTextFragment>> =
                 LazyLock::new(|| {
-                    vec![
-                        FormattedTextFragment::plain_text("Encountered an incorrect detection? "),
-                        FormattedTextFragment::hyperlink(
-                            "Let us know",
-                            "https://warpdotdev.typeform.com/to/offrTIpq",
-                        ),
-                    ]
+                    vec![FormattedTextFragment::plain_text(
+                        "Agent prompt autodetection runs locally and can be adjusted with the denylist below.",
+                    )]
                 });
 
             section.add_children([
@@ -5050,11 +4596,7 @@ impl AIInputWidget {
                         "Enabling natural language detection will detect when natural language is written in the terminal input, and then automatically switch to Agent Mode for AI queries.",
                     ),
                     FormattedTextFragment::plain_text(
-                        " Encountered an incorrect input detection? ",
-                    ),
-                    FormattedTextFragment::hyperlink(
-                        "Let us know",
-                        "https://warpdotdev.typeform.com/to/offrTIpq",
+                        " Detection runs locally and can be adjusted with the denylist below.",
                     ),
                 ]
             });
@@ -5159,11 +4701,7 @@ impl SettingsWidget for MCPServersWidget {
         let mcp_description = vec![
             FormattedTextFragment::plain_text(
                 "Add MCP servers to extend the Warp Agent's capabilities. \
-            MCP servers expose data sources or tools to agents through a standardized interface, essentially acting like plugins. ",
-            ),
-            FormattedTextFragment::hyperlink(
-                "Learn more",
-                "https://docs.warp.dev/agent-platform/capabilities/mcp",
+            MCP servers expose data sources or tools to agents through a standardized interface, essentially acting like plugins.",
             ),
         ];
 
@@ -5205,11 +4743,7 @@ impl SettingsWidget for MCPServersWidget {
                         > = LazyLock::new(|| {
                             vec![
                                 FormattedTextFragment::plain_text(
-                                    "Automatically detect and spawn MCP servers from globally-scoped third-party AI agent configuration files (e.g. in your home directory). Servers detected inside a repository are never spawned automatically and must be enabled individually from the MCP settings page. ",
-                                ),
-                                FormattedTextFragment::hyperlink(
-                                    "See supported providers.",
-                                    "https://docs.warp.dev/agent-platform/capabilities/mcp#file-based-mcp-servers",
+                                    "Automatically detect and spawn MCP servers from globally-scoped third-party AI agent configuration files (e.g. in your home directory). Servers detected inside a repository are never spawned automatically and must be enabled individually from the MCP settings page.",
                                 ),
                             ]
                         });
@@ -5267,7 +4801,6 @@ struct AIFactWidget {
     rules_link_index: HighlightedHyperlink,
     manage_rules_button: MouseStateHandle,
     rule_suggestions_toggle: SwitchStateHandle,
-    warp_drive_context_toggle: SwitchStateHandle,
 }
 
 impl AIFactWidget {
@@ -5290,11 +4823,7 @@ impl AIFactWidget {
 
         let rules_description = vec![
             FormattedTextFragment::plain_text(
-                "Rules help the Warp Agent follow your conventions, whether for codebases or specific workflows. ",
-            ),
-            FormattedTextFragment::hyperlink(
-                "Learn more",
-                "https://docs.warp.dev/agent-platform/capabilities/rules",
+                "Rules help the Warp Agent follow your conventions, whether for codebases or specific workflows.",
             ),
         ];
         let description = Container::new(
@@ -5341,34 +4870,6 @@ impl AIFactWidget {
 
         let description = render_ai_setting_description(
             "Let AI suggest rules to save based on your interactions.",
-            ai_settings.is_any_ai_enabled(app),
-            app,
-        );
-
-        Flex::column()
-            .with_child(toggle)
-            .with_child(description)
-            .finish()
-    }
-
-    fn render_warp_drive_context_toggle(
-        &self,
-        view: &AISettingsPageView,
-        ai_settings: &AISettings,
-        app: &warpui::AppContext,
-    ) -> Box<dyn Element> {
-        let toggle = render_ai_setting_toggle::<WarpDriveContextEnabled>(
-            "Warp Drive as agent context",
-            AISettingsPageAction::ToggleWarpDriveContext,
-            *ai_settings.warp_drive_context_enabled,
-            ai_settings.is_any_ai_enabled(app),
-            self.warp_drive_context_toggle.clone(),
-            &view.local_only_icon_tooltip_states,
-            app,
-        );
-
-        let description = render_ai_setting_description(
-            "The Warp Agent can leverage your Warp Drive Contents to tailor responses to your personal and team developer workflows and environments. This includes any Workflows, Notebooks, and Environment Variables.",
             ai_settings.is_any_ai_enabled(app),
             app,
         );
@@ -5425,10 +4926,6 @@ impl SettingsWidget for AIFactWidget {
         }
 
         column.add_child(button);
-        if false {
-            column.add_child(self.render_warp_drive_context_toggle(view, ai_settings, app));
-        }
-
         column.finish()
     }
 }
@@ -6113,7 +5610,7 @@ impl SettingsWidget for CloudAgentComputerUseWidget {
     type View = AISettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "oz cloud agent computer use orchestration multi-agent"
+        "oz agent workspace computer use orchestration multi-agent"
     }
 
     fn render(
@@ -6122,15 +5619,15 @@ impl SettingsWidget for CloudAgentComputerUseWidget {
         appearance: &Appearance,
         app: &AppContext,
     ) -> Box<dyn Element> {
-        use crate::ai::execution_profiles::{CloudAgentComputerUseState, ComputerUsePermission};
+        use crate::ai::execution_profiles::{AgentComputerUseState, ComputerUsePermission};
 
         let is_any_ai_enabled = AISettings::as_ref(app).is_any_ai_enabled(app);
 
         // Determine toggle state based on workspace autonomy setting and user preference
-        let CloudAgentComputerUseState {
+        let AgentComputerUseState {
             enabled: is_checked,
             is_forced_by_org,
-        } = ComputerUsePermission::resolve_cloud_agent_state(app);
+        } = ComputerUsePermission::resolve_agent_state(app);
 
         // Toggle is disabled if forced by org settings OR if AI is globally disabled
         let is_disabled = is_forced_by_org || !is_any_ai_enabled;
@@ -6170,7 +5667,7 @@ impl SettingsWidget for CloudAgentComputerUseWidget {
 
         let toggle_row = build_toggle_element(
             render_body_item_label::<AISettingsPageAction>(
-                "Computer use in Cloud Agents".to_string(),
+                "Computer use in agent workspaces".to_string(),
                 Some(styles::header_font_color(!is_disabled, app)),
                 None,
                 LocalOnlyIconState::Hidden,
@@ -6195,7 +5692,7 @@ impl SettingsWidget for CloudAgentComputerUseWidget {
             )
             .with_child(toggle_row)
             .with_child(render_ai_setting_description(
-                "Enable computer use in cloud agent conversations started from the Warp app.",
+                "Enable computer use in local agent workspace conversations started from the app.",
                 !is_disabled,
                 app,
             ));
@@ -7166,345 +6663,6 @@ impl SettingsWidget for LLMProvidersWidget {
         }
 
         Container::new(content.finish())
-            .with_margin_bottom(HEADER_PADDING)
-            .finish()
-    }
-}
-
-#[allow(dead_code)]
-struct ApiKeysWidget {
-    openai_api_key_editor: ViewHandle<EditorView>,
-    anthropic_api_key_editor: ViewHandle<EditorView>,
-    google_api_key_editor: ViewHandle<EditorView>,
-
-    can_use_warp_credits_with_byok: SwitchStateHandle,
-    upgrade_highlight_index: HighlightedHyperlink,
-}
-
-#[allow(dead_code)]
-impl ApiKeysWidget {
-    fn new(ctx: &mut ViewContext<<Self as SettingsWidget>::View>) -> Self {
-        let ai_settings = AISettings::as_ref(ctx);
-        let workspace_handle = UserWorkspaces::handle(ctx);
-        let is_any_ai_enabled = ai_settings.is_any_ai_enabled(ctx);
-        let is_byo_enabled = workspace_handle.as_ref(ctx).is_byo_api_key_enabled();
-
-        let ApiKeys {
-            openai: openai_key,
-            anthropic: anthropic_key,
-            google: google_key,
-            ..
-        } = ApiKeyManager::as_ref(ctx).keys().clone();
-
-        // A helper macro to create and configure an API key editor.  This avoids a lot
-        // of code duplication and ensures consistency between the editors.
-        macro_rules! create_api_key_editor {
-            ($editor:ident, $key:ident, $set_func:ident, $placeholder:literal) => {
-                let $editor = ctx.add_typed_action_view(move |ctx| {
-                    let appearance = Appearance::handle(ctx).as_ref(ctx);
-                    let options = SingleLineEditorOptions {
-                        is_password: true,
-                        text: TextOptions {
-                            font_size_override: Some(appearance.ui_font_size()),
-                            font_family_override: Some(appearance.monospace_font_family()),
-                            text_colors_override: Some(TextColors {
-                                default_color: appearance.theme().active_ui_text_color(),
-                                disabled_color: appearance.theme().disabled_ui_text_color(),
-                                hint_color: appearance.theme().disabled_ui_text_color(),
-                            }),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    };
-                    let mut editor = EditorView::single_line(options, ctx);
-                    editor.set_placeholder_text($placeholder, ctx);
-                    if let Some(key) = &$key {
-                        editor.set_buffer_text(key, ctx);
-                    }
-                    editor
-                });
-                AISettingsPageView::update_editor_interaction_state(
-                    $editor.clone(),
-                    is_any_ai_enabled && is_byo_enabled,
-                    ctx,
-                );
-                ctx.subscribe_to_view(&$editor, |_, $editor, event, ctx| {
-                    if matches!(event, EditorEvent::Blurred | EditorEvent::Enter) {
-                        let buffer_text = $editor.as_ref(ctx).buffer_text(ctx);
-                        let key = buffer_text.is_empty().not().then_some(buffer_text);
-                        ApiKeyManager::handle(ctx).update(ctx, |model, ctx| {
-                            model.$set_func(key, ctx);
-                        });
-                    }
-                });
-                let editor_clone = $editor.clone();
-                ctx.subscribe_to_model(&workspace_handle, move |_, workspace, event, ctx| {
-                    if let UserWorkspacesEvent::TeamsChanged = event {
-                        let is_any_ai_enabled =
-                            AISettings::handle(ctx).as_ref(ctx).is_any_ai_enabled(ctx);
-                        let is_byo_enabled = workspace.as_ref(ctx).is_byo_api_key_enabled();
-                        let is_enabled = is_any_ai_enabled && is_byo_enabled;
-                        let has_key = !editor_clone.as_ref(ctx).is_empty(ctx);
-
-                        // If BYO is disabled, clear the API key from the editor and storage
-                        if !is_byo_enabled && has_key {
-                            editor_clone.update(ctx, |editor, ctx| {
-                                editor.set_buffer_text("", ctx);
-                            });
-                            ApiKeyManager::handle(ctx).update(ctx, |model, ctx| {
-                                model.$set_func(None, ctx);
-                            });
-                        }
-
-                        AISettingsPageView::update_editor_interaction_state(
-                            editor_clone.clone(),
-                            is_enabled,
-                            ctx,
-                        );
-                        ctx.notify();
-                    }
-                })
-            };
-        }
-
-        create_api_key_editor!(openai_api_key_editor, openai_key, set_openai_key, "sk-...");
-        create_api_key_editor!(
-            anthropic_api_key_editor,
-            anthropic_key,
-            set_anthropic_key,
-            "sk-ant-..."
-        );
-        create_api_key_editor!(
-            google_api_key_editor,
-            google_key,
-            set_google_key,
-            "AIzaSy..."
-        );
-
-        Self {
-            openai_api_key_editor,
-            anthropic_api_key_editor,
-            google_api_key_editor,
-
-            can_use_warp_credits_with_byok: Default::default(),
-            upgrade_highlight_index: Default::default(),
-        }
-    }
-
-    fn render_api_keys_section(
-        &self,
-        appearance: &Appearance,
-        app: &AppContext,
-        is_byo_enabled: bool,
-    ) -> Box<dyn Element> {
-        let ai_settings = AISettings::as_ref(app);
-        let is_any_ai_enabled = ai_settings.is_any_ai_enabled(app);
-        let is_enabled = is_any_ai_enabled && is_byo_enabled;
-
-        let mut column = Flex::column()
-            .with_spacing(16.)
-            .with_child(
-                Container::new(
-                    render_ai_setting_description(
-                        "Use your own API keys from model providers for the Warp Agent to use. API keys are stored locally and never synced to the cloud. Using auto models or models from providers you have not provided API keys for will consume Warp credits.",
-                        is_enabled,
-                        app,
-                    ))
-                // Remove the bottom margin of the description so that it doesn't
-                // create extra space between the description and the API key inputs.
-                .with_margin_bottom(-styles::DESCRIPTION_MARGIN_BOTTOM).finish()
-            );
-
-        /// Helper function to render the UI for an API key input field.
-        fn render_api_key_input(
-            appearance: &Appearance,
-            label: &'static str,
-            editor: ViewHandle<EditorView>,
-            is_enabled: bool,
-            app: &AppContext,
-        ) -> Box<dyn Element> {
-            let padding = Some(Coords {
-                top: 10.,
-                bottom: 10.,
-                left: 16.,
-                right: 16.,
-            });
-            let editor_style = UiComponentStyles {
-                padding,
-                background: Some(appearance.theme().surface_2().into()),
-                ..Default::default()
-            };
-
-            let label = Text::new_inline(label, appearance.ui_font_family(), CONTENT_FONT_SIZE)
-                .with_color(styles::header_font_color(is_enabled, app).into())
-                .finish();
-
-            let input = appearance
-                .ui_builder()
-                .text_input(editor)
-                .with_style(editor_style)
-                .build()
-                .finish();
-
-            Flex::column()
-                .with_spacing(8.)
-                .with_child(label)
-                .with_child(input)
-                .finish()
-        }
-
-        column.add_child(render_api_key_input(
-            appearance,
-            "OpenAI API Key",
-            self.openai_api_key_editor.clone(),
-            is_enabled,
-            app,
-        ));
-        column.add_child(render_api_key_input(
-            appearance,
-            "Anthropic API Key",
-            self.anthropic_api_key_editor.clone(),
-            is_enabled,
-            app,
-        ));
-        column.add_child(render_api_key_input(
-            appearance,
-            "Google API Key",
-            self.google_api_key_editor.clone(),
-            is_enabled,
-            app,
-        ));
-
-        // Show upgrade CTA if BYOK is not enabled
-        if false && !is_byo_enabled {
-            let auth_state = AuthStateProvider::as_ref(app).get();
-            let upgrade_text_fragments = if let Some(team) =
-                UserWorkspaces::as_ref(app).current_team()
-            {
-                // Enterprise teams don't have a self-serve upgrade path; route them
-                // to sales to enable BYOK on their existing plan.
-                if team.billing_metadata.customer_type == CustomerType::Enterprise {
-                    vec![
-                        FormattedTextFragment::hyperlink("Contact sales", "mailto:sales@warp.dev"),
-                        FormattedTextFragment::plain_text(
-                            " to enable bringing your own API keys on your Enterprise plan.",
-                        ),
-                    ]
-                } else {
-                    let current_user_email = auth_state.user_email().unwrap_or_default();
-                    let has_admin_permissions = team.has_admin_permissions(&current_user_email);
-                    let upgrade_url = UserWorkspaces::upgrade_link_for_team(team.uid);
-                    if has_admin_permissions {
-                        vec![
-                            FormattedTextFragment::hyperlink(
-                                "Upgrade to the Build plan",
-                                upgrade_url,
-                            ),
-                            FormattedTextFragment::plain_text(" to use your own API keys."),
-                        ]
-                    } else {
-                        vec![FormattedTextFragment::plain_text(
-                            "Ask your team's admin to upgrade to the Build plan to use your own API keys.",
-                        )]
-                    }
-                }
-            } else {
-                let user_id = auth_state.user_id().unwrap_or_default();
-                let upgrade_url = UserWorkspaces::upgrade_link(user_id);
-                vec![
-                    FormattedTextFragment::hyperlink("Upgrade to the Build plan", upgrade_url),
-                    FormattedTextFragment::plain_text(" to use your own API keys."),
-                ]
-            };
-
-            let upgrade_text_element = FormattedTextElement::new(
-                FormattedText::new([FormattedTextLine::Line(upgrade_text_fragments)]),
-                appearance.ui_font_size(),
-                appearance.ui_font_family(),
-                appearance.ui_font_family(),
-                blended_colors::text_sub(appearance.theme(), appearance.theme().surface_1()),
-                self.upgrade_highlight_index.clone(),
-            )
-            .with_hyperlink_font_color(appearance.theme().accent().into_solid())
-            .register_default_click_handlers(|url, ctx, _| {
-                ctx.dispatch_typed_action(AISettingsPageAction::HyperlinkClick(url));
-            });
-
-            column.add_child(Container::new(upgrade_text_element.finish()).finish());
-        }
-
-        column.finish()
-    }
-
-    fn render_can_use_warp_credits_with_byok_toggle(
-        &self,
-        view: &AISettingsPageView,
-        app: &AppContext,
-    ) -> Box<dyn Element> {
-        let ai_settings = AISettings::as_ref(app);
-
-        let toggle = render_ai_setting_toggle::<CanUseWarpCreditsWithByok>(
-            "Warp credit fallback",
-            AISettingsPageAction::ToggleCanUseWarpCreditsWithByok,
-            *ai_settings.can_use_warp_credits_with_byok,
-            ai_settings.is_any_ai_enabled(app),
-            self.can_use_warp_credits_with_byok.clone(),
-            &view.local_only_icon_tooltip_states,
-            app,
-        );
-
-        let description = render_ai_setting_description(
-            "When enabled, agent requests may be routed to one of Warp's provided models in the event of an error. Warp will prioritize using your API keys over your Warp credits.",
-            ai_settings.is_any_ai_enabled(app),
-            app,
-        );
-
-        Flex::column()
-            .with_child(toggle)
-            .with_child(description)
-            .finish()
-    }
-}
-
-impl SettingsWidget for ApiKeysWidget {
-    type View = AISettingsPageView;
-
-    fn search_terms(&self) -> &str {
-        "api keys bring your own byo openai anthropic google claude gemini gpt"
-    }
-
-    fn render(
-        &self,
-        view: &Self::View,
-        appearance: &Appearance,
-        app: &AppContext,
-    ) -> Box<dyn Element> {
-        let ai_settings = AISettings::as_ref(app);
-        let is_any_ai_enabled = ai_settings.is_any_ai_enabled(app);
-        let is_byo_enabled = UserWorkspaces::as_ref(app).is_byo_api_key_enabled();
-
-        let mut column = Flex::column()
-            .with_child(render_separator(appearance))
-            .with_child(
-                build_sub_header(
-                    appearance,
-                    "API Keys",
-                    Some(styles::header_font_color(is_any_ai_enabled, app)),
-                )
-                .with_padding_bottom(HEADER_PADDING)
-                .finish(),
-            )
-            .with_child(self.render_api_keys_section(appearance, app, is_byo_enabled));
-
-        if false && is_byo_enabled {
-            column.add_child(
-                Container::new(self.render_can_use_warp_credits_with_byok_toggle(view, app))
-                    .with_margin_top(16.)
-                    .finish(),
-            );
-        }
-
-        Container::new(column.finish())
             .with_margin_bottom(HEADER_PADDING)
             .finish()
     }

@@ -46,8 +46,8 @@ use crate::settings::{
 };
 use crate::settings::{
     AliasExpansionEnabled, AliasExpansionSettings, AppEditorSettings, AtContextMenuInTerminalMode,
-    AutocompleteSymbols, AutosuggestionKeybindingHint, ChangelogSettings, CloudPreferencesSettings,
-    CodeSettings, CommandCorrections, CompletionsOpenWhileTyping, CopyOnSelect, CtrlTabBehavior,
+    AutocompleteSymbols, AutosuggestionKeybindingHint, ChangelogSettings, CodeSettings,
+    CommandCorrections, CompletionsOpenWhileTyping, CopyOnSelect, CtrlTabBehavior,
     DefaultSessionMode, EnableSlashCommandsInTerminal, EnableSshWrapper, ErrorUnderliningEnabled,
     ExtraMetaKeys, GPUSettings, GlobalHotkeyMode, InputSettings, InputSettingsChangedEvent,
     LinuxSelectionClipboard, MiddleClickPasteEnabled, MouseScrollMultiplier,
@@ -601,7 +601,6 @@ pub enum FeaturesPageAction {
     QuakeEditorSetHeightPercentage,
     QuakeEditorResetWidthHeight,
     QuakeEditorTogglePinWindow,
-    OpenUrl(String),
     SetExtraMetaKeys(ExtraMetaKeys),
     ToggleLeftMetaKey,
     ToggleRightMetaKey,
@@ -662,8 +661,6 @@ lazy_static! {
 /// Used for styling notification settings
 const NOTIFICATION_CHECKBOX_MARGIN_RIGHT: f32 = 5.;
 const NOTIFICATION_EDITOR_MARGIN: f32 = 5.;
-
-const NOTIFICATIONS_DOCS_URL: &str = "https://docs.warp.dev/terminal/more-features/notifications";
 
 /// WARNING: this constant was computed manually by determining the pixel width
 /// of the quake mode dropdowns based on the number of expanded items in the flex row.
@@ -890,9 +887,6 @@ impl TypedActionView for FeaturesPageView {
                         .enable_legacy_ssh_wrapper
                         .toggle_and_save_value(ctx));
                 });
-            }
-            OpenUrl(url) => {
-                ctx.open_url(url.as_str());
             }
             SetGlobalHotkeyMode(mode) => self.set_global_hotkey_mode(mode, ctx),
             ActivationKeybindEditorClicked => {
@@ -3815,9 +3809,7 @@ impl SettingsWidget for SessionRestorationWidget {
             "Restore windows, tabs, and panes on startup".into(),
             Some(AdditionalInfo {
                 mouse_state: self.additional_info_link.clone(),
-                on_click_action: Some(FeaturesPageAction::OpenUrl(
-                    "https://docs.warp.dev/terminal/sessions/session-restoration".into(),
-                )),
+                on_click_action: None,
                 secondary_text: None,
                 tooltip_override_text: None,
             }),
@@ -3848,7 +3840,7 @@ impl SettingsWidget for SessionRestorationWidget {
             let link = ui_builder
                 .link(
                     "See docs.".to_owned(),
-                    Some("https://docs.warp.dev/terminal/sessions/session-restoration".to_owned()),
+                    None,
                     None,
                     self.docs_link.clone(),
                 )
@@ -3900,9 +3892,7 @@ impl SettingsWidget for SnackbarHeaderWidget {
             "Show sticky command header".into(),
             Some(AdditionalInfo {
                 mouse_state: self.additional_info_link.clone(),
-                on_click_action: Some(FeaturesPageAction::OpenUrl(
-                    "https://docs.warp.dev/terminal/blocks/sticky-command-header".into(),
-                )),
+                on_click_action: None,
                 secondary_text: None,
                 tooltip_override_text: None,
             }),
@@ -4452,9 +4442,7 @@ impl SettingsWidget for SSHWrapperWidget {
             "Warp SSH Wrapper".into(),
             Some(AdditionalInfo {
                 mouse_state: self.additional_info_link.clone(),
-                on_click_action: Some(FeaturesPageAction::OpenUrl(
-                    "https://docs.warp.dev/terminal/warpify/ssh-legacy#implementation".into(),
-                )),
+                on_click_action: None,
                 secondary_text: if view.ssh_wrapper_toggled {
                     Some("This change will take effect in new sessions".to_string())
                 } else {
@@ -4513,7 +4501,7 @@ impl SettingsWidget for DesktopNotificationsWidget {
             "Receive desktop notifications from Warp".into(),
             Some(AdditionalInfo {
                 mouse_state: self.additional_info_link.clone(),
-                on_click_action: Some(FeaturesPageAction::OpenUrl(NOTIFICATIONS_DOCS_URL.into())),
+                on_click_action: None,
                 secondary_text: None,
                 tooltip_override_text: None,
             }),
@@ -4780,7 +4768,7 @@ impl SettingsWidget for ConfirmCloseSharedSessionWidget {
     type View = FeaturesPageView;
 
     fn search_terms(&self) -> &str {
-        "warning popup modal dialog shared session close"
+        "warning popup modal dialog hosted session close"
     }
 
     fn render(
@@ -4792,7 +4780,7 @@ impl SettingsWidget for ConfirmCloseSharedSessionWidget {
         let ui_builder = appearance.ui_builder();
         let session_settings = SessionSettings::as_ref(app);
         render_body_item::<FeaturesPageAction>(
-            "Confirm before closing shared session".into(),
+            "Confirm before closing hosted session".into(),
             None,
             LocalOnlyIconState::for_setting(
                 ShouldConfirmCloseSession::storage_key(),
@@ -4925,10 +4913,7 @@ impl SettingsWidget for GlobalHotkeyWidget {
                         ui_builder
                             .link(
                                 "See docs.".to_owned(),
-                                Some(
-                                    "https://docs.warp.dev/terminal/windows/global-hotkey"
-                                        .to_owned(),
-                                ),
+                                None,
                                 None,
                                 view.button_mouse_states.global_hotkey_link.clone(),
                             )
@@ -5896,16 +5881,6 @@ impl SettingsWidget for TabKeyBehaviorWidget {
                     .build()
                     .finish(),
             );
-        if *CloudPreferencesSettings::as_ref(app).settings_sync_enabled {
-            tab_key_span.add_child(render_local_only_icon(
-                appearance,
-                view.button_mouse_states
-                    .tab_behavior_local_only_icon
-                    .clone(),
-                None,
-            ));
-        }
-
         let main_row = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_child(
@@ -5994,10 +5969,7 @@ impl SettingsWidget for MouseReportingWidget {
             "Enable Mouse Reporting".into(),
             Some(AdditionalInfo {
                 mouse_state: self.additional_info_link.clone(),
-                on_click_action: Some(FeaturesPageAction::OpenUrl(
-                    "https://docs.warp.dev/terminal/more-features/full-screen-apps#mouse-and-scroll-reporting"
-                        .into(),
-                )),
+                on_click_action: None,
                 secondary_text: None,
                 tooltip_override_text: None,
             }),
@@ -6259,9 +6231,7 @@ impl SettingsWidget for SmartSelectWidget {
             "Double-click smart selection".into(),
             Some(AdditionalInfo {
                 mouse_state: self.additional_info_link.clone(),
-                on_click_action: Some(FeaturesPageAction::OpenUrl(
-                    "https://docs.warp.dev/terminal/more-features/text-selection".into(),
-                )),
+                on_click_action: None,
                 secondary_text: None,
                 tooltip_override_text: None,
             }),
@@ -6510,9 +6480,7 @@ impl SettingsWidget for WorkflowsInCommandSearch {
             "Show Global Workflows in Command Search (ctrl-r)".into(),
             Some(AdditionalInfo {
                 mouse_state: self.additional_info_link.clone(),
-                on_click_action: Some(FeaturesPageAction::OpenUrl(
-                    "https://docs.warp.dev/terminal/entry/yaml-workflows".into(),
-                )),
+                on_click_action: None,
                 secondary_text: None,
                 tooltip_override_text: None,
             }),

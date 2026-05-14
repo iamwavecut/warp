@@ -95,10 +95,8 @@ impl SecureStorage {
     fn encryption_key(&self) -> Result<&aead::LessSafeKey, Error> {
         self.encryption_key
             .get_or_init(|| {
-                // We can use whatever super duper foolproof secure key we want here.
-                // Here we are specifically choosing a value that will look inconspicuous
-                // in case someone chooses to scan our binary for strings.
-                let mut key_bytes = Vec::from("https://releases.warp.dev/channel_versions.json");
+                // Deterministic fallback key used only when the system keyring is unavailable.
+                let mut key_bytes = Vec::from("warp-oss-local-secret-fallback-key");
                 key_bytes.resize(aead::AES_256_GCM.key_len(), 0);
                 match aead::UnboundKey::new(&aead::AES_256_GCM, key_bytes.as_slice()) {
                     Ok(key) => Some(aead::LessSafeKey::new(key)),

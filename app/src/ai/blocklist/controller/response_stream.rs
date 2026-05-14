@@ -178,7 +178,7 @@ impl ResponseStream {
                 );
             }
             Err(e) => {
-                log::error!("Failed to send request to multi-agent API: {e:?}");
+                log::error!("Failed to send agent request: {e:?}");
                 self.on_response_stream_complete(request_id, ctx);
             }
         }

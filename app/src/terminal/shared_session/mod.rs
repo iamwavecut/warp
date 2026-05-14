@@ -27,7 +27,6 @@ pub mod replay_agent_conversations;
 pub mod role_change_modal;
 mod selections;
 pub mod settings;
-pub mod share_modal;
 pub(super) mod shared_handlers;
 pub mod sharer;
 pub mod viewer;
@@ -301,36 +300,13 @@ pub fn join_native_intent(session_id: &SessionId) -> String {
 
 /// Returns the link to join a shared session.
 pub fn join_link(session_id: &SessionId) -> String {
-    // For non-bundled builds against the staging server, use the native app intent
-    // because the staging web URL won't resolve to a local build.
-    let use_web_url = !ChannelState::uses_staging_server() || cfg!(feature = "release_bundle");
-
-    let mut link = if use_web_url {
-        format!("{}/session/{}", ChannelState::server_root_url(), session_id,)
-    } else {
-        join_native_intent(session_id)
-    };
-
-    // If this is a preview build, route the sharing link to the preview server.
-    if matches!(ChannelState::channel(), Channel::Preview) {
-        link.push_str("?preview=true");
-    }
-
-    link
+    join_native_intent(session_id)
 }
 
 /// Returns the full session sharing URL given a path.
 pub fn connect_endpoint(path: String) -> Option<String> {
-    let base = ChannelState::session_sharing_server_url()?;
-    if FeatureFlag::SessionSharingAcls.is_enabled() {
-        let version = ChannelState::app_version().unwrap_or("v0.00.000");
-        if path.contains("?") {
-            return Some(format!("{base}{path}&version={version}"));
-        } else {
-            return Some(format!("{base}{path}?version={version}"));
-        }
-    }
-    Some(format!("{base}{path}"))
+    let _ = path;
+    None
 }
 
 /// The event number for events sent to the server. The newtype

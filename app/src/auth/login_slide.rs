@@ -1,19 +1,16 @@
 use crate::appearance::Appearance;
 use crate::auth::auth_manager::{AuthManager, AuthManagerEvent};
-use crate::auth::auth_view_modal::AuthRedirectPayload;
 use crate::auth::login_failure_notification::{self, LoginFailureReason};
 use crate::editor::{EditorView, SingleLineEditorOptions, TextColors, TextOptions};
 use crate::themes::theme::Fill as ThemeFill;
 use crate::util::bindings::CustomAction;
 
 use onboarding::slides::{layout, slide_content};
-use onboarding::{OnboardingIntention, AI_FEATURES, WARP_DRIVE_FEATURES};
+use onboarding::{OnboardingIntention, AI_FEATURES};
 use pathfinder_color::ColorU;
 use ui_components::{button, Component as _, Options as _};
-use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::Icon;
-use warpui::clipboard::ClipboardContent;
 use warpui::elements::{
     Align, Border, CacheOption, ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Dismiss, Fill, Flex, FormattedTextElement, HighlightedHyperlink, Image,
@@ -34,7 +31,7 @@ use std::cell::Cell;
 use pathfinder_geometry::vector::vec2f;
 use warpui::elements::{ChildAnchor, ParentAnchor, ParentOffsetBounds};
 
-const TOS_URL: &str = "https://www.warp.dev/terms-of-service";
+const TOS_URL: &str = "about:blank";
 
 // ---------------------------------------------------------------------------
 // Init (keybindings)
@@ -141,11 +138,8 @@ enum LoginSlideOverlay {
 const AUTH_TOKEN_INPUT_BORDER_RADIUS: Radius = Radius::Pixels(4.);
 
 pub struct LoginSlideView {
-    /// Onboarding intention selected by the user, used to render Drive-focused
-    /// copy on the Terminal+Drive path. On the login slide, `intention ==
-    /// OnboardingIntention::Terminal` is equivalent to "Terminal+Drive":
-    /// `RootView` only routes Terminal-intent users here when Warp Drive is
-    /// enabled.
+    /// Onboarding intention selected by the user, used to render local-first
+    /// copy on the terminal path.
     intention: OnboardingIntention,
     theme_visual_path: &'static str,
     step: LoginStep,
@@ -318,23 +312,9 @@ impl LoginSlideView {
     fn handle_auth_manager_event(&mut self, event: &AuthManagerEvent, ctx: &mut ViewContext<Self>) {
         match event {
             AuthManagerEvent::AuthFailed(err) => {
-                use crate::server::server_api::auth::UserAuthenticationError;
-                if let UserAuthenticationError::InvalidStateParameter = err {
-                    self.last_login_failure_reason =
-                        Some(LoginFailureReason::InvalidStateParameter);
-                } else if let UserAuthenticationError::MissingStateParameter = err {
-                    self.last_login_failure_reason =
-                        Some(LoginFailureReason::MissingStateParameter);
-                } else {
-                    self.last_login_failure_reason =
-                        Some(LoginFailureReason::FailedUserAuthentication);
-                }
-            }
-            AuthManagerEvent::CreateAnonymousUserFailed => {
-                self.last_login_failure_reason = Some(LoginFailureReason::FailedUserAuthentication);
-            }
-            AuthManagerEvent::MintCustomTokenFailed(_) => {
-                self.last_login_failure_reason = Some(LoginFailureReason::FailedMintCustomToken);
+                let _ = err;
+                self.last_login_failure_reason =
+                    Some(LoginFailureReason::FailedUserAuthentication);
             }
             _ => {}
         }
@@ -342,18 +322,11 @@ impl LoginSlideView {
     }
 
     fn handle_pasted_auth_url(&mut self, pasted_url: String, ctx: &mut ViewContext<Self>) {
-        match AuthRedirectPayload::from_raw_url(pasted_url) {
-            Ok(redirect_payload) => {
-                AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                    auth_manager.initialize_user_from_auth_payload(redirect_payload, true, ctx);
-                });
-            }
-            Err(error) => {
-                log::error!("Failed to parse AuthRedirectPayload from redirect URL: {error:#}");
-                self.last_login_failure_reason =
-                    Some(LoginFailureReason::InvalidRedirectUrl { was_pasted: true });
-            }
-        }
+        let _ = pasted_url;
+        log::info!("Ignoring pasted remote auth URL in local workflow");
+        AuthManager::handle(ctx).update(ctx, |_, ctx| {
+            ctx.emit(AuthManagerEvent::SkippedLogin);
+        });
         ctx.notify();
     }
 
@@ -361,15 +334,9 @@ impl LoginSlideView {
         // Send synchronously since this is an important event in the sign up funnel and we
         // don't want to lose events if the user quits before the event queue is flushed.
 
-        if FeatureFlag::SkipFirebaseAnonymousUser.is_enabled() {
-            AuthManager::handle(ctx).update(ctx, |_, ctx| {
-                ctx.emit(AuthManagerEvent::SkippedLogin);
-            });
-        } else {
-            AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                auth_manager.create_anonymous_user(ctx);
-            });
-        }
+        AuthManager::handle(ctx).update(ctx, |_, ctx| {
+            ctx.emit(AuthManagerEvent::SkippedLogin);
+        });
         ctx.emit(LoginSlideEvent::LoginLaterConfirmed);
     }
 
@@ -418,7 +385,7 @@ impl LoginSlideView {
 
         let is_terminal = matches!(self.intention, OnboardingIntention::Terminal);
         let title_text = if is_terminal {
-            "Get started with Warp Drive"
+            "Continue locally"
         } else {
             "Get started with AI"
         };
@@ -432,9 +399,9 @@ impl LoginSlideView {
             .finish();
 
         let subtitle_text = if is_terminal {
-            "Connect your account to save and share notebooks, workflows, and more across devices."
+            "This local-first build stores notebooks, workflows, and settings on this device without a Warp account."
         } else {
-            "Connect your account to enable AI-powered planning, coding, and automation."
+            "Configure a local or BYOK provider to enable AI-powered planning, coding, and automation without a Warp account."
         };
         let subtitle =
             FormattedTextElement::from_str(subtitle_text, appearance.ui_font_family(), 16.)
@@ -444,37 +411,16 @@ impl LoginSlideView {
                 .with_line_height_ratio(1.0)
                 .finish();
 
-        // Terms of Service link.
         let disclaimer_styles = UiComponentStyles {
             font_color: Some(sub_text_color),
             font_size: Some(12.),
             ..Default::default()
         };
 
-        let tos_line = Flex::row()
-            .with_child(
-                ui_builder
-                    .span("By continuing, you agree to Warp's ")
-                    .with_style(disclaimer_styles)
-                    .build()
-                    .finish(),
-            )
-            .with_child(
-                ui_builder
-                    .link(
-                        "Terms of Service".into(),
-                        Some(TOS_URL.into()),
-                        None,
-                        self.tos_mouse_state.clone(),
-                    )
-                    .soft_wrap(false)
-                    .with_style(UiComponentStyles {
-                        font_size: Some(12.),
-                        ..Default::default()
-                    })
-                    .build()
-                    .finish(),
-            )
+        let tos_line = ui_builder
+            .span("No Warp account is required in this local-first build.")
+            .with_style(disclaimer_styles)
+            .build()
             .finish();
 
         let disclaimers = Container::new(tos_line).with_margin_top(24.).finish();
@@ -507,7 +453,7 @@ impl LoginSlideView {
 
         let cmd_enter = Keystroke::parse("cmdorctrl-enter").unwrap_or_default();
         let skip_label = if matches!(self.intention, OnboardingIntention::Terminal) {
-            "Disable Warp Drive"
+            "Continue locally"
         } else {
             "Disable AI features"
         };
@@ -576,7 +522,7 @@ impl LoginSlideView {
         };
 
         let title = FormattedTextElement::from_str(
-            "Sign in on your browser to continue",
+            "Hosted sign-in is disabled",
             appearance.ui_font_family(),
             36.,
         )
@@ -744,7 +690,7 @@ impl LoginSlideView {
 
         let is_terminal = matches!(self.intention, OnboardingIntention::Terminal);
         let title_text = if is_terminal {
-            "Are you sure you want to disable Warp Drive?"
+            "Continue without hosted sync?"
         } else {
             "Are you sure you want to disable AI features?"
         };
@@ -780,7 +726,7 @@ impl LoginSlideView {
             .finish();
 
         let body_text_str = if is_terminal {
-            "Warp Drive lets you save workflows and knowledge across devices and share them with your team. By continuing, you won't have access to the following features:"
+            "Hosted sync and sharing are disabled in this local-first build. Local notebooks, workflows, and AI remain available where configured."
         } else {
             "Warp is better with AI. By continuing, you won't have access to any of the following features:"
         };
@@ -795,11 +741,7 @@ impl LoginSlideView {
         let feature_x_fill: ThemeFill = ThemeFill::Solid(theme.ansi_fg_red());
         let mut feature_list =
             Flex::column().with_cross_axis_alignment(CrossAxisAlignment::Stretch);
-        let feature_items: &[&str] = if is_terminal {
-            WARP_DRIVE_FEATURES
-        } else {
-            AI_FEATURES
-        };
+        let feature_items: &[&str] = if is_terminal { &[] } else { AI_FEATURES };
         for &item in feature_items {
             let icon_el = ConstrainedBox::new(Icon::X.to_warpui_icon(feature_x_fill).finish())
                 .with_width(16.)
@@ -826,16 +768,20 @@ impl LoginSlideView {
 
         let body_section = Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
-            .with_child(body_text)
-            .with_child(
+            .with_child(body_text);
+        let body_section = if feature_items.is_empty() {
+            body_section
+        } else {
+            body_section.with_child(
                 Container::new(feature_list.finish())
                     .with_margin_top(12.)
                     .finish(),
             )
-            .finish();
+        }
+        .finish();
 
         let cancel_label = if is_terminal {
-            "Enable Warp Drive"
+            "Review options"
         } else {
             "Enable AI features"
         };
@@ -1029,11 +975,7 @@ impl TypedActionView for LoginSlideView {
                 // Otherwise Enter is log in
 
                 self.last_login_failure_reason = None;
-                self.step = LoginStep::BrowserOpen;
-                AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                    let sign_up_url = auth_manager.sign_up_url();
-                    ctx.open_url(&sign_up_url);
-                });
+                self.handle_login_later(ctx);
                 ctx.notify();
             }
             LoginSlideAction::ShowSkipDialog => {
@@ -1082,12 +1024,7 @@ impl TypedActionView for LoginSlideView {
             },
             LoginSlideAction::CopyLoginUrl => {
                 AuthManager::handle(ctx).update(ctx, |auth_manager, inner_ctx| {
-                    let sign_in_url = auth_manager.sign_in_url();
-                    inner_ctx.clipboard().write(ClipboardContent {
-                        plain_text: sign_in_url.clone(),
-                        paths: Some(vec![sign_in_url]),
-                        ..Default::default()
-                    });
+                    auth_manager.copy_anonymous_user_linking_url_to_clipboard(inner_ctx);
                 });
             }
             LoginSlideAction::EnterToken => {

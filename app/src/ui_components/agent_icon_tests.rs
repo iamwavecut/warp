@@ -394,7 +394,7 @@ fn non_ambient_entry_uses_display_harness() {
             server_conversation_token: None,
             session_id: None,
         },
-        provenance: AgentConversationProvenance::CloudSyncedConversation,
+        provenance: AgentConversationProvenance::LocalInteractive,
         display: AgentConversationDisplayData {
             title: "Codex conversation".to_string(),
             initial_query: None,

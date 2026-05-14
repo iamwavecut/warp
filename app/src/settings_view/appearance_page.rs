@@ -592,7 +592,8 @@ impl TypedActionView for AppearanceSettingsPageView {
             OpacitySliderDragged(val) => self.set_opacity(*val, false, ctx),
             BlurSliderDragged(val) => self.set_blur(*val, false, ctx),
             OpenUrl(url) => {
-                ctx.open_url(url);
+                let _ = url;
+                log::info!("Ignoring hosted documentation link in local-first build");
             }
             ToggleTabIndicators => self.toggle_tab_indicators(ctx),
             ToggleShowCodeReviewButton => self.toggle_show_code_review_button(ctx),
@@ -2488,7 +2489,7 @@ impl SettingsWidget for CreateCustomThemeWidget {
                 .ui_builder()
                 .link(
                     "Create your own custom theme".to_string(),
-                    Some("https://docs.warp.dev/terminal/appearance/custom-themes".to_string()),
+                    None,
                     None,
                     self.mouse_state.clone(),
                 )
@@ -3045,9 +3046,7 @@ impl SettingsWidget for WindowBlurWidget {
         let blur_value = *window_settings.background_blur_radius;
         let label_info = AdditionalInfo {
             mouse_state: self.info_button.clone(),
-            on_click_action: Some(AppearancePageAction::OpenUrl(
-                "https://docs.warp.dev/terminal/appearance/size-opacity-blurring".into(),
-            )),
+            on_click_action: None,
             secondary_text: None,
             tooltip_override_text: None,
         };
@@ -4906,9 +4905,7 @@ impl SettingsWidget for AltScreenPaddingWidget {
             "Use custom padding in alt-screen".into(),
             Some(AdditionalInfo {
                 mouse_state: self.additional_info_mouse_state.clone(),
-                on_click_action: Some(AppearancePageAction::OpenUrl(
-                    "https://docs.warp.dev/terminal/more-features/full-screen-apps#padding".into(),
-                )),
+                on_click_action: None,
                 secondary_text: None,
                 tooltip_override_text: None,
             }),

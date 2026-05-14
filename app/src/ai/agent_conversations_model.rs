@@ -15,58 +15,28 @@ use crate::ai::artifacts::Artifact;
 use crate::ai::blocklist::{
     format_credits, BlocklistAIHistoryEvent, BlocklistAIHistoryModel, ConversationStatusUpdate,
 };
-use crate::ai::cloud_environments::CloudAmbientAgentEnvironment;
 use crate::ai::conversation_navigation::ConversationNavigationData;
-use crate::auth::auth_manager::{AuthManager, AuthManagerEvent};
 use crate::auth::AuthStateProvider;
 use crate::auth::UserUid;
-use crate::network::{NetworkStatus, NetworkStatusEvent, NetworkStatusKind};
-use crate::server::cloud_objects::update_manager::{UpdateManager, UpdateManagerEvent};
-use crate::server::ids::{ServerId, SyncId};
-use crate::server::retry_strategies::{
-    is_transient_http_error, OUT_OF_BAND_REQUEST_RETRY_STRATEGY, PERIODIC_POLL_RETRY_STRATEGY,
-};
-use crate::server::server_api::{ai::TaskListFilter, ServerApiProvider};
 use crate::settings::AISettings;
 use crate::ui_components::icons::Icon;
 use crate::workspace::{RestoreConversationLayout, WorkspaceAction};
 use crate::workspaces::user_profiles::UserProfiles;
 use chrono::{DateTime, Utc};
 use clap::ValueEnum;
-use futures::stream::AbortHandle;
-use instant::Instant;
 use itertools::Itertools;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use session_sharing_protocol::common::SessionId;
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
 use warp_cli::agent::Harness;
-use warp_core::execution_mode::AppExecutionMode;
 use warp_core::features::FeatureFlag;
 use warp_core::report_error;
 use warp_core::ui::theme::{color::internal_colors, WarpTheme};
 use warpui::color::ColorU;
-use warpui::r#async::Timer;
-use warpui::windowing::{StateEvent, WindowManager};
 use warpui::{
-    duration_with_jitter, AppContext, Entity, EntityId, ModelContext, RequestState,
-    SingletonEntity, WindowId,
+    AppContext, Entity, EntityId, ModelContext, SingletonEntity, WindowId,
 };
 
-const POLLING_INTERVAL: Duration = Duration::from_secs(30);
-const INITIAL_TASK_AMOUNT: i32 = 100;
-
-/// How long to skip refetching a task that just failed with a transient error
-/// (5xx / 408 / 429 / network). Short cooldown — `spawn_with_retry_on_error_when` already
-/// runs fast exponential retries before bubbling up the failure, so this is just enough to
-/// absorb streaming-driven re-entries from `update_transcript_details_panel_data`.
-const TRANSIENT_FETCH_FAILURE_COOLDOWN: Duration = Duration::from_secs(2);
-
-/// How long to skip refetching a task that just failed with a permanent (non-transient) HTTP
-/// error such as 401/403/404. We don't refuse forever — permissions can change mid-session
-/// (e.g. an ACL grant) — but we wait long enough that streaming bursts and rapid re-entries
-/// can't cause a flood.
-const PERMANENT_FETCH_FAILURE_COOLDOWN: Duration = Duration::from_secs(60);
 const SESSION_EXPIRATION_TIME: chrono::Duration = chrono::Duration::weeks(1);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -74,24 +44,6 @@ enum LinkPreference {
     Session,
     Conversation,
     None,
-}
-
-/// Per-task fetch state for `get_or_async_fetch_task_data`. The three variants are mutually
-/// exclusive: a task id is either being fetched right now, in a short cooldown after a
-/// transient failure, or in a longer cooldown after a permanent (non-transient) failure.
-#[derive(Debug)]
-enum TaskFetchState {
-    /// A retry chain is currently outstanding for this task id. Used to dedupe re-entries
-    /// (e.g. from streaming-driven panel refreshes) so we don't spawn overlapping retry
-    /// chains for the same task id.
-    InFlight,
-    /// The fetch returned a permanent (non-transient) HTTP error such as 401/403/404; remember
-    /// when it failed so we can back off for [`PERMANENT_FETCH_FAILURE_COOLDOWN`] before
-    /// retrying. We don't refuse forever in case permissions change mid-session.
-    PermanentlyFailedAt(Instant),
-    /// The retry chain just exhausted on a transient error; remember when it failed so we
-    /// can back off for [`TRANSIENT_FETCH_FAILURE_COOLDOWN`] before retrying.
-    TransientlyFailedAt(Instant),
 }
 
 /// Protected eviction: we'll always keep at least 200 personal tasks in the model.
@@ -172,14 +124,6 @@ pub enum CreatedOnFilter {
     LastWeek,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
-pub enum EnvironmentFilter {
-    #[default]
-    All,
-    NoEnvironment,
-    Specific(String),
-}
-
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OwnerFilter {
     All,
@@ -222,8 +166,6 @@ pub struct AgentManagementFilters {
     pub creator: CreatorFilter,
     pub artifact: ArtifactFilter,
     #[serde(default)]
-    pub environment: EnvironmentFilter,
-    #[serde(default)]
     pub harness: HarnessFilter,
 }
 
@@ -234,7 +176,6 @@ impl AgentManagementFilters {
         self.created_on = CreatedOnFilter::default();
         self.creator = CreatorFilter::default();
         self.artifact = ArtifactFilter::default();
-        self.environment = EnvironmentFilter::default();
         self.harness = HarnessFilter::default();
     }
 
@@ -244,7 +185,6 @@ impl AgentManagementFilters {
             || self.created_on != CreatedOnFilter::default()
             || self.creator != CreatorFilter::default() && self.owners != OwnerFilter::PersonalOnly
             || self.artifact != ArtifactFilter::default()
-            || self.environment != EnvironmentFilter::default()
             || self.harness != HarnessFilter::default()
     }
 }
@@ -655,10 +595,7 @@ impl ConversationOrTask<'_> {
                         .or(Some(Harness::Oz))
                 })
             }
-            ConversationOrTask::Conversation(metadata) => BlocklistAIHistoryModel::as_ref(app)
-                .get_server_conversation_metadata(&metadata.nav_data.id)
-                .map(|m| Harness::from(m.harness))
-                .or(Some(Harness::Oz)),
+            ConversationOrTask::Conversation(_) => Some(Harness::Oz),
         }
     }
 
@@ -681,21 +618,14 @@ impl ConversationOrTask<'_> {
         }
     }
 
-    /// Returns the preferred link type based on cloud conversations and session state.
+    /// Returns the preferred local navigation link type based on session state.
     fn link_preference(&self) -> LinkPreference {
         match self {
             ConversationOrTask::Task(task) => {
-                // Always open session link if there's a live session.
-                // Without cloud conversations, also open session link as long as it's not expired.
-                // With cloud conversations, even if the link is not expired, we load conversation
-                // data from graphql as long as the session isn't live.
                 if task.has_active_execution()
-                    || (!FeatureFlag::CloudConversations.is_enabled()
-                        && self.get_session_status() != Some(SessionStatus::Expired))
+                    || self.get_session_status() != Some(SessionStatus::Expired)
                 {
                     LinkPreference::Session
-                } else if FeatureFlag::CloudConversations.is_enabled() {
-                    LinkPreference::Conversation
                 } else {
                     LinkPreference::None
                 }
@@ -704,53 +634,7 @@ impl ConversationOrTask<'_> {
         }
     }
 
-    /// Get a link to a session or conversation, depending on whether the cloud agent is running
-    pub fn session_or_conversation_link(&self, app: &AppContext) -> Option<String> {
-        match self.link_preference() {
-            LinkPreference::Session => match self {
-                ConversationOrTask::Task(task) => task
-                    .active_run_execution()
-                    .session_link
-                    .map(ToString::to_string),
-                ConversationOrTask::Conversation(_) => None,
-            },
-            LinkPreference::Conversation => match self {
-                ConversationOrTask::Task(task) => task
-                    .conversation_id()
-                    .map(|id| ServerConversationToken::new(id.to_string()).conversation_link()),
-                ConversationOrTask::Conversation(conversation) => {
-                    let history_model = BlocklistAIHistoryModel::as_ref(app);
-                    history_model
-                        .conversation(&conversation.nav_data.id)
-                        .and_then(|c| c.server_conversation_token())
-                        .map(|t| t.conversation_link())
-                        .or_else(|| {
-                            history_model
-                                .get_conversation_metadata(&conversation.nav_data.id)
-                                .and_then(|m| m.server_conversation_token.as_ref())
-                                .map(|t| t.conversation_link())
-                        })
-                }
-            },
-            LinkPreference::None => None,
-        }
-    }
-
     pub fn get_session_status(&self) -> Option<SessionStatus> {
-        // With cloud conversations, as long as the session link is populated, it is available.
-        // If it is not, there is no live session link or remotely stored conversation data.
-        if FeatureFlag::CloudConversations.is_enabled() {
-            return match self {
-                ConversationOrTask::Task(task) => {
-                    if task.active_run_execution().session_link.is_some() {
-                        Some(SessionStatus::Available)
-                    } else {
-                        Some(SessionStatus::Unavailable)
-                    }
-                }
-                ConversationOrTask::Conversation(_) => None,
-            };
-        }
         match self {
             ConversationOrTask::Task(task) => {
                 if task.active_run_execution().session_id.is_some() {
@@ -828,7 +712,7 @@ impl ConversationOrTask<'_> {
 
     /// Returns the appropriate `WorkspaceAction` to dispatch when opening this item.
     /// This encapsulates the decision logic for opening ambient agent sessions vs loading
-    /// cloud conversation data vs navigating to local conversations.
+    /// locally cached ambient agent sessions vs navigating to local conversations.
     pub fn get_open_action(
         &self,
         restore_layout: Option<RestoreConversationLayout>,
@@ -836,22 +720,11 @@ impl ConversationOrTask<'_> {
     ) -> Option<WorkspaceAction> {
         match self.link_preference() {
             LinkPreference::Session => match self {
-                ConversationOrTask::Task(task) => {
-                    self.session_id()
-                        .map(|session_id| WorkspaceAction::OpenAmbientAgentSession {
-                            session_id,
-                            task_id: task.run_id(),
-                        })
-                }
+                ConversationOrTask::Task(_) => None,
                 ConversationOrTask::Conversation(_) => None,
             },
             LinkPreference::Conversation => match self {
-                ConversationOrTask::Task(task) => task.conversation_id().map(|id| {
-                    WorkspaceAction::OpenConversationTranscriptViewer {
-                        conversation_id: ServerConversationToken::new(id.to_string()),
-                        ambient_agent_task_id: Some(task.run_id()),
-                    }
-                }),
+                ConversationOrTask::Task(_) => None,
                 ConversationOrTask::Conversation(metadata) => {
                     let is_active = ActiveAgentViewsModel::as_ref(app)
                         .is_conversation_open(metadata.nav_data.id, app);
@@ -897,9 +770,7 @@ pub(crate) fn artifacts_match_filter(
     }
 }
 
-/// This model serves as a unified interface for reading both local and ambient agent conversations
-/// (i.e. conversations & tasks). The model is responsible for polling for new tasks and updating
-/// its local state accordingly.
+/// This model serves as a unified interface for reading locally indexed agent conversations.
 ///
 /// This model backs both the agent management view and the conversation list view.
 pub struct AgentConversationsModel {
@@ -907,19 +778,8 @@ pub struct AgentConversationsModel {
     tasks: HashMap<AmbientAgentTaskId, AmbientAgentTask>,
     /// A map of conversation IDs to local conversations.
     conversations: HashMap<AIConversationId, ConversationMetadata>,
-    /// Handle to abort the in-flight polling request.
-    in_flight_poll_abort_handle: Option<AbortHandle>,
-    /// Handle to abort the timer for initiating the next poll.
-    next_poll_abort_handle: Option<AbortHandle>,
-    /// Set of view IDs actively consuming this model's data per window.
-    /// When a window has at least one consumer, we poll for new tasks while that window is active.
-    active_data_consumers_per_window: HashMap<WindowId, HashSet<EntityId>>,
     /// Whether we have finished the initial task load
     has_finished_initial_load: bool,
-    /// Per-task fetch state for `get_or_async_fetch_task_data`. See [`TaskFetchState`] for
-    /// the meaning of each variant. Tasks that have been successfully fetched live in `tasks`
-    /// and are absent from this map.
-    task_fetch_state: HashMap<AmbientAgentTaskId, TaskFetchState>,
 }
 
 pub enum AgentConversationsModelEvent {
@@ -961,23 +821,9 @@ impl AgentConversationsModel {
             return Self {
                 tasks: HashMap::new(),
                 conversations: HashMap::new(),
-                in_flight_poll_abort_handle: None,
-                next_poll_abort_handle: None,
-                active_data_consumers_per_window: HashMap::new(),
                 has_finished_initial_load: true,
-                task_fetch_state: HashMap::new(),
             };
         }
-
-        // Subscribe to network status and window manager to inform whether we should poll for new task data
-        let network_status = NetworkStatus::handle(ctx);
-        ctx.subscribe_to_model(&network_status, Self::handle_network_status_changed);
-        let window_manager = WindowManager::handle(ctx);
-        ctx.subscribe_to_model(&window_manager, Self::handle_window_state_changed);
-
-        // Subscribe to auth events to retry initial sync when user becomes available
-        let auth_manager = AuthManager::handle(ctx);
-        ctx.subscribe_to_model(&auth_manager, Self::handle_auth_manager_event);
 
         let history_model = BlocklistAIHistoryModel::handle(ctx);
         ctx.subscribe_to_model(&history_model, move |me, event, ctx| {
@@ -989,30 +835,15 @@ impl AgentConversationsModel {
             me.sync_conversations(ctx);
         });
 
-        // Subscribe to UpdateManager for RTC task updates
-        if FeatureFlag::AmbientAgentsRTC.is_enabled() {
-            let update_manager = UpdateManager::handle(ctx);
-            ctx.subscribe_to_model(&update_manager, Self::handle_update_manager_event);
-        }
-
         let mut model = Self {
             tasks: HashMap::new(),
             conversations: HashMap::new(),
-            in_flight_poll_abort_handle: None,
-            next_poll_abort_handle: None,
-            active_data_consumers_per_window: HashMap::new(),
             has_finished_initial_load: false,
-            task_fetch_state: HashMap::new(),
         };
 
-        // Only sync local conversations if we're not in CLI mode. Server-side data
-        // (tasks and cloud conversation metadata) is fetched on AuthComplete instead of
-        // here to avoid duplicate requests at startup.
-        if AppExecutionMode::as_ref(ctx).can_fetch_agent_runs_for_management() {
-            model.sync_conversations(ctx);
-        } else {
-            model.has_finished_initial_load = true;
-        }
+        // Local-first builds use the local conversation history as the source of
+        // truth for this model.
+        model.sync_conversations(ctx);
         model
     }
 
@@ -1020,101 +851,12 @@ impl AgentConversationsModel {
         !self.has_finished_initial_load
     }
 
-    fn handle_network_status_changed(
-        &mut self,
-        event: &NetworkStatusEvent,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        match event {
-            NetworkStatusEvent::NetworkStatusChanged { new_status } => match new_status {
-                NetworkStatusKind::Online => {
-                    self.update_polling_state(ctx);
-                }
-                NetworkStatusKind::Offline => {
-                    self.abort_existing_poll();
-                }
-            },
-        }
-    }
-
-    fn handle_window_state_changed(&mut self, event: &StateEvent, ctx: &mut ModelContext<Self>) {
-        match event {
-            StateEvent::ValueChanged { current, previous } => {
-                // If the active window changed, check if we need to start/stop polling
-                if current.active_window != previous.active_window {
-                    self.update_polling_state(ctx);
-                }
-            }
-        }
-    }
-
-    fn handle_auth_manager_event(
-        &mut self,
-        event: &AuthManagerEvent,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        // When auth completes, retry the initial task sync if we haven't loaded tasks yet
-        // Only sync if we're not in CLI mode
-        if matches!(event, AuthManagerEvent::AuthComplete)
-            && !self.has_finished_initial_load
-            && AppExecutionMode::as_ref(ctx).can_fetch_agent_runs_for_management()
-        {
-            self.fetch_ambient_agent_tasks_and_cloud_convo_metadata(ctx);
-        }
-    }
-
-    fn handle_update_manager_event(
-        &mut self,
-        event: &UpdateManagerEvent,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        if let UpdateManagerEvent::AmbientTaskUpdated { timestamp } = event {
-            self.fetch_tasks_updated_after(*timestamp, ctx);
-        }
-    }
-
-    /// Fetch tasks updated after the given timestamp (minus 1 second buffer since server uses `>` not `>=`).
-    fn fetch_tasks_updated_after(
-        &mut self,
-        timestamp: DateTime<Utc>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-
-        // Subtract 1 second to give buffer for clock differences with server
-        let updated_after = timestamp - chrono::Duration::seconds(1);
-
-        ctx.spawn_with_retry_on_error(
-            move || {
-                let ai_client = ai_client.clone();
-                async move {
-                    ai_client
-                        .list_ambient_agent_tasks(
-                            INITIAL_TASK_AMOUNT,
-                            TaskListFilter {
-                                updated_after: Some(updated_after),
-                                ..Default::default()
-                            },
-                        )
-                        .await
-                }
-            },
-            OUT_OF_BAND_REQUEST_RETRY_STRATEGY,
-            |model, result, ctx| {
-                if let RequestState::RequestSucceeded(tasks) = result {
-                    model.update_model_with_new_tasks(tasks, ctx);
-                } else if let RequestState::RequestFailed(e) = result {
-                    report_error!(e);
-                }
-            },
-        );
-    }
-
     /// Sync all conversations to the AgentConversationsModel.
     ///
     /// This function will loop through all active panes, recently closed panes, and historical
     /// conversations to construct a complete snapshot of conversations.
     pub fn sync_conversations(&mut self, ctx: &mut ModelContext<Self>) {
+        self.has_finished_initial_load = true;
         if !FeatureFlag::InteractiveConversationManagementView.is_enabled() {
             return;
         }
@@ -1131,300 +873,26 @@ impl AgentConversationsModel {
         ctx.emit(AgentConversationsModelEvent::ConversationsLoaded);
     }
 
-    /// Fetches tasks and cloud conversation metadata async. Cloud conversation metadata is merged with
-    /// metadata stored in local db in the BlocklistAIHistoryModel
-    fn fetch_ambient_agent_tasks_and_cloud_convo_metadata(&mut self, ctx: &mut ModelContext<Self>) {
-        let Some(creator_uid) = AuthStateProvider::as_ref(ctx)
-            .get()
-            .user_id()
-            .map(|uid| uid.as_string())
-        else {
-            // If we don't have a user ID, don't pull tasks
-            return;
-        };
-
-        let ai_settings = AISettings::as_ref(ctx);
-        if !ai_settings.is_any_ai_enabled(ctx) {
-            // If we don't have AI enabled, don't pull tasks
-            return;
-        }
-
-        let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-
-        ctx.spawn_with_retry_on_error(
-            move || {
-                let ai_client = ai_client.clone();
-                let creator_uid = creator_uid.clone();
-                async move {
-                    // Fetch personal tasks only on initialization; team tasks fetched by the view model when filters applied
-                    let personal_future = ai_client.list_ambient_agent_tasks(
-                        INITIAL_TASK_AMOUNT,
-                        TaskListFilter {
-                            creator_uid: Some(creator_uid),
-                            ..Default::default()
-                        },
-                    );
-                    let conversation_metadata_future =
-                        ai_client.list_ai_conversation_metadata(None);
-
-                    let (personal_result, conversation_metadata_result) =
-                        futures::future::join(personal_future, conversation_metadata_future).await;
-
-                    // Handle tasks result
-                    let tasks = match personal_result {
-                        Ok(tasks) => tasks,
-                        Err(e) => {
-                            log::warn!("Failed to fetch ambient agent tasks: {e:?}");
-                            vec![]
-                        }
-                    };
-
-                    // Handle conversation metadata result
-                    let mut conversation_metadata = match conversation_metadata_result {
-                        Ok(metadata) => metadata,
-                        Err(e) => {
-                            log::warn!("Failed to fetch conversation metadata: {e:?}");
-                            vec![]
-                        }
-                    };
-
-                    // Collect all conversation IDs from tasks
-                    let task_conversation_ids: HashSet<String> = tasks
-                        .iter()
-                        .filter_map(|task| task.conversation_id().map(str::to_string))
-                        .collect();
-
-                    // Build a set of conversation IDs we already have
-                    let fetched_conversation_ids: HashSet<String> = conversation_metadata
-                        .iter()
-                        .map(|meta| meta.server_conversation_token.as_str().to_string())
-                        .collect();
-
-                    // Find conversation IDs that are in tasks but not in the initial metadata fetch
-                    let missing_conversation_ids: Vec<String> = task_conversation_ids
-                        .difference(&fetched_conversation_ids)
-                        .cloned()
-                        .collect();
-
-                    // If there are missing conversation IDs, fetch their metadata
-                    if !missing_conversation_ids.is_empty() {
-                        log::info!(
-                            "Fetching {} missing conversation metadata entries for ambient agent tasks",
-                            missing_conversation_ids.len()
-                        );
-                        match ai_client
-                            .list_ai_conversation_metadata(Some(missing_conversation_ids))
-                            .await
-                        {
-                            Ok(additional_metadata) => {
-                                log::info!(
-                                    "Fetched {} additional conversation metadata entries",
-                                    additional_metadata.len()
-                                );
-                                conversation_metadata.extend(additional_metadata);
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to fetch additional conversation metadata: {e:?}");
-                            }
-                        }
-                    }
-
-                    // Always return success - we handle failures individually above
-                    Ok((tasks, conversation_metadata))
-                }
-            },
-            OUT_OF_BAND_REQUEST_RETRY_STRATEGY,
-            |model, result, ctx| {
-                if let RequestState::RequestSucceeded((tasks, conversation_metadata)) = result {
-                    model.has_finished_initial_load = true;
-
-                    // Update tasks if we got any
-                    if !tasks.is_empty() {
-                        log::info!("Updating model with {} tasks", tasks.len());
-                        for task in tasks {
-                            model.tasks.insert(task.task_id, task);
-                        }
-                    }
-
-                    // Update BlocklistAIHistoryModel with cloud conversation metadata if we got any
-                    if !conversation_metadata.is_empty() {
-                        log::info!(
-                            "Fetched {} cloud conversation metadata entries total",
-                            conversation_metadata.len()
-                        );
-                        BlocklistAIHistoryModel::handle(ctx).update(ctx, |history_model, _| {
-                            history_model.merge_cloud_conversation_metadata(conversation_metadata);
-                        });
-                    }
-
-                    // Sync conversations to refresh local cache
-                    model.sync_conversations(ctx);
-
-                    model.update_polling_state(ctx);
-                    ctx.emit(AgentConversationsModelEvent::ConversationsLoaded);
-                } else if let RequestState::RequestFailed(e) = result {
-                    model.has_finished_initial_load = true;
-                    model.update_polling_state(ctx);
-                    report_error!(e);
-                }
-            },
-        );
-    }
-
     /// Called when a view that consumes this model's data becomes visible.
-    /// Uses view_id to make registration idempotent.
     pub fn register_view_open(
         &mut self,
         window_id: WindowId,
         view_id: EntityId,
         ctx: &mut ModelContext<Self>,
     ) {
-        self.active_data_consumers_per_window
-            .entry(window_id)
-            .or_default()
-            .insert(view_id);
-        self.update_polling_state(ctx);
+        let _ = (window_id, view_id);
+        self.sync_conversations(ctx);
     }
 
     /// Called when a view that consumes this model's data becomes hidden.
-    /// Uses view_id to make unregistration idempotent.
     pub fn register_view_closed(
         &mut self,
         window_id: WindowId,
         view_id: EntityId,
         ctx: &mut ModelContext<Self>,
     ) {
-        if let Some(views) = self.active_data_consumers_per_window.get_mut(&window_id) {
-            views.remove(&view_id);
-            if views.is_empty() {
-                self.active_data_consumers_per_window.remove(&window_id);
-            }
-        }
-        self.update_polling_state(ctx);
-    }
-
-    /// Updates the polling state based on whether the active window has the view open.
-    fn update_polling_state(&mut self, ctx: &mut ModelContext<Self>) {
-        let should_poll = self.should_be_polling(ctx);
-
-        if should_poll && self.next_poll_abort_handle.is_none() {
-            self.poll_for_tasks(ctx);
-        } else if !should_poll {
-            self.abort_existing_poll();
-        }
-    }
-
-    /// Returns true if we should be polling: online, not loading, and active window has the view open.
-    fn should_be_polling(&self, ctx: &ModelContext<Self>) -> bool {
-        if !self.has_finished_initial_load {
-            return false;
-        }
-
-        // Don't poll if we're using RTC
-        if FeatureFlag::AmbientAgentsRTC.is_enabled() {
-            return false;
-        }
-
-        let is_online = NetworkStatus::as_ref(ctx).is_online();
-
-        if !is_online {
-            return false;
-        }
-
-        let active_window = WindowManager::as_ref(ctx).active_window();
-
-        match active_window {
-            Some(window_id) => self
-                .active_data_consumers_per_window
-                .get(&window_id)
-                .is_some_and(|views| !views.is_empty()),
-            None => false,
-        }
-    }
-
-    /// Abort the current in-flight poll (does NOT abort initial sync)
-    fn abort_existing_poll(&mut self) {
-        if let Some(handle) = self.next_poll_abort_handle.take() {
-            handle.abort();
-        }
-        if let Some(handle) = self.in_flight_poll_abort_handle.take() {
-            handle.abort();
-        }
-    }
-
-    fn schedule_next_poll(&mut self, ctx: &mut ModelContext<Self>) {
-        let future_handle = ctx.spawn(
-            async move {
-                Timer::after(duration_with_jitter(POLLING_INTERVAL, 0.2)).await;
-            },
-            |model, _, ctx| {
-                model.poll_for_tasks(ctx);
-            },
-        );
-        self.next_poll_abort_handle = Some(future_handle.abort_handle());
-    }
-
-    fn poll_for_tasks(&mut self, ctx: &mut ModelContext<Self>) {
-        self.abort_existing_poll();
-        if !self.should_be_polling(ctx) {
-            return;
-        }
-
-        let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-
-        let future = ctx.spawn_with_retry_on_error(
-            move || {
-                let ai_client = ai_client.clone();
-                async move {
-                    ai_client
-                        .list_ambient_agent_tasks(100, TaskListFilter::default())
-                        .await
-                }
-            },
-            PERIODIC_POLL_RETRY_STRATEGY,
-            |model, result, ctx| {
-                let should_poll_again = !result.has_pending_retries();
-
-                if let RequestState::RequestSucceeded(tasks) = result {
-                    model.update_model_with_new_tasks(tasks, ctx);
-                }
-
-                if should_poll_again {
-                    model.schedule_next_poll(ctx);
-                }
-            },
-        );
-
-        self.in_flight_poll_abort_handle = Some(future.abort_handle());
-    }
-
-    // Update the model with new tasks retrieved from the server.
-    fn update_model_with_new_tasks(
-        &mut self,
-        tasks: Vec<AmbientAgentTask>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let mut has_new_tasks = false;
-        let mut has_updated_tasks = false;
-
-        for task in tasks {
-            let task_id = task.task_id;
-            match self.tasks.get(&task_id) {
-                Some(existing_task) => {
-                    if existing_task != &task {
-                        has_updated_tasks = true
-                    }
-                }
-                None => has_new_tasks = true,
-            };
-            self.tasks.insert(task_id, task);
-        }
-
-        if has_new_tasks {
-            ctx.emit(AgentConversationsModelEvent::NewTasksReceived);
-        } else if has_updated_tasks {
-            ctx.emit(AgentConversationsModelEvent::TasksUpdated);
-        }
+        let _ = (window_id, view_id);
+        self.sync_conversations(ctx);
     }
 
     /// Returns true if we have tasks or local conversations in this view
@@ -1527,6 +995,7 @@ impl AgentConversationsModel {
                 .or_else(|| {
                     history_model
                         .get_conversation_metadata(conversation_id)
+                        .filter(|metadata| metadata.has_local_data)
                         .map(|metadata| {
                             let nav_data =
                                 ConversationNavigationData::from_historical_conversation_metadata(
@@ -1555,13 +1024,7 @@ impl AgentConversationsModel {
                 .and_then(|entry| model.resolve_entry_open_action(&entry, restore_layout, app)),
             AgentConversationNavigationSubject::ServerToken(server_token) => model
                 .entry_for_server_token(&server_token, app)
-                .and_then(|entry| model.resolve_entry_open_action(&entry, restore_layout, app))
-                .or_else(|| {
-                    Some(WorkspaceAction::OpenConversationTranscriptViewer {
-                        ambient_agent_task_id: model.task_id_for_server_token(&server_token),
-                        conversation_id: server_token,
-                    })
-                }),
+                .and_then(|entry| model.resolve_entry_open_action(&entry, restore_layout, app)),
         }
     }
 
@@ -1576,8 +1039,7 @@ impl AgentConversationsModel {
                 .and_then(|entry| model.resolve_entry_copy_link(&entry)),
             AgentConversationNavigationSubject::ServerToken(server_token) => model
                 .entry_for_server_token(&server_token, app)
-                .and_then(|entry| model.resolve_entry_copy_link(&entry))
-                .or_else(|| Some(server_token.conversation_link())),
+                .and_then(|entry| model.resolve_entry_copy_link(&entry)),
         }
     }
 
@@ -1623,20 +1085,6 @@ impl AgentConversationsModel {
             }
         }
 
-        if let Some(task_id) = entry.identity.ambient_agent_task_id {
-            if let Some(session_id) = self
-                .tasks
-                .get(&task_id)
-                .and_then(AmbientAgentTask::active_execution_session_id)
-                .and_then(entry::parse_session_id)
-            {
-                return Some(WorkspaceAction::OpenAmbientAgentSession {
-                    session_id,
-                    task_id,
-                });
-            }
-        }
-
         if let Some(conversation_id) = entry.identity.local_conversation_id {
             let nav_data = self
                 .conversations
@@ -1657,14 +1105,7 @@ impl AgentConversationsModel {
             }
         }
 
-        entry
-            .identity
-            .server_conversation_token
-            .as_ref()
-            .map(|token| WorkspaceAction::OpenConversationTranscriptViewer {
-                conversation_id: token.clone(),
-                ambient_agent_task_id: entry.identity.ambient_agent_task_id,
-            })
+        None
     }
 
     fn resolve_entry_copy_link(&self, entry: &AgentConversationEntry) -> Option<String> {
@@ -1682,11 +1123,7 @@ impl AgentConversationsModel {
             }
         }
 
-        entry
-            .identity
-            .server_conversation_token
-            .as_ref()
-            .map(ServerConversationToken::conversation_link)
+        None
     }
 
     fn entry_for_server_token(
@@ -1713,17 +1150,6 @@ impl AgentConversationsModel {
             &AgentConversationEntryId::Conversation(conversation_id),
             app,
         )
-    }
-
-    fn task_id_for_server_token(
-        &self,
-        server_token: &ServerConversationToken,
-    ) -> Option<AmbientAgentTaskId> {
-        self.tasks.values().find_map(|task| {
-            task.conversation_id()
-                .is_some_and(|conversation_id| conversation_id == server_token.as_str())
-                .then_some(task.task_id)
-        })
     }
 
     fn handle_history_event(
@@ -1821,101 +1247,13 @@ impl AgentConversationsModel {
         self.tasks.get(task_id).cloned()
     }
 
-    /// Get raw task data by task ID, fetching from server if not in memory.
-    /// If the task is already in memory, returns it immediately.
-    /// If not, spawns an async task to fetch it from the server, stores it in memory,
-    /// and emits a TasksUpdated event when ready.
-    ///
-    /// Multiple unrelated callers (the WASM transcript details panel, the cloud-mode details
-    /// panel, and pane-group restoration) can all hit this method, sometimes many times per
-    /// second while an agent is streaming. To avoid spamming `GET /api/v1/agent/runs/{id}` we:
-    /// * dedupe in-flight fetches per task id,
-    /// * back off for [`TRANSIENT_FETCH_FAILURE_COOLDOWN`] after a transient retry chain
-    ///   exhausts (5xx/408/429/network), and
-    /// * back off for [`PERMANENT_FETCH_FAILURE_COOLDOWN`] after a non-transient failure
-    ///   (e.g. 401/403/404). Permanent failures still get retried periodically so we recover
-    ///   if permissions change mid-session.
+    /// Get locally cached task data by task ID.
     pub fn get_or_async_fetch_task_data(
         &mut self,
         task_id: &AmbientAgentTaskId,
-        ctx: &mut ModelContext<Self>,
+        _ctx: &mut ModelContext<Self>,
     ) -> Option<AmbientAgentTask> {
-        // If we already have it, return it
-        if let Some(task) = self.tasks.get(task_id) {
-            return Some(task.clone());
-        }
-
-        // Consult the per-task fetch state. The three variants are mutually exclusive: at most
-        // one applies to a given id.
-        match self.task_fetch_state.get(task_id) {
-            Some(TaskFetchState::InFlight) => return None,
-            Some(TaskFetchState::PermanentlyFailedAt(failed_at)) => {
-                if failed_at.elapsed() < PERMANENT_FETCH_FAILURE_COOLDOWN {
-                    return None;
-                }
-                // Cooldown has elapsed; clear the entry and fall through to fetch again.
-                self.task_fetch_state.remove(task_id);
-            }
-            Some(TaskFetchState::TransientlyFailedAt(failed_at)) => {
-                if failed_at.elapsed() < TRANSIENT_FETCH_FAILURE_COOLDOWN {
-                    return None;
-                }
-                self.task_fetch_state.remove(task_id);
-            }
-            None => {}
-        }
-
-        // Opportunistically purge other expired entries so the map doesn't grow unbounded.
-        self.task_fetch_state.retain(|_, state| match state {
-            TaskFetchState::TransientlyFailedAt(failed_at) => {
-                failed_at.elapsed() < TRANSIENT_FETCH_FAILURE_COOLDOWN
-            }
-            TaskFetchState::PermanentlyFailedAt(failed_at) => {
-                failed_at.elapsed() < PERMANENT_FETCH_FAILURE_COOLDOWN
-            }
-            TaskFetchState::InFlight => true,
-        });
-
-        // Otherwise, spawn a task to fetch it. Use the `_when` variant so non-transient errors
-        // (e.g. 401/403/404) bail after the first attempt instead of issuing all 4 requests in
-        // the retry chain before being cached.
-        let ai_client = ServerApiProvider::as_ref(ctx).get_ai_client();
-        let task_id_clone = *task_id;
-
-        self.task_fetch_state
-            .insert(task_id_clone, TaskFetchState::InFlight);
-
-        ctx.spawn_with_retry_on_error_when(
-            move || {
-                let ai_client = ai_client.clone();
-                async move { ai_client.get_ambient_agent_task(&task_id_clone).await }
-            },
-            OUT_OF_BAND_REQUEST_RETRY_STRATEGY,
-            is_transient_http_error,
-            move |model, result, ctx| match result {
-                RequestState::RequestSucceeded(task) => {
-                    let fetched_id = task.task_id;
-                    model.tasks.insert(fetched_id, task);
-                    model.task_fetch_state.remove(&fetched_id);
-                    ctx.emit(AgentConversationsModelEvent::TasksUpdated);
-                }
-                RequestState::RequestFailed(e) => {
-                    let now = Instant::now();
-                    let new_state = if is_transient_http_error(&e) {
-                        TaskFetchState::TransientlyFailedAt(now)
-                    } else {
-                        TaskFetchState::PermanentlyFailedAt(now)
-                    };
-                    model.task_fetch_state.insert(task_id_clone, new_state);
-                    report_error!(e);
-                }
-                RequestState::RequestFailedRetryPending(_) => {
-                    // Wait for a terminal outcome before updating dedup/backoff state.
-                }
-            },
-        );
-
-        None
+        self.tasks.get(task_id).cloned()
     }
 
     /// Returns all (name, uid) pairs for creators of tasks in the model.
@@ -1945,167 +1283,16 @@ impl AgentConversationsModel {
         creators
     }
 
-    /// Returns a mapping of environment IDs to display names.
-    ///
-    /// When multiple environments share the same name, each is disambiguated
-    /// as "<name> (<id>)".
-    pub fn get_all_environment_ids_and_names(&self, ctx: &AppContext) -> HashMap<String, String> {
-        let mut envs = HashMap::<String, String>::new();
-
-        for task in self.tasks.values() {
-            let Some(environment_id) = task
-                .agent_config_snapshot
-                .as_ref()
-                .and_then(|s| s.environment_id.as_deref())
-            else {
-                continue;
-            };
-
-            let Some(server_id) = ServerId::try_from(environment_id).ok() else {
-                continue;
-            };
-            let sync_id = SyncId::ServerId(server_id);
-            let Some(env) = CloudAmbientAgentEnvironment::get_by_id(&sync_id, ctx) else {
-                continue;
-            };
-            let env_model = &env.model().string_model;
-            envs.insert(environment_id.to_string(), env_model.name.clone());
-        }
-
-        // Disambiguate duplicate names by appending the environment ID.
-        let mut name_counts = HashMap::<String, usize>::new();
-        for name in envs.values() {
-            *name_counts.entry(name.clone()).or_default() += 1;
-        }
-        for (id, name) in &mut envs {
-            if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
-                *name = format!("{name} ({id})");
-            }
-        }
-
-        envs
-    }
-
-    /// Converts AgentManagementFilters to TaskListFilter for server API calls.
-    pub fn build_task_list_filter(
-        &self,
-        filters: &AgentManagementFilters,
-        current_user_uid: &str,
-    ) -> TaskListFilter {
-        let states = match filters.status {
-            StatusFilter::All => None,
-            StatusFilter::Working => Some(vec![
-                AmbientAgentTaskState::Queued,
-                AmbientAgentTaskState::Pending,
-                AmbientAgentTaskState::Claimed,
-                AmbientAgentTaskState::InProgress,
-            ]),
-            StatusFilter::Done => Some(vec![
-                AmbientAgentTaskState::Succeeded,
-                AmbientAgentTaskState::InProgress,
-            ]),
-            StatusFilter::Failed => Some(vec![
-                AmbientAgentTaskState::InProgress,
-                AmbientAgentTaskState::Failed,
-                AmbientAgentTaskState::Error,
-                AmbientAgentTaskState::Blocked,
-                AmbientAgentTaskState::Cancelled,
-                AmbientAgentTaskState::Unknown,
-            ]),
-        };
-
-        let source = match &filters.source {
-            SourceFilter::All => None,
-            SourceFilter::Specific(s) => Some(s.clone()),
-        };
-
-        let now = Utc::now();
-        let created_after = match filters.created_on {
-            CreatedOnFilter::All => None,
-            CreatedOnFilter::Last24Hours => Some(now - chrono::Duration::hours(24)),
-            CreatedOnFilter::Past3Days => Some(now - chrono::Duration::days(3)),
-            CreatedOnFilter::LastWeek => Some(now - chrono::Duration::days(7)),
-        };
-
-        let creator_uid = match filters.owners {
-            OwnerFilter::PersonalOnly => Some(current_user_uid.to_string()),
-            OwnerFilter::All => match &filters.creator {
-                CreatorFilter::All => None,
-                CreatorFilter::Specific { uid, .. } => Some(uid.clone()),
-            },
-        };
-
-        let environment_id = match &filters.environment {
-            EnvironmentFilter::All | EnvironmentFilter::NoEnvironment => None,
-            EnvironmentFilter::Specific(id) => Some(id.clone()),
-        };
-
-        TaskListFilter {
-            creator_uid,
-            states,
-            source,
-            created_after,
-            environment_id,
-            ..TaskListFilter::default()
-        }
-    }
-
-    /// Fetches tasks matching the given filters from the server, merges them into the model,
-    /// and enforces the task cap. Called when user changes filters in AgentManagementView.
+    /// Refreshes local conversations for the given filters.
     pub fn fetch_tasks_for_filters(
         &mut self,
         filters: &AgentManagementFilters,
         current_user_uid: &str,
         ctx: &mut ModelContext<Self>,
     ) {
-        let ai_client = ServerApiProvider::handle(ctx).as_ref(ctx).get_ai_client();
-        let task_filter = self.build_task_list_filter(filters, current_user_uid);
-        let current_user_uid = current_user_uid.to_string();
-
-        ctx.spawn_with_retry_on_error(
-            move || {
-                let ai_client = ai_client.clone();
-                let task_filter = task_filter.clone();
-                async move {
-                    ai_client
-                        .list_ambient_agent_tasks(INITIAL_TASK_AMOUNT, task_filter)
-                        .await
-                }
-            },
-            OUT_OF_BAND_REQUEST_RETRY_STRATEGY,
-            move |model, result, ctx| {
-                if let RequestState::RequestSucceeded(tasks) = result {
-                    // Merge results into model
-                    let mut has_new_tasks = false;
-                    let mut has_updated_tasks = false;
-
-                    for task in tasks {
-                        let task_id = task.task_id;
-                        match model.tasks.get(&task_id) {
-                            Some(existing_task) => {
-                                if existing_task != &task {
-                                    has_updated_tasks = true;
-                                }
-                            }
-                            None => has_new_tasks = true,
-                        };
-                        model.tasks.insert(task_id, task);
-                    }
-
-                    // Enforce task cap
-                    model.enforce_task_cap(&current_user_uid);
-
-                    // Emit appropriate event
-                    if has_new_tasks {
-                        ctx.emit(AgentConversationsModelEvent::NewTasksReceived);
-                    } else if has_updated_tasks {
-                        ctx.emit(AgentConversationsModelEvent::TasksUpdated);
-                    }
-                } else if let RequestState::RequestFailed(e) = result {
-                    report_error!(e);
-                }
-            },
-        );
+        let _ = (filters, current_user_uid);
+        self.sync_conversations(ctx);
+        ctx.emit(AgentConversationsModelEvent::TasksUpdated);
     }
 
     /// Enforces cap on tasks stored in the model so it doesn't grow without bound.
@@ -2138,10 +1325,7 @@ impl AgentConversationsModel {
     pub(crate) fn reset(&mut self) {
         self.tasks.clear();
         self.conversations.clear();
-        self.abort_existing_poll();
-        self.active_data_consumers_per_window.clear();
-        self.task_fetch_state.clear();
-        // Reset the initial load flag so that we can retry the initial sync with the new logged in user
+        // Reset the initial load flag so that local history can be reindexed.
         self.has_finished_initial_load = false;
     }
 }

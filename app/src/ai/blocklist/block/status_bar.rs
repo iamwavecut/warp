@@ -938,7 +938,7 @@ impl BlocklistAIStatusBar {
                     color: Some(color),
                 },
                 MessageItem::Text {
-                    content: "Cloud agent run cancelled".into(),
+                    content: "Agent run cancelled".into(),
                     color: Some(color),
                 },
             ]));
@@ -987,9 +987,6 @@ fn render_agent_tip(tip: &AgentTip, app: &AppContext) -> Box<dyn Element> {
     if let (Some(action), Some(text)) = (tip.action.clone(), action_text.clone()) {
         fragments.push(FormattedTextFragment::plain_text(" "));
         fragments.push(FormattedTextFragment::hyperlink_action(text, action));
-    } else if let Some(link_target) = tip.link.clone() {
-        fragments.push(FormattedTextFragment::plain_text(" "));
-        fragments.push(FormattedTextFragment::hyperlink("Learn more", link_target));
     }
 
     let formatted_text =

@@ -292,7 +292,7 @@ impl AIExecutionProfilesModel {
         let mut new_profile = self.default_profile(ctx).data().clone();
         new_profile.name = "".to_string();
         new_profile.is_default_profile = false;
-        new_profile.autosync_plans_to_warp_drive = true;
+        new_profile.autosync_plans_to_warp_drive = false;
 
         let update_manager = UpdateManager::handle(ctx);
         let client_id = ClientId::default();

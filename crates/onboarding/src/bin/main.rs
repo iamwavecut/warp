@@ -79,21 +79,18 @@ impl OnboardingMainView {
                 id: LLMId::from("auto"),
                 title: "Auto".to_string(),
                 icon: Icon::Oz,
-                requires_upgrade: false,
                 is_default: true,
             },
             OnboardingModelInfo {
                 id: LLMId::from("claude-sonnet"),
                 title: "Claude Sonnet".to_string(),
                 icon: Icon::ClaudeLogo,
-                requires_upgrade: false,
                 is_default: false,
             },
             OnboardingModelInfo {
                 id: LLMId::from("gpt-4o"),
                 title: "GPT-4o".to_string(),
                 icon: Icon::OpenAILogo,
-                requires_upgrade: true,
                 is_default: false,
             },
         ];
@@ -106,9 +103,6 @@ impl OnboardingMainView {
                 default_model_id.clone(),
                 false,
                 false,
-                false,
-                None,
-                onboarding::OnboardingAuthState::LoggedOut,
                 ctx,
             )
         });
@@ -157,9 +151,6 @@ impl OnboardingMainView {
                 ctx.notify();
             }
             AgentOnboardingEvent::SyncWithOsToggled { .. }
-            | AgentOnboardingEvent::UpgradeRequested
-            | AgentOnboardingEvent::UpgradeCopyUrlRequested
-            | AgentOnboardingEvent::UpgradePasteTokenFromClipboardRequested
             | AgentOnboardingEvent::LoginFromWelcomeRequested
             | AgentOnboardingEvent::AppBecameActive => {
                 // No-op in the standalone demo binary

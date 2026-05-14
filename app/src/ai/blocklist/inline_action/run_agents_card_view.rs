@@ -54,7 +54,6 @@ use crate::view_components::compactible_action_button::{
 };
 use crate::view_components::compactible_split_action_button::CompactibleSplitActionButton;
 use crate::view_components::dropdown::DropdownEvent;
-use crate::view_components::{FilterableDropdownEvent, FilterableDropdownOrientation};
 
 const RUN_AGENTS_CARD_TITLE: &str = "Can I start additional agents for this task?";
 
@@ -118,7 +117,7 @@ impl RunAgentsEditState {
             skills: self.skills.clone(),
             model_id: self.orch.model_id.clone(),
             harness_type: self.orch.harness_type.clone(),
-            execution_mode: self.orch.execution_mode.clone(),
+            execution_mode: RunAgentsExecutionMode::Local,
             agent_run_configs: self.agent_run_configs.clone(),
             plan_id: self.plan_id.clone(),
         }
@@ -126,20 +125,11 @@ impl RunAgentsEditState {
 }
 
 impl OrchestrationControlAction for RunAgentsCardViewAction {
-    fn execution_mode_toggled(is_remote: bool) -> Self {
-        Self::ExecutionModeToggled { is_remote }
-    }
     fn model_changed(model_id: String) -> Self {
         Self::ModelChanged { model_id }
     }
     fn harness_changed(harness_type: String) -> Self {
         Self::HarnessChanged { harness_type }
-    }
-    fn environment_changed(environment_id: String) -> Self {
-        Self::EnvironmentChanged { environment_id }
-    }
-    fn worker_host_changed(worker_host: String) -> Self {
-        Self::WorkerHostChanged { worker_host }
     }
 }
 
@@ -157,11 +147,8 @@ pub enum RunAgentsCardViewAction {
     AcceptWithoutOrchestration,
     ToggleAcceptMenu,
     Reject,
-    ExecutionModeToggled { is_remote: bool },
     ModelChanged { model_id: String },
     HarnessChanged { harness_type: String },
-    EnvironmentChanged { environment_id: String },
-    WorkerHostChanged { worker_host: String },
 }
 
 #[derive(Clone, Debug)]
@@ -212,21 +199,12 @@ pub(crate) fn compute_is_denied(
         )
 }
 
-fn is_opencode_on_remote(request: &RunAgentsRequest) -> bool {
-    matches!(
-        request.execution_mode,
-        RunAgentsExecutionMode::Remote { .. }
-    ) && request.harness_type.eq_ignore_ascii_case("opencode")
-}
-
 /// Resolves UI-only interactive defaults on edit state that has
 /// already had config-inherited fields resolved. These defaults are
 /// for the picker display and should NOT run before auto-launch
 /// matching.
 ///
 /// 1. Defaults the Oz model to the conversation's base model.
-/// 2. Defaults Remote worker_host to "warp".
-/// 3. Defaults a Remote environment from settings / recency.
 fn resolve_interactive_defaults(
     state: &mut RunAgentsEditState,
     block_model: &dyn AIBlockModel<View = AIBlock>,
@@ -238,25 +216,6 @@ fn resolve_interactive_defaults(
         if matches!(harness, Some(warp_cli::agent::Harness::Oz) | None) {
             if let Some(base) = block_model.base_model(ctx).map(|id| id.to_string()) {
                 state.orch.model_id = base;
-            }
-        }
-    }
-    if let RunAgentsExecutionMode::Remote {
-        environment_id,
-        worker_host,
-        ..
-    } = &state.orch.execution_mode
-    {
-        let needs_host = worker_host.is_empty();
-        let needs_env = environment_id.is_empty();
-        if needs_host {
-            state
-                .orch
-                .set_worker_host(oc::ORCHESTRATION_WARP_WORKER_HOST.to_string());
-        }
-        if needs_env {
-            if let Some(default_env) = oc::resolve_default_environment_id(ctx) {
-                state.orch.set_environment_id(default_env);
             }
         }
     }
@@ -398,25 +357,24 @@ impl RunAgentsCardView {
             _ => {}
         });
 
-        // Repopulate the model picker when available Warp LLMs change.
+        // Repopulate the model picker when available LLMs change.
         // Only relevant for Oz harness — non-Oz harnesses get their
         // model catalog from HarnessAvailabilityModel, not LLMPreferences.
         ctx.subscribe_to_model(&LLMPreferences::handle(ctx), |me, _, event, ctx| {
             if let LLMPreferencesEvent::UpdatedAvailableLLMs = event {
                 if let Some(handle) = &me.handles.pickers.model_picker {
-                    let is_local = !me.state.orch.execution_mode.is_remote();
                     oc::populate_model_picker_for_harness(
                         handle,
                         &me.state.orch.model_id,
                         &me.state.orch.harness_type,
-                        is_local,
+                        true,
                         ctx,
                     );
                 }
             }
         });
 
-        // Repopulate harness and model pickers when the server-provided
+        // Repopulate harness and model pickers when the local harness
         // harness list or harness model catalogs change.
         ctx.subscribe_to_model(
             &HarnessAvailabilityModel::handle(ctx),
@@ -559,12 +517,6 @@ impl RunAgentsCardView {
             return;
         }
         let request = self.state.to_request();
-        if is_opencode_on_remote(&request) {
-            log::warn!(
-                "RunAgentsCardView: refusing Accept for OpenCode+Cloud (unsupported per spec)"
-            );
-            return;
-        }
         let action_id = self.action_id.clone();
         self.action_model.update(ctx, |action_model, action_ctx| {
             action_model.execute_run_agents(&action_id, request, action_ctx);
@@ -574,7 +526,7 @@ impl RunAgentsCardView {
     /// Construct the picker dropdown views (idempotent).
     fn ensure_pickers(&mut self, ctx: &mut ViewContext<Self>) {
         let appearance = Appearance::as_ref(ctx);
-        let (styles, colors) = oc::picker_styles(appearance);
+        let (_, colors) = oc::picker_styles(appearance);
 
         let initial_model_id_default = self
             .block_model
@@ -589,14 +541,13 @@ impl RunAgentsCardView {
             } else {
                 state.orch.model_id.clone()
             };
-            let is_local = !state.orch.execution_mode.is_remote();
             let handle = oc::new_standard_picker_dropdown(&colors, ctx);
             Self::set_upward_menu_position(&handle, ctx);
             oc::populate_model_picker_for_harness(
                 &handle,
                 &initial_model_id,
                 &state.orch.harness_type,
-                is_local,
+                true,
                 ctx,
             );
             Self::subscribe_picker_close(&handle, ctx);
@@ -609,35 +560,6 @@ impl RunAgentsCardView {
             oc::populate_harness_picker(&handle, &state.orch.harness_type, ctx);
             Self::subscribe_picker_close(&handle, ctx);
             self.handles.pickers.harness_picker = Some(handle);
-        }
-
-        if self.handles.pickers.environment_picker.is_none() {
-            let initial_env = match &state.orch.execution_mode {
-                RunAgentsExecutionMode::Remote { environment_id, .. } => environment_id.as_str(),
-                RunAgentsExecutionMode::Local => "",
-            };
-            let handle = oc::create_environment_picker(initial_env, &styles, ctx);
-            handle.update(ctx, |d, _| {
-                d.set_orientation(FilterableDropdownOrientation::Up)
-            });
-            ctx.subscribe_to_view(&handle, |me, _, event, ctx| {
-                if let FilterableDropdownEvent::Close = event {
-                    me.refocus_after_picker_close(ctx);
-                }
-            });
-            self.handles.pickers.environment_picker = Some(handle);
-        }
-
-        if self.handles.pickers.host_picker.is_none() {
-            let initial_host = match &state.orch.execution_mode {
-                RunAgentsExecutionMode::Remote { worker_host, .. } => worker_host.as_str(),
-                RunAgentsExecutionMode::Local => oc::ORCHESTRATION_WARP_WORKER_HOST,
-            };
-            let handle = oc::new_standard_picker_dropdown(&colors, ctx);
-            Self::set_upward_menu_position(&handle, ctx);
-            oc::populate_host_picker(&handle, initial_host, ctx);
-            Self::subscribe_picker_close(&handle, ctx);
-            self.handles.pickers.host_picker = Some(handle);
         }
 
         self.sync_picker_selections(ctx);
@@ -829,17 +751,6 @@ impl TypedActionView for RunAgentsCardView {
             RunAgentsCardViewAction::Reject => {
                 ctx.emit(RunAgentsCardViewEvent::RejectRequested);
             }
-            RunAgentsCardViewAction::ExecutionModeToggled { is_remote } => {
-                let block_model = self.block_model.clone();
-                oc::apply_execution_mode_change(
-                    &mut self.state.orch,
-                    &self.handles.pickers,
-                    *is_remote,
-                    |ctx| block_model.base_model(ctx).map(|id| id.to_string()),
-                    ctx,
-                );
-                ctx.notify();
-            }
             RunAgentsCardViewAction::ModelChanged { model_id } => {
                 self.state.orch.model_id = model_id.clone();
                 ctx.notify();
@@ -854,15 +765,6 @@ impl TypedActionView for RunAgentsCardView {
                     |ctx| block_model.base_model(ctx).map(|id| id.to_string()),
                     ctx,
                 );
-                ctx.notify();
-            }
-            RunAgentsCardViewAction::EnvironmentChanged { environment_id } => {
-                self.state.orch.set_environment_id(environment_id.clone());
-                oc::persist_environment_selection(environment_id, ctx);
-                ctx.notify();
-            }
-            RunAgentsCardViewAction::WorkerHostChanged { worker_host } => {
-                self.state.orch.set_worker_host(worker_host.clone());
                 ctx.notify();
             }
         }
@@ -1117,17 +1019,6 @@ fn render_editor(
     .finish();
     column.add_child(divider);
 
-    column.add_child(
-        Container::new(oc::render_mode_toggle(
-            state.orch.execution_mode.is_remote(),
-            &handles.pickers,
-            appearance,
-            None,
-            false,
-        ))
-        .with_margin_top(12.)
-        .finish(),
-    );
     column.add_child(oc::render_picker_row(
         &state.orch,
         &handles.pickers,
@@ -1138,14 +1029,6 @@ fn render_editor(
         column.add_child(oc::render_validation_error(
             reason,
             theme.ui_error_color(),
-            appearance,
-        ));
-    } else if let Some(message) =
-        oc::empty_env_recommendation_message(&state.orch.execution_mode, app)
-    {
-        column.add_child(oc::render_validation_error(
-            message,
-            theme.ui_warning_color(),
             appearance,
         ));
     }

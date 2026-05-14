@@ -26,7 +26,6 @@ const CONFIRM_MARGIN_TOP: f32 = 16.;
 
 pub struct OnboardingPromptBlock {
     learn_more_highlight_index: HighlightedHyperlink,
-    mouse_state_handle_look_incorrect: MouseStateHandle,
     mouse_state_handle_warp_prompt: MouseStateHandle,
     mouse_state_handle_existing_prompt: MouseStateHandle,
     mouse_state_handle_confirm: MouseStateHandle,
@@ -39,7 +38,6 @@ impl OnboardingPromptBlock {
     pub fn new(ps1_grid_info: Option<(BlockGrid, SizeInfo)>) -> Self {
         Self {
             learn_more_highlight_index: Default::default(),
-            mouse_state_handle_look_incorrect: Default::default(),
             mouse_state_handle_warp_prompt: Default::default(),
             mouse_state_handle_existing_prompt: Default::default(),
             mouse_state_handle_confirm: Default::default(),
@@ -63,10 +61,7 @@ impl OnboardingPromptBlock {
         // Copy - https://docs.google.com/document/d/1zttBLI5Mw07kUupvrMQoC5aTwTXSHIUOIFFnxZ8GQEU/edit
         const LINE_ONE: &str = "Next, let’s set up your prompt. Warp has a custom prompt builder or you can select PS1 to honor your pre-existing prompt configuration.";
         const LINE_TWO: &str =
-            "Warp works with many custom prompts like oh-my-zsh, Starship, Powerlevel10K. ";
-        const LINK_TEXT: &str = "Learn more";
-        const LINK_DESTINATION: &str =
-            "https://docs.warp.dev/terminal/appearance/prompt#custom-prompt-compatibility-table";
+            "Warp works with many custom prompts like oh-my-zsh, Starship, Powerlevel10K.";
 
         Flex::column()
             .with_children([
@@ -81,7 +76,6 @@ impl OnboardingPromptBlock {
                     FormattedTextElement::new(
                         FormattedText::new([FormattedTextLine::Line(vec![
                             FormattedTextFragment::plain_text(LINE_TWO),
-                            FormattedTextFragment::hyperlink(LINK_TEXT, LINK_DESTINATION),
                         ])]),
                         font_size,
                         font_family,
@@ -237,16 +231,11 @@ impl OnboardingPromptBlock {
         // https://www.figma.com/file/y888viqzWBoMpFTxQqkQEN/Activation?node-id=568:1595&mode=dev
         const HEADER_TEXT: &str = "Shell prompt (PS1)";
         const NO_PS1_TEXT: &str = "No existing prompt.";
-        const CORRECTION_TEXT: &str = "Look incorrect? ";
-        const LINK_TEXT: &str = "Let us know.";
-        const LINK_DESTINATION: &str = "https://github.com/warpdotdev/Warp/issues/new?assignees=&labels=Bug&projects=&template=01_bug_report.yml";
-
         const HEADER_MARGIN_LEFT: f32 = 4.;
         const PS1_PADDING_VERTICAL: f32 = 12.;
         const PS1_PADDING_HORIZONTAL: f32 = 8.;
         const PS1_MARGIN_TOP: f32 = 8.;
         const CORNER_RADIUS_PIXELS: f32 = 4.;
-        const CORRECTION_OPACITY: u8 = 60;
 
         let current_theme = appearance.theme();
         let font_family = appearance.monospace_font_family();
@@ -268,12 +257,6 @@ impl OnboardingPromptBlock {
                 .finish()
         };
 
-        let link_style = UiComponentStyles {
-            font_size: Some(font_size),
-            font_family_id: Some(font_family),
-            ..Default::default()
-        };
-
         Flex::column()
             .with_child(
                 Container::new(
@@ -285,38 +268,6 @@ impl OnboardingPromptBlock {
                 .finish(),
             )
             .with_child(prompt_body)
-            .with_child(
-                Shrinkable::new(
-                    1.,
-                    Align::new(
-                        Flex::row()
-                            .with_children([
-                                Text::new_inline(CORRECTION_TEXT, font_family, font_size)
-                                    .with_color(
-                                        font_color.with_opacity(CORRECTION_OPACITY).into_solid(),
-                                    )
-                                    .finish(),
-                                appearance
-                                    .ui_builder()
-                                    .link(
-                                        LINK_TEXT.to_string(),
-                                        Some(LINK_DESTINATION.to_string()),
-                                        None,
-                                        self.mouse_state_handle_look_incorrect.clone(),
-                                    )
-                                    .soft_wrap(false)
-                                    .with_style(link_style)
-                                    .build()
-                                    .finish(),
-                            ])
-                            .with_main_axis_size(MainAxisSize::Min)
-                            .finish(),
-                    )
-                    .bottom_right()
-                    .finish(),
-                )
-                .finish(),
-            )
             .with_main_axis_size(MainAxisSize::Max)
             .finish()
     }

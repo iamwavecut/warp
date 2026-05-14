@@ -1673,7 +1673,7 @@ impl TerminalManager {
                     let is_ambient_agent = terminal_view
                         .as_ref(ctx)
                         .is_shared_session_for_ambient_agent();
-                    // We never want to reset back to the sharer size if we are a cloud agent,
+                    // We never want to reset back to the sharer size if we are an agent,
                     // since it was a default. Prefer to keep the viewer-set size for transcript
                     // persistence.
                     if !is_ambient_agent {

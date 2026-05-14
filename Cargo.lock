@@ -1707,7 +1707,6 @@ dependencies = [
  "base64-simd",
  "bytes",
  "bytes-utils",
- "futures-core",
  "http 0.2.12",
  "http 1.4.0",
  "http-body 0.4.6",
@@ -1720,8 +1719,6 @@ dependencies = [
  "ryu",
  "serde",
  "time",
- "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -4609,14 +4606,6 @@ dependencies = [
  "lazy_static",
  "libc",
  "winapi",
-]
-
-[[package]]
-name = "firebase"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "serde",
 ]
 
 [[package]]
@@ -13681,7 +13670,6 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-credential-types",
- "aws-sdk-sts",
  "aws-types",
  "axum",
  "base64 0.22.1",
@@ -13735,7 +13723,6 @@ dependencies = [
  "enum-iterator",
  "env_logger",
  "field_mask",
- "firebase",
  "flate2",
  "float-cmp",
  "freedesktop-desktop-entry",

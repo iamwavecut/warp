@@ -1,8 +1,4 @@
-use crate::{
-    experiment::Experiment, mutations::create_anonymous_user::AnonymousUserType,
-    object_permissions::OwnerType, request_context::RequestContext, scalars::Time, schema,
-    workspace::FeatureModelChoice,
-};
+use crate::{object_permissions::OwnerType, request_context::RequestContext, scalars::Time, schema};
 
 /*
 query GetUser($requestContext: RequestContext!) {
@@ -20,7 +16,6 @@ query GetUser($requestContext: RequestContext!) {
             workflowLimit
           }
         }
-        experiments
         globalSkills
         isOnWorkDomain
         isOnboarded
@@ -134,12 +129,10 @@ pub enum PrincipalType {
 #[derive(cynic::QueryFragment, Debug)]
 pub struct User {
     pub anonymous_user_info: Option<AnonymousUserInfo>,
-    pub experiments: Option<Vec<Experiment>>,
     pub global_skills: Vec<String>,
     pub is_onboarded: bool,
     pub is_on_work_domain: bool,
     pub profile: FirebaseProfile,
-    pub llms: FeatureModelChoice,
 }
 
 #[derive(cynic::QueryFragment, Debug)]
@@ -156,6 +149,15 @@ pub struct AnonymousUserInfo {
     pub anonymous_user_type: AnonymousUserType,
     pub linked_at: Option<Time>,
     pub personal_object_limits: Option<AnonymousUserPersonalObjectLimits>,
+}
+
+#[derive(cynic::Enum, Clone, Debug)]
+pub enum AnonymousUserType {
+    NativeClientAnonymousUser,
+    NativeClientAnonymousUserFeatureGated,
+    WebClientAnonymousUser,
+    #[cynic(fallback)]
+    Other(String),
 }
 
 #[derive(cynic::QueryFragment, Debug, Clone)]

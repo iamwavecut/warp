@@ -207,7 +207,7 @@ pub(crate) struct Props<'a> {
     pub(super) thinking_display_mode: crate::settings::ThinkingDisplayMode,
     pub(super) conversation_has_imported_comments: bool,
     pub(super) ask_user_question_view: Option<&'a ViewHandle<AskUserQuestionView>>,
-    /// `true` when this block belongs to a cloud agent pane that is still in its setup
+    /// `true` when this block belongs to an agent pane that is still in its setup
     /// phase (running environment startup commands before the first agent turn). Used to
     /// hide the response footer (thumbs up/down, credit usage, fork) until the agent has
     /// produced real output — otherwise the footer renders awkwardly above the still-

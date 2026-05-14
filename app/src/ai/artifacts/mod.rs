@@ -1,23 +1,13 @@
 use std::path::Path;
-#[cfg(feature = "local_fs")]
-use std::path::PathBuf;
 
 use anyhow::anyhow;
 use ui_components::lightbox::{LightboxImage, LightboxImageSource};
 use warp_core::report_error;
 use warp_multi_agent_api as api;
-#[cfg(feature = "local_fs")]
-use warpui::platform::SaveFilePickerConfiguration;
 use warpui::SingletonEntity;
 
-#[cfg(feature = "local_fs")]
-use crate::ai::artifact_download::default_download_filename;
 use crate::ai::artifact_download::sanitized_basename;
-#[cfg(feature = "local_fs")]
-use crate::ai::artifact_download::{default_download_directory, download_artifact_bytes};
 use crate::notebooks::NotebookId;
-use crate::server::server_api::ai::ArtifactDownloadResponse;
-use crate::server::server_api::ServerApiProvider;
 use crate::view_components::DismissibleToast;
 use crate::workspace::ToastStack;
 use crate::workspace::WorkspaceAction;
@@ -31,7 +21,7 @@ pub enum Artifact {
     #[serde(rename = "PLAN")]
     Plan {
         document_uid: String,
-        /// None until the plan is synced to Warp Drive.
+        /// None until the plan is saved as a local notebook.
         notebook_uid: Option<NotebookId>,
         title: Option<String>,
     },
@@ -313,57 +303,18 @@ pub fn open_screenshot_lightbox<V: warpui::View>(
         initial_index: 0,
     });
 
-    // Fetch each signed URL independently and update the lightbox as each resolves.
-    // TODO(QUALITY-318): We should cache the signed URL for each artifact UUID so
-    // we avoid fetching screenshots already in the asset cache.
-    let ai_client = ServerApiProvider::handle(ctx).as_ref(ctx).get_ai_client();
-
     for (i, uid) in artifact_uids.iter().enumerate() {
-        let ai_client = ai_client.clone();
-        let uid = uid.clone();
-        let uid_for_callback = uid.clone();
-
-        ctx.spawn(
-            async move { ai_client.get_artifact_download(&uid).await },
-            move |_me, result, ctx| {
-                if let Some(image) =
-                    screenshot_lightbox_image_from_download_result(result, &uid_for_callback, i)
-                {
-                    ctx.dispatch_typed_action(&WorkspaceAction::UpdateLightboxImage {
-                        index: i,
-                        image,
-                    });
-                }
-            },
-        );
-    }
-}
-
-fn screenshot_lightbox_image_from_download_result(
-    result: anyhow::Result<ArtifactDownloadResponse>,
-    uid_for_callback: &str,
-    index: usize,
-) -> Option<LightboxImage> {
-    match result {
-        Ok(ArtifactDownloadResponse::Screenshot { data, .. }) => Some(LightboxImage {
-            source: LightboxImageSource::Resolved {
-                asset_source: asset_cache::url_source(data.download_url),
-            },
-            description: data
-                .description
-                .filter(|description| !description.is_empty()),
-        }),
-        Ok(ArtifactDownloadResponse::File { .. }) => {
-            log::warn!("Artifact {uid_for_callback} was not a screenshot");
-            None
-        }
-        Err(e) => {
-            log::warn!("Failed to load screenshot artifact {index}: {e}");
-            Some(LightboxImage {
+        log::warn!("Hosted screenshot artifact {uid} is unavailable in this local-first build");
+        ctx.dispatch_typed_action(&WorkspaceAction::UpdateLightboxImage {
+            index: i,
+            image: LightboxImage {
                 source: LightboxImageSource::Loading,
-                description: Some("Failed to load".to_string()),
-            })
-        }
+                description: Some(
+                    "Hosted screenshot artifacts are unavailable in this local-first build."
+                        .to_string(),
+                ),
+            },
+        });
     }
 }
 
@@ -371,100 +322,14 @@ pub fn download_file_artifact<V: warpui::View>(
     artifact_uid: &str,
     ctx: &mut warpui::ViewContext<V>,
 ) {
-    let ai_client = ServerApiProvider::handle(ctx).as_ref(ctx).get_ai_client();
     let artifact_uid = artifact_uid.to_string();
-    let artifact_uid_for_request = artifact_uid.clone();
-
-    ctx.spawn(
-        async move {
-            ai_client
-                .get_artifact_download(&artifact_uid_for_request)
-                .await
-        },
-        move |_me, result, ctx| match result {
-            Ok(artifact) => open_file_download_result(&artifact_uid, artifact, ctx),
-            Err(error) => {
-                log::warn!("Failed to load file artifact {artifact_uid}: {error}");
-                show_file_download_toast(
-                    &artifact_uid,
-                    DismissibleToast::error("Failed to prepare file download.".to_string()),
-                    ctx,
-                );
-            }
-        },
-    );
-}
-
-fn open_file_download_result<V: warpui::View>(
-    artifact_uid: &str,
-    artifact: ArtifactDownloadResponse,
-    ctx: &mut warpui::ViewContext<V>,
-) {
-    match artifact {
-        ArtifactDownloadResponse::File { .. } => {
-            #[cfg(feature = "local_fs")]
-            {
-                open_file_download_picker(artifact, ctx);
-            }
-
-            #[cfg(not(feature = "local_fs"))]
-            {
-                ctx.open_url(artifact.download_url());
-            }
-        }
-        ArtifactDownloadResponse::Screenshot { .. } => {
-            log::warn!("Artifact {artifact_uid} was not a file");
-        }
-    }
-}
-
-#[cfg(feature = "local_fs")]
-fn open_file_download_picker<V: warpui::View>(
-    artifact: ArtifactDownloadResponse,
-    ctx: &mut warpui::ViewContext<V>,
-) {
-    let mut config = SaveFilePickerConfiguration::new()
-        .with_default_filename(default_download_filename(&artifact));
-    if let Some(default_directory) = default_download_directory() {
-        config = config.with_default_directory(default_directory);
-    }
-
-    ctx.open_save_file_picker(
-        move |path_opt: Option<String>, _me: &mut V, ctx: &mut warpui::ViewContext<V>| {
-            let Some(path) = path_opt else {
-                return;
-            };
-            let server_api = ServerApiProvider::handle(ctx).as_ref(ctx).get();
-            let artifact = artifact.clone();
-            let artifact_uid = artifact.artifact_uid().to_string();
-            let path = PathBuf::from(path);
-            let toast_filename = download_toast_filename(&path);
-            let artifact_for_download = artifact.clone();
-            ctx.spawn(
-                async move {
-                    download_artifact_bytes(server_api.http_client(), &artifact_for_download, &path)
-                        .await
-                },
-                move |_me, result, ctx| match result {
-                    Ok(()) => show_file_download_toast(
-                        &artifact_uid,
-                        DismissibleToast::success(format!("Downloaded {toast_filename}.")),
-                        ctx,
-                    ),
-                    Err(error) => {
-                        log::warn!("Failed to download file artifact {artifact_uid}: {error}");
-                        show_file_download_toast(
-                            &artifact_uid,
-                            DismissibleToast::error(format!(
-                                "Failed to download {toast_filename}."
-                            )),
-                            ctx,
-                        );
-                    }
-                },
-            );
-        },
-        config,
+    log::warn!("Hosted file artifact {artifact_uid} is unavailable in this local-first build");
+    show_file_download_toast(
+        &artifact_uid,
+        DismissibleToast::error(
+            "Hosted file artifacts are unavailable in this local-first build.".to_string(),
+        ),
+        ctx,
     );
 }
 
@@ -478,15 +343,6 @@ fn show_file_download_toast<V: warpui::View>(
     ToastStack::handle(ctx).update(ctx, move |toast_stack, ctx| {
         toast_stack.add_ephemeral_toast(toast.with_object_id(toast_id), window_id, ctx);
     });
-}
-
-#[cfg(feature = "local_fs")]
-fn download_toast_filename(path: &Path) -> String {
-    path.file_name()
-        .and_then(|file_name| file_name.to_str())
-        .filter(|file_name| !file_name.is_empty())
-        .unwrap_or("file")
-        .to_string()
 }
 
 fn non_empty_trimmed(value: &str) -> Option<&str> {

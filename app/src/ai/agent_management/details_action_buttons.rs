@@ -25,7 +25,7 @@ pub struct ActionButtonsConfig {
     /// Shows an info button for viewing more details.
     /// Only used in management view hover toolbelt.
     pub view_details_item_id: Option<AgentConversationEntryId>,
-    /// Conversation link URL (either to the transcript or live session) for copy link button.
+    /// Live local session URL for the copy link button.
     pub copy_link_url: Option<String>,
 }
 
@@ -42,7 +42,7 @@ impl ActionButtonsConfig {
     /// Create config for a task.
     /// - `display_status`: used to determine if cancel button should show.
     /// - `open_action`: pass `Some(action)` to show open button, `None` to hide
-    /// - `copy_link_url`: conversation link URL, or `None` to hide
+    /// - `copy_link_url`: live session URL, or `None` to hide
     pub fn for_task(
         task_id: AmbientAgentTaskId,
         display_status: &AgentRunDisplayStatus,
@@ -64,7 +64,7 @@ impl ActionButtonsConfig {
 
     /// Create config for a conversation.
     /// - `open_action`: pass `Some(action)` to show open button, `None` to hide
-    /// - `copy_link_url`: conversation link URL, or `None` to hide
+    /// - `copy_link_url`: live session URL, or `None` to hide
     pub fn for_conversation(
         conversation_id: AIConversationId,
         open_action: Option<WorkspaceAction>,

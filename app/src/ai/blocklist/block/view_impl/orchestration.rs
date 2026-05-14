@@ -699,28 +699,28 @@ pub(super) fn render_start_agent(
 fn start_agent_success_suffix(execution_mode: &StartAgentExecutionMode) -> &'static str {
     match execution_mode {
         StartAgentExecutionMode::Local { .. } => " locally.",
-        StartAgentExecutionMode::Remote { .. } => " remotely.",
+        StartAgentExecutionMode::Remote { .. } => " locally.",
     }
 }
 
 fn start_agent_error_prefix(execution_mode: &StartAgentExecutionMode) -> &'static str {
     match execution_mode {
         StartAgentExecutionMode::Local { .. } => "Failed to start agent ",
-        StartAgentExecutionMode::Remote { .. } => "Failed to start remote agent ",
+        StartAgentExecutionMode::Remote { .. } => "Failed to start agent ",
     }
 }
 
 fn start_agent_cancelled_prefix(execution_mode: &StartAgentExecutionMode) -> &'static str {
     match execution_mode {
         StartAgentExecutionMode::Local { .. } => "Start agent ",
-        StartAgentExecutionMode::Remote { .. } => "Start remote agent ",
+        StartAgentExecutionMode::Remote { .. } => "Start agent ",
     }
 }
 
 fn start_agent_in_progress_prefix(execution_mode: &StartAgentExecutionMode) -> &'static str {
     match execution_mode {
         StartAgentExecutionMode::Local { .. } => "Starting agent ",
-        StartAgentExecutionMode::Remote { .. } => "Starting remote agent ",
+        StartAgentExecutionMode::Remote { .. } => "Starting agent ",
     }
 }
 

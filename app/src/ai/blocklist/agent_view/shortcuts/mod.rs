@@ -13,9 +13,11 @@ use warpui::{
     AppContext, Element, SingletonEntity,
 };
 
-use crate::ai::blocklist::agent_view::ENTER_CLOUD_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE;
 use crate::{
-    ai::blocklist::agent_view::ENTER_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE,
+    ai::blocklist::agent_view::{
+        ENTER_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE,
+        ENTER_AMBIENT_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE,
+    },
     cmd_or_ctrl_shift,
     terminal::{self, TOGGLE_AUTOEXECUTE_MODE_KEYBINDING},
     ui_components::blended_colors,
@@ -154,7 +156,7 @@ pub fn render_agent_shortcuts_view(
         app,
     ));
 
-    // Code review is not available for cloud agents.
+    // Code review is not available for ambient agents.
     if !context.is_cloud_agent {
         if let Some(keystroke) = keybinding_name_to_keystroke(TOGGLE_RIGHT_PANEL_BINDING_NAME, app)
         {
@@ -195,7 +197,7 @@ pub fn render_agent_shortcuts_view(
 
     // Use cloud keystroke (cmd+opt+enter) for cloud mode, regular keystroke (cmd+enter) otherwise.
     let new_conversation_keystroke = if context.is_cloud_agent {
-        ENTER_CLOUD_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE.clone()
+        ENTER_AMBIENT_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE.clone()
     } else {
         ENTER_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE.clone()
     };

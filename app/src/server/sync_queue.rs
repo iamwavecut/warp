@@ -23,7 +23,6 @@ use crate::ai::mcp::templatable::CloudTemplatableMCPServerModel;
 use crate::server::cloud_objects::update_manager::InitiatedBy;
 use crate::{
     ai::cloud_agent_config::CloudAgentConfigModel,
-    ai::cloud_environments::CloudAmbientAgentEnvironmentModel,
     ai::{
         ambient_agents::scheduled::CloudScheduledAmbientAgentModel,
         execution_profiles::CloudAIExecutionProfileModel, facts::CloudAIFactModel,
@@ -220,11 +219,6 @@ pub enum QueueItem {
         id: SyncId,
         revision: Option<Revision>,
     },
-    UpdateCloudEnvironment {
-        model: Arc<CloudAmbientAgentEnvironmentModel>,
-        id: SyncId,
-        revision: Option<Revision>,
-    },
     UpdateScheduledAmbientAgent {
         model: Arc<CloudScheduledAmbientAgentModel>,
         id: SyncId,
@@ -414,8 +408,8 @@ impl SyncQueue {
     }
 
     pub fn start_dequeueing(&mut self, ctx: &mut ModelContext<Self>) {
-        self.should_dequeue = true;
-        self.dequeue(ctx)
+        let _ = ctx;
+        self.should_dequeue = false;
     }
 
     // Clear the SyncQueue. This is used during Logout.
@@ -434,12 +428,8 @@ impl SyncQueue {
 
     /// Enqueue a new request.
     pub fn enqueue(&mut self, item: QueueItem, ctx: &mut ModelContext<Self>) -> QueueItemId {
+        let _ = (item, ctx);
         let queue_id = QueueItemId::new();
-        let mut queue_item = item;
-
-        self.add_inferred_dependencies(&mut queue_item, &queue_id, ctx);
-        self.queue.push((queue_id, queue_item));
-        self.dequeue(ctx);
         queue_id
     }
 
@@ -457,7 +447,6 @@ impl SyncQueue {
             QueueItem::UpdateCloudPreferences { id, .. } => self.get_update_dependencies(id),
             QueueItem::UpdateEnvVarCollection { id, .. } => self.get_update_dependencies(id),
             QueueItem::UpdateWorkflowEnum { id, .. } => self.get_update_dependencies(id),
-            QueueItem::UpdateCloudEnvironment { id, .. } => self.get_update_dependencies(id),
             QueueItem::UpdateScheduledAmbientAgent { id, .. } => self.get_update_dependencies(id),
             QueueItem::UpdateCloudAgentConfig { id, .. } => self.get_update_dependencies(id),
 
@@ -561,7 +550,6 @@ impl SyncQueue {
                 QueueItem::UpdateMCPServer { id, .. } => id.uid() == item_id,
                 QueueItem::UpdateAIExecutionProfile { id, .. } => id.uid() == item_id,
                 QueueItem::UpdateTemplatableMCPServer { id, .. } => id.uid() == item_id,
-                QueueItem::UpdateCloudEnvironment { id, .. } => id.uid() == item_id,
                 QueueItem::UpdateScheduledAmbientAgent { id, .. } => id.uid() == item_id,
                 QueueItem::UpdateCloudAgentConfig { id, .. } => id.uid() == item_id,
                 // We don't depend on object actions, since they don't affect an object's own content or metadata
@@ -819,20 +807,6 @@ impl SyncQueue {
                     );
                 }
                 QueueItem::UpdateTemplatableMCPServer {
-                    model,
-                    id,
-                    revision,
-                } => {
-                    self.update_object(
-                        model.clone(),
-                        id,
-                        revision,
-                        object_client,
-                        dequeued_item_id,
-                        ctx,
-                    );
-                }
-                QueueItem::UpdateCloudEnvironment {
                     model,
                     id,
                     revision,
@@ -1261,13 +1235,6 @@ impl SyncQueue {
                                 )
                                 .await
                             }
-                            JsonObjectType::CloudEnvironment => {
-                                CloudAmbientAgentEnvironmentModel::send_create_request(
-                                    object_client_clone,
-                                    create_request,
-                                )
-                                .await
-                            }
                             JsonObjectType::ScheduledAmbientAgent => {
                                 CloudScheduledAmbientAgentModel::send_create_request(
                                     object_client_clone,
@@ -1683,9 +1650,6 @@ impl SyncQueue {
 
             if let Some(err) = cause.downcast_ref::<GraphQLError>() {
                 match err {
-                    // This only applies to WarpDev, but if someone's IP address is blocked, there's no
-                    // point in continuing to dequeue.
-                    GraphQLError::StagingAccessBlocked => return true,
                     // If the user isn't authorized, stop dequeuing. In general, this should
                     // manifest as a UserAuthenticationError instead.
                     GraphQLError::HttpError {
@@ -1847,9 +1811,6 @@ impl SyncQueue {
                     self.handle_update_failure_response(id, item_id, ctx);
                 }
                 QueueItem::UpdateTemplatableMCPServer { id, .. } => {
-                    self.handle_update_failure_response(id, item_id, ctx);
-                }
-                QueueItem::UpdateCloudEnvironment { id, .. } => {
                     self.handle_update_failure_response(id, item_id, ctx);
                 }
                 QueueItem::UpdateScheduledAmbientAgent { id, .. } => {

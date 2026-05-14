@@ -13,8 +13,7 @@ use crate::ui_components::icons::Icon as UiIcon;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use warp_core::ui::theme::WarpTheme;
 use warpui::elements::{
-    FormattedTextElement, HighlightedHyperlink, Hoverable, Icon, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle,
+    FormattedTextElement, Hoverable, Icon, MainAxisAlignment, MainAxisSize, MouseStateHandle,
 };
 use warpui::keymap::FixedBinding;
 use warpui::ui_components::toggle_menu::ToggleMenuStateHandle;
@@ -23,9 +22,6 @@ use warpui::{
     AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext,
 };
 use warpui::{BlurContext, FocusContext};
-
-pub const WHY_INSTALL_TMUX_URL: &str =
-    "https://docs.warp.dev/terminal/warpify/ssh#why-do-i-need-tmux-on-the-remote-machine";
 
 #[derive(Debug, Clone)]
 pub struct TmuxInstallMethod {
@@ -88,7 +84,6 @@ impl SshKeyEvent {
 
 pub struct SshInstallTmuxBlock {
     requested_script_mouse_states: RequestedScriptMouseStates,
-    why_install_tmux_highlight_index: HighlightedHyperlink,
     never_warpify_mouse_state_handle: MouseStateHandle,
     block_mouse_state: MouseStateHandle,
     is_focused: bool,
@@ -166,7 +161,6 @@ impl SshInstallTmuxBlock {
     ) -> Self {
         Self {
             requested_script_mouse_states: Default::default(),
-            why_install_tmux_highlight_index: Default::default(),
             never_warpify_mouse_state_handle: Default::default(),
             block_mouse_state: Default::default(),
             is_focused: false,
@@ -384,7 +378,6 @@ impl View for SshInstallTmuxBlock {
 
         let warpify_description = vec![
             FormattedTextFragment::plain_text(explanation),
-            FormattedTextFragment::hyperlink("Why do I need tmux?", WHY_INSTALL_TMUX_URL),
         ];
 
         let text_color =
@@ -396,12 +389,9 @@ impl View for SshInstallTmuxBlock {
             appearance.monospace_font_family(),
             appearance.monospace_font_family(),
             text_color,
-            self.why_install_tmux_highlight_index.clone(),
+            Default::default(),
         )
         .with_hyperlink_font_color(appearance.theme().accent().into_solid())
-        .register_default_click_handlers(|url, _, ctx| {
-            ctx.open_url(&url.url);
-        })
         .finish();
 
         content

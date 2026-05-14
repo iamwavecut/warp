@@ -18,7 +18,6 @@ use serde::Serialize;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
-use warp_core::channel::ChannelState;
 use warp_core::execution_mode::AppExecutionMode;
 use warp_core::features::FeatureFlag;
 
@@ -57,20 +56,9 @@ impl ServerConversationToken {
     }
 
     pub fn debug_link(&self) -> String {
-        format!(
-            "{}/debug/maa/{}",
-            ChannelState::server_root_url(),
-            self.as_str()
-        )
+        format!("local://debug/maa/{}", self.as_str())
     }
 
-    pub fn conversation_link(&self) -> String {
-        format!(
-            "{}/conversation/{}",
-            ChannelState::server_root_url(),
-            self.as_str()
-        )
-    }
 }
 
 impl From<ServerConversationToken> for String {
@@ -113,7 +101,6 @@ pub struct RequestParams {
     pub cli_agent_model: LLMId,
     pub computer_use_model: LLMId,
     pub is_memory_enabled: bool,
-    pub warp_drive_context_enabled: bool,
     pub context_window_limit: Option<u32>,
     pub mcp_context: Option<MCPContext>,
     pub planning_enabled: bool,
@@ -122,7 +109,6 @@ pub struct RequestParams {
     /// User-provided API keys for AI providers (BYO API Key).
     pub api_keys: Option<warp_multi_agent_api::request::settings::ApiKeys>,
     pub(crate) custom_provider_route: Option<direct_openai::CustomProviderRoute>,
-    pub allow_use_of_warp_credits_with_byok: bool,
     pub autonomy_level: warp_multi_agent_api::AutonomyLevel,
     pub isolation_level: warp_multi_agent_api::IsolationLevel,
     pub web_search_enabled: bool,
@@ -170,7 +156,6 @@ impl RequestParams {
     ) -> Self {
         let ai_settings = AISettings::as_ref(app);
         let is_memory_enabled = ai_settings.is_memory_enabled(app);
-        let warp_drive_context_enabled = ai_settings.is_warp_drive_context_enabled(app);
 
         // Build MCP context - either grouped by server or flat lists based on feature flag
         let mcp_context = if FeatureFlag::MCPGroupedServerContext.is_enabled() {
@@ -245,34 +230,11 @@ impl RequestParams {
             user_workspaces.is_byo_api_key_enabled(),
             user_workspaces.is_aws_bedrock_credentials_enabled(app),
         );
-        let allow_use_of_warp_credits_with_byok =
-            *AISettings::as_ref(app).can_use_warp_credits_with_byok;
-
-        let custom_provider_route = direct_openai::parse_custom_model_id(
+        let custom_provider_route = direct_openai::resolve_custom_provider_route(
             request_input.model_id.as_str(),
-        )
-        .and_then(|custom_model| {
-            let provider = ai_settings
-                .custom_providers
-                .iter()
-                .find(|provider| provider.name == custom_model.provider_name)?;
-            let secure_storage_key = ApiKeyManager::as_ref(app)
-                .keys()
-                .custom
-                .get(&custom_model.provider_name)
-                .cloned();
-            let env_key = provider
-                .api_key_env_var
-                .as_deref()
-                .and_then(crate::settings::normalize_custom_provider_env_var)
-                .and_then(|env_var| std::env::var(env_var).ok());
-            Some(direct_openai::CustomProviderRoute {
-                provider_name: custom_model.provider_name.clone(),
-                base_url: provider.base_url.clone(),
-                model: custom_model.model,
-                api_key: secure_storage_key.or(env_key),
-            })
-        });
+            &ai_settings.custom_providers,
+            ApiKeyManager::as_ref(app).keys(),
+        );
         let request_task_id = request_input
             .input_messages
             .keys()
@@ -356,13 +318,11 @@ impl RequestParams {
             cli_agent_model: request_input.cli_agent_model_id.clone(),
             computer_use_model: request_input.computer_use_model_id.clone(),
             is_memory_enabled,
-            warp_drive_context_enabled,
             mcp_context,
             planning_enabled: true,
             should_redact_secrets,
             api_keys,
             custom_provider_route,
-            allow_use_of_warp_credits_with_byok,
             autonomy_level,
             isolation_level,
             web_search_enabled,

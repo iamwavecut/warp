@@ -1,8 +1,7 @@
 use super::{
     common::{
         add_command_xray_overlay, add_input_suggestions_overlays, add_voltron_overlay,
-        add_workflow_info_overlay, maybe_add_buy_credits_banner,
-        wrap_input_with_terminal_padding_and_focus_handler,
+        add_workflow_info_overlay, wrap_input_with_terminal_padding_and_focus_handler,
     },
     Input, InputAction, InputDropTargetData,
 };
@@ -70,14 +69,9 @@ impl Input {
     pub fn is_cloud_mode_input_v2_composing(&self, app: &AppContext) -> bool {
         FeatureFlag::CloudModeInputV2.is_enabled()
             && FeatureFlag::CloudMode.is_enabled()
-            && self.ambient_agent_view_model().is_some_and(|model| {
-                let view_model = model.as_ref(app);
-                view_model.is_configuring_ambient_agent()
-                    // The handoff pane intentionally stays on the existing input UI even
-                    // when V2 is on — V2 is for fresh cloud-mode runs only, and handoff has
-                    // its own pre-spawn flow (submit interception).
-                    && !view_model.is_local_to_cloud_handoff()
-            })
+            && self
+                .ambient_agent_view_model()
+                .is_some_and(|model| model.as_ref(app).is_configuring_ambient_agent())
     }
 
     /// Renders the input when there is an active `AgentView`.
@@ -331,14 +325,6 @@ impl Input {
 
         let mut outer_stack = Stack::new().with_constrain_absolute_children();
         outer_stack.add_child(column.finish());
-        maybe_add_buy_credits_banner(
-            &mut outer_stack,
-            &self.buy_credits_banner,
-            self.is_pane_focused(app),
-            self.terminal_view_id,
-            self.is_input_at_top(&model, app),
-            app,
-        );
 
         SavePosition::new(outer_stack.finish(), &self.save_position_id()).finish()
     }
@@ -406,7 +392,7 @@ impl Input {
         }
 
         if self.suggestions_mode_model.as_ref(app).is_slash_commands() {
-            if let Some(view) = self.cloud_mode_v2_slash_commands_view.as_ref() {
+            if let Some(view) = self.ambient_agent_v2_slash_commands_view.as_ref() {
                 let cursor_position = position_id_for_cursor(self.editor.id());
                 stack.add_positioned_overlay_child(
                     ChildView::new(view).finish(),
@@ -492,14 +478,6 @@ impl Input {
 
         let mut outer_stack = Stack::new().with_constrain_absolute_children();
         outer_stack.add_child(input);
-        maybe_add_buy_credits_banner(
-            &mut outer_stack,
-            &self.buy_credits_banner,
-            self.is_pane_focused(app),
-            self.terminal_view_id,
-            self.is_input_at_top(&model, app),
-            app,
-        );
 
         SavePosition::new(outer_stack.finish(), &self.save_position_id()).finish()
     }
@@ -532,7 +510,7 @@ impl Input {
         {
             return None;
         }
-        let view = self.cloud_mode_v2_history_menu_view.as_ref()?;
+        let view = self.ambient_agent_v2_history_menu_view.as_ref()?;
         Some(ChildView::new(view).finish())
     }
 
@@ -542,12 +520,6 @@ impl Input {
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(CLOUD_MODE_V2_TOP_ROW_INNER_GAP);
 
-        // Only show the host selector when a default host is configured.
-        if let Some(host) = self.host_selector() {
-            if host.as_ref(app).has_default_host() {
-                row.add_child(ChildView::new(host).finish());
-            }
-        }
         if let Some(harness_selector) = self.harness_selector() {
             row.add_child(ChildView::new(harness_selector).finish());
         }
@@ -631,16 +603,6 @@ impl Input {
         // Don't render status bar when agent has failed or is waiting for session
         let show_status_bar = ambient_agent_model.error_message().is_none()
             && !ambient_agent_model.is_waiting_for_session();
-
-        let model = self.model.lock();
-        maybe_add_buy_credits_banner(
-            &mut stack,
-            &self.buy_credits_banner,
-            self.focus_handle.as_ref().is_none_or(|h| h.is_focused(app)),
-            self.terminal_view_id,
-            self.is_input_at_top(&model, app),
-            app,
-        );
 
         let save_position =
             SavePosition::new(stack.finish(), &self.status_free_input_save_position_id()).finish();

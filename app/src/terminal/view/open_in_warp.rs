@@ -41,10 +41,6 @@ use super::{Event, InlineBannerItem, InlineBannerType, TerminalView};
 #[path = "open_in_warp_tests.rs"]
 mod tests;
 
-const LEARN_MORE_MARKDOWN_URL: &str =
-    "https://docs.warp.dev/terminal/more-features/markdown-viewer";
-const LEARN_MORE_CODE_URL: &str = "https://docs.warp.dev/code/overview#built-in-code-editor";
-
 /// A path to a file that can be opened in Warp, along with its type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenablePath {
@@ -195,13 +191,8 @@ impl TerminalView {
                 }
             }
             OpenInWarpBannerAction::LearnMore => {
-                if let Some(banner_state) = &self.inline_banners_state.open_in_warp_banner {
-                    let url = match banner_state.target.file_type {
-                        OpenableFileType::Markdown => LEARN_MORE_MARKDOWN_URL,
-                        OpenableFileType::Code | OpenableFileType::Text => LEARN_MORE_CODE_URL,
-                    };
-                    ctx.open_url(url);
-                }
+                let _ = ctx;
+                log::info!("Ignoring hosted documentation link in local-first build");
             }
             OpenInWarpBannerAction::Close => {
                 if let Some(banner_state) = self.inline_banners_state.open_in_warp_banner.take() {

@@ -1,27 +1,19 @@
 use std::env;
 #[cfg(unix)]
 use std::ffi::CStr;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 
-use anyhow::anyhow;
 use chrono::{DateTime, Duration, Utc};
 use parking_lot::RwLock;
 use uuid::Uuid;
 use warpui::{AppContext, Entity, SingletonEntity};
 
-use crate::{
-    cloud_object::{GenericStringObjectFormat, JsonObjectType, ObjectType},
-    report_error,
-};
+use crate::cloud_object::{GenericStringObjectFormat, JsonObjectType, ObjectType};
 
 use super::{
     anonymous_id::get_or_create_anonymous_id,
-    auth_manager::user_persistence::PersistedUser,
     credentials::Credentials,
-    user::{AnonymousUserType, FirebaseAuthTokens, PersonalObjectLimits, PrincipalType, User},
+    user::{AnonymousUserType, PersonalObjectLimits, PrincipalType, User},
     UserUid,
 };
 
@@ -29,8 +21,6 @@ const ANONYMOUS_USER_NOTIFICATION_BLOCK_TIMER: Duration = Duration::days(7);
 
 /// Describes what persistence action to take based on the current auth state.
 pub(super) enum PersistAction {
-    /// The user has Firebase credentials and should be persisted to secure storage.
-    Persist(Box<PersistedUser>),
     /// The user has been logged out and should be removed from secure storage.
     Remove,
     /// No persistence action is needed (e.g. API key or test credentials).
@@ -46,10 +36,6 @@ pub struct AuthState {
     /// An anonymous UUID. Can be used to consistently identify an anonymous user who is not logged in.
     anonymous_id: Uuid,
 
-    /// State that indicates whether the current user's refresh token has been
-    /// invalidated, meaning a reauth is required.
-    needs_reauth: AtomicBool,
-
     /// The current authentication credentials.
     credentials: RwLock<Option<Credentials>>,
 }
@@ -59,7 +45,6 @@ impl AuthState {
         Self {
             user: RwLock::new(None),
             anonymous_id: get_or_create_anonymous_id(ctx),
-            needs_reauth: AtomicBool::new(false),
             credentials: RwLock::new(None),
         }
     }
@@ -69,7 +54,6 @@ impl AuthState {
         Self {
             user: RwLock::new(Some(User::test())),
             anonymous_id: Uuid::new_v4(),
-            needs_reauth: AtomicBool::new(false),
             credentials: RwLock::new(Some(Credentials::Test)),
         }
     }
@@ -79,7 +63,6 @@ impl AuthState {
         Self {
             user: RwLock::new(None),
             anonymous_id: Uuid::new_v4(),
-            needs_reauth: AtomicBool::new(false),
             credentials: RwLock::new(None),
         }
     }
@@ -102,60 +85,17 @@ impl AuthState {
         let credentials = self.credentials.read().clone();
 
         match (user, credentials) {
-            (Some(user), Some(Credentials::Firebase(firebase_tokens))) => {
-                let anonymous_user_type = user.anonymous_user_type();
-                let linked_at = user.linked_at();
-                let personal_object_limits = user.personal_object_limits();
-
-                #[allow(deprecated)]
-                let persisted = PersistedUser {
-                    auth_tokens: firebase_tokens,
-                    refresh_token: String::new(),
-                    local_id: user.local_id,
-                    metadata: user.metadata,
-                    is_onboarded: user.is_onboarded,
-                    needs_sso_link: user.needs_sso_link,
-                    anonymous_user_type,
-                    linked_at,
-                    personal_object_limits,
-                    is_on_work_domain: user.is_on_work_domain,
-                };
-                PersistAction::Persist(Box::new(persisted))
-            }
             // Remove persisted auth state if it is unset in-memory.
             (None, None) => PersistAction::Remove,
             // Do not persist if using API keys, session cookies, or test credentials.
             (Some(_), Some(Credentials::SessionCookie)) => PersistAction::DoNothing,
-            #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
+            #[cfg(any(test, feature = "integration_tests"))]
             (Some(_), Some(Credentials::Test)) => PersistAction::DoNothing,
             (Some(_), Some(Credentials::Local)) => PersistAction::DoNothing,
             // Credentials without a user, or user without credentials - transient states
             // during initialization or refresh; no persistence action needed.
             (None, Some(_)) | (Some(_), None) => PersistAction::DoNothing,
         }
-    }
-
-    /// Applies a deserialized PersistedUser, splitting it into User and Credentials.
-    fn apply_persisted_user(&self, persisted: PersistedUser) {
-        let user = User {
-            is_onboarded: persisted.is_onboarded,
-            local_id: persisted.local_id,
-            metadata: persisted.metadata,
-            needs_sso_link: persisted.needs_sso_link,
-            anonymous_user_type: persisted.anonymous_user_type,
-            is_on_work_domain: persisted.is_on_work_domain,
-            linked_at: persisted.linked_at,
-            personal_object_limits: persisted.personal_object_limits,
-            principal_type: PrincipalType::default(),
-            global_skills: Vec::new(),
-        };
-        *self.user.write() = Some(user);
-
-        if persisted.auth_tokens.refresh_token.is_empty() {
-            log::warn!("Skipping credentials update due to empty refresh token");
-            return;
-        }
-        *self.credentials.write() = Some(Credentials::Firebase(persisted.auth_tokens));
     }
 
     /// Sets the user. This should only be called by the AuthManager, to ensure
@@ -181,29 +121,6 @@ impl AuthState {
     /// Sets the credentials. Should only be called within the auth module.
     pub(super) fn set_credentials(&self, credentials: Option<Credentials>) {
         *self.credentials.write() = credentials;
-    }
-
-    /// Updates the Firebase auth tokens within the current credentials.
-    /// Reports an error if the current credentials are not Firebase.
-    pub(crate) fn update_firebase_tokens(&self, new_auth_tokens: FirebaseAuthTokens) {
-        let mut write_lock = self.credentials.write();
-        match write_lock.as_mut() {
-            Some(Credentials::Firebase(tokens)) => {
-                *tokens = new_auth_tokens;
-            }
-            #[cfg(any(test, feature = "integration_tests", feature = "skip_login"))]
-            Some(Credentials::Test) => {
-                log::info!("Ignoring Firebase token update for Test credentials");
-            }
-            Some(Credentials::Local) => {
-                log::info!("Ignoring Firebase token update for Local credentials");
-            }
-            _ => {
-                report_error!(anyhow!(
-                    "Tried to update Firebase tokens without Firebase credentials"
-                ));
-            }
-        }
     }
 
     /// Determines whether the user should be considered as logged in.
@@ -280,7 +197,7 @@ impl AuthState {
     }
 
     /// Returns whether or not the user is anonymous.
-    /// Anonymous users are real Warp users, but have no providers linked in Firebase.
+    /// Local-first sessions use a local non-anonymous user by default.
     /// Returns `None` if there is no user data.
     pub fn is_user_anonymous(&self) -> Option<bool> {
         self.user
@@ -312,7 +229,7 @@ impl AuthState {
         })
     }
 
-    /// Returns whether or not the anonymous user is past any of their Warp Drive object limits.
+    /// Returns whether or not the anonymous user is past any local object limits.
     pub fn is_anonymous_user_past_object_limit(
         &self,
         object_type: ObjectType,
@@ -338,15 +255,13 @@ impl AuthState {
         })
     }
 
-    /// Returns the user's photo URL from Firebase,
-    /// typically acquired from linking a provider like Google/GitHub.
+    /// Returns the user's profile photo URL, if one exists.
     pub fn user_photo_url(&self) -> Option<String> {
         let _ = self;
         None
     }
 
     /// Returns whether or not the user needs to link their account to an SSO provider.
-    /// The actual value is calculated on the server to avoid additional RPCs to Firebase.
     pub fn needs_sso_link(&self) -> Option<bool> {
         self.user.read().as_ref().map(|user| user.needs_sso_link)
     }
@@ -377,7 +292,7 @@ impl AuthState {
         }
     }
 
-    /// If the user is logged in, returns their Firebase UID. Otherwise, returns None.
+    /// If the user is logged in, returns their local user id. Otherwise, returns None.
     pub fn user_id(&self) -> Option<UserUid> {
         self.user.read().as_ref().map(|user| user.local_id)
     }
@@ -386,19 +301,6 @@ impl AuthState {
     /// The anonymous id will be consistent across the app's lifetime. It is a random UUID.
     pub fn anonymous_id(&self) -> String {
         self.anonymous_id.to_string()
-    }
-
-    /// Returns whether a reauth is required for the current user given the state
-    /// of their refresh token.
-    pub fn needs_reauth(&self) -> bool {
-        self.needs_reauth.load(Ordering::Relaxed)
-    }
-
-    /// Sets whether a reauth is required for the current user.
-    /// Returns whether or not the reauth state was changed from false to true.
-    pub(super) fn set_needs_reauth(&self, new_needs_reauth: bool) -> bool {
-        let prev_needs_reauth = self.needs_reauth.swap(new_needs_reauth, Ordering::Relaxed);
-        !prev_needs_reauth && new_needs_reauth
     }
 
     /// Returns whether or not the renotification block to encourage anonymous users to sign up
@@ -432,13 +334,6 @@ impl AuthState {
     }
 }
 
-// Adapter for the [`warp_managed_secrets`] crate, which needs to access the current user.
-impl warp_managed_secrets::ActorProvider for AuthState {
-    fn actor_uid(&self) -> Option<String> {
-        self.user_id().map(|uid| uid.as_string())
-    }
-}
-
 /// AuthStateProvider is a singleton model which provides a reference to the global AuthState.
 pub struct AuthStateProvider {
     auth_state: Arc<AuthState>,
@@ -466,7 +361,6 @@ impl AuthStateProvider {
             auth_state: Arc::new(AuthState {
                 user: RwLock::new(None),
                 anonymous_id: Uuid::new_v4(),
-                needs_reauth: AtomicBool::new(false),
                 credentials: RwLock::new(None),
             }),
         }

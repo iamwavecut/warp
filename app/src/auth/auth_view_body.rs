@@ -18,7 +18,6 @@ use warp_core::{
 };
 use warpui::{
     accessibility::{AccessibilityContent, WarpA11yRole},
-    clipboard::ClipboardContent,
     color::ColorU,
     elements::{
         Border, Container, CornerRadius, CrossAxisAlignment, Dismiss, Fill, Flex,
@@ -41,7 +40,7 @@ use super::{
     AuthStateProvider,
 };
 
-const TOS_URL: &str = "https://www.warp.dev/terms-of-service";
+const TOS_URL: &str = "about:blank";
 
 const COMMON_BODY_UI_FONT_SIZE: f32 = 12.;
 const AUTH_MODAL_GAP: f32 = 16.;
@@ -303,34 +302,11 @@ impl AuthViewBody {
             ..Default::default()
         };
 
-        let link_styles = UiComponentStyles {
-            font_color: Some(disclaimer_color),
-            border_color: Some(Fill::Solid(disclaimer_color)),
-            ..Default::default()
-        };
-
         let disclaimer_line_1 = Container::new(
-            Flex::row()
-                .with_child(
-                    ui_builder
-                        .span("By continuing, you agree to Warp's ")
-                        .with_style(disclaimer_styles)
-                        .build()
-                        .finish(),
-                )
-                .with_child(
-                    ui_builder
-                        .link(
-                            "Terms of Service".into(),
-                            Some(TOS_URL.into()),
-                            None,
-                            self.mouse_state_handles.tos_mouse_state_handle.clone(),
-                        )
-                        .soft_wrap(false)
-                        .with_style(link_styles)
-                        .build()
-                        .finish(),
-                )
+            ui_builder
+                .span("No Warp account is required in this local-first build.")
+                .with_style(disclaimer_styles)
+                .build()
                 .finish(),
         )
         .with_margin_top(AUTH_MODAL_GAP)
@@ -375,17 +351,7 @@ impl AuthViewBody {
             ..hover_button_style
         };
 
-        let on_click_action = if is_anonymous
-            && matches!(
-                self.variant,
-                AuthViewVariant::RequireLoginCloseable
-                    | AuthViewVariant::HitDriveObjectLimitCloseable
-                    | AuthViewVariant::ShareRequirementCloseable
-            ) {
-            AuthViewBodyAction::SignupAnonymousUser
-        } else {
-            AuthViewBodyAction::Signup
-        };
+        let on_click_action = AuthViewBodyAction::LoginLater;
 
         ui_builder
             .button_with_custom_styles(
@@ -396,7 +362,7 @@ impl AuthViewBody {
                 Some(click_button_style),
                 None,
             )
-            .with_centered_text_label("Sign up".into())
+            .with_centered_text_label("Continue locally".into())
             .build()
             .on_click(move |ctx, _, _| {
                 ctx.dispatch_typed_action(on_click_action);
@@ -408,17 +374,17 @@ impl AuthViewBody {
         Flex::row()
             .with_child(
                 ui_builder
-                    .span("Already have an account? ")
+                    .span("Hosted sign-in is disabled in this local-first build. ")
                     .build()
                     .finish(),
             )
             .with_child(
                 ui_builder
                     .link(
-                        "Sign in".into(),
+                        "Continue locally".into(),
                         None,
                         Some(Box::new(|ctx| {
-                            ctx.dispatch_typed_action(AuthViewBodyAction::Login);
+                            ctx.dispatch_typed_action(AuthViewBodyAction::LoginLater);
                         })),
                         self.mouse_state_handles
                             .login_link_mouse_state_handle
@@ -526,13 +492,13 @@ impl AuthViewBody {
 
         let text = match self.variant {
             AuthViewVariant::RequireLoginCloseable  => {
-                "In order to use Warp’s AI features or collaborate with others, please create an account."
+                "AI features use local or BYOK providers in this build. No Warp account is required."
             }
             AuthViewVariant::HitDriveObjectLimitCloseable => {
-                "In order to create more objects in Warp Drive, please create an account."
+                "This local-first build stores objects locally without requiring a Warp account."
             }
             AuthViewVariant::ShareRequirementCloseable => {
-                "In order to share, please create an account."
+                "Hosted sharing is disabled in this local-first build."
             }
             _ => "",
         };
@@ -561,7 +527,7 @@ impl AuthViewBody {
             AuthViewVariant::Initial => "Welcome to Warp!",
             AuthViewVariant::RequireLoginCloseable
             | AuthViewVariant::HitDriveObjectLimitCloseable
-            | AuthViewVariant::ShareRequirementCloseable => "Sign up for Warp",
+            | AuthViewVariant::ShareRequirementCloseable => "Continue locally",
         };
 
         ui_builder
@@ -677,7 +643,7 @@ impl AuthViewBody {
 
         let header = Container::new(
             ui_builder
-                .paragraph("Sign in on your browser \nto continue")
+                .paragraph("Hosted sign-in is disabled")
                 .with_style(header_styles)
                 .build()
                 .finish(),
@@ -763,12 +729,7 @@ impl TypedActionView for AuthViewBody {
     fn handle_action(&mut self, action: &AuthViewBodyAction, ctx: &mut ViewContext<Self>) {
         match action {
             AuthViewBodyAction::Login => {
-                self.auth_step = AuthStep::BrowserOpen;
-
-                AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                    let sign_in_url = auth_manager.sign_in_url();
-                    ctx.open_url(&sign_in_url);
-                });
+                ctx.emit(AuthViewBodyEvent::LoginLaterClicked);
             }
             AuthViewBodyAction::InitiateLoginLater => {
                 self.loginless_step = LoginlessStep::Initiated;
@@ -788,35 +749,12 @@ impl TypedActionView for AuthViewBody {
             }
             AuthViewBodyAction::CopyLoginUrl => {
                 self.copy_url_click_count += 1;
-                if AuthStateProvider::as_ref(ctx)
-                    .get()
-                    .is_user_anonymous()
-                    .unwrap_or_default()
-                {
-                    AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                        auth_manager.copy_anonymous_user_linking_url_to_clipboard(ctx);
-                    });
-                } else {
-                    AuthManager::handle(ctx).update(ctx, |auth_manager, inner_ctx| {
-                        let sign_in_url = auth_manager.sign_in_url();
-                        inner_ctx.clipboard().write(ClipboardContent {
-                            plain_text: sign_in_url.clone(),
-                            paths: Some(vec![sign_in_url]),
-                            ..Default::default()
-                        });
-                    });
-                }
+                AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
+                    auth_manager.copy_anonymous_user_linking_url_to_clipboard(ctx);
+                });
             }
             AuthViewBodyAction::Signup => {
-                // Send synchronously since this is an important event in the sign up funnel and we
-                // don't want to lose events if the user quits before the event queue is flushed.
-
-                self.auth_step = AuthStep::BrowserOpen;
-
-                AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                    let sign_up_url = auth_manager.sign_up_url();
-                    ctx.open_url(&sign_up_url);
-                });
+                ctx.emit(AuthViewBodyEvent::LoginLaterClicked);
             }
             AuthViewBodyAction::SignupAnonymousUser => {
                 let entrypoint = match self.variant {
@@ -838,7 +776,6 @@ impl TypedActionView for AuthViewBody {
                 AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
                     auth_manager.initiate_anonymous_user_linking(entrypoint, ctx);
                 });
-                self.auth_step = AuthStep::BrowserOpen;
                 ctx.emit(AuthViewBodyEvent::SignUpButtonClicked);
             }
             AuthViewBodyAction::ShowOverlay(overlay) => {
@@ -864,7 +801,7 @@ impl View for AuthViewBody {
     fn accessibility_contents(&self, _: &AppContext) -> Option<AccessibilityContent> {
         Some(AccessibilityContent::new(
             "Welcome to Warp!",
-            "Press enter to open your browser to Sign Up or Sign In.",
+            "Press enter to continue locally.",
             WarpA11yRole::HelpRole,
         ))
     }

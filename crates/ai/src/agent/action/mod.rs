@@ -269,6 +269,39 @@ impl StartAgentExecutionMode {
             title: String::new(),
         }
     }
+
+    /// Converts hosted/remote execution metadata into the closest local
+    /// child-agent launch this build can execute.
+    pub fn local_from_hosted_fields(harness_type: &str, model_id: &str) -> Self {
+        let trimmed_harness = harness_type.trim();
+        let trimmed_model_id = model_id.trim();
+        let model_id = (!trimmed_model_id.is_empty()).then(|| trimmed_model_id.to_string());
+
+        if trimmed_harness.is_empty() || trimmed_harness.eq_ignore_ascii_case("oz") {
+            Self::Local {
+                harness_type: None,
+                model_id,
+            }
+        } else {
+            Self::Local {
+                harness_type: Some(trimmed_harness.to_string()),
+                model_id,
+            }
+        }
+    }
+
+    /// Local-first builds should execute generated remote child-agent requests
+    /// through the local child-agent path instead of Warp hosted workers.
+    pub fn local_first(self) -> Self {
+        match self {
+            Self::Remote {
+                model_id,
+                harness_type,
+                ..
+            } => Self::local_from_hosted_fields(&harness_type, &model_id),
+            local => local,
+        }
+    }
 }
 impl AIAgentActionType {
     pub fn is_request_command_output(&self) -> bool {

@@ -11,15 +11,15 @@ use clap::{Arg, Args, Command, ValueEnum};
 pub struct ShareArgs {
     /// Share the agent's session
     ///
-    /// Learn more at https://docs.warp.dev/knowledge-and-collaboration/session-sharing
-    #[arg(long = "share", value_name = "RECIPIENTS", num_args=0..=1)]
+    /// Hosted session sharing is disabled in this local-first build.
+    #[arg(long = "share", value_name = "RECIPIENTS", num_args=0..=1, hide = true)]
     pub share: Option<Vec<ShareRequest>>,
 }
 
 impl ShareArgs {
     /// Returns `true` if the session should be shared.
     pub fn is_shared(&self) -> bool {
-        self.share.is_some()
+        false
     }
 }
 
@@ -35,7 +35,7 @@ pub struct ShareRequest {
 impl fmt::Display for ShareRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.subject {
-            ShareSubject::Team => write!(f, "team:{}", self.access_level)?,
+            ShareSubject::Team => write!(f, "disabled:{}", self.access_level)?,
             ShareSubject::Public => write!(f, "public:{}", self.access_level)?,
             ShareSubject::User { email } => write!(f, "{email}:{}", self.access_level)?,
         }
@@ -86,25 +86,7 @@ impl clap::builder::TypedValueParser for ShareRequestParser {
     }
 
     fn possible_values(&self) -> Option<Box<dyn Iterator<Item = PossibleValue> + '_>> {
-        Some(Box::new(
-            [
-                PossibleValue::new("team:view")
-                    .help("Share with your team, view-only")
-                    .alias("team"),
-                PossibleValue::new("team:edit").help("Share with your team, with edit access"),
-                PossibleValue::new("public:view")
-                    .help("Share with anyone who has the link, view-only")
-                    .alias("public"),
-                PossibleValue::new("public:edit")
-                    .help("Share with anyone who has the link, with edit access"),
-                PossibleValue::new("<user@email.com>:view")
-                    .help("Share with <user@email.com>, view-only")
-                    .alias("<user@email.com>"),
-                PossibleValue::new("<user@email.com>:edit")
-                    .help("Share with <user@email.com>, with edit access"),
-            ]
-            .into_iter(),
-        ))
+        None
     }
 }
 
@@ -126,7 +108,7 @@ impl fmt::Display for ShareAccessLevel {
 
 #[derive(Debug, Clone)]
 pub enum ShareSubject {
-    /// Share with everyone on the caller's current team.
+    /// Legacy hosted team share target.
     Team,
     /// Share with anyone who has the link (anyone-with-link ACL).
     /// Subject to the workspace-level anyone-with-link sharing setting.
@@ -140,16 +122,9 @@ impl FromStr for ShareSubject {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "team" => Ok(ShareSubject::Team),
-            "public" => Ok(ShareSubject::Public),
-            email if email.contains('@') => Ok(ShareSubject::User {
-                email: email.to_string(),
-            }),
             other => Err(clap::Error::raw(
                 ErrorKind::InvalidValue,
-                format!(
-                    "Cannot share with '{other}'. Expected 'team', 'public', or an email address"
-                ),
+                format!("Hosted sharing is disabled in this local-first build: '{other}'"),
             )),
         }
     }

@@ -1,4 +1,4 @@
-use crate::ai::llms::{is_using_api_key_for_provider, DisableReason, LLMId, LLMInfo};
+use crate::ai::llms::{is_using_api_key_for_provider, LLMId, LLMInfo};
 use crate::menu::{MenuItem, MenuItemFields, MenuTooltipPosition};
 use itertools::Itertools;
 use std::sync::Arc;
@@ -8,7 +8,6 @@ use warpui::{
         ConstrainedBox, Container, CrossAxisAlignment, Empty, Flex, ParentElement, SavePosition,
         Shrinkable, Text,
     },
-    fonts::{Properties, Style},
     Action, AppContext, Element,
 };
 
@@ -134,11 +133,6 @@ fn make_item_fields<A: Action + Clone>(
         item = item
             .with_tooltip(reason.tooltip_text())
             .with_tooltip_position(MenuTooltipPosition::Above);
-
-        if matches!(reason, DisableReason::RequiresUpgrade) {
-            item =
-                item.with_right_side_label("disabled", Properties::default().style(Style::Italic));
-        }
     }
 
     with_cost_and_profile_info(item, llm, model_id_to_add_profile_default_label_to).into_item()

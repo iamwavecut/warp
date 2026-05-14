@@ -221,8 +221,7 @@ impl GlobalRules {
                 // which is PII; we only want the full path on dogfood builds.
                 // The error itself can also embed the canonicalized path
                 // (e.g. `RepoMetadataError::RepoNotFound(...)`), so we keep
-                // it out of the safe branch as well — only the source name
-                // is safe to send to Sentry.
+                // it out of the safe branch as well.
                 safe_warn!(
                     safe: (
                         "Failed to register {} for global rules watching",

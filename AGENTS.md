@@ -131,20 +131,21 @@ space-constrained AI model UI.
 
 File: `app/Cargo.toml`
 
-Default builds should be local-first. Keep `skip_login`,
-`skip_firebase_anonymous_user`, and `solo_user_byok` in the default feature set
-unless their behavior is made unconditional in source.
+Default builds are local-first. Login skipping, Firebase anonymous-user
+skipping, and solo-user BYOK behavior are unconditional source behavior, not
+build-mode switches.
 
 The `local_only` feature may remain only as a compatibility alias for older
 commands:
 
 ```toml
-local_only = ["skip_login", "skip_firebase_anonymous_user", "solo_user_byok"]
+local_only = []
 ```
 
 Do not add new `local_only` source-level branches. If behavior belongs in this
 fork, make it unconditional. If compatibility commands still use
-`--features local_only`, they should exercise the same local-first behavior.
+`--features local_only`, they must produce the same local-first artifact as a
+default build.
 
 ## Feature Flags
 
@@ -360,7 +361,7 @@ cargo fmt --check
 cargo test -p warp --features local_only custom_provider -- --nocapture
 cargo test -p warp --features local_only direct_openai -- --nocapture
 cargo test -p warp --features local_only defaults_to_true -- --nocapture
-cargo test -p warp --features local_only local_only_account_section_is_user_and_cloud_sections_are_hidden -- --nocapture
+cargo test -p warp --features local_only local_first_account_section_is_user_and_cloud_sections_are_hidden -- --nocapture
 cargo build --all-targets
 cargo build --features local_only --all-targets
 TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open

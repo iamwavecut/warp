@@ -1,6 +1,6 @@
 use crate::{
-    billing::PricingInfo, experiment::Experiment, request_context::RequestContext, schema,
-    user::DiscoverableTeamData, workspace::Workspace,
+    billing::PricingInfo, request_context::RequestContext, schema, user::DiscoverableTeamData,
+    workspace::Workspace,
 };
 
 /*
@@ -167,7 +167,6 @@ pub enum PricingInfoResult {
 #[derive(cynic::QueryFragment, Debug)]
 pub struct User {
     pub workspaces: Vec<Workspace>,
-    pub experiments: Option<Vec<Experiment>>,
     pub discoverable_teams: Vec<DiscoverableTeamData>,
 }
 

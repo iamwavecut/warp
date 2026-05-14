@@ -25,14 +25,12 @@ fn request_params_with_ask_user_question_enabled(ask_user_question_enabled: bool
         cli_agent_model: model.clone(),
         computer_use_model: model,
         is_memory_enabled: false,
-        warp_drive_context_enabled: false,
         context_window_limit: None,
         mcp_context: None,
         planning_enabled: true,
         should_redact_secrets: false,
         api_keys: None,
         custom_provider_route: None,
-        allow_use_of_warp_credits_with_byok: false,
         autonomy_level: api::AutonomyLevel::Supervised,
         isolation_level: api::IsolationLevel::None,
         web_search_enabled: false,
@@ -75,24 +73,6 @@ fn supported_tools_includes_ask_user_question_when_enabled_and_feature_flag_is_e
     let supported_tools = get_supported_tools(&params);
 
     assert!(supported_tools.contains(&api::ToolType::AskUserQuestion));
-}
-
-#[test]
-fn supported_tools_include_upload_artifact_when_feature_flag_is_enabled() {
-    let _flag = FeatureFlag::ArtifactCommand.override_enabled(true);
-    let params = request_params_with_ask_user_question_enabled(false);
-    let supported_tools = get_supported_tools(&params);
-
-    assert!(supported_tools.contains(&api::ToolType::UploadFileArtifact));
-}
-
-#[test]
-fn supported_tools_omit_upload_artifact_when_feature_flag_is_disabled() {
-    let _flag = FeatureFlag::ArtifactCommand.override_enabled(false);
-    let params = request_params_with_ask_user_question_enabled(false);
-    let supported_tools = get_supported_tools(&params);
-
-    assert!(!supported_tools.contains(&api::ToolType::UploadFileArtifact));
 }
 
 #[test]

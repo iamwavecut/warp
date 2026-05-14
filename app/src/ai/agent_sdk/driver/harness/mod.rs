@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fmt;
@@ -6,25 +5,19 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use tempfile::NamedTempFile;
 use warp_cli::agent::Harness;
 use warpui::{ModelHandle, ModelSpawner, SingletonEntity};
 
-use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::ai::mcp::JSONMCPServer;
-use crate::server::server_api::harness_support::{upload_to_target, HarnessSupportClient};
 use crate::server::server_api::ServerApi;
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
 use crate::terminal::CLIAgent;
 use crate::util::path::resolve_executable;
-use warp_cli::{
-    OZ_CLI_ENV, OZ_HARNESS_ENV, OZ_PARENT_RUN_ID_ENV, OZ_RUN_ID_ENV, SERVER_ROOT_URL_OVERRIDE_ENV,
-    SESSION_SHARING_SERVER_URL_OVERRIDE_ENV, WS_SERVER_URL_OVERRIDE_ENV,
-};
-use warp_core::channel::ChannelState;
+use warp_cli::{OZ_CLI_ENV, OZ_HARNESS_ENV, OZ_PARENT_RUN_ID_ENV, OZ_RUN_ID_ENV};
 use warp_managed_secrets::ManagedSecretValue;
 
 use super::terminal::{CommandHandle, TerminalDriver};
@@ -37,85 +30,32 @@ use super::{
 pub(crate) mod claude_code;
 pub(crate) mod claude_transcript;
 mod codex;
-pub(crate) mod codex_transcript;
 mod gemini;
 mod json_utils;
 pub(crate) use claude_code::ClaudeHarness;
 use claude_transcript::ClaudeResumeInfo;
 use codex::CodexHarness;
-use codex_transcript::CodexResumeInfo;
 use gemini::GeminiHarness;
 
-/// Harness-agnostic payload describing how to resume an existing conversation.
-///
-/// Each variant carries the data a specific harness needs to rehydrate state before its CLI
-/// launches. Harnesses match on the variant they produce and ignore others; new CLIs that
-/// want resume support add a new variant and override [`ThirdPartyHarness::fetch_resume_payload`].
+/// Local harness payload describing how to resume an existing conversation.
 #[derive(Debug)]
 pub(crate) enum ResumePayload {
     /// Claude Code session state rehydrated from an existing local transcript envelope.
     Claude(ClaudeResumeInfo),
-    /// Codex session state fetched from the server's transcript endpoint.
-    Codex(CodexResumeInfo),
 }
 
 impl TryFrom<ResumePayload> for ClaudeResumeInfo {
     type Error = AgentDriverError;
 
     fn try_from(payload: ResumePayload) -> Result<Self, Self::Error> {
-        match payload {
-            ResumePayload::Claude(info) => Ok(info),
-            _ => {
-                log::error!("ClaudeHarness given non-Claude ResumePayload variant");
-                Err(AgentDriverError::InvalidRuntimeState)
-            }
-        }
+        let ResumePayload::Claude(info) = payload;
+        Ok(info)
     }
-}
-
-impl TryFrom<ResumePayload> for CodexResumeInfo {
-    type Error = AgentDriverError;
-
-    fn try_from(payload: ResumePayload) -> Result<Self, Self::Error> {
-        match payload {
-            ResumePayload::Codex(info) => Ok(info),
-            _ => {
-                log::error!("CodexHarness given non-Codex ResumePayload variant");
-                Err(AgentDriverError::InvalidRuntimeState)
-            }
-        }
-    }
-}
-
-/// Fetch the harness transcript for `conversation_id` and deserialize it into `E`.
-pub(super) async fn fetch_transcript_envelope<E: serde::de::DeserializeOwned>(
-    harness_label: &str,
-    conversation_id: &AIConversationId,
-    client: Arc<dyn HarnessSupportClient>,
-) -> Result<E, AgentDriverError> {
-    let bytes = client.fetch_transcript().await.map_err(|err| {
-        // A 404 from the server maps to "no stored transcript" so the CLI can tell
-        // the user the prior run never saved state.
-        let message = format!("{err:#}").to_lowercase();
-        if message.contains("status 404") {
-            AgentDriverError::ConversationResumeStateMissing {
-                harness: harness_label.to_string(),
-                conversation_id: conversation_id.to_string(),
-            }
-        } else {
-            AgentDriverError::ConversationLoadFailed(format!("{err:#}"))
-        }
-    })?;
-    serde_json::from_slice(&bytes).map_err(|err| {
-        AgentDriverError::ConversationLoadFailed(format!(
-            "Failed to deserialize {harness_label} transcript for {conversation_id}: {err:#}"
-        ))
-    })
 }
 
 /// Trait for third-party agent harnesses that execute prompts via their own CLIs.
 ///
-/// Each new external harness (e.g. Claude, Codex) implements this to be used with cloud agents.
+/// Each new external harness (e.g. Claude, Codex) implements this for local CLI-backed agents.
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 pub(crate) trait ThirdPartyHarness: Send + Sync {
@@ -146,20 +86,6 @@ pub(crate) trait ThirdPartyHarness: Send + Sync {
         validate_cli_installed(self.cli_agent().command_prefix(), self.install_docs_url())
     }
 
-    /// Fetch the harness-specific resume payload for an existing conversation.
-    ///
-    /// The driver calls this when the user passes `--conversation <id>` and the harness
-    /// matches the stored conversation's harness. Harnesses that don't support resume
-    /// use the default impl, which returns `Ok(None)` and causes the run to start fresh.
-    ///
-    async fn fetch_resume_payload(
-        &self,
-        _conversation_id: &AIConversationId,
-        _harness_support_client: Arc<dyn HarnessSupportClient>,
-    ) -> Result<Option<ResumePayload>, AgentDriverError> {
-        Ok(None)
-    }
-
     /// Build a runner for executing this harness with the given prompt.
     ///
     /// Responsible for all harness-specific setup: writing config files (auth,
@@ -172,8 +98,7 @@ pub(crate) trait ThirdPartyHarness: Send + Sync {
     /// `resolved_secrets` provides the raw typed managed secrets so harnesses
     /// can read structured fields (e.g. `base_url`) without relying on env vars.
     ///
-    /// If `resume` is `Some`, the harness matches on its own [`ResumePayload`]
-    /// variant and reuses stored session/conversation ids.
+    /// If `resume` is `Some`, the harness reuses local on-disk session state.
     #[allow(clippy::too_many_arguments)]
     fn build_runner(
         &self,
@@ -255,18 +180,6 @@ pub(crate) fn validate_cli_installed(
     Ok(())
 }
 
-fn insert_non_empty_task_env_var(
-    env_vars: &mut HashMap<OsString, OsString>,
-    key: &'static str,
-    value: String,
-) {
-    if value.is_empty() {
-        return;
-    }
-
-    env_vars.insert(OsString::from(key), OsString::from(value));
-}
-
 fn insert_task_env_var_aliases(
     env_vars: &mut HashMap<OsString, OsString>,
     keys: &[&'static str],
@@ -309,13 +222,9 @@ fn task_env_vars_for_harness_name(
 
     env_vars.insert(
         OsString::from(OZ_CLI_ENV),
-        OsString::from(
-            std::env::current_exe()
-                .unwrap_or_else(|_| ChannelState::channel().cli_command_name().into()),
-        ),
+        OsString::from(std::env::current_exe().unwrap_or_else(|_| "warp".into())),
     );
-    // `OZ_HARNESS` is only consumed by child orchestration diagnostics when the child
-    // CLI emits `run message *` events.
+    // `OZ_HARNESS` is consumed by local child-orchestration diagnostics.
     env_vars.insert(
         OsString::from(OZ_HARNESS_ENV),
         OsString::from(selected_harness.to_string()),
@@ -340,30 +249,6 @@ fn task_env_vars_for_harness_name(
             );
         }
     }
-    // Server URL overrides are disabled on release channels, so there's no
-    // override to propagate to child processes there.
-    if ChannelState::channel().allows_server_url_overrides() {
-        insert_non_empty_task_env_var(
-            &mut env_vars,
-            SERVER_ROOT_URL_OVERRIDE_ENV,
-            ChannelState::server_root_url().into_owned(),
-        );
-        insert_non_empty_task_env_var(
-            &mut env_vars,
-            WS_SERVER_URL_OVERRIDE_ENV,
-            ChannelState::ws_server_url().into_owned(),
-        );
-        if let Some(url) = ChannelState::session_sharing_server_url()
-            .map(Cow::into_owned)
-            .filter(|url| !url.is_empty())
-        {
-            env_vars.insert(
-                OsString::from(SESSION_SHARING_SERVER_URL_OVERRIDE_ENV),
-                OsString::from(url),
-            );
-        }
-    }
-
     env_vars
 }
 

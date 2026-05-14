@@ -1,7 +1,7 @@
-//! Settings for cloud agent functionality.
+//! Settings for local agent workspace functionality.
 //!
-//! This module contains user-specific settings for cloud agent features,
-//! such as remembering the last selected environment.
+//! This module contains user-specific settings for local agent workspace
+//! features, such as remembering the last selected environment.
 
 use settings::{macros::define_settings_group, SupportedPlatforms, SyncToCloud};
 

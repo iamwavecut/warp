@@ -13,7 +13,6 @@ pub(super) mod util;
 
 // Re-export types that were moved to the ai crate.
 pub use ai::agent::{action::*, action_result::*, AIAgentCitation, FileLocations};
-use warp_core::features::FeatureFlag;
 
 use crate::ai::block_context::BlockContext;
 use crate::ai::blocklist::block::view_impl::output::are_all_text_sections_empty;
@@ -617,9 +616,6 @@ impl AIAgentOutput {
 /// Represents user visible errors.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum RenderableAIError {
-    QuotaLimit,
-    ServerOverloaded,
-    InternalWarpError,
     ContextWindowExceeded(String),
     InvalidApiKey {
         provider: String,
@@ -660,14 +656,10 @@ impl RenderableAIError {
 
 impl From<&AIApiError> for RenderableAIError {
     fn from(value: &AIApiError) -> Self {
-        match value {
-            AIApiError::QuotaLimit => Self::QuotaLimit,
-            AIApiError::ServerOverloaded => Self::ServerOverloaded,
-            _ => Self::Other {
-                error_message: format!("Request failed with error: {value:?}"),
-                will_attempt_resume: false,
-                waiting_for_network: false,
-            },
+        Self::Other {
+            error_message: format!("Request failed with error: {value:?}"),
+            will_attempt_resume: false,
+            waiting_for_network: false,
         }
     }
 }
@@ -675,11 +667,6 @@ impl From<&AIApiError> for RenderableAIError {
 impl Display for RenderableAIError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::QuotaLimit => write!(f, "Quota limit reached."),
-            Self::ServerOverloaded => {
-                write!(f, "Warp is currently overloaded. Please try again later.")
-            }
-            Self::InternalWarpError => write!(f, "Internal Warp error."),
             Self::ContextWindowExceeded(message) => {
                 write!(f, "Context window exceeded: {message}")
             }
@@ -3026,13 +3013,6 @@ impl AIAgentExchange {
         self.input
             .iter()
             .any(|input| input.auto_code_diff_query().is_some())
-            || (FeatureFlag::PromptSuggestionsViaMAA.is_enabled()
-                && self.has_passive_request()
-                && self.output_status.output().is_some_and(|output| {
-                    output.get().actions().any(|action| {
-                        matches!(action.action, AIAgentActionType::RequestFileEdits { .. })
-                    })
-                }))
     }
 
     pub fn passive_suggestion_trigger(&self) -> Option<&PassiveSuggestionTrigger> {

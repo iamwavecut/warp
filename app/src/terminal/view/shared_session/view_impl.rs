@@ -71,7 +71,6 @@ use super::sharer::inactivity_modal::InactivityModalEvent;
 use super::sharer::Sharer;
 use super::viewer::Viewer;
 #[cfg(not(target_family = "wasm"))]
-use super::ConversationEndedTombstoneEvent;
 use super::ConversationEndedTombstoneView;
 
 impl TerminalView {
@@ -143,20 +142,6 @@ impl TerminalView {
             .get_task_data(&task_id)
             .and_then(|task| task.creator.map(|creator| creator.uid))
             .is_some_and(|creator_uid| creator_uid == current_user_uid)
-    }
-
-    pub(in crate::terminal::view) fn enable_owned_cloud_followup_input(
-        &mut self,
-        task_id: AmbientAgentTaskId,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.pending_cloud_followup_task_id = Some(task_id);
-        self.input.update(ctx, |input, ctx| {
-            input.reset_after_cloud_followup_submission(ctx);
-            input.set_input_mode_agent(true, ctx);
-        });
-        self.update_pane_configuration(ctx);
-        ctx.notify();
     }
 
     pub(super) fn handle_viewer_role_change_menu_event(
@@ -700,14 +685,10 @@ impl TerminalView {
     /// Clear the presence manager and handle any UI necessary on shared session end.
     /// Applies to both sharer and viewer when the session sharing ends.
     pub fn on_session_share_ended(&mut self, ctx: &mut ViewContext<Self>) {
-        let viewed_ambient_task_id_owned_by_current_user = self.owned_ambient_agent_task_id(ctx);
-        let can_continue_owned_task_in_cloud = FeatureFlag::HandoffCloudCloud.is_enabled();
         let should_insert_tombstone = {
             let model = self.model.lock();
             FeatureFlag::CloudModeSetupV2.is_enabled()
                 && model.is_shared_ambient_agent_session()
-                && (viewed_ambient_task_id_owned_by_current_user.is_none()
-                    || !can_continue_owned_task_in_cloud)
                 && self.conversation_ended_tombstone_view_id.is_none()
                 && !model.is_receiving_agent_conversation_replay()
         };
@@ -750,11 +731,7 @@ impl TerminalView {
         });
 
         if self.pending_cloud_followup_task_id.is_none() {
-            if let Some(task_id) = viewed_ambient_task_id_owned_by_current_user
-                .filter(|_| can_continue_owned_task_in_cloud)
-            {
-                self.enable_owned_cloud_followup_input(task_id, ctx);
-            } else if self.model.lock().shared_session_status().is_viewer() {
+            if self.model.lock().shared_session_status().is_viewer() {
                 // When the session is ended, the input should be uneditable iff this is a viewer.
                 self.input().update(ctx, |input, ctx| {
                     input.editor().update(ctx, |editor, ctx| {
@@ -797,49 +774,8 @@ impl TerminalView {
         {
             return;
         }
-        if !FeatureFlag::HandoffCloudCloud.is_enabled() {
-            self.insert_conversation_ended_tombstone(ctx);
-            return;
-        }
-        let Some(task_id) = self.owned_ambient_agent_task_id(ctx) else {
-            self.insert_conversation_ended_tombstone(ctx);
-            return;
-        };
-        if has_live_shared_session {
-            return;
-        }
-
-        self.enable_owned_cloud_followup_input(task_id, ctx);
-    }
-
-    #[cfg(not(target_family = "wasm"))]
-    fn start_cloud_followup_from_tombstone(
-        &mut self,
-        task_id: crate::ai::ambient_agents::AmbientAgentTaskId,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        if !FeatureFlag::HandoffCloudCloud.is_enabled() {
-            return;
-        }
-
-        let Some(ambient_agent_view_model) = self.ambient_agent_view_model.as_ref() else {
-            self.show_error_toast("Couldn't continue this cloud task.".to_string(), ctx);
-            return;
-        };
-
-        if ambient_agent_view_model.as_ref(ctx).task_id() != Some(task_id) {
-            self.show_error_toast("Couldn't continue this cloud task.".to_string(), ctx);
-            return;
-        }
-        self.remove_conversation_ended_tombstone(ctx);
-
-        self.pending_cloud_followup_task_id = Some(task_id);
-        self.input.update(ctx, |input, ctx| {
-            input.reset_after_cloud_followup_submission(ctx);
-            input.set_input_mode_agent(true, ctx);
-        });
-        self.focus_input_box(ctx);
-        ctx.notify();
+        let _ = has_live_shared_session;
+        self.insert_conversation_ended_tombstone(ctx);
     }
 
     pub fn handle_inactivity_modal_event(
@@ -1638,12 +1574,6 @@ impl TerminalView {
         let tombstone_view_handle = ctx.add_typed_action_view(move |ctx| {
             ConversationEndedTombstoneView::new(ctx, terminal_view_id, task_id)
         });
-        #[cfg(not(target_family = "wasm"))]
-        ctx.subscribe_to_view(&tombstone_view_handle, |me, _, event, ctx| match event {
-            ConversationEndedTombstoneEvent::ContinueInCloud { task_id } => {
-                me.start_cloud_followup_from_tombstone(*task_id, ctx);
-            }
-        });
         let tombstone_view_id = tombstone_view_handle.id();
         self.insert_rich_content(
             None,
@@ -1718,32 +1648,14 @@ impl TerminalView {
         is_share_session_disabled: bool,
     ) -> Vec<MenuItem<TerminalAction>> {
         let mut items = Vec::new();
+        let _ = is_share_session_disabled;
 
-        if !model.shared_session_status().is_sharer_or_viewer() {
-            items.push(
-                MenuItemFields::new("Share session...")
-                    .with_on_select_action(TerminalAction::ContextMenu(
-                        ContextMenuAction::OpenShareSessionModal,
-                    ))
-                    .with_disabled(is_share_session_disabled)
-                    .into_item(),
-            );
-        } else if model.shared_session_status().is_active_sharer() {
+        if model.shared_session_status().is_active_sharer() {
             items.push(
                 MenuItemFields::new("Stop sharing")
                     .with_on_select_action(TerminalAction::ContextMenu(
                         ContextMenuAction::StopSharing,
                     ))
-                    .into_item(),
-            );
-        }
-
-        if model.shared_session_status().is_sharer_or_viewer() {
-            items.push(
-                MenuItemFields::new("Copy session sharing link")
-                    .with_on_select_action(TerminalAction::CopySharedSessionLink {
-                        source: SharedSessionActionSource::RightClickMenu,
-                    })
                     .into_item(),
             );
         }
@@ -1771,7 +1683,7 @@ impl TerminalView {
     }
 
     /// Returns true if viewer-driven sizing should be active.
-    /// For cloud agent sessions (AmbientAgent), the same-user identity check is skipped.
+    /// For agent sessions (AmbientAgent), the same-user identity check is skipped.
     /// Otherwise, conditions: exactly 1 viewer, and that viewer is the same user as the sharer.
     pub(crate) fn is_viewer_driven_sizing_eligible(
         &self,

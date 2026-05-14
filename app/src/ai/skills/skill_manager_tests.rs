@@ -238,7 +238,7 @@ fn get_skills_for_working_directory_name_collision_returns_both() {
 }
 
 #[test]
-fn cloud_environment_skills_always_included() {
+fn agent_environment_skills_always_included() {
     // In a cloud environment, all skills should be in scope regardless of
     // the working directory—even when cwd is inside a different repo or
     // when working_directory is None.
@@ -305,11 +305,11 @@ fn cloud_environment_skills_always_included() {
         skill_manager_handle.update(&mut app, |manager, _ctx| {
             manager.directory_skills = directory_skills;
             manager.skills_by_path = skills_by_path;
-            manager.is_cloud_environment = true;
+            manager.is_agent_environment = true;
         });
 
         // From inside repo_a, both repo_a and repo_b skills are visible
-        // because is_cloud_environment skips the ancestor filter.
+        // because is_agent_environment skips the ancestor filter.
         let skills = skill_manager_handle.read(&app, |manager, ctx| {
             manager.get_skills_for_working_directory(Some(&repo_a), ctx)
         });

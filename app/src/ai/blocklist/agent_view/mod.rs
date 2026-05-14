@@ -51,7 +51,7 @@ pub static ENTER_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE: LazyLock<Keystroke> = La
     }
 });
 
-pub static ENTER_CLOUD_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE: LazyLock<Keystroke> =
+pub static ENTER_AMBIENT_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE: LazyLock<Keystroke> =
     LazyLock::new(|| {
         cfg_if::cfg_if! {
             if #[cfg(target_os = "macos")] {

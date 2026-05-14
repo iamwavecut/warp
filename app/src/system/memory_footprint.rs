@@ -160,8 +160,7 @@ mod platform {
     /// rarely mounted), so we use `getrusage(RUSAGE_SELF)`. `ru_maxrss` is
     /// reported in kilobytes and represents the maximum resident set size, not
     /// the current value, but it's the closest portable signal we have without
-    /// pulling in `kvm`/`sysctl(KERN_PROC_PID)` plumbing for one telemetry
-    /// number.
+    /// pulling in `kvm`/`sysctl(KERN_PROC_PID)` plumbing for this local stat.
     pub fn memory_footprint_bytes() -> u64 {
         let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
         if unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) } != 0 {

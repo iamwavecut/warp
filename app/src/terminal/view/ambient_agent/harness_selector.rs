@@ -1,15 +1,17 @@
 //! Harness selector: an "options menu" (`ActionButton` + generic `Menu<A>`) shown
-//! in a row above the cloud mode input that lets the user switch between the Oz
-//! and Claude Code harnesses.
+//! in a row above the agent input that lets the user switch between local
+//! agent harnesses.
 
 use std::sync::Arc;
 
+use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warpui::{
     elements::{
         Border, ChildAnchor, ChildView, OffsetPositioning, ParentAnchor, ParentElement as _,
         ParentOffsetBounds, Stack,
     },
+    fonts::{Properties, Weight},
     AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
     ViewHandle,
 };
@@ -57,6 +59,46 @@ const BUTTON_TOOLTIP: &str = "Agent harness";
 /// Label rendered at the top of the dropdown.
 const MENU_HEADER_LABEL: &str = "Agent harness";
 
+#[derive(Clone, Copy)]
+pub struct NakedHeaderButtonTheme;
+
+impl ActionButtonTheme for NakedHeaderButtonTheme {
+    fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
+        if hovered {
+            Some(internal_colors::fg_overlay_1(appearance.theme()))
+        } else {
+            None
+        }
+    }
+
+    fn text_color(
+        &self,
+        _hovered: bool,
+        _background: Option<Fill>,
+        appearance: &Appearance,
+    ) -> ColorU {
+        appearance
+            .theme()
+            .sub_text_color(appearance.theme().surface_1())
+            .into_solid()
+    }
+
+    fn border(&self, _appearance: &Appearance) -> Option<ColorU> {
+        None
+    }
+
+    fn should_opt_out_of_contrast_adjustment(&self) -> bool {
+        true
+    }
+
+    fn font_properties(&self) -> Option<Properties> {
+        Some(Properties {
+            weight: Weight::Semibold,
+            ..Default::default()
+        })
+    }
+}
+
 /// Actions dispatched by the [`HarnessSelector`].
 #[derive(Clone, Debug, PartialEq)]
 pub enum HarnessSelectorAction {
@@ -72,7 +114,7 @@ pub enum HarnessSelectorEvent {
     MenuVisibilityChanged { open: bool },
 }
 
-/// A dropdown selector for choosing which execution harness to run cloud agent
+/// A dropdown selector for choosing which local execution harness to run agent
 /// prompts with.
 pub struct HarnessSelector {
     button: ViewHandle<ActionButton>,
@@ -148,9 +190,6 @@ impl HarnessSelector {
 
     /// Programmatically opens the harness selector popover. No-op if already open.
     pub fn open_menu(&mut self, ctx: &mut ViewContext<Self>) {
-        if self.is_locked_to_oz(ctx) {
-            return;
-        }
         self.set_menu_visibility(true, ctx);
     }
 
@@ -176,7 +215,6 @@ impl HarnessSelector {
     }
 
     fn set_menu_visibility(&mut self, is_open: bool, ctx: &mut ViewContext<Self>) {
-        let is_open = is_open && !self.is_locked_to_oz(ctx);
         if self.is_menu_open == is_open {
             return;
         }
@@ -189,14 +227,7 @@ impl HarnessSelector {
         ctx.notify();
     }
 
-    fn is_locked_to_oz(&self, app: &AppContext) -> bool {
-        self.ambient_agent_model
-            .as_ref(app)
-            .is_local_to_cloud_handoff()
-    }
-
     fn refresh_button(&mut self, ctx: &mut ViewContext<Self>) {
-        let is_locked_to_oz = self.is_locked_to_oz(ctx);
         let harness = self.ambient_agent_model.as_ref(ctx).selected_harness();
         let label = HarnessAvailabilityModel::as_ref(ctx)
             .display_name_for(harness)
@@ -205,20 +236,10 @@ impl HarnessSelector {
         self.button.update(ctx, |button, ctx| {
             button.set_label(label, ctx);
             button.set_icon(Some(icon), ctx);
-            button.set_has_menu(!is_locked_to_oz, ctx);
-            button.set_disabled(is_locked_to_oz, ctx);
-            button.set_tooltip(
-                Some(if is_locked_to_oz {
-                    "This conversation is with the Warp Agent, so the cloud handoff will also use Warp"
-                } else {
-                    BUTTON_TOOLTIP
-                }),
-                ctx,
-            );
+            button.set_has_menu(true, ctx);
+            button.set_disabled(false, ctx);
+            button.set_tooltip(Some(BUTTON_TOOLTIP), ctx);
         });
-        if is_locked_to_oz {
-            self.set_menu_visibility(false, ctx);
-        }
     }
 
     fn refresh_menu(&mut self, ctx: &mut ViewContext<Self>) {
@@ -295,7 +316,7 @@ fn build_menu_items(
             fields = fields
                 .with_disabled(true)
                 .with_override_text_color(disabled_text_color)
-                .with_tooltip("Disabled by your administrator");
+                .with_tooltip("Disabled in local settings");
         }
         items.push(MenuItem::Item(fields));
     }
@@ -313,18 +334,10 @@ impl TypedActionView for HarnessSelector {
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
         match action {
             HarnessSelectorAction::ToggleMenu => {
-                if self.is_locked_to_oz(ctx) {
-                    self.set_menu_visibility(false, ctx);
-                    return;
-                }
                 let new_state = !self.is_menu_open;
                 self.set_menu_visibility(new_state, ctx);
             }
             HarnessSelectorAction::SelectHarness(harness) => {
-                if self.is_locked_to_oz(ctx) {
-                    self.set_menu_visibility(false, ctx);
-                    return;
-                }
                 let harness = *harness;
                 self.ambient_agent_model.update(ctx, |model, ctx| {
                     model.set_harness(harness, ctx);

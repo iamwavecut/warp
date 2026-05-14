@@ -7,7 +7,6 @@ use crate::ai::blocklist::inline_action::requested_action::RenderableAction;
 use crate::appearance::Appearance;
 use crate::terminal::shell::ShellType;
 use crate::terminal::warpify;
-use crate::terminal::warpify::render::SSH_DOCS_URL;
 use crate::ui_components::icons::Icon as UiIcon;
 use warpui::elements::{HighlightedHyperlink, Hoverable, Icon, MouseStateHandle};
 use warpui::keymap::FixedBinding;
@@ -80,9 +79,8 @@ pub fn warpify_description(
 
     let description = FormattedText::new(vec![FormattedTextLine::Line(vec![
         FormattedTextFragment::plain_text(
-            "Bring Warp's features to your remote session. Blocks, full text editing, auto-complete, Oz, and more. "
+            "Bring Warp's features to your remote session. Blocks, full text editing, auto-complete, Oz, and more."
         ),
-        FormattedTextFragment::hyperlink("Learn more", SSH_DOCS_URL),
     ])]);
     warpify::render::build_description_row(description, theme, appearance, hyperlink_index.clone())
         .with_hyperlink_font_color(appearance.theme().accent().into_solid())

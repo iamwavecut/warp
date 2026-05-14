@@ -1,20 +1,16 @@
-use mockall::predicate::eq;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
 
 use tempfile::TempDir;
 use uuid::Uuid;
 use warp_cli::{OZ_HARNESS_ENV, OZ_PARENT_RUN_ID_ENV, OZ_RUN_ID_ENV};
 
 use super::*;
-use crate::ai::agent_events::MessageHydrator;
 use crate::ai::agent_sdk::driver::harness::claude_transcript::{
     encode_cwd, read_envelope, ClaudeTranscriptEnvelope,
 };
 use crate::ai::agent_sdk::driver::OZ_MESSAGE_LISTENER_MANAGED_EXTERNALLY_ENV;
-use crate::server::server_api::ai::{MockAIClient, ReadAgentMessageResponse};
 use crate::server::server_api::ServerApiProvider;
 
 fn sample_parent_bridge_message(
@@ -320,41 +316,16 @@ async fn prepare_parent_bridge_hook_output_moves_selected_messages_to_surfaced_d
         "Please pivot",
         "Inspect the failing tests first.",
     );
+    stage_parent_bridge_message(&state_dir, &first).unwrap();
     stage_parent_bridge_message(
         &state_dir,
-        &sample_staged_parent_bridge_message(42, "msg-123"),
+        &sample_parent_bridge_message(43, "msg-456", "Second update", "Keep investigating."),
     )
     .unwrap();
-    stage_parent_bridge_message(
-        &state_dir,
-        &sample_staged_parent_bridge_message(43, "msg-456"),
-    )
-    .unwrap();
-
-    let mut ai_client = MockAIClient::new();
-    let expected_first = first.clone();
-    ai_client
-        .expect_read_agent_message()
-        .with(eq("msg-123"))
-        .times(1)
-        .returning(move |_| {
-            Ok(ReadAgentMessageResponse {
-                message_id: expected_first.message_id.clone(),
-                sender_run_id: expected_first.sender_run_id.clone(),
-                subject: expected_first.subject.clone(),
-                body: expected_first.body.clone(),
-                sent_at: "2026-04-17T15:46:00Z".to_string(),
-                delivered_at: None,
-                read_at: Some("2026-04-17T15:46:02Z".to_string()),
-            })
-        });
-    let hydrator = MessageHydrator::new(
-        Arc::new(ai_client) as Arc<dyn crate::server::server_api::ai::AIClient>
-    );
 
     let max_context_chars = parent_bridge_char_count(MESSAGE_BRIDGE_CONTEXT_PREAMBLE)
         + parent_bridge_char_count(&render_parent_bridge_message_block(&first));
-    prepare_parent_bridge_hook_output(&hydrator, &state_dir, max_context_chars)
+    prepare_parent_bridge_hook_output(&state_dir, max_context_chars)
         .await
         .unwrap();
 
@@ -376,7 +347,7 @@ async fn prepare_parent_bridge_hook_output_moves_selected_messages_to_surfaced_d
 }
 
 #[tokio::test]
-async fn acknowledge_parent_bridge_hook_output_marks_messages_delivered_and_clears_state() {
+async fn acknowledge_parent_bridge_hook_output_clears_local_state() {
     let tmp = TempDir::new().unwrap();
     let state_dir = tmp.path().join("session-123");
     ensure_parent_bridge_state_dir(&state_dir).unwrap();
@@ -400,19 +371,7 @@ async fn acknowledge_parent_bridge_hook_output_marks_messages_delivered_and_clea
     .unwrap();
     fs::write(parent_bridge_hook_output_ack_file(&state_dir), "").unwrap();
 
-    let mut ai_client = MockAIClient::new();
-    ai_client
-        .expect_mark_message_delivered()
-        .with(eq("msg-123"))
-        .times(1)
-        .returning(|_| Ok(()));
-    let hydrator = MessageHydrator::new(
-        Arc::new(ai_client) as Arc<dyn crate::server::server_api::ai::AIClient>
-    );
-
-    acknowledge_parent_bridge_hook_output(&hydrator, &state_dir)
-        .await
-        .unwrap();
+    acknowledge_parent_bridge_hook_output(&state_dir).await.unwrap();
 
     assert!(!parent_bridge_surfaced_message_path(&state_dir, 42, "msg-123").exists());
     assert!(!parent_bridge_hook_output_file(&state_dir).exists());
@@ -433,15 +392,9 @@ async fn prepare_parent_bridge_hook_output_reuses_surfaced_records_without_rehyd
     );
     write_surfaced_parent_bridge_message(&state_dir, &record);
 
-    let mut ai_client = MockAIClient::new();
-    ai_client.expect_read_agent_message().times(0);
-    let hydrator = MessageHydrator::new(
-        Arc::new(ai_client) as Arc<dyn crate::server::server_api::ai::AIClient>
-    );
-
     let max_context_chars = parent_bridge_char_count(MESSAGE_BRIDGE_CONTEXT_PREAMBLE)
         + parent_bridge_char_count(&render_parent_bridge_message_block(&record));
-    prepare_parent_bridge_hook_output(&hydrator, &state_dir, max_context_chars)
+    prepare_parent_bridge_hook_output(&state_dir, max_context_chars)
         .await
         .unwrap();
 
@@ -458,35 +411,15 @@ async fn prepare_parent_bridge_hook_output_truncates_single_large_message() {
     let tmp = TempDir::new().unwrap();
     let state_dir = tmp.path().join("session-123");
     ensure_parent_bridge_state_dir(&state_dir).unwrap();
+    let long_body = "x".repeat(200);
     stage_parent_bridge_message(
         &state_dir,
-        &sample_staged_parent_bridge_message(42, "msg-123"),
+        &sample_parent_bridge_message(42, "msg-123", "Please pivot", &long_body),
     )
     .unwrap();
 
-    let long_body = "x".repeat(200);
-    let mut ai_client = MockAIClient::new();
-    ai_client
-        .expect_read_agent_message()
-        .with(eq("msg-123"))
-        .times(1)
-        .returning(move |_| {
-            Ok(ReadAgentMessageResponse {
-                message_id: "msg-123".to_string(),
-                sender_run_id: "parent-run-456".to_string(),
-                subject: "Please pivot".to_string(),
-                body: long_body.clone(),
-                sent_at: "2026-04-17T15:46:00Z".to_string(),
-                delivered_at: None,
-                read_at: Some("2026-04-17T15:46:02Z".to_string()),
-            })
-        });
-    let hydrator = MessageHydrator::new(
-        Arc::new(ai_client) as Arc<dyn crate::server::server_api::ai::AIClient>
-    );
-
     let max_context_chars = parent_bridge_char_count(MESSAGE_BRIDGE_CONTEXT_PREAMBLE) + 48;
-    prepare_parent_bridge_hook_output(&hydrator, &state_dir, max_context_chars)
+    prepare_parent_bridge_hook_output(&state_dir, max_context_chars)
         .await
         .unwrap();
 
@@ -516,15 +449,7 @@ async fn acknowledge_parent_bridge_hook_output_ignores_missing_ack_marker() {
     );
     write_surfaced_parent_bridge_message(&state_dir, &record);
 
-    let mut ai_client = MockAIClient::new();
-    ai_client.expect_mark_message_delivered().times(0);
-    let hydrator = MessageHydrator::new(
-        Arc::new(ai_client) as Arc<dyn crate::server::server_api::ai::AIClient>
-    );
-
-    acknowledge_parent_bridge_hook_output(&hydrator, &state_dir)
-        .await
-        .unwrap();
+    acknowledge_parent_bridge_hook_output(&state_dir).await.unwrap();
 
     assert!(parent_bridge_surfaced_message_path(&state_dir, 42, "msg-123").exists());
 }

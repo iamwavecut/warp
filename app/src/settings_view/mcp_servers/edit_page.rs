@@ -184,7 +184,7 @@ impl MCPServersEditPageView {
 
         let editing_disabled_banner = ctx.add_typed_action_view(|_| {
             Banner::new_without_close(BannerTextContent::plain_text(
-                "Only team admins and the creator of the MCP server can edit the MCP server.",
+                "Hosted MCP sharing permissions are disabled in this local-first build.",
             ))
             .with_icon(Icon::Warning)
         });

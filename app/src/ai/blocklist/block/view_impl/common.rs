@@ -92,7 +92,6 @@ use crate::{
             view_util::error_color,
             TextLocation,
         },
-        AIRequestUsageModel,
     },
     code::{editor::view::CodeEditorView, editor_management::CodeSource},
     notebooks::editor::{markdown_table_appearance, rich_text_styles},
@@ -126,7 +125,6 @@ pub const WAITING_FOR_USER_INPUT_MESSAGE: &str = "Agent waiting for instructions
 const IMAGE_SOURCE_LINK_LINE_INDEX: usize = 1;
 
 const ERROR_APOLOGY_TEXT: &str = "I'm sorry, I couldn't complete that request.";
-const INTERNAL_WARP_ERROR: &str = "Internal Warp error.";
 
 pub const LOAD_OUTPUT_MESSAGE: &str = "Warping...";
 pub const LOAD_OUTPUT_MESSAGE_FOR_ADJUSTING: &str = "Adjusting tasks...";
@@ -2951,23 +2949,6 @@ pub fn render_failed_output(props: FailedOutputProps, app: &AppContext) -> Box<d
     let appearance = Appearance::as_ref(app);
 
     let error_text = match props.error {
-        RenderableAIError::QuotaLimit => {
-            let ai_request_usage_model = AIRequestUsageModel::as_ref(app);
-            let formatted_next_refresh_time = ai_request_usage_model
-                .next_refresh_time()
-                .format("%B %d")
-                .to_string();
-
-            format!(
-                "{ERROR_APOLOGY_TEXT}\n\nYou've reached your credit limit. Your credit limit resets on {formatted_next_refresh_time}.",
-            )
-        }
-        RenderableAIError::ServerOverloaded => {
-            "Warp is currently overloaded. Please try again later.".to_string()
-        }
-        RenderableAIError::InternalWarpError => {
-            format!("{ERROR_APOLOGY_TEXT}\n\n{INTERNAL_WARP_ERROR}")
-        }
         RenderableAIError::Other {
             error_message,
             will_attempt_resume,
@@ -3347,9 +3328,7 @@ pub(super) fn query_prefix_highlight_len(
         }
     }
 
-    if displayed_query.starts_with(commands::CREATE_ENVIRONMENT.name) {
-        Some(commands::CREATE_ENVIRONMENT.name.len())
-    } else if displayed_query.starts_with(commands::AGENT.name) {
+    if displayed_query.starts_with(commands::AGENT.name) {
         Some(commands::AGENT.name.len())
     } else if displayed_query.starts_with(commands::NEW.name) {
         Some(commands::NEW.name.len())

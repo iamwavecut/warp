@@ -378,7 +378,7 @@ fn cli_agent_footer_renders_for_viewer_of_shared_cloud_agent_session() {
             let model = view.model.lock();
             assert!(
                 view.should_render_use_agent_footer(&model, ctx),
-                "footer should render for viewer of shared cloud agent session with CLI agent",
+                "footer should render for viewer of shared agent session with CLI agent",
             );
             let active_block_index = model.block_list().active_block_index();
             let rendered_footer_view_id = model

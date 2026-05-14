@@ -24,7 +24,6 @@ use crate::server::sync_queue::{CreationFailureReason, QueueItemId, SyncQueueEve
 use crate::{NetworkStatus, QueueItem, SyncQueue};
 use anyhow::anyhow;
 use chrono::{DateTime, Duration, Utc};
-use firebase::FirebaseError;
 use itertools::Itertools;
 use std::sync::Arc;
 use warp_server_client::cloud_object::ServerPermissions;
@@ -525,11 +524,10 @@ fn test_no_dequeue_after_intransient_failure() {
             .returning(move |_| {
                 // This is one of the types of errors that won't cause us to keep dequeueing;
                 // if Firebase rejects the user once, they'll likely reject requests for other queue items.
-                Err(UserAuthenticationError::DeniedAccessToken(FirebaseError {
-                    code: 401,
-                    message: "Unauthenticated".to_string(),
-                })
-                .into())
+                Err(
+                    UserAuthenticationError::DeniedAccessToken("Unauthenticated".to_string())
+                        .into(),
+                )
             });
 
         initialize_app(&mut app);

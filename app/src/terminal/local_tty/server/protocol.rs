@@ -177,7 +177,7 @@ fn try_receive_message_internal(socket_fd: impl AsRawFd) -> Result<TryReceiveMes
     // Extract extra information from Unix domain socket control messages for
     // api::Message variants which require it.
     if let api::Message::SpawnShellResponse {
-        spawn_result: api::Result::Ok(PtySpawnResult { leader_fd, .. }),
+        spawn_result: api::Result::Ok(spawn_result),
         ..
     } = &mut message.data
     {
@@ -191,7 +191,7 @@ fn try_receive_message_internal(socket_fd: impl AsRawFd) -> Result<TryReceiveMes
                 };
                 // Set the `leader_fd` field in the `TtySpawnResult` to the
                 // value we received in the control message.
-                *leader_fd = *received_fd;
+                spawn_result.leader_fd = *received_fd;
             }
             _ => {
                 bail!(

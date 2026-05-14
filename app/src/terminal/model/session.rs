@@ -1273,31 +1273,8 @@ impl Session {
         // Otherwise, fall back to using [`async_fs`] to read the history file.
         match async_fs::read(history_file).await {
             Ok(contents) => {
-                // Report this error so we have some data on whether this method of running
-                // PowerShell commands is reliable. If this turns out to be noisy, we can remove
-                // this log line.
                 log::warn!(
                     "Failed to read history using PowerShell commands: {powershell_error:?}"
-                );
-                #[cfg(feature = "crash_reporting")]
-                sentry::with_scope(
-                    |scope| {
-                        let mut context = std::collections::BTreeMap::new();
-                        context.insert(
-                            "powershell_error".to_string(),
-                            format!("{powershell_error:?}").into(),
-                        );
-                        scope.set_context(
-                            "powershell_history",
-                            sentry::protocol::Context::Other(context),
-                        );
-                    },
-                    || {
-                        sentry::capture_message(
-                            "Failed to read history using PowerShell commands",
-                            sentry::Level::Error,
-                        )
-                    },
                 );
                 Ok(contents)
             }

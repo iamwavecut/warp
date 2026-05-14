@@ -19,7 +19,7 @@ use warpui::{
 use crate::{
     ai::blocklist::agent_view::{
         AgentViewController, AgentViewControllerEvent, ENTER_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE,
-        ENTER_CLOUD_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE,
+        ENTER_AMBIENT_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE,
     },
     appearance::Appearance,
     settings::{AISettings, AISettingsChangedEvent, InputModeSettings},
@@ -203,9 +203,9 @@ impl View for TerminalViewZeroStateBlock {
                 Message::new(vec![MessageItem::clickable(
                     vec![
                         MessageItem::keystroke(
-                            ENTER_CLOUD_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE.clone(),
+                            ENTER_AMBIENT_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE.clone(),
                         ),
-                        MessageItem::text("start a new cloud agent conversation"),
+                        MessageItem::text("start a new agent workspace"),
                     ],
                     |ctx| {
                         ctx.dispatch_typed_action(TerminalAction::EnterCloudAgentView);

@@ -8,13 +8,11 @@ use std::path::PathBuf;
 
 use indexmap::IndexMap;
 
-use crate::ai::request_usage_model::RequestLimitInfo;
 use crate::auth::AuthStateProvider;
 use crate::report_if_error;
 use crate::terminal::CLIAgent;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use cfg_if::cfg_if;
-use chrono::{DateTime, Utc};
 use lazy_static::lazy_static;
 use regex::Regex;
 use warpui::platform::OperatingSystem;
@@ -34,7 +32,7 @@ use strum_macros::EnumIter;
 
 /// Configuration for a user-defined custom LLM provider (BYOK).
 /// Stored in the settings file and used to populate the model list
-/// when running in local_only mode.
+/// in this local-first build.
 #[derive(
     Clone,
     Debug,
@@ -490,7 +488,7 @@ pub enum DefaultSessionMode {
     Terminal,
     /// New sessions start in agent view.
     Agent,
-    /// New sessions start in cloud (ambient) agent mode.
+    /// New sessions start in ambient agent mode.
     CloudAgent,
     /// New sessions open a user-defined tab config.
     /// The specific config is identified by the companion `default_tab_config_path` setting.
@@ -516,7 +514,7 @@ impl DefaultSessionMode {
         match self {
             DefaultSessionMode::Terminal => "Terminal",
             DefaultSessionMode::Agent => "Agent",
-            DefaultSessionMode::CloudAgent => "Cloud Oz",
+            DefaultSessionMode::CloudAgent => "Agent Workspace",
             DefaultSessionMode::TabConfig => "Tab Config",
             DefaultSessionMode::DockerSandbox => "Local Docker Sandbox",
         }
@@ -585,67 +583,6 @@ impl ThinkingDisplayMode {
     pub fn should_keep_expanded(&self) -> bool {
         matches!(self, ThinkingDisplayMode::AlwaysShow)
     }
-}
-
-/// Tracks the state of the quota reset banner
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    PartialEq,
-    Default,
-    schemars::JsonSchema,
-    settings_value::SettingsValue,
-)]
-#[schemars(description = "State of the quota reset banner.")]
-pub struct BannerState {
-    #[serde(default)]
-    #[schemars(description = "Whether the banner has been dismissed.")]
-    pub dismissed: bool,
-}
-
-/// Tracks information about a single billing cycle for AI request usage
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    PartialEq,
-    schemars::JsonSchema,
-    settings_value::SettingsValue,
-)]
-#[schemars(description = "Information about a single billing cycle.")]
-pub struct CycleInfo {
-    /// End date of the billing cycle
-    #[schemars(description = "End date of the billing cycle.")]
-    pub end_date: DateTime<Utc>,
-    /// Whether the quota was exceeded in this cycle
-    #[schemars(description = "Whether the usage quota was exceeded in this cycle.")]
-    pub was_quota_exceeded: bool,
-    /// State of the quota reset banner
-    #[schemars(description = "State of the quota reset banner for this cycle.")]
-    pub banner_state: BannerState,
-}
-
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    Default,
-    PartialEq,
-    schemars::JsonSchema,
-    settings_value::SettingsValue,
-)]
-#[schemars(description = "AI usage quota information across billing cycles.")]
-pub struct AIRequestQuotaInfo {
-    /// History of billing cycles and their usage.
-    ///
-    /// Note that these are only populated going forward from when this setting
-    /// was introduced.
-    #[schemars(description = "History of billing cycles and their quota usage.")]
-    pub cycle_history: Vec<CycleInfo>,
 }
 
 #[derive(
@@ -1006,18 +943,6 @@ define_settings_group!(AISettings, settings: [
         description: "Controls whether ghosted text autosuggestions are shown for AI input queries.",
         feature_flag: FeatureFlag::PredictAMQueries,
     }
-    // This field should not be referenced directly to lookup shared block title generations
-    // enablement -- use the `is_shared_block_title_generation_enabled()` getter.
-    // This feature refers to the auto title generation when the user opens the shared block dialog.
-    shared_block_title_generation_enabled_internal: SharedBlockTitleGenerationEnabled {
-        type: bool,
-        default: true,
-        supported_platforms: SupportedPlatforms::ALL,
-        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
-        private: false,
-        toml_path: "agents.warp_agent.active_ai.shared_block_title_generation_enabled",
-        description: "Controls whether titles are auto-generated when sharing blocks.",
-    }
     // This field should not be referenced directly to lookup git operations AI autogen
     // enablement -- use the `is_git_operations_autogen_enabled()` getter.
     git_operations_autogen_enabled_internal: GitOperationsAutogenEnabled {
@@ -1276,17 +1201,6 @@ define_settings_group!(AISettings, settings: [
         toml_path: "agents.knowledge.rules_enabled",
         description: "Whether the agent uses your saved rules during requests.",
     }
-    // Whether warp drive context should be included in AI requests
-    warp_drive_context_enabled: WarpDriveContextEnabled {
-        type: bool,
-        default: true,
-        supported_platforms: SupportedPlatforms::ALL,
-        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
-        private: false,
-        toml_path: "agents.knowledge.warp_drive_context_enabled",
-        description: "Whether Warp Drive context is included in AI requests.",
-    }
-
     // Whether the codebase speedbump banner has been permanently dismissed for a given repo path.
     //
     // Not a user-visible settings - we model it as a setting so we can track state.
@@ -1320,15 +1234,6 @@ define_settings_group!(AISettings, settings: [
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         private: true,
     }
-
-    // Information about AI request quotas and usage across billing cycles
-    ai_request_quota_info: AIRequestQuotaInfoSetting {
-        type: AIRequestQuotaInfo,
-        default: AIRequestQuotaInfo::default(),
-        supported_platforms: SupportedPlatforms::ALL,
-        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
-        private: true,
-    },
 
     // Whether or not we should show the speedbump for showing code suggestion banners.
     // This includes both passive code diffs and suggested prompts (passive unit tests).
@@ -1396,18 +1301,6 @@ define_settings_group!(AISettings, settings: [
         private: false,
         toml_path: "agents.warp_agent.other.should_show_oz_updates_in_zero_state",
         description: "Whether the \"What's new\" section is shown in the agent view.",
-    }
-
-    // Whether or not the user has enabled the ability to use Warp credits even when providing
-    // their own LLM provider API key.
-    can_use_warp_credits_with_byok: CanUseWarpCreditsWithByok {
-        type: bool,
-        default: false,
-        supported_platforms: SupportedPlatforms::ALL,
-        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
-        private: false,
-        toml_path: "cloud_platform.third_party_api_keys.can_use_warp_credits_with_byok",
-        description: "Whether Warp credits can be used even when providing your own API key.",
     }
 
     should_render_use_agent_footer_for_user_commands: ShouldRenderUseAgentToolbarForUserCommands {
@@ -1537,16 +1430,16 @@ define_settings_group!(AISettings, settings: [
         toml_path: "general.default_tab_config_path",
     }
 
-    // Whether computer use is enabled for cloud agent conversations started from the Warp app.
+    // Whether computer use is enabled for local agent conversations started from the Warp app.
     // This setting is only used when the AI autonomy setting is AlwaysAsk or not set.
     cloud_agent_computer_use_enabled: CloudAgentComputerUseEnabled {
         type: bool,
         default: warp_core::channel::ChannelState::channel().is_dogfood(),
         supported_platforms: SupportedPlatforms::DESKTOP,
-        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        sync_to_cloud: SyncToCloud::Never,
         private: false,
         toml_path: "agents.warp_agent.other.cloud_agent_computer_use_enabled",
-        description: "Whether computer use is enabled for cloud agent conversations.",
+        description: "Whether computer use is enabled for local agent conversations.",
     }
 
     // Whether multi-agent orchestration is enabled. When enabled, the agent can
@@ -1653,7 +1546,7 @@ define_settings_group!(AISettings, settings: [
         description: "Whether the Warp Agent adds an attribution co-author line to commit messages and pull requests it creates.",
     }
 
-    // Custom LLM provider configurations for BYOK (local_only mode).
+    // Custom LLM provider configurations for BYOK in this local-first build.
     // Each entry defines a provider with a name, base URL, and model list.
     // API keys for custom providers are stored separately in ApiKeyManager.
     custom_providers: CustomProviders {
@@ -1717,10 +1610,18 @@ impl AISettings {
         match mode {
             // Terminal and TabConfig don't require AI.
             DefaultSessionMode::Terminal | DefaultSessionMode::TabConfig => mode,
-            // Agent and CloudAgent require AI to be enabled.
-            DefaultSessionMode::Agent | DefaultSessionMode::CloudAgent => {
+            // Agent requires AI to be enabled.
+            DefaultSessionMode::Agent => {
                 if self.is_any_ai_enabled(app) {
                     mode
+                } else {
+                    DefaultSessionMode::Terminal
+                }
+            }
+            // Legacy stored cloud-agent defaults fall back to the local agent view.
+            DefaultSessionMode::CloudAgent => {
+                if self.is_any_ai_enabled(app) {
+                    DefaultSessionMode::Agent
                 } else {
                     DefaultSessionMode::Terminal
                 }
@@ -1782,10 +1683,6 @@ impl AISettings {
         self.is_active_ai_enabled(app) && *self.natural_language_autosuggestions_enabled_internal
     }
 
-    pub fn is_shared_block_title_generation_enabled(&self, app: &warpui::AppContext) -> bool {
-        self.is_active_ai_enabled(app) && *self.shared_block_title_generation_enabled_internal
-    }
-
     pub fn is_git_operations_autogen_enabled(&self, app: &warpui::AppContext) -> bool {
         self.is_active_ai_enabled(app) && *self.git_operations_autogen_enabled_internal
     }
@@ -1822,10 +1719,6 @@ impl AISettings {
         self.is_any_ai_enabled(app) && *self.memory_enabled
     }
 
-    pub fn is_warp_drive_context_enabled(&self, app: &warpui::AppContext) -> bool {
-        self.is_any_ai_enabled(app) && *self.warp_drive_context_enabled
-    }
-
     pub fn is_file_based_mcp_enabled(&self, app: &warpui::AppContext) -> bool {
         if !FeatureFlag::FileBasedMcp.is_enabled() || !self.is_any_ai_enabled(app) {
             return false;
@@ -1833,8 +1726,8 @@ impl AISettings {
         // NOTE: we intentionally do not force-enable this in Cloud Mode. Previously
         // we auto-spawned file-based MCPs in autonomous execution, but that bypassed
         // the user's explicit opt-in and let any MCP config checked into a repo run
-        // arbitrary commands as part of a cloud agent run. Respecting the toggle
-        // closes that attack surface; cloud agents that need project-scoped MCP
+        // arbitrary commands as part of an ambient agent run. Respecting the toggle
+        // closes that attack surface; agents that need project-scoped MCP
         // servers should surface an explicit, auditable opt-in. A more robust
         // solution (e.g. per-environment allowlisting, signed configs) should be
         // explored in the future.
@@ -1845,91 +1738,6 @@ impl AISettings {
         FeatureFlag::Orchestration.is_enabled()
             && self.is_any_ai_enabled(app)
             && *self.orchestration_enabled
-    }
-
-    /// Determines whether a quota reset banner should be displayed to the user.
-    ///
-    /// The banner should be shown if the most recent completed billing cycle had
-    /// quota exceeded and the banner was not manually dismissed.
-    pub fn should_display_quota_reset_banner(&self) -> bool {
-        let quota_info = &self.ai_request_quota_info;
-
-        let most_recent_completed_cycle = quota_info
-            .cycle_history
-            .iter()
-            .rev()
-            .find(|cycle| cycle.end_date < Utc::now());
-
-        if let Some(cycle) = most_recent_completed_cycle {
-            if cycle.was_quota_exceeded && !cycle.banner_state.dismissed {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Marks the banner as dismissed for all completed cycles.
-    pub fn mark_quota_banner_as_dismissed(&mut self, ctx: &mut ModelContext<Self>) {
-        let mut cycle_history = self.ai_request_quota_info.cycle_history.clone();
-
-        for cycle in cycle_history.iter_mut() {
-            if cycle.end_date < Utc::now() {
-                cycle.banner_state.dismissed = true;
-            }
-        }
-
-        report_if_error!(self
-            .ai_request_quota_info
-            .set_value(AIRequestQuotaInfo { cycle_history }, ctx));
-    }
-
-    /// Updates the quota info based on the latest RequestLimitInfo.
-    ///
-    /// This method finds or creates the appropriate CycleInfo based on the
-    /// request_limit_info's next refresh time and updates its fields accordingly.
-    pub fn update_quota_info(
-        &mut self,
-        request_limit_info: &RequestLimitInfo,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        // Convert ServerTimestamp to DateTime<Utc>
-        let next_refresh_time = request_limit_info.next_refresh_time.utc();
-        let now = Utc::now();
-
-        // Check if request_limit_info has unlimited requests
-        let is_quota_exceeded = !request_limit_info.is_unlimited
-            && request_limit_info.num_requests_used_since_refresh >= request_limit_info.limit;
-
-        let mut cycle_history = self.ai_request_quota_info.cycle_history.clone();
-
-        // Track if we updated an existing cycle
-        let mut updated_existing_cycle = false;
-
-        // Find or create a cycle that matches the current period
-        if let Some(current_cycle) = cycle_history.last_mut() {
-            if now <= current_cycle.end_date {
-                // Update existing cycle
-                current_cycle.was_quota_exceeded = is_quota_exceeded;
-                updated_existing_cycle = true;
-            }
-        }
-
-        // Only create a new cycle if we didn't update an existing one
-        if !updated_existing_cycle {
-            // Create a new cycle
-            let new_cycle = CycleInfo {
-                end_date: next_refresh_time,
-                was_quota_exceeded: is_quota_exceeded,
-                banner_state: BannerState::default(),
-            };
-
-            cycle_history.push(new_cycle);
-        }
-
-        report_if_error!(self
-            .ai_request_quota_info
-            .set_value(AIRequestQuotaInfo { cycle_history }, ctx));
     }
 
     pub fn is_command_denylist_editable(&self, app: &AppContext) -> bool {

@@ -160,7 +160,6 @@ pub enum JsonObjectType {
     MCPServer,
     AIExecutionProfile,
     TemplatableMCPServer,
-    CloudEnvironment,
     ScheduledAmbientAgent,
     CloudAgentConfig,
 }
@@ -175,7 +174,6 @@ impl JsonObjectType {
             JsonObjectType::MCPServer => "MCPSERVER",
             JsonObjectType::AIExecutionProfile => "AIEXECUTIONPROFILE",
             JsonObjectType::TemplatableMCPServer => "TEMPLATABLEMCPSERVER",
-            JsonObjectType::CloudEnvironment => "CLOUDENVIRONMENT",
             JsonObjectType::ScheduledAmbientAgent => "SCHEDULEDAMBIENTAGENT",
             JsonObjectType::CloudAgentConfig => "CLOUDAGENTCONFIG",
         }
@@ -194,7 +192,6 @@ impl TryFrom<&str> for JsonObjectType {
             "MCPSERVER" => Ok(JsonObjectType::MCPServer),
             "AIEXECUTIONPROFILE" => Ok(JsonObjectType::AIExecutionProfile),
             "TEMPLATABLEMCPSERVER" => Ok(JsonObjectType::TemplatableMCPServer),
-            "CLOUDENVIRONMENT" => Ok(JsonObjectType::CloudEnvironment),
             "SCHEDULEDAMBIENTAGENT" => Ok(JsonObjectType::ScheduledAmbientAgent),
             "CLOUDAGENTCONFIG" => Ok(JsonObjectType::CloudAgentConfig),
             _ => Err(anyhow!("could not convert unknown json object type")),
@@ -549,11 +546,7 @@ pub struct CloudObjectMetadata {
     pub is_welcome_object: bool,
     pub last_editor_uid: Option<String>,
     pub creator_uid: Option<String>,
-    /// The "last used" timestamp for this environment.
-    ///
-    /// This is populated via `GetCloudEnvironments` from
-    /// `CloudEnvironment.lastTaskCreated.createdAt`.
-    /// Only applicable for CloudEnvironment objects.
+    /// Reserved legacy timestamp field.
     pub last_task_run_ts: Option<ServerTimestamp>,
 }
 
@@ -575,7 +568,6 @@ impl CloudObjectMetadata {
             is_welcome_object: server_metadata.is_welcome_object,
             creator_uid: server_metadata.creator_uid,
             last_editor_uid: server_metadata.last_editor_uid,
-            // last_task_run_ts is populated separately via GetCloudEnvironments query
             last_task_run_ts: None,
         }
     }
@@ -810,9 +802,6 @@ impl From<GenericStringObjectFormat>
             }
             GenericStringObjectFormat::Json(JsonObjectType::TemplatableMCPServer) => {
                 GraphQLFormat::JsonTemplatableMCPServer
-            }
-            GenericStringObjectFormat::Json(JsonObjectType::CloudEnvironment) => {
-                GraphQLFormat::JsonCloudEnvironment
             }
             GenericStringObjectFormat::Json(JsonObjectType::ScheduledAmbientAgent) => {
                 GraphQLFormat::JsonScheduledAmbientAgent

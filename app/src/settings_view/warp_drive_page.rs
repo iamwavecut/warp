@@ -5,7 +5,7 @@ use super::{
     },
     LocalOnlyIconState, SettingsSection, ToggleState,
 };
-use crate::{appearance::Appearance, auth::AuthStateProvider, drive::settings::WarpDriveSettings};
+use crate::{appearance::Appearance, drive::settings::WarpDriveSettings};
 use warp_core::{features::FeatureFlag, report_if_error, settings::ToggleableSetting as _};
 use warpui::{
     elements::{Container, Element, Flex, MouseStateHandle, ParentElement, Shrinkable, Text},
@@ -22,7 +22,6 @@ use warpui::{
 pub enum WarpDriveSettingsPageAction {
     ToggleShowWarpDrive,
     SignUp,
-    OpenUrl(String),
 }
 
 pub enum WarpDriveSettingsPageEvent {
@@ -64,9 +63,6 @@ impl TypedActionView for WarpDriveSettingsPageView {
             }
             WarpDriveSettingsPageAction::SignUp => {
                 ctx.emit(WarpDriveSettingsPageEvent::SignUp);
-            }
-            WarpDriveSettingsPageAction::OpenUrl(url) => {
-                ctx.open_url(url.as_str());
             }
         }
     }
@@ -123,10 +119,8 @@ impl SettingsWidget for WarpDriveHeaderWidget {
     }
 
     fn should_render(&self, app: &AppContext) -> bool {
-        FeatureFlag::SkipFirebaseAnonymousUser.is_enabled()
-            && AuthStateProvider::as_ref(app)
-                .get()
-                .is_anonymous_or_logged_out()
+        let _ = app;
+        false
     }
 
     fn render(
@@ -139,7 +133,8 @@ impl SettingsWidget for WarpDriveHeaderWidget {
 
         let message = Container::new(
             Text::new_inline(
-                "To use Warp Drive, please create an account.".to_string(),
+                "Hosted drive sync is disabled. Local objects are stored on this machine."
+                    .to_string(),
                 appearance.ui_font_family(),
                 14.,
             )
@@ -171,11 +166,8 @@ impl SettingsWidget for WarpDriveHeaderWidget {
                     }),
                     ..Default::default()
                 })
-                .with_text_label("Sign up".to_owned())
+                .with_text_label("Local only".to_owned())
                 .build()
-                .on_click(move |ctx, _, _| {
-                    ctx.dispatch_typed_action(WarpDriveSettingsPageAction::SignUp);
-                })
                 .finish(),
         )
         .finish();
@@ -202,7 +194,7 @@ impl SettingsWidget for WarpDriveToggleWidget {
     type View = WarpDriveSettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "warp drive tools panel command palette search workflows prompts notebooks environment variables"
+        "local library tools panel command palette search workflows prompts notebooks environment variables"
     }
 
     fn render(
@@ -212,18 +204,13 @@ impl SettingsWidget for WarpDriveToggleWidget {
         app: &AppContext,
     ) -> Box<dyn Element> {
         let settings = WarpDriveSettings::as_ref(app);
-        let is_anonymous_or_logged_out = FeatureFlag::SkipFirebaseAnonymousUser.is_enabled()
-            && AuthStateProvider::as_ref(app)
-                .get()
-                .is_anonymous_or_logged_out();
+        let is_anonymous_or_logged_out = false;
 
         render_body_item::<WarpDriveSettingsPageAction>(
-            "Warp Drive".into(),
+            "Local Library".into(),
             Some(AdditionalInfo {
                 mouse_state: self.info_icon_mouse_state.clone(),
-                on_click_action: Some(WarpDriveSettingsPageAction::OpenUrl(
-                    "https://docs.warp.dev/knowledge-and-collaboration/warp-drive".to_string(),
-                )),
+                on_click_action: None,
                 secondary_text: None,
                 tooltip_override_text: None,
             }),
@@ -248,7 +235,7 @@ impl SettingsWidget for WarpDriveToggleWidget {
                     }
                 })
                 .finish(),
-            Some("Warp Drive is a workspace in your terminal where you can save Workflows, Notebooks, Prompts, and Environment Variables for personal use or to share with a team.".into()),
+            Some("Local Library stores workflows, notebooks, prompts, and environment variables on this machine without hosted sync.".into()),
         )
     }
 }

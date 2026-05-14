@@ -1,11 +1,5 @@
 mod changelog;
 mod channel_versions;
-#[cfg(target_os = "linux")]
-pub mod linux;
-#[cfg(target_os = "macos")]
-mod mac;
-#[cfg(windows)]
-mod windows;
 
 use crate::features::FeatureFlag;
 use crate::server::server_api::ServerApi;
@@ -520,10 +514,6 @@ impl AutoupdateState {
                     update_id,
                 })
             }
-            Ok(DownloadReady::NeedsAuthorization) => {
-                self.stage = AutoupdateStage::UnableToUpdateToNewVersion { new_version };
-                Ok(UpdateReady::No)
-            }
             Ok(DownloadReady::No) => {
                 log::info!("Could not download a newer version");
                 self.stage = AutoupdateStage::NoUpdateAvailable;
@@ -544,19 +534,8 @@ impl AutoupdateState {
     }
 
     /// Clean up all old autoupdate directories except the current one.
-    #[cfg_attr(not(target_os = "macos"), expect(unused_variables))]
     fn clear_old_autoupdate_dirs(&self, update_id: &str, ctx: &mut ModelContext<Self>) {
-        #[cfg(target_os = "macos")]
-        {
-            let update_id_owned = update_id.to_owned();
-            ctx.spawn(
-                async move {
-                    // Clean up all autoupdate directories except any current ones
-                    mac::cleanup_all_except(Some(&update_id_owned)).await;
-                },
-                |_, _, _| {},
-            );
-        }
+        let _ = (update_id, ctx);
     }
 
     fn on_check_complete(
@@ -686,9 +665,6 @@ pub enum UpdateReady {
 pub enum DownloadReady {
     /// The update was downloaded successfully.
     Yes,
-    /// There were insufficient permissions to download the update.
-    #[cfg_attr(windows, allow(dead_code))]
-    NeedsAuthorization,
     /// A newer version could not be downloaded.
     No,
 }
@@ -800,26 +776,17 @@ async fn fetch_version(
 async fn download_update(
     version_info: VersionInfo,
     update_id: String,
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     last_successful_update_id: Option<String>,
     server_api: Arc<ServerApi>,
 ) -> Result<DownloadReady> {
-    if ChannelState::app_version().is_none() {
-        log::info!("No tag set, not performing autoupdate.");
-        return Ok(DownloadReady::No);
-    }
-
-    cfg_if::cfg_if! {
-        if #[cfg(target_os = "macos")] {
-            mac::download_update_and_cleanup(&version_info, &update_id, last_successful_update_id.as_deref(), server_api.http_client()).await
-        } else if #[cfg(target_os = "linux")] {
-            linux::download_update_and_cleanup(&version_info, &update_id, server_api.http_client()).await
-        } else if #[cfg(windows)] {
-            windows::download_update_and_cleanup(&version_info, &update_id, server_api.http_client()).await
-        } else {
-            Err(anyhow::anyhow!("Not implemented"))
-        }
-    }
+    let _ = (
+        version_info,
+        update_id,
+        last_successful_update_id,
+        server_api,
+    );
+    log::info!("Autoupdate downloads are disabled in the local-first build.");
+    Ok(DownloadReady::No)
 }
 
 /// Apply a downloaded update. If this returns `Ok(ReadyForRelaunch::Yes)`, then the app should be
@@ -837,21 +804,7 @@ pub fn apply_update(
     _initiating_workspace: &mut Workspace,
     _ctx: &mut ViewContext<Workspace>,
 ) -> Result<ReadyForRelaunch> {
-    cfg_if::cfg_if! {
-        if #[cfg(any(target_os = "macos", windows))] {
-            // macOS applies the update during the download step. Windows does it during
-            // `spawn_child_if_necessary`. In either case, simply continue relaunching the app.
-            Ok(ReadyForRelaunch::Yes)
-        } else if #[cfg(target_os = "linux")] {
-            let AutoupdateStage::UpdateReady { update_id, .. } = &AutoupdateState::handle(_ctx).as_ref(_ctx).stage else {
-                anyhow::bail!("Trying to apply an update without AutoupdateState being UpdateReady!");
-            };
-            let update_id = update_id.clone();
-            linux::apply_update(_initiating_workspace, &update_id, _ctx)
-        } else {
-            anyhow::bail!("Not implemented")
-        }
-    }
+    anyhow::bail!("Autoupdate is disabled in the local-first build")
 }
 
 /// Relaunch Warp to apply an update.
@@ -960,31 +913,7 @@ fn finalize_update<F>(app: &mut AppContext, callback: F)
 where
     F: FnOnce(Result<()>, &mut AppContext) + Send + 'static,
 {
-    cfg_if::cfg_if! {
-        if #[cfg(target_os = "macos")] {
-            mac::apply_update_async(app, |autoupdate_state, result, ctx| {
-                match result {
-                    Ok(maybe_new_version) => {
-                        if let Some(new_version) = maybe_new_version {
-                            log::info!("Pending update applied successfully");
-                            // Record that this update was applied, so we don't reattempt it.
-                            autoupdate_state.set_autoupdate_stage(AutoupdateStage::UpdatedPendingRestart { new_version }, ctx);
-                        }
-                        callback(Ok(()), ctx);
-                    },
-                    Err(err) => {
-                        autoupdate_state.relaunch_failed(ctx);
-
-                        let err = anyhow!(err).context("Error applying installed update");
-                        crate::report_error!(&err);
-                        callback(Err(err), ctx);
-                    }
-                }
-            });
-        } else {
-            callback(Ok(()), app);
-        }
-    }
+    callback(Ok(()), app);
 }
 
 pub fn cancel_relaunch(app: &mut AppContext) {
@@ -1012,17 +941,9 @@ pub fn spawn_child_if_necessary(app: &mut AppContext) {
     // we don't necessarily want to block termination on it.
 
     if status == RelaunchStatus::Requested {
-        cfg_if::cfg_if! {
-            if #[cfg(target_os = "macos")] {
-                let relaunch_status = mac::relaunch();
-            } else if #[cfg(target_os = "linux")] {
-                let relaunch_status = linux::relaunch();
-            } else if #[cfg(windows)] {
-                let relaunch_status = windows::relaunch();
-            } else {
-                let relaunch_status: Result<()> = Err(anyhow!("No autoupdate support on this platform!"));
-            }
-        }
+        let relaunch_status: Result<()> = Err(anyhow!(
+            "Autoupdate relaunch is disabled in the local-first build"
+        ));
         match relaunch_status {
             Ok(_) => {
                 log::info!("Terminating app for relaunch. Bye!");
@@ -1053,30 +974,13 @@ pub fn manually_download_new_version(ctx: &mut AppContext) {
 
 #[allow(unused_variables)]
 fn manually_download_version(channel: &Channel, version: &VersionInfo, ctx: &mut AppContext) {
-    #[cfg(target_os = "macos")]
-    mac::manually_download_version(channel, version, ctx);
+    log::info!("Manual autoupdate downloads are disabled in the local-first build.");
 }
 
-pub(crate) fn check_and_report_update_errors(_ctx: &mut AppContext) {
-    #[cfg(windows)]
-    windows::check_and_report_update_errors(_ctx);
-}
+pub(crate) fn check_and_report_update_errors(_ctx: &mut AppContext) {}
 
 pub fn remove_old_executable() -> Result<()> {
-    cfg_if::cfg_if! {
-        if #[cfg(target_os = "macos")] {
-            mac::remove_old_executable()
-        } else if #[cfg(any(target_os = "linux", windows))] {
-            // Nothing to do on Linux or Windows; we don't leave anything behind to clean up after
-            // a relaunch.
-            Ok(())
-        } else if #[cfg(target_family = "wasm")] {
-            // Nothing to do on web. There's no executables stored somewhere.
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Not implemented"))
-        }
-    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
@@ -1132,24 +1036,6 @@ pub fn is_incoming_version_past_current(version: Option<&str>) -> bool {
     };
 
     installed_version.is_some_and(|curr_version| incoming_version > curr_version)
-}
-
-/// Returns the base URL that contains release assets for the given version
-/// of this app bundle.
-fn release_assets_directory_url(channel: Channel, version: &str) -> String {
-    let releases_base_url = ChannelState::releases_base_url();
-    match channel {
-        Channel::Stable => {
-            format!("{releases_base_url}/stable/{version}")
-        }
-        Channel::Preview => {
-            format!("{releases_base_url}/preview/{version}")
-        }
-        Channel::Dev => format!("{releases_base_url}/dev/{version}"),
-        Channel::Local | Channel::Integration | Channel::Oss => {
-            unreachable!("local/integration/oss autoupdate not supported");
-        }
-    }
 }
 
 #[cfg(test)]

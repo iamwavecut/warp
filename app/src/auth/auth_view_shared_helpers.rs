@@ -168,9 +168,10 @@ where
         ..Default::default()
     };
 
-    let paragraph_1 = "All of Warp’s non-cloud features work offline.";
-    let paragraph_2 = "However, we require users to be online when using Warp for the first time in order to enable Warp's AI and cloud features.";
-    let paragraph_3 = "We offer cloud features to all users, and so we need an internet connection to meter AI usage, prevent abuse, and associate cloud objects with users. If you opt to use Warp logged-out, a unique ID will be attached to an anonymous user account in order to support these features.";
+    let paragraph_1 = "This local-first build works without a Warp account.";
+    let paragraph_2 = "AI features use local or BYOK providers configured on this device.";
+    let paragraph_3 =
+        "No anonymous Warp account is created for hosted metering or cloud-object association.";
 
     Container::new(
         Flex::column()

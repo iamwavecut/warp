@@ -93,7 +93,7 @@ fn write_json_line_emits_compact_json_with_trailing_newline() {
         "{\"id\":\"message-1\",\"subject\":\"Build update\"}\n"
     );
 }
-/// A small fixture that matches the shape of `GET /api/v1/agent/runs`.
+/// A small fixture that matches the local run-list JSON shape.
 fn list_response_fixture() -> serde_json::Value {
     json!({
         "runs": [

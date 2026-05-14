@@ -2,9 +2,6 @@ use super::hoa_onboarding;
 use crate::auth::auth_manager::AuthManagerEvent;
 use crate::auth::AuthManager;
 use crate::channel::{Channel, ChannelState};
-use crate::settings::cloud_preferences_syncer::{
-    CloudPreferencesSyncer, CloudPreferencesSyncerEvent,
-};
 use crate::settings::{AISettings, CodeSettings};
 use crate::terminal::general_settings::GeneralSettings;
 use settings::Setting as _;
@@ -18,7 +15,6 @@ use warpui::{Entity, ModelContext, SingletonEntity, WindowId};
 /// a modal is currently being shown and automatically triggers the modal when appropriate
 /// conditions are met (e.g., user becomes onboarded).
 pub struct OneTimeModalModel {
-    is_build_plan_migration_modal_open: bool,
     /// Whether the Oz launch modal is currently being shown.
     is_oz_launch_modal_open: bool,
     /// Whether the OpenWarp launch modal is currently being shown.
@@ -32,20 +28,8 @@ pub struct OneTimeModalModel {
 
 impl OneTimeModalModel {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
-        // Subscribe to UserWorkspaces to detect when sunsetted_to_build_ts changes
-        ctx.subscribe_to_model(
-            &crate::workspaces::user_workspaces::UserWorkspaces::handle(ctx),
-            |me, event, ctx| {
-                use crate::workspaces::user_workspaces::UserWorkspacesEvent;
-                if let UserWorkspacesEvent::SunsettedToBuildDataUpdated = event {
-                    // When sunsetted_to_build_ts is updated, check if we should show the modal
-                    me.check_and_trigger_build_plan_migration_modal(ctx);
-                }
-            },
-        );
-
         // Subscribe to auth manager events to automatically trigger modal when user becomes onboarded
-        ctx.subscribe_to_model(&AuthManager::handle(ctx), |_, event, ctx| {
+        ctx.subscribe_to_model(&AuthManager::handle(ctx), |me, event, ctx| {
             let AuthManagerEvent::AuthComplete = event else {
                 return;
             };
@@ -53,17 +37,7 @@ impl OneTimeModalModel {
             let auth_state = crate::auth::AuthStateProvider::as_ref(ctx).get().clone();
             let is_existing_user = auth_state.is_onboarded().unwrap_or_default();
             if is_existing_user {
-                // Settings modals settings are synced to the cloud, not respecting the user's sync setting, so they
-                // must all await initial load to be triggered, else we risk reading a stale triggered value.
-                ctx.subscribe_to_model(
-                    &CloudPreferencesSyncer::handle(ctx),
-                    move |me, event, ctx| {
-                        if let CloudPreferencesSyncerEvent::InitialLoadCompleted = event {
-                            ctx.unsubscribe_from_model(&CloudPreferencesSyncer::handle(ctx));
-                            me.check_and_trigger_all_modals(ctx);
-                        }
-                    },
-                );
+                me.check_and_trigger_all_modals(ctx);
             } else {
                 AISettings::handle(ctx).update(ctx, |settings, ctx| {
                     if let Err(e) = settings
@@ -85,7 +59,6 @@ impl OneTimeModalModel {
         });
 
         Self {
-            is_build_plan_migration_modal_open: false,
             is_oz_launch_modal_open: false,
             is_openwarp_launch_modal_open: false,
             is_hoa_onboarding_open: false,
@@ -129,7 +102,6 @@ impl OneTimeModalModel {
     pub fn is_any_modal_open(&self) -> bool {
         (self.is_oz_launch_modal_open
             || self.is_openwarp_launch_modal_open
-            || self.is_build_plan_migration_modal_open
             || self.is_hoa_onboarding_open)
             && self.target_window_id.is_some()
     }
@@ -205,8 +177,6 @@ impl OneTimeModalModel {
         if self.check_and_trigger_hoa_onboarding(ctx) {
             return;
         }
-
-        self.check_and_trigger_build_plan_migration_modal(ctx);
     }
 
     fn set_hoa_onboarding_open(&mut self, is_open: bool, ctx: &mut ModelContext<Self>) -> bool {
@@ -293,84 +263,6 @@ impl OneTimeModalModel {
         let should_show_openwarp_modal = !matches!(ChannelState::channel(), Channel::Integration);
         self.set_openwarp_launch_modal_open(should_show_openwarp_modal, ctx);
         should_show_openwarp_modal
-    }
-
-    pub fn is_build_plan_migration_modal_open(&self) -> bool {
-        self.is_build_plan_migration_modal_open && self.target_window_id.is_some()
-    }
-
-    pub fn mark_build_plan_migration_modal_dismissed(&mut self, ctx: &mut ModelContext<Self>) {
-        self.set_build_plan_migration_modal_open(false, ctx);
-    }
-
-    #[cfg(debug_assertions)]
-    pub fn force_open_build_plan_migration_modal(&mut self, ctx: &mut ModelContext<Self>) {
-        self.set_build_plan_migration_modal_open(true, ctx);
-    }
-
-    fn set_build_plan_migration_modal_open(
-        &mut self,
-        is_open: bool,
-        ctx: &mut ModelContext<Self>,
-    ) -> bool {
-        if self.is_build_plan_migration_modal_open != is_open {
-            self.is_build_plan_migration_modal_open = is_open;
-            ctx.emit(OneTimeModalEvent::VisibilityChanged { is_open });
-            return true;
-        }
-        false
-    }
-
-    fn check_and_trigger_build_plan_migration_modal(
-        &mut self,
-        ctx: &mut ModelContext<Self>,
-    ) -> bool {
-        use crate::workspaces::user_workspaces::UserWorkspaces;
-
-        // Check if already dismissed
-        let general_settings = GeneralSettings::as_ref(ctx);
-        if *general_settings
-            .build_plan_migration_modal_dismissed
-            .value()
-        {
-            return false;
-        }
-
-        // Check if user is authenticated
-        let auth_state = crate::auth::AuthStateProvider::as_ref(ctx).get();
-
-        if auth_state.is_anonymous_or_logged_out() {
-            return false;
-        }
-
-        // Check if current workspace has sunsetted_to_build_ts set
-        let user_workspaces = UserWorkspaces::as_ref(ctx);
-        let Some(current_team) = user_workspaces.current_team() else {
-            return false;
-        };
-
-        // Check if user is admin of the team
-        let Some(user_email) = auth_state.user_email() else {
-            return false;
-        };
-
-        if !current_team.has_admin_permissions(&user_email) {
-            return false;
-        }
-
-        // Check if service agreement has sunsetted_to_build_ts set
-        let has_sunsetted_to_build = current_team
-            .billing_metadata
-            .service_agreements
-            .first()
-            .is_some_and(|sa| sa.sunsetted_to_build_ts.is_some());
-
-        if !has_sunsetted_to_build {
-            return false;
-        }
-
-        // All conditions met, show the modal
-        self.set_build_plan_migration_modal_open(true, ctx)
     }
 }
 

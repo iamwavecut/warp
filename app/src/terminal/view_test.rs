@@ -819,11 +819,10 @@ fn set_input_mode_agent_does_not_enter_local_agent_from_root_cloud_mode_pane() {
 }
 
 #[test]
-fn pending_cloud_followup_without_ambient_model_restores_prompt() {
+fn pending_cloud_followup_submission_is_disabled() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
         app.add_singleton_model(|_| ToastStack);
-        let _flag = FeatureFlag::HandoffCloudCloud.override_enabled(true);
         let terminal = add_window_with_terminal(&mut app, None);
 
         let task_id = AmbientAgentTaskId::from_str("123e4567-e89b-12d3-a456-426614174000")
@@ -832,12 +831,12 @@ fn pending_cloud_followup_without_ambient_model_restores_prompt() {
         terminal.update(&mut app, |view, ctx| {
             view.pending_cloud_followup_task_id = Some(task_id);
 
-            assert!(view.try_submit_pending_cloud_followup("follow up".to_string(), ctx));
+            assert!(!view.try_submit_pending_cloud_followup("follow up".to_string(), ctx));
         });
 
         terminal.read(&app, |view, ctx| {
-            assert_eq!(view.pending_cloud_followup_task_id, None);
-            assert_eq!(view.input.as_ref(ctx).buffer_text(ctx), "follow up");
+            assert_eq!(view.pending_cloud_followup_task_id, Some(task_id));
+            assert_eq!(view.input.as_ref(ctx).buffer_text(ctx), "");
         });
     });
 }
@@ -870,9 +869,7 @@ fn cloud_mode_dispatched_agent_inserts_queued_user_query() {
                             runtime_skills: vec![],
                             referenced_attachments: vec![],
                             conversation_id: None,
-                            initial_snapshot_token: None,
                             agent_identity_uid: None,
-                            snapshot_disabled: None,
                         },
                         ctx,
                     );
@@ -934,10 +931,7 @@ fn cloud_mode_failed_inserts_tombstone_and_hides_input() {
             .last()
             .expect("failed cloud mode should insert a tombstone");
         tombstone.read(&app, |tombstone, _| {
-            assert_eq!(
-                tombstone.title_for_test(),
-                Some("Cloud agent failed to start")
-            );
+            assert_eq!(tombstone.title_for_test(), Some("Agent failed to start"));
             assert_eq!(
                 tombstone.error_message_for_test(),
                 Some("setup failed again")
@@ -955,7 +949,6 @@ fn cloud_mode_followup_dispatched_inserts_queued_user_query() {
         initialize_app_for_terminal_view(&mut app);
         let _agent_view = FeatureFlag::AgentView.override_enabled(true);
         let _cloud_mode = FeatureFlag::CloudMode.override_enabled(true);
-        let _handoff = FeatureFlag::HandoffCloudCloud.override_enabled(true);
         let _setup_v2 = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
         let terminal = add_window_with_cloud_mode_terminal(&mut app);

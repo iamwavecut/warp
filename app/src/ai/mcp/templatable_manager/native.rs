@@ -193,7 +193,7 @@ impl TemplatableMCPServerManager {
                 me.purge_file_based_server_credentials(installation_hashes, ctx);
             }
             // Notification for cloud-environment readiness; handled by the AgentDriver.
-            FileBasedMCPManagerEvent::CloudEnvMcpScanComplete { .. } => {}
+            FileBasedMCPManagerEvent::AgentEnvMcpScanComplete { .. } => {}
         });
 
         // TemplatableMCPServerManager is the source of truth for templatable MCP servers stored on the cloud

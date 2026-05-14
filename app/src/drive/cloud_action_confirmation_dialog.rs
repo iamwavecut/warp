@@ -25,14 +25,15 @@ const BORDER_WIDTH: f32 = 1.;
 const DIALOG_WIDTH: f32 = 450.;
 const CANCEL_TEXT: &str = "Cancel";
 
-const DELETE_TEAM_TITLE_TEXT: &str = "Are you sure you want to delete this team?";
-const LEAVE_TEAM_TITLE_TEXT: &str = "Are you sure you want to leave this team?";
+const DELETE_TEAM_TITLE_TEXT: &str = "Hosted team deletion is disabled";
+const LEAVE_TEAM_TITLE_TEXT: &str = "Hosted team membership is disabled";
 
-const DELETE_TEAM_BODY_TEXT: &str = "Deleting this team will permanently delete it and all of its related content, including billing information or credits. You will not be able to restore them.";
-const LEAVE_TEAM_BODY_TEXT: &str = "You will need to be reinvited in order to rejoin.";
+const DELETE_TEAM_BODY_TEXT: &str =
+    "Team, billing, and hosted workspace management are unavailable in this local-first build.";
+const LEAVE_TEAM_BODY_TEXT: &str = "Team membership is unavailable in this local-first build.";
 
-const DELETE_TEAM_CONFIRM_TEXT: &str = "Yes, delete";
-const LEAVE_TEAM_CONFIRM_TEXT: &str = "Yes, leave";
+const DELETE_TEAM_CONFIRM_TEXT: &str = "Close";
+const LEAVE_TEAM_CONFIRM_TEXT: &str = "Close";
 
 pub enum CloudActionConfirmationDialogEvent {
     Cancel,

@@ -6,12 +6,8 @@ use std::sync::Arc;
 use lazy_static::lazy_static;
 
 fn url_for_font(family_name: &str, font_file: &str) -> String {
-    format!(
-        "{}/assets/client/static/fallback-fonts/{}/{}",
-        ChannelState::server_root_url(),
-        family_name,
-        font_file
-    )
+    let _ = (family_name, font_file);
+    String::new()
 }
 
 lazy_static! {

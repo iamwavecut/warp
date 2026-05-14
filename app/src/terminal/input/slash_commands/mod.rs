@@ -411,20 +411,6 @@ impl Input {
                     origin: AgentViewEntryOrigin::SlashCommand { trigger },
                 });
             }
-            _ if command.name == commands::CLOUD_AGENT.name => {
-                let prompt = argument.and_then(|argument| {
-                    let trimmed = argument.trim();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        Some(trimmed.to_owned())
-                    }
-                });
-
-                ctx.emit(Event::EnterCloudAgentView {
-                    initial_prompt: prompt,
-                });
-            }
             _ if command.name == commands::CREATE_DOCKER_SANDBOX.name => {
                 ctx.emit(Event::CreateDockerSandbox);
             }
@@ -496,19 +482,6 @@ impl Input {
                 };
 
                 ctx.dispatch_typed_action(&WorkspaceAction::SetActiveTabColor(color));
-            }
-            _ if command.name == commands::CREATE_ENVIRONMENT.name => {
-                // If the user included args after the slash command, treat them as repo paths/URLs.
-                let repos = argument
-                    .map(|arg| {
-                        arg.split_whitespace()
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                ctx.emit(Event::TriggerEnvironmentSetup { repos });
             }
             _ if command.name == commands::CREATE_NEW_PROJECT.name => {
                 if argument.is_none_or(|args| args.is_empty()) {
@@ -656,10 +629,7 @@ impl Input {
                 ctx.dispatch_typed_action(&TerminalAction::InitProject);
             }
             _ if command.name == commands::CHANGELOG.name => {
-                if true || !FeatureFlag::Changelog.is_enabled() {
-                    return false;
-                }
-                ctx.dispatch_typed_action(&WorkspaceAction::ViewLatestChangelog);
+                return false;
             }
             _ if command.name == commands::OPEN_CODE_REVIEW.name => {
                 ctx.dispatch_typed_action(&TerminalAction::ToggleCodeReviewPane {
@@ -737,54 +707,10 @@ impl Input {
                 });
             }
             _ if command.name == commands::USAGE.name => {
-                if true {
-                    return false;
-                }
-                ctx.dispatch_typed_action(&TerminalAction::OpenBillingAndUsagePane);
-            }
-            _ if command.name == commands::REMOTE_CONTROL.name => {
-                if !FeatureFlag::CreatingSharedSessions.is_enabled()
-                    || !FeatureFlag::HOARemoteControl.is_enabled()
-                {
-                    return false;
-                }
-                if self
-                    .model
-                    .lock()
-                    .shared_session_status()
-                    .is_sharer_or_viewer()
-                {
-                    show_error_toast("Session is already being shared".to_owned(), ctx);
-                    return true;
-                }
-                ctx.emit(Event::StartRemoteControl);
+                return false;
             }
             _ if command.name == commands::COST.name => {
-                if true {
-                    return false;
-                }
-                let history = BlocklistAIHistoryModel::handle(ctx);
-                let conversation = history
-                    .as_ref(ctx)
-                    .active_conversation(self.terminal_view_id);
-                if conversation.is_none() {
-                    show_error_toast(
-                        "Cannot show conversation cost: no active conversation".to_owned(),
-                        ctx,
-                    );
-                } else if conversation.is_some_and(|c| c.is_empty()) {
-                    show_error_toast(
-                        "Cannot show conversation cost: conversation is empty".to_owned(),
-                        ctx,
-                    );
-                } else if conversation.is_some_and(|c| !c.status().is_done()) {
-                    show_error_toast(
-                        "Cannot show conversation cost: conversation is in progress".to_owned(),
-                        ctx,
-                    );
-                } else {
-                    ctx.dispatch_typed_action(&TerminalAction::ToggleUsageFooter);
-                }
+                return false;
             }
             _ if command.name == commands::FORK.name => {
                 let Some(conversation_id) = self
@@ -999,7 +925,7 @@ impl Input {
         if !self.is_cloud_mode_input_v2_composing(ctx) {
             return false;
         }
-        let Some(view) = self.cloud_mode_v2_slash_commands_view.clone() else {
+        let Some(view) = self.ambient_agent_v2_slash_commands_view.clone() else {
             return false;
         };
         let has_filter = view.as_ref(ctx).has_section_filter();

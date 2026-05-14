@@ -1,7 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
-use instant::Instant;
 use parking_lot::Mutex;
-use persistence::model::{AgentConversationData, ConversationUsageMetadata};
+use persistence::model::AgentConversationData;
 use std::{
     collections::HashMap,
     sync::{
@@ -14,10 +13,7 @@ use warpui::{App, EntityId, ModelHandle, SingletonEntity};
 
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::agent::api::ServerConversationToken;
-use crate::ai::agent::conversation::{
-    AIAgentHarness, AIConversation, AIConversationId, ConversationStatus,
-    ServerAIConversationMetadata,
-};
+use crate::ai::agent::conversation::{AIConversation, AIConversationId, ConversationStatus};
 use crate::ai::ambient_agents::task::{TaskPrincipalInfo, TaskStatusMessage};
 use crate::ai::ambient_agents::AgentConfigSnapshot;
 use crate::ai::ambient_agents::AmbientAgentTaskId;
@@ -28,7 +24,6 @@ use crate::ai::blocklist::history_model::{
 };
 use crate::ai::conversation_navigation::ConversationNavigationData;
 use crate::auth::AuthStateProvider;
-use crate::cloud_object::{Owner, Revision, ServerMetadata, ServerPermissions};
 use crate::server::ids::ServerId;
 use crate::test_util::ai_agent_tasks::{create_api_task, create_message};
 
@@ -38,8 +33,7 @@ use super::entry::{
 use super::{
     AgentConversationsModel, AgentConversationsModelEvent, AgentManagementFilters,
     AgentRunDisplayStatus, ArtifactFilter, ConversationMetadata, ConversationUpdateKind,
-    EnvironmentFilter, HarnessFilter, OwnerFilter, StatusFilter, TaskFetchState,
-    MAX_PERSONAL_TASKS, MAX_TEAM_TASKS,
+    HarnessFilter, OwnerFilter, StatusFilter, MAX_PERSONAL_TASKS, MAX_TEAM_TASKS,
 };
 use crate::ai::ambient_agents::task::HarnessConfig;
 use crate::workspace::WorkspaceAction;
@@ -570,11 +564,7 @@ fn create_test_model() -> AgentConversationsModel {
     AgentConversationsModel {
         tasks: HashMap::new(),
         conversations: HashMap::new(),
-        in_flight_poll_abort_handle: None,
-        next_poll_abort_handle: None,
-        active_data_consumers_per_window: HashMap::new(),
         has_finished_initial_load: false,
-        task_fetch_state: Default::default(),
     }
 }
 
@@ -631,54 +621,6 @@ fn add_entry_projection_test_models(app: &mut App) {
     app.add_singleton_model(|_| ActiveAgentViewsModel::new());
 }
 
-fn mock_server_metadata() -> ServerMetadata {
-    ServerMetadata {
-        uid: ServerId::default(),
-        revision: Revision::now(),
-        metadata_last_updated_ts: Utc::now().into(),
-        trashed_ts: None,
-        folder_id: None,
-        is_welcome_object: false,
-        creator_uid: None,
-        last_editor_uid: None,
-        current_editor_uid: None,
-    }
-}
-
-fn mock_server_permissions() -> ServerPermissions {
-    ServerPermissions {
-        space: Owner::mock_current_user(),
-        guests: Vec::new(),
-        anyone_link_sharing: None,
-        permissions_last_updated_ts: Utc::now().into(),
-    }
-}
-
-fn create_server_conversation_metadata(
-    title: &str,
-    server_token: &str,
-    ambient_agent_task_id: Option<AmbientAgentTaskId>,
-) -> ServerAIConversationMetadata {
-    ServerAIConversationMetadata {
-        title: title.to_string(),
-        working_directory: None,
-        harness: AIAgentHarness::Oz,
-        usage: ConversationUsageMetadata {
-            was_summarized: false,
-            context_window_usage: 0.0,
-            credits_spent: 0.0,
-            credits_spent_for_last_block: None,
-            token_usage: vec![],
-            tool_usage_metadata: Default::default(),
-        },
-        metadata: mock_server_metadata(),
-        permissions: mock_server_permissions(),
-        ambient_agent_task_id,
-        server_conversation_token: ServerConversationToken::new(server_token.to_string()),
-        artifacts: Vec::new(),
-    }
-}
-
 #[test]
 fn test_get_entries_includes_task_only_entry() {
     App::test((), |mut app| async move {
@@ -732,45 +674,6 @@ fn test_get_entries_includes_local_only_entry() {
                 AgentConversationProvenance::LocalInteractive
             );
             assert_eq!(entry.display.title, "Local conversation");
-        });
-    });
-}
-
-#[test]
-fn test_get_entries_includes_cloud_metadata_only_entry() {
-    App::test((), |mut app| async move {
-        let token = "cloud-token-only";
-        add_entry_projection_test_models(&mut app);
-        BlocklistAIHistoryModel::handle(&app).update(&mut app, |model, _| {
-            model.merge_cloud_conversation_metadata(vec![create_server_conversation_metadata(
-                "Cloud conversation",
-                token,
-                None,
-            )]);
-        });
-
-        let model = create_test_model();
-
-        app.update(|ctx| {
-            let entries = model.get_entries(&all_owner_filters(), ctx);
-
-            assert_eq!(entries.len(), 1);
-            let entry = &entries[0];
-            assert_eq!(
-                entry
-                    .identity
-                    .server_conversation_token
-                    .as_ref()
-                    .map(|t| t.as_str()),
-                Some(token)
-            );
-            assert_eq!(
-                entry.provenance,
-                AgentConversationProvenance::CloudSyncedConversation
-            );
-            assert!(entry.backing.has_cloud_data);
-            assert!(!entry.backing.has_loaded_conversation);
-            assert!(!entry.backing.has_local_persisted_data);
         });
     });
 }
@@ -957,7 +860,7 @@ fn test_resolve_open_action_prefers_active_ambient_terminal() {
 }
 
 #[test]
-fn test_resolve_open_action_opens_active_ambient_session() {
+fn test_resolve_open_action_ignores_hosted_ambient_session() {
     App::test((), |mut app| async move {
         add_entry_projection_test_models(&mut app);
 
@@ -985,13 +888,7 @@ fn test_resolve_open_action_opens_active_ambient_session() {
                 ctx,
             );
 
-            assert!(matches!(
-                action,
-                Some(WorkspaceAction::OpenAmbientAgentSession {
-                    session_id: resolved_session_id,
-                    task_id: resolved_task_id,
-                }) if resolved_session_id.to_string() == session_id && resolved_task_id == task_id
-            ));
+            assert!(action.is_none());
         });
     });
 }
@@ -1067,7 +964,7 @@ fn test_resolve_open_action_falls_back_to_local_conversation_for_invalid_session
 }
 
 #[test]
-fn test_resolve_open_action_handles_server_token_subject_without_entry() {
+fn test_resolve_open_action_ignores_unknown_server_token_subject() {
     App::test((), |mut app| async move {
         add_entry_projection_test_models(&mut app);
         app.add_singleton_model(|_| create_test_model());
@@ -1080,19 +977,13 @@ fn test_resolve_open_action_handles_server_token_subject_without_entry() {
                 ctx,
             );
 
-            assert!(matches!(
-                action,
-                Some(WorkspaceAction::OpenConversationTranscriptViewer {
-                    conversation_id,
-                    ambient_agent_task_id: None,
-                }) if conversation_id == server_token
-            ));
+            assert!(action.is_none());
         });
     });
 }
 
 #[test]
-fn test_resolve_open_action_opens_completed_cloud_task_by_server_token() {
+fn test_resolve_open_action_does_not_open_cloud_only_task_by_server_token() {
     App::test((), |mut app| async move {
         add_entry_projection_test_models(&mut app);
 
@@ -1119,62 +1010,7 @@ fn test_resolve_open_action_opens_completed_cloud_task_by_server_token() {
                 ctx,
             );
 
-            assert!(matches!(
-                action,
-                Some(WorkspaceAction::OpenConversationTranscriptViewer {
-                    conversation_id,
-                    ambient_agent_task_id: Some(resolved_task_id),
-                }) if conversation_id.as_str() == token && resolved_task_id == task_id
-            ));
-        });
-    });
-}
-
-#[test]
-fn test_resolve_open_action_opens_metadata_only_cloud_conversation_by_server_token() {
-    App::test((), |mut app| async move {
-        let token = "metadata-only-token";
-        add_entry_projection_test_models(&mut app);
-        BlocklistAIHistoryModel::handle(&app).update(&mut app, |model, _| {
-            model.merge_cloud_conversation_metadata(vec![create_server_conversation_metadata(
-                "Cloud conversation",
-                token,
-                None,
-            )]);
-        });
-        app.add_singleton_model(|_| create_test_model());
-
-        app.update(|ctx| {
-            let entries =
-                AgentConversationsModel::as_ref(ctx).get_entries(&all_owner_filters(), ctx);
-            let entry = entries
-                .iter()
-                .find(|entry| {
-                    entry
-                        .identity
-                        .server_conversation_token
-                        .as_ref()
-                        .is_some_and(|server_token| server_token.as_str() == token)
-                })
-                .expect("metadata-only cloud entry should exist");
-
-            assert!(entry.backing.has_cloud_data);
-            assert!(!entry.backing.has_loaded_conversation);
-            assert!(!entry.backing.has_local_persisted_data);
-
-            let action = AgentConversationsModel::resolve_open_action(
-                AgentConversationNavigationSubject::Entry(entry.id),
-                None,
-                ctx,
-            );
-
-            assert!(matches!(
-                action,
-                Some(WorkspaceAction::OpenConversationTranscriptViewer {
-                    conversation_id,
-                    ambient_agent_task_id: None,
-                }) if conversation_id.as_str() == token
-            ));
+            assert!(action.is_none());
         });
     });
 }
@@ -1214,7 +1050,7 @@ fn test_resolve_copy_link_prefers_active_session_link() {
 }
 
 #[test]
-fn test_resolve_copy_link_uses_cloud_conversation_link_for_inactive_task() {
+fn test_resolve_copy_link_returns_none_for_cloud_only_inactive_task() {
     App::test((), |mut app| async move {
         add_entry_projection_test_models(&mut app);
 
@@ -1237,15 +1073,12 @@ fn test_resolve_copy_link_uses_cloud_conversation_link_for_inactive_task() {
                 ctx,
             );
 
-            assert_eq!(
-                link,
-                Some(ServerConversationToken::new(token.to_string()).conversation_link())
-            );
+            assert_eq!(link, None);
 
             let entry = AgentConversationsModel::as_ref(ctx)
                 .get_entry_by_id(&AgentConversationEntryId::AmbientRun(task_id), ctx)
                 .expect("task entry should exist");
-            assert!(entry.capabilities.can_copy_link);
+            assert!(!entry.capabilities.can_copy_link);
         });
     });
 }
@@ -1373,16 +1206,13 @@ fn test_server_token_assignment_updates_copy_link_resolution() {
                 )),
                 ctx,
             );
-            assert_eq!(
-                link,
-                Some(ServerConversationToken::new(token.to_string()).conversation_link())
-            );
+            assert_eq!(link, None);
         });
     });
 }
 
 #[test]
-fn test_resolve_open_action_reopens_ambient_session_after_terminal_unregister() {
+fn test_resolve_open_action_does_not_reopen_hosted_ambient_session_after_terminal_unregister() {
     App::test((), |mut app| async move {
         add_entry_projection_test_models(&mut app);
 
@@ -1434,19 +1264,13 @@ fn test_resolve_open_action_reopens_ambient_session_after_terminal_unregister() 
                 ctx,
             );
 
-            assert!(matches!(
-                action,
-                Some(WorkspaceAction::OpenAmbientAgentSession {
-                    session_id: resolved_session_id,
-                    task_id: resolved_task_id,
-                }) if resolved_session_id.to_string() == session_id && resolved_task_id == task_id
-            ));
+            assert!(action.is_none());
         });
     });
 }
 
 #[test]
-fn test_resolve_copy_link_uses_attached_synced_conversation_for_task_without_token() {
+fn test_resolve_copy_link_ignores_attached_synced_conversation_token_for_task_without_token() {
     App::test((), |mut app| async move {
         let _orchestration_v2_guard = FeatureFlag::OrchestrationV2.override_enabled(true);
         add_entry_projection_test_models(&mut app);
@@ -1500,15 +1324,12 @@ fn test_resolve_copy_link_uses_attached_synced_conversation_for_task_without_tok
                 ctx,
             );
 
-            assert_eq!(
-                link,
-                Some(ServerConversationToken::new(token.to_string()).conversation_link())
-            );
+            assert_eq!(link, None);
 
             let entry = AgentConversationsModel::as_ref(ctx)
                 .get_entry_by_id(&AgentConversationEntryId::AmbientRun(task_id), ctx)
                 .expect("task entry should exist");
-            assert!(entry.capabilities.can_copy_link);
+            assert!(!entry.capabilities.can_copy_link);
             assert_eq!(entry.identity.local_conversation_id, Some(conversation_id));
         });
     });
@@ -1662,57 +1483,6 @@ fn test_eviction_noop_when_under_cap() {
         original_count,
         "no tasks should be evicted when under cap"
     );
-}
-
-#[test]
-fn test_environment_none_filter_includes_conversations() {
-    App::test((), |mut app| async move {
-        add_entry_projection_test_models(&mut app);
-
-        let now = Utc::now();
-        let mut model = create_test_model();
-
-        let task_no_env = create_test_task(&make_uuid(1), "user-a", now);
-        model.tasks.insert(task_no_env.task_id, task_no_env.clone());
-
-        let mut task_with_env = create_test_task(&make_uuid(2), "user-b", now);
-        task_with_env.agent_config_snapshot = Some(AgentConfigSnapshot {
-            environment_id: Some("env_123".to_string()),
-            ..Default::default()
-        });
-        model
-            .tasks
-            .insert(task_with_env.task_id, task_with_env.clone());
-
-        let conversation_id = AIConversationId::new();
-        model.conversations.insert(
-            conversation_id,
-            create_test_conversation_metadata(conversation_id, "Test conversation"),
-        );
-
-        let filters = AgentManagementFilters {
-            owners: OwnerFilter::All,
-            environment: EnvironmentFilter::NoEnvironment,
-            ..Default::default()
-        };
-
-        app.update(|ctx| {
-            let entries = model.get_entries(&filters, ctx);
-
-            assert!(entries
-                .iter()
-                .any(|entry| entry.id == AgentConversationEntryId::Conversation(conversation_id)));
-            assert!(
-                entries
-                    .iter()
-                    .any(|entry| entry.id
-                        == AgentConversationEntryId::AmbientRun(task_no_env.task_id))
-            );
-            assert!(!entries.iter().any(
-                |entry| entry.id == AgentConversationEntryId::AmbientRun(task_with_env.task_id)
-            ));
-        });
-    })
 }
 
 #[test]
@@ -2022,9 +1792,6 @@ fn test_harness_filter_is_filtering_and_reset() {
 
 #[test]
 fn test_get_or_async_fetch_task_data_returns_cached_task_without_fetching() {
-    // If the task is already in `tasks`, return it directly and don't touch the fetch-state
-    // map — even if a stale `PermanentlyFailedAt` entry exists (which shouldn't normally happen,
-    // but proves the success path takes precedence).
     App::test((), |mut app| async move {
         let now = Utc::now();
         let task = create_test_task(&make_uuid(7000), "user-a", now);
@@ -2033,10 +1800,6 @@ fn test_get_or_async_fetch_task_data_returns_cached_task_without_fetching() {
         let model_handle = app.add_singleton_model(|_| {
             let mut model = create_test_model();
             model.tasks.insert(task_id, task.clone());
-            // Sentinel: even if a permanent-failure entry is present, the cached task wins.
-            model
-                .task_fetch_state
-                .insert(task_id, TaskFetchState::PermanentlyFailedAt(Instant::now()));
             model
         });
 
@@ -2045,103 +1808,6 @@ fn test_get_or_async_fetch_task_data_returns_cached_task_without_fetching() {
         });
 
         assert!(result.is_some(), "cached task should be returned");
-        model_handle.update(&mut app, |model, _| {
-            // The cached-hit fast path doesn't touch `task_fetch_state`, so the sentinel
-            // entry is left as-is and (importantly) no `InFlight` entry was added.
-            assert!(matches!(
-                model.task_fetch_state.get(&task_id),
-                Some(TaskFetchState::PermanentlyFailedAt(_))
-            ));
-        });
-    });
-}
-
-#[test]
-fn test_get_or_async_fetch_task_data_skips_when_permanently_failed() {
-    // A task id marked as `PermanentlyFailedAt` within its cooldown (e.g. very recent 403) must
-    // not spawn a new fetch.
-    App::test((), |mut app| async move {
-        let task_id: AmbientAgentTaskId = make_uuid(7001).parse().unwrap();
-
-        let model_handle = app.add_singleton_model(|_| {
-            let mut model = create_test_model();
-            model
-                .task_fetch_state
-                .insert(task_id, TaskFetchState::PermanentlyFailedAt(Instant::now()));
-            model
-        });
-
-        let result = model_handle.update(&mut app, |model, ctx| {
-            model.get_or_async_fetch_task_data(&task_id, ctx)
-        });
-
-        assert!(result.is_none());
-        model_handle.update(&mut app, |model, _| {
-            // The state is unchanged — still permanently failed, no in-flight upgrade.
-            assert!(matches!(
-                model.task_fetch_state.get(&task_id),
-                Some(TaskFetchState::PermanentlyFailedAt(_))
-            ));
-        });
-    });
-}
-
-#[test]
-fn test_get_or_async_fetch_task_data_skips_when_in_flight() {
-    // A task id already marked as `InFlight` must not spawn a duplicate fetch.
-    App::test((), |mut app| async move {
-        let task_id: AmbientAgentTaskId = make_uuid(7002).parse().unwrap();
-
-        let model_handle = app.add_singleton_model(|_| {
-            let mut model = create_test_model();
-            model
-                .task_fetch_state
-                .insert(task_id, TaskFetchState::InFlight);
-            model
-        });
-
-        let result = model_handle.update(&mut app, |model, ctx| {
-            model.get_or_async_fetch_task_data(&task_id, ctx)
-        });
-
-        assert!(result.is_none());
-        model_handle.update(&mut app, |model, _| {
-            // Still exactly the one in-flight entry we pre-seeded.
-            assert_eq!(model.task_fetch_state.len(), 1);
-            assert!(matches!(
-                model.task_fetch_state.get(&task_id),
-                Some(TaskFetchState::InFlight)
-            ));
-        });
-    });
-}
-
-#[test]
-fn test_get_or_async_fetch_task_data_skips_within_transient_cooldown() {
-    // A recent transient failure (timestamp younger than the cooldown) must short-circuit.
-    App::test((), |mut app| async move {
-        let task_id: AmbientAgentTaskId = make_uuid(7003).parse().unwrap();
-
-        let model_handle = app.add_singleton_model(|_| {
-            let mut model = create_test_model();
-            model
-                .task_fetch_state
-                .insert(task_id, TaskFetchState::TransientlyFailedAt(Instant::now()));
-            model
-        });
-
-        let result = model_handle.update(&mut app, |model, ctx| {
-            model.get_or_async_fetch_task_data(&task_id, ctx)
-        });
-
-        assert!(result.is_none());
-        model_handle.update(&mut app, |model, _| {
-            // The transient entry is preserved (no upgrade to in-flight).
-            assert!(matches!(
-                model.task_fetch_state.get(&task_id),
-                Some(TaskFetchState::TransientlyFailedAt(_))
-            ));
-        });
     });
 }
 

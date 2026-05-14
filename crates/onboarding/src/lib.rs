@@ -28,19 +28,13 @@ pub use callout::{OnboardingCalloutView, OnboardingKeybindings};
 /// skip-login confirmation dialog so the two always stay in sync.
 pub const AI_FEATURES: &[&str] = &[
     "Warp agents",
-    "Oz cloud agents platform",
+    "Local/BYOK agent execution",
     "Next command predictions",
     "Prompt suggestions",
     "Codebase context",
     "Remote control with Claude Code, Codex, and other agents",
     "Agents over SSH",
 ];
-
-/// User-facing names of the Warp Drive features enabled when the terminal
-/// intention is selected with Warp Drive turned on. Shared by the login slide's
-/// skip-login confirmation dialog so the list stays in sync with any future
-/// surfaces that need it.
-pub const WARP_DRIVE_FEATURES: &[&str] = &["Warp Drive", "Session Sharing"];
 
 pub mod components;
 mod visuals;
@@ -64,7 +58,7 @@ impl std::fmt::Display for SessionDefault {
 }
 
 pub use agent_onboarding_view::{AgentOnboardingAction, AgentOnboardingEvent, AgentOnboardingView};
-pub use model::{OnboardingAuthState, SelectedSettings, UICustomizationSettings};
+pub use model::{SelectedSettings, UICustomizationSettings};
 pub use slides::ProjectOnboardingSettings;
 
 pub fn init(app: &mut warpui::AppContext) {

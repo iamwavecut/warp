@@ -1,4 +1,3 @@
-use std::borrow::Cow;
 use std::fs::File;
 use std::path::PathBuf;
 
@@ -17,7 +16,6 @@ use crate::terminal::settings::{SpacingMode, TerminalSettings};
 use crate::undo_close::UndoCloseStack;
 use crate::user_config::WarpConfig;
 use crate::util::bindings::{self, trigger_to_keystroke, CustomAction};
-use crate::util::links;
 use crate::workspace::sync_inputs::SyncedInputState;
 use ai::workspace::WorkspaceMetadata;
 use csv::Writer;
@@ -178,12 +176,6 @@ fn make_new_app_menu(ctx: &AppContext) -> Menu {
     {
         menu_items.push(MenuItem::Services);
     }
-
-    menu_items.push(MenuItem::Separator);
-    menu_items.push(link_menu_item(
-        "Privacy Policy...",
-        links::PRIVACY_POLICY_URL.into(),
-    ));
 
     let debug_menu_items = debug_menu_items();
     if !debug_menu_items.is_empty() {
@@ -353,13 +345,6 @@ fn make_new_edit_menu(ctx: &AppContext) -> Menu {
 
 fn make_new_view_menu(ctx: &AppContext) -> Menu {
     let mut items = vec![];
-    if false {
-        items.extend([
-            updateable_custom_item_without_checkmark(CustomAction::ToggleWarpDrive, ctx),
-            MenuItem::Separator,
-        ]);
-    }
-
     items.extend([
         updateable_custom_item_without_checkmark(CustomAction::CommandPalette, ctx),
         updateable_custom_item_without_checkmark(CustomAction::NavigationPalette, ctx),
@@ -546,13 +531,6 @@ fn make_new_blocks_menu(ctx: &AppContext) -> Menu {
         CustomAction::ScrollToBottomOfSelectedBlocks,
         ctx,
     ));
-    items.push(MenuItem::Separator);
-    if false {
-        items.extend([
-            updateable_custom_item_without_checkmark(CustomAction::CreateBlockPermalink, ctx),
-            non_updateable_custom_item(CustomAction::ViewSharedBlocks, ctx),
-        ]);
-    }
     items.extend([
         updateable_custom_item_without_checkmark(CustomAction::ToggleBookmarkBlock, ctx),
         updateable_custom_item_without_checkmark(CustomAction::FindWithinBlock, ctx),
@@ -583,36 +561,11 @@ fn make_new_drive_menu(ctx: &AppContext) -> Menu {
     ));
     items.extend([
         MenuItem::Separator,
-        updateable_custom_item_without_checkmark(CustomAction::NewTeamWorkflow, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::NewTeamNotebook, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::NewTeamAIPrompt, ctx),
-    ]);
-    items.push(updateable_custom_item_without_checkmark(
-        CustomAction::NewTeamEnvVars,
-        ctx,
-    ));
-    items.extend([
-        MenuItem::Separator,
-        updateable_custom_item_without_checkmark(CustomAction::ToggleWarpDrive, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::SearchDrive, ctx),
-        updateable_custom_item_without_checkmark(CustomAction::OpenTeamSettings, ctx),
         updateable_custom_item_without_checkmark(CustomAction::OpenAIFactCollection, ctx),
         updateable_custom_item_without_checkmark(CustomAction::OpenMCPServerCollection, ctx),
     ]);
 
-    items.push(updateable_custom_item_without_checkmark(
-        CustomAction::SharePaneContents,
-        ctx,
-    ));
-
-    if FeatureFlag::CreatingSharedSessions.is_enabled() {
-        items.extend([
-            MenuItem::Separator,
-            updateable_custom_item_without_checkmark(CustomAction::ShareCurrentSession, ctx),
-        ])
-    }
-
-    Menu::new("Drive", items)
+    Menu::new("Local Library", items)
 }
 
 /// Returns [`MenuItem`]s that aid debugging to be included in the Block menu.
@@ -875,24 +828,8 @@ fn debug_menu_items() -> Vec<MenuItem> {
     debug_menu_items
 }
 
-fn link_menu_item(title: &'static str, link: Cow<'static, str>) -> MenuItem {
-    MenuItem::Custom(CustomMenuItem::new(
-        title,
-        move |ctx| {
-            ctx.open_url(&link);
-        },
-        no_updates,
-        None,
-    ))
-}
-
 fn make_new_help_menu() -> Menu {
-    let items = vec![
-        link_menu_item("Warp Documentation...", links::USER_DOCS_URL.into()),
-        link_menu_item("GitHub Issues...", links::GITHUB_ISSUES_URL.into()),
-    ];
-
-    Menu::new("Help", items)
+    Menu::new("Help", Vec::new())
 }
 
 fn make_launch_config_menu_items(ctx: &mut AppContext) -> Vec<MenuItem> {

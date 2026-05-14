@@ -3,7 +3,6 @@ use std::borrow::Cow;
 use cynic::{GraphQlResponse, QueryFragment, QueryVariables};
 use http::StatusCode;
 use instant::Duration;
-use reqwest::header::CONTENT_TYPE;
 use serde::{de::DeserializeOwned, Serialize};
 use warp_core::{channel::ChannelState, operating_system_info::OperatingSystemInfo};
 
@@ -42,9 +41,6 @@ pub enum GraphQLError {
     /// Encountered an error while sending the request.
     #[error("error sending request")]
     RequestError(#[source] reqwest::Error),
-    /// Not authorized to talk to the staging server.
-    #[error("not authorized for staging")]
-    StagingAccessBlocked,
     #[error("received non-OK response code {status}")]
     HttpError { status: StatusCode, body: String },
     #[error("Failed to deserialize GraphQL response: {0:?}")]
@@ -63,10 +59,7 @@ pub struct RequestOptions {
     pub path_prefix: Option<String>,
 }
 
-pub(crate) struct Request {
-    req: http_client::Request,
-    operation_name: String,
-}
+pub(crate) struct Request;
 
 /// Builds a [`Request`] that can be sent using [`send_graphql_request`].
 pub(crate) fn build_graphql_request<Q, V>(
@@ -78,35 +71,8 @@ where
     Q: QueryFragment + DeserializeOwned,
     V: QueryVariables + Serialize,
 {
-    let operation_name = operation
-        .operation_name
-        .clone()
-        .map(Cow::into_owned)
-        .unwrap_or_default();
-
-    let graphql_endpoint = format!(
-        "{}{}/graphql/v2?op={}",
-        ChannelState::server_root_url(),
-        options.path_prefix.unwrap_or_default(),
-        &operation_name
-    );
-
-    let mut req = client.post(&graphql_endpoint).json(&operation);
-
-    if let Some(auth_token) = options.auth_token {
-        req = req.bearer_auth(auth_token);
-    }
-    if let Some(timeout) = options.timeout {
-        req = req.timeout(timeout);
-    }
-    for (header, value) in options.headers {
-        req = req.header(header, value);
-    }
-
-    Ok(Request {
-        req: req.build()?,
-        operation_name,
-    })
+    let _ = (client, operation, options);
+    Ok(Request)
 }
 
 /// Sends a [`Request`] to the server and returns the response.
@@ -117,44 +83,11 @@ pub(crate) async fn send_graphql_request<Q>(
 where
     Q: QueryFragment + DeserializeOwned,
 {
-    let Request {
-        req,
-        operation_name,
-    } = req;
-
-    let response = client
-        .execute(req)
-        .await
-        .map_err(GraphQLError::RequestError)?;
-
-    match response.status() {
-        StatusCode::OK => {
-            log::debug!("{operation_name} request to /graphql/v2 succeeded.");
-        }
-        status_code => {
-            if status_code == StatusCode::FORBIDDEN && ChannelState::uses_staging_server() {
-                // Both our server and Cloud Armor can send back HTTP 403 errors.
-                // Since Cloud Armor sends back an HTML error page, check for that to determine
-                // if we were blocked by the staging allowlist.
-                let is_html = response
-                    .headers()
-                    .get(CONTENT_TYPE)
-                    .and_then(|v| v.to_str().ok())
-                    .is_some_and(|v| v.contains("text/html"));
-
-                if is_html {
-                    return Err(GraphQLError::StagingAccessBlocked);
-                }
-            }
-            let payload = response.text().await.unwrap_or_default();
-            return Err(GraphQLError::HttpError {
-                status: status_code,
-                body: payload,
-            });
-        }
-    }
-
-    response.json().await.map_err(GraphQLError::ResponseError)
+    let _ = (client, req);
+    Err(GraphQLError::HttpError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        body: "Warp GraphQL backend is disabled in this local-first build".to_string(),
+    })
 }
 
 /// Returns a [`RequestContext`] pre-populated as appropriate for the current client.

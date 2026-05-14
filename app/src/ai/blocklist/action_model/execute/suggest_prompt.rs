@@ -1,5 +1,4 @@
 use futures::{channel::oneshot, future::BoxFuture, FutureExt};
-use warp_core::features::FeatureFlag;
 use warpui::{Entity, ModelContext};
 
 use crate::{
@@ -53,15 +52,10 @@ impl PromptSuggestionExecutor {
             return ActionExecution::InvalidAction;
         };
 
-        if FeatureFlag::PromptSuggestionsViaMAA.is_enabled() {
-            if let SuggestPromptRequest::PromptSuggestion { prompt, label } = request {
-                ctx.emit(PromptSuggestionExecutorEvent::NewPromptSuggestion {
-                    prompt: prompt.clone(),
-                    label: label.clone(),
-                    conversation_id: input.conversation_id,
-                    action_id: input.action.id.clone(),
-                });
-            }
+        if matches!(request, SuggestPromptRequest::PromptSuggestion { .. }) {
+            return ActionExecution::Sync(AIAgentActionResultType::SuggestPrompt(
+                SuggestPromptResult::Cancelled,
+            ));
         }
 
         let (result_tx, result_rx) = oneshot::channel();

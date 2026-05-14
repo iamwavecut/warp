@@ -65,15 +65,15 @@ impl From<&DestructiveMCPConfirmationDialogVariant>
                 "Cancel".to_string(),
             ),
             DestructiveMCPConfirmationDialogVariant::DeleteShared => DestructiveMCPConfirmationDialogDisplayOptions::new(
-                "Delete shared MCP server?".to_string(),
-                "This will not only delete this MCP server for yourself, but also uninstall and remove this MCP server from Warp and across all of your teammates' devices.".to_string(),
+                "Delete imported MCP server?".to_string(),
+                "This will uninstall and remove this MCP server from this local profile. Hosted team removal is disabled in this build.".to_string(),
                 "Delete MCP".to_string(),
                 "Cancel".to_string(),
             ),
             DestructiveMCPConfirmationDialogVariant::Unshare => DestructiveMCPConfirmationDialogDisplayOptions::new(
-                "Remove shared MCP server from team?".to_string(),
-                "This will uninstall and remove this MCP server from Warp and across all of your teammates' devices.".to_string(),
-                "Remove from team".to_string(),
+                "Remove hosted MCP sharing?".to_string(),
+                "Hosted MCP sharing is disabled in this local-first build. This only affects the local profile.".to_string(),
+                "Remove locally".to_string(),
                 "Cancel".to_string(),
             ),
         }

@@ -150,46 +150,15 @@ impl TerminalView {
         self.update_agent_view_pane_header(ctx);
     }
 
-    /// Returns the shareable object for the active agent view conversation, if any.
+    /// Returns the shareable object for active local shared sessions, if any.
     fn agent_view_shareable_object(&self, ctx: &ViewContext<Self>) -> Option<ShareableObject> {
-        // Only set shareable object if CloudConversations feature is enabled
-        if !FeatureFlag::CloudConversations.is_enabled() {
-            return None;
-        }
-
-        // If we're in a shared session, prioritize this to share.
-        if let Some(shared_session) = &self.shared_session {
-            return Some(ShareableObject::Session {
+        self.shared_session
+            .as_ref()
+            .map(|shared_session| ShareableObject::Session {
                 handle: ctx.handle(),
                 session_id: *shared_session.session_id(),
                 started_at: *shared_session.started_at(),
-            });
-        }
-
-        // Check if agent view is active
-        let conversation_id = self
-            .agent_view_controller
-            .as_ref(ctx)
-            .agent_view_state()
-            .active_conversation_id()?;
-
-        // Don't show share button for empty conversations
-        let conversation = BlocklistAIHistoryModel::as_ref(ctx).conversation(&conversation_id)?;
-        if conversation.is_empty() {
-            return None;
-        }
-        let exchange_count = conversation.exchange_count();
-        // If there's only one exchange, make sure it's completed (not still streaming)
-        if exchange_count == 1 {
-            if let Some(latest_exchange) = conversation.latest_exchange() {
-                if latest_exchange.output_status.is_streaming() {
-                    return None;
-                }
-            }
-        }
-
-        // Return the ShareableObject with the conversation ID
-        Some(ShareableObject::AIConversation(conversation_id))
+            })
     }
 
     /// Updates the pane header's shareable object based on agent view state.
@@ -647,18 +616,10 @@ impl BackingView for TerminalView {
         let mut items = vec![];
         let source = SharedSessionActionSource::PaneHeader;
 
-        // Shared-session related items.
+        // Hosted shared-session entry points are disabled in this local-first fork.
         let shared_session_status = model.shared_session_status();
         let is_ambient_agent = self.is_ambient_agent_session(ctx);
         if shared_session_status.is_sharer_or_viewer() {
-            if !is_ambient_agent {
-                items.push(
-                    MenuItemFields::new("Copy link")
-                        .with_on_select_action(TerminalAction::CopySharedSessionLink { source })
-                        .into_item(),
-                );
-            }
-
             if shared_session_status.is_sharer() {
                 items.push(
                     MenuItemFields::new("Stop sharing session")
@@ -666,28 +627,6 @@ impl BackingView for TerminalView {
                         .into_item(),
                 );
             }
-            if !ContextFlag::HideOpenOnDesktopButton.is_enabled()
-                && *UserAppInstallDetectionSettings::as_ref(ctx)
-                    .user_app_installation_detected
-                    .value()
-                    == UserAppInstallStatus::Detected
-            {
-                items.push(
-                    MenuItemFields::new("Open on Desktop")
-                        .with_on_select_action(TerminalAction::OpenSharedSessionOnDesktop {
-                            source,
-                        })
-                        .into_item(),
-                );
-            }
-        } else if FeatureFlag::CreatingSharedSessions.is_enabled()
-            && ContextFlag::CreateSharedSession.is_enabled()
-        {
-            items.push(
-                MenuItemFields::new("Share session")
-                    .with_on_select_action(TerminalAction::OpenShareSessionModal { source })
-                    .into_item(),
-            );
         }
 
         // Split-pane related items.
@@ -1059,7 +998,7 @@ impl TerminalView {
 
 fn default_agent_conversation_title(is_ambient_agent: bool) -> String {
     if is_ambient_agent {
-        "New cloud agent".to_owned()
+        "New agent workspace".to_owned()
     } else {
         "New agent conversation".to_owned()
     }

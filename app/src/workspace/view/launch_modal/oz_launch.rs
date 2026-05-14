@@ -10,10 +10,10 @@ use warpui::SingletonEntity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OzLaunchSlide {
-    CloudAgents,
+    LocalAgents,
     AgentAutomations,
     AgentManagement,
-    LaunchCredits,
+    LocalFirst,
 }
 
 impl Slide for OzLaunchSlide {
@@ -24,61 +24,59 @@ impl Slide for OzLaunchSlide {
     fn modal_subtext_paragraphs(&self) -> Vec<FormattedTextLine> {
         vec![FormattedTextLine::Line(vec![
             FormattedTextFragment::plain_text(
-                "Infinitely scalable coding agent — run in local sessions or in the cloud.",
+                "Local-first coding agents for your sessions, tools, and custom providers.",
             ),
         ])]
     }
 
     fn first() -> Self {
-        OzLaunchSlide::CloudAgents
+        OzLaunchSlide::LocalAgents
     }
 
     fn next(&self) -> Option<Self> {
         match self {
-            OzLaunchSlide::CloudAgents => Some(OzLaunchSlide::AgentAutomations),
+            OzLaunchSlide::LocalAgents => Some(OzLaunchSlide::AgentAutomations),
             OzLaunchSlide::AgentAutomations => Some(OzLaunchSlide::AgentManagement),
-            OzLaunchSlide::AgentManagement => Some(OzLaunchSlide::LaunchCredits),
-            OzLaunchSlide::LaunchCredits => None,
+            OzLaunchSlide::AgentManagement => Some(OzLaunchSlide::LocalFirst),
+            OzLaunchSlide::LocalFirst => None,
         }
     }
 
     fn prev(&self) -> Option<Self> {
         match self {
-            OzLaunchSlide::CloudAgents => None,
-            OzLaunchSlide::AgentAutomations => Some(OzLaunchSlide::CloudAgents),
+            OzLaunchSlide::LocalAgents => None,
+            OzLaunchSlide::AgentAutomations => Some(OzLaunchSlide::LocalAgents),
             OzLaunchSlide::AgentManagement => Some(OzLaunchSlide::AgentAutomations),
-            OzLaunchSlide::LaunchCredits => Some(OzLaunchSlide::AgentManagement),
+            OzLaunchSlide::LocalFirst => Some(OzLaunchSlide::AgentManagement),
         }
     }
 
     fn display_text(&self) -> Option<&'static str> {
         Some(match self {
-            OzLaunchSlide::CloudAgents => "Cloud agents",
+            OzLaunchSlide::LocalAgents => "Local agents",
             OzLaunchSlide::AgentAutomations => "Agent automations",
             OzLaunchSlide::AgentManagement => "Agent management",
-            OzLaunchSlide::LaunchCredits => "A little gift",
+            OzLaunchSlide::LocalFirst => "Local-first",
         })
     }
 
     fn short_label(&self) -> &'static str {
         match self {
-            OzLaunchSlide::CloudAgents => "Cloud agents",
+            OzLaunchSlide::LocalAgents => "Local agents",
             OzLaunchSlide::AgentAutomations => "Agent automations",
             OzLaunchSlide::AgentManagement => "Agent management",
-            OzLaunchSlide::LaunchCredits => "Launch credits",
+            OzLaunchSlide::LocalFirst => "Local-first",
         }
     }
 
     fn title(&self) -> &'static str {
         match self {
-            OzLaunchSlide::CloudAgents => "Break out of your laptop with cloud agents",
+            OzLaunchSlide::LocalAgents => "Run agents in your local workspace",
             OzLaunchSlide::AgentAutomations => {
                 "Orchestrate agents, turning Skills into automations"
             }
-            OzLaunchSlide::AgentManagement => "Track local and cloud agents seamlessly",
-            OzLaunchSlide::LaunchCredits => {
-                "1,000 free cloud agent credits when you upgrade to Warp Build"
-            }
+            OzLaunchSlide::AgentManagement => "Track local agents seamlessly",
+            OzLaunchSlide::LocalFirst => "Bring your own model provider",
         }
     }
 
@@ -88,17 +86,17 @@ impl Slide for OzLaunchSlide {
 
     fn content(&self) -> &'static str {
         match self {
-            OzLaunchSlide::CloudAgents => {
-                "Use cloud agents to run many agents in parallel, keep agents working when you close your laptop, or start agents programmatically. Plus, you can check on their work through the web."
+            OzLaunchSlide::LocalAgents => {
+                "Use agents from your own sessions with local tools, MCP, and custom OpenAI-compatible providers."
             }
             OzLaunchSlide::AgentAutomations => {
-                "Oz agents can be defined using the standard Skills format. You can use the built in scheduler to setup agents to run autonomously at set intervals, or use the Oz SDK or API to programmatically start and manage Oz agents."
+                "Oz agents can be defined using the standard Skills format and launched locally from the app."
             }
             OzLaunchSlide::AgentManagement => {
                 "View local agent sessions in Warp, continue tasks locally, and steer agents with one click."
             }
-            OzLaunchSlide::LaunchCredits => {
-                "Upgrade to Build this month and receive 1,000 extra credits to try using Oz. Credits are only eligible for Oz runs in Warp-hosted cloud environments."
+            OzLaunchSlide::LocalFirst => {
+                "Configure BYOK or an OpenAI-compatible endpoint and keep agent execution tied to this machine."
             }
         }
     }
@@ -106,7 +104,7 @@ impl Slide for OzLaunchSlide {
     fn image(&self) -> AssetSource {
         // TODO: Replace with new images once provided.
         match self {
-            OzLaunchSlide::CloudAgents => {
+            OzLaunchSlide::LocalAgents => {
                 bundled_or_fetched_asset!("png/oz_cloud_agents.png")
             }
             OzLaunchSlide::AgentAutomations => {
@@ -115,7 +113,7 @@ impl Slide for OzLaunchSlide {
             OzLaunchSlide::AgentManagement => {
                 bundled_or_fetched_asset!("png/oz_agent_management.png")
             }
-            OzLaunchSlide::LaunchCredits => {
+            OzLaunchSlide::LocalFirst => {
                 bundled_or_fetched_asset!("png/oz_launch_credits.png")
             }
         }
@@ -123,37 +121,37 @@ impl Slide for OzLaunchSlide {
 
     fn all() -> Vec<Self> {
         vec![
-            OzLaunchSlide::CloudAgents,
+            OzLaunchSlide::LocalAgents,
             OzLaunchSlide::AgentAutomations,
             OzLaunchSlide::AgentManagement,
-            OzLaunchSlide::LaunchCredits,
+            OzLaunchSlide::LocalFirst,
         ]
     }
 
     fn cta_button(&self) -> CTAButton<Self> {
         match self {
-            OzLaunchSlide::CloudAgents
+            OzLaunchSlide::LocalAgents
             | OzLaunchSlide::AgentAutomations
             | OzLaunchSlide::AgentManagement => {
                 let next = self.next().expect("Non-final slides should have a next");
                 CTAButton::next_slide(next, format!("Next: {}", next.short_label()))
             }
-            OzLaunchSlide::LaunchCredits => CTAButton::custom("Try it out", |ctx| {
+            OzLaunchSlide::LocalFirst => CTAButton::custom("Try it out", |ctx| {
                 ctx.emit(LaunchModalEvent::Close);
                 ctx.dispatch_typed_action(&WorkspaceAction::StartAgentOnboardingTutorial(
                     OnboardingTutorial::NoProject {
                         intention: OnboardingIntention::AgentDrivenDevelopment,
                     },
                 ));
-                ctx.dispatch_typed_action(&WorkspaceAction::AddAmbientAgentTab);
+                ctx.dispatch_typed_action(&WorkspaceAction::AddAgentTab);
             }),
         }
     }
 
     fn secondary_cta_button(&self) -> Option<CTAButton<Self>> {
         match self {
-            OzLaunchSlide::LaunchCredits => Some(CTAButton::close("Skip for now")),
-            OzLaunchSlide::CloudAgents
+            OzLaunchSlide::LocalFirst => Some(CTAButton::close("Skip for now")),
+            OzLaunchSlide::LocalAgents
             | OzLaunchSlide::AgentAutomations
             | OzLaunchSlide::AgentManagement => None,
         }

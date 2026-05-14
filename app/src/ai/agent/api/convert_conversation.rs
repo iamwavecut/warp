@@ -1,6 +1,6 @@
-//! Conversions from MAA API types to application types, for loading and restoring conversations.
+//! Conversions from agent wire types to application types, for loading and restoring conversations.
 //! Contains logic necessary for converting proto tasks to application exchanges and conversations.
-//! Whenever adding new MAA types, conversions here must be updated for restoration and loading to work.
+//! Whenever adding new agent wire types, conversions here must be updated for restoration and loading to work.
 //! If some UI state is stored in the client, it needs to also be represented in the proto tasks somehow so it can be restored.
 //! Some conversions may be lossy if it's not important to recover that UI state.
 

@@ -34,7 +34,6 @@ use crate::workspaces::user_workspaces::UserWorkspaces;
 use chrono::Utc;
 use parking_lot::FairMutex;
 use serde_json::json;
-use warp_core::features::FeatureFlag;
 use warpui::r#async::{FutureExt as AsyncFutureExt, SpawnedFutureHandle, Timer};
 use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
@@ -158,10 +157,6 @@ impl PassiveSuggestionsModel {
                 self.abort_pending_requests(ctx);
             }
             ModelEvent::AfterBlockCompleted(after_block_completed_event) => {
-                if FeatureFlag::PromptSuggestionsViaMAA.is_enabled() {
-                    self.abort_pending_requests(ctx);
-                    return;
-                }
                 let BlockType::User(block_completed) = &after_block_completed_event.block_type
                 else {
                     return;
@@ -221,19 +216,6 @@ impl PassiveSuggestionsModel {
         }
 
         self.abort_pending_requests(ctx);
-
-        // Startup commands run while bootstrapping an Oz cloud environment, so we skip
-        // passive prompt suggestion generation for them to avoid unnecessary requests.
-        let is_oz_environment_startup_command = FeatureFlag::CloudModeSetupV2.is_enabled()
-            && self
-                .terminal_model
-                .lock()
-                .block_list()
-                .block_at(block_completed.index)
-                .is_some_and(|block| block.is_oz_environment_startup_command());
-        if is_oz_environment_startup_command {
-            return;
-        }
 
         if should_generate_unit_test_suggestion(block_completed, ctx) {
             self.generate_unit_test_suggestion(block_completed.clone(), ctx);

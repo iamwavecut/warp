@@ -123,10 +123,7 @@ impl Team {
     }
 
     pub fn is_multi_admin_enabled(&self) -> bool {
-        self.billing_metadata
-            .tier
-            .multi_admin_policy
-            .is_some_and(|policy| policy.enabled)
+        true
     }
 
     pub fn has_admin_permissions(&self, user_email: &str) -> bool {
@@ -148,9 +145,6 @@ impl Team {
                 .is_none_or(|m| m.email != current_user_email)
         {
             return Some(TeamDeleteDisabledReason::OtherMembers);
-        }
-        if self.billing_metadata.is_user_on_paid_plan() {
-            return Some(TeamDeleteDisabledReason::ActivePaidSubscription);
         }
         if remaining_workspace_credits > 0 {
             return Some(TeamDeleteDisabledReason::RemainingBonusCredits);

@@ -22,7 +22,7 @@ use warpui::r#async::executor;
 ///
 /// Delegates to `run_internal` with `LaunchMode::RemoteServerDaemon`.
 /// All initialization (feature flags, profiling, logging, resource limits,
-/// TLS, `initialize_app`, crash reporting) is handled by `run_internal`.
+/// TLS, `initialize_app`) is handled by `run_internal`.
 /// The daemon-specific socket binding and `ServerModel` registration
 /// happen in [`launch_daemon`], called from `launch()`.
 pub fn run_daemon(identity_key: String) -> anyhow::Result<()> {

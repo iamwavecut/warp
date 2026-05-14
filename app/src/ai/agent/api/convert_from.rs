@@ -1,4 +1,4 @@
-//! Conversions from MAA API types to application types.
+//! Conversions from agent wire types to application types.
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -102,8 +102,8 @@ fn convert_start_agent_execution_mode(
     execution_mode: Option<api::start_agent::ExecutionMode>,
 ) -> StartAgentExecutionMode {
     match execution_mode.and_then(|execution_mode| execution_mode.mode) {
-        Some(api::start_agent::execution_mode::Mode::Remote(remote)) => {
-            StartAgentExecutionMode::remote_with_defaults(remote.environment_id)
+        Some(api::start_agent::execution_mode::Mode::Remote(_)) => {
+            StartAgentExecutionMode::local_with_defaults()
         }
         Some(api::start_agent::execution_mode::Mode::Local(_)) | None => {
             StartAgentExecutionMode::local_with_defaults()
@@ -115,11 +115,7 @@ fn convert_run_agents_execution_mode(
     execution_mode: Option<api::run_agents::ExecutionMode>,
 ) -> RunAgentsExecutionMode {
     match execution_mode {
-        Some(api::run_agents::ExecutionMode::Remote(remote)) => RunAgentsExecutionMode::Remote {
-            environment_id: remote.environment_id,
-            worker_host: remote.worker_host,
-            computer_use_enabled: remote.computer_use_enabled,
-        },
+        Some(api::run_agents::ExecutionMode::Remote(_)) => RunAgentsExecutionMode::Local,
         Some(api::run_agents::ExecutionMode::Local(_)) | None => RunAgentsExecutionMode::Local,
     }
 }
@@ -162,20 +158,9 @@ fn convert_start_agent_v2_execution_mode(
 ) -> StartAgentExecutionMode {
     match execution_mode.and_then(|execution_mode| execution_mode.mode) {
         Some(api::start_agent_v2::execution_mode::Mode::Remote(remote)) => {
-            StartAgentExecutionMode::Remote {
-                environment_id: remote.environment_id,
-                skill_references: remote
-                    .skills
-                    .into_iter()
-                    .filter_map(convert_skill_reference)
-                    .collect(),
-                model_id: remote.model_id,
-                computer_use_enabled: remote.computer_use_enabled,
-                worker_host: remote.worker_host,
-                harness_type: convert_start_agent_v2_harness_type(remote.harness)
-                    .unwrap_or_default(),
-                title: remote.title,
-            }
+            let harness_type =
+                convert_start_agent_v2_harness_type(remote.harness).unwrap_or_default();
+            StartAgentExecutionMode::local_from_hosted_fields(&harness_type, &remote.model_id)
         }
         Some(api::start_agent_v2::execution_mode::Mode::Local(local)) => {
             convert_start_agent_v2_harness_type(local.harness)

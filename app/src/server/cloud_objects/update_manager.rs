@@ -2,10 +2,6 @@
 use crate::ai::mcp::templatable::{CloudTemplatableMCPServerModel, TemplatableMCPServer};
 use crate::{
     ai::{
-        agent::conversation::AIConversationId,
-        ambient_agents::scheduled::{CloudScheduledAmbientAgentModel, ScheduledAmbientAgent},
-        blocklist::BlocklistAIHistoryModel,
-        cloud_environments::{AmbientAgentEnvironment, CloudAmbientAgentEnvironmentModel},
         execution_profiles::{
             profiles::AIExecutionProfilesModel, AIExecutionProfile, CloudAIExecutionProfileModel,
         },
@@ -22,15 +18,14 @@ use crate::{
             view::{CloudViewModel, Editor, EditorState},
         },
         CloudLinkSharing, CloudModelType, CloudObject, CloudObjectEventEntrypoint,
-        CloudObjectLocation, CloudObjectSyncStatus, CreateCloudObjectResult, CreateObjectRequest,
-        GenericCloudObject, GenericServerObject, GenericStringObjectFormat, JsonObjectType,
-        NumInFlightRequests, ObjectDeleteResult, ObjectIdType, ObjectMetadataUpdateResult,
-        ObjectPermissionsUpdateData, ObjectType, Owner, Revision, RevisionAndLastEditor,
-        ServerAIExecutionProfile, ServerAIFact, ServerAmbientAgentEnvironment,
+        CloudObjectLocation, CloudObjectSyncStatus, GenericCloudObject, GenericServerObject,
+        GenericStringObjectFormat, JsonObjectType, NumInFlightRequests, ObjectDeleteResult,
+        ObjectIdType, ObjectMetadataUpdateResult, ObjectPermissionsUpdateData, ObjectType, Owner,
+        Revision, RevisionAndLastEditor, ServerAIExecutionProfile, ServerAIFact,
         ServerCloudAgentConfig, ServerCloudObject, ServerEnvVarCollection, ServerFolder,
         ServerMCPServer, ServerMetadata, ServerNotebook, ServerObject, ServerPermissions,
         ServerPreference, ServerScheduledAmbientAgent, ServerTemplatableMCPServer, ServerWorkflow,
-        ServerWorkflowEnum, Space, UpdateCloudObjectResult,
+        ServerWorkflowEnum, Space,
     },
     drive::{
         folders::{CloudFolderModel, FolderId},
@@ -46,16 +41,12 @@ use crate::{
             parse_sqlite_id_to_uid, ClientId, HashableId, HashedSqliteId, ObjectUid, ServerId,
             SyncId, ToServerId,
         },
-        retry_strategies::{
-            OUT_OF_BAND_REQUEST_RETRY_STRATEGY, PERIODIC_POLL, PERIODIC_POLL_RETRY_STRATEGY,
-        },
         server_api::object::{GuestIdentifier, ObjectClient},
         sync_queue::{
             CreationFailureReason, GenericStringObjectToCreate, QueueItem, SyncQueue,
             SyncQueueEvent,
         },
     },
-    settings::cloud_preferences::Preference,
     workflows::{
         workflow::Workflow,
         workflow_enum::{CloudWorkflowEnum, CloudWorkflowEnumModel, WorkflowEnum},
@@ -63,7 +54,6 @@ use crate::{
     },
     workspaces::{
         team_tester::{TeamTesterStatus, TeamTesterStatusEvent},
-        update_manager::TeamUpdateManager,
         user_profiles::{UserProfileWithUID, UserProfiles},
         user_workspaces::UserWorkspaces,
     },
@@ -78,13 +68,12 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::{mpsc::SyncSender, Arc};
 use std::time::Duration;
-use warp_core::features::FeatureFlag;
 use warp_graphql::mcp_gallery_template::MCPGalleryTemplate;
 use warp_graphql::object_permissions::AccessLevel;
 use warp_graphql::scalars::time::ServerTimestamp;
 use warp_util::sync::Condition;
-use warpui::r#async::{FutureId, Timer};
-use warpui::{duration_with_jitter, AppContext};
+use warpui::r#async::FutureId;
+use warpui::AppContext;
 use warpui::{Entity, ModelContext, RequestState, RetryOption, SingletonEntity};
 
 use super::listener::ObjectUpdateMessage;
@@ -136,9 +125,7 @@ pub struct ObjectOperationResult {
 #[derive(Debug)]
 pub enum UpdateManagerEvent {
     ObjectOperationComplete { result: ObjectOperationResult },
-    CloudPreferencesUpdated { updated: Vec<Preference> },
     MCPGalleryUpdated { templates: Vec<MCPGalleryTemplate> },
-    AmbientTaskUpdated { timestamp: DateTime<Utc> },
 }
 
 /// An enum for choosing the behavior of the fetch_single_cloud_object function.
@@ -206,7 +193,6 @@ pub struct UpdateManager {
     object_client: Arc<dyn ObjectClient>,
     next_poll_abort_handle: Option<AbortHandle>,
     in_flight_request_abort_handle: Option<AbortHandle>,
-    should_poll_for_updated_objects: bool,
     spawned_futures: Vec<FutureId>,
     has_initial_load: Condition,
 }
@@ -235,7 +221,6 @@ impl UpdateManager {
             object_client,
             next_poll_abort_handle: None,
             in_flight_request_abort_handle: None,
-            should_poll_for_updated_objects: false,
             spawned_futures: Default::default(),
             has_initial_load: Condition::new(),
         }
@@ -276,42 +261,6 @@ impl UpdateManager {
                 }
             }
         }
-    }
-
-    /// Remove team-owned objects in response to leaving a team.
-    pub fn remove_team_objects(&mut self, left_team_uid: ServerId, ctx: &mut ModelContext<Self>) {
-        let cloud_model = CloudModel::handle(ctx);
-        let objects_to_remove = cloud_model
-            .as_ref(ctx)
-            .all_cloud_objects_in_space(
-                Space::Team {
-                    team_uid: left_team_uid,
-                },
-                ctx,
-            )
-            .map(|object| object.cloud_object_type_and_id())
-            .collect_vec();
-
-        // First, delete in-memory from CloudModel and object actions.
-        cloud_model.update(ctx, |cloud_model, ctx| {
-            for object in objects_to_remove.iter() {
-                cloud_model.delete_object(object.sync_id(), ctx);
-            }
-        });
-        ObjectActions::handle(ctx).update(ctx, |object_actions, ctx| {
-            for object in objects_to_remove.iter() {
-                object_actions.delete_actions_for_object(&object.uid(), ctx);
-            }
-        });
-
-        // Then, delete from SQLite.
-        let object_ids_and_types = objects_to_remove
-            .into_iter()
-            .map(|object| (object.sync_id(), object.object_id_type()))
-            .collect();
-        self.save_to_db([ModelEvent::DeleteObjects {
-            ids: object_ids_and_types,
-        }]);
     }
 
     fn handle_team_tester_status_changed(
@@ -633,45 +582,17 @@ impl UpdateManager {
     }
 
     pub fn start_polling_for_updated_objects(&mut self, ctx: &mut ModelContext<Self>) {
-        let is_online = NetworkStatus::as_ref(ctx).is_online();
-
-        if !self.should_poll_for_updated_objects && is_online {
-            self.should_poll_for_updated_objects = true;
-            self.poll_for_updated_objects(ctx);
-        }
+        let _ = ctx;
+        self.abort_existing_poll();
     }
 
     /// Out-of-band (from the regular poll) refresh of updated objects.
     pub fn refresh_updated_objects(&mut self, ctx: &mut ModelContext<Self>) {
-        let object_client = self.object_client.clone();
-        let cloud_model = CloudModel::as_ref(ctx);
-        let versions_for_all_objects = cloud_model.get_versions_for_all_objects(ctx);
-        let spawned_handle = ctx.spawn_with_retry_on_error(
-            move || {
-                let object_client = object_client.clone();
-                let cloned_objects_to_update = versions_for_all_objects.clone();
-                async move {
-                    object_client
-                        .fetch_changed_objects(
-                            cloned_objects_to_update,
-                            false, /* force_refresh */
-                        )
-                        .await
-                }
-            },
-            OUT_OF_BAND_REQUEST_RETRY_STRATEGY,
-            |update_manager, res, ctx| {
-                update_manager.handle_fetch_changed_objects_with_request_state(
-                    res, false, /* force_refresh */
-                    ctx,
-                );
-            },
-        );
-        self.spawned_futures.push(spawned_handle.future_id());
+        let _ = ctx;
+        self.abort_existing_poll();
     }
 
     pub fn stop_polling_for_updated_objects(&mut self) {
-        self.should_poll_for_updated_objects = false;
         self.abort_existing_poll();
     }
 
@@ -683,69 +604,6 @@ impl UpdateManager {
         if let Some(abort_handle) = self.next_poll_abort_handle.take() {
             abort_handle.abort();
         }
-    }
-
-    fn poll_for_updated_objects(&mut self, ctx: &mut ModelContext<Self>) {
-        self.abort_existing_poll();
-
-        if !self.should_poll_for_updated_objects {
-            return;
-        }
-
-        // Don't poll when the user is logged out to avoid spamming auth errors in the logs.
-        // Polling will be restarted when the user logs in via `initiate_data_pollers`.
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
-            self.should_poll_for_updated_objects = false;
-            return;
-        }
-
-        let object_client = self.object_client.clone();
-        let cloud_model = CloudModel::as_ref(ctx);
-        let versions_for_all_objects = cloud_model.get_versions_for_all_objects(ctx);
-
-        // If there's a force refresh for cloud objects pending, we'll execute the refresh now
-        let force_refresh = cloud_model.cloud_objects_force_refresh_pending();
-        // We retry a few times here in case there are any transient network errors.
-        let spawned_handle = ctx.spawn_with_retry_on_error(
-            move || {
-                let object_client = object_client.clone();
-                let cloned_objects_to_update = versions_for_all_objects.clone();
-                async move {
-                    object_client
-                        .fetch_changed_objects(cloned_objects_to_update, force_refresh)
-                        .await
-                }
-            },
-            PERIODIC_POLL_RETRY_STRATEGY,
-            move |update_manager, res, ctx| {
-                // Only poll if `spawn_with_retry_on_error` is not going to retry again so we don't end up with multiple
-                // polls running simultaneously.
-                let should_poll_again = !res.has_pending_retries();
-                update_manager.handle_fetch_changed_objects_with_request_state(
-                    res,
-                    force_refresh,
-                    ctx,
-                );
-
-                if should_poll_again {
-                    let next_poll_handle = ctx.spawn(
-                        async move {
-                            Timer::after(duration_with_jitter(
-                                PERIODIC_POLL,
-                                0.2, /* max_jitter_multiplier */
-                            ))
-                            .await
-                        },
-                        |update_manager, _, ctx| {
-                            update_manager.poll_for_updated_objects(ctx);
-                        },
-                    );
-                    update_manager.next_poll_abort_handle = Some(next_poll_handle.abort_handle());
-                }
-            },
-        );
-
-        self.in_flight_request_abort_handle = Some(spawned_handle.abort_handle());
     }
 
     fn handle_network_status_changed(
@@ -763,29 +621,6 @@ impl UpdateManager {
                     SyncQueue::handle(ctx).update(ctx, |queue, _ctx| queue.stop_dequeueing())
                 }
             },
-        }
-    }
-
-    fn handle_fetch_changed_objects_with_request_state(
-        &mut self,
-        request_state: RequestState<InitialLoadResponse>,
-        force_refresh: bool,
-        ctx: &mut ModelContext<UpdateManager>,
-    ) {
-        match request_state {
-            RequestState::RequestSucceeded(response) => {
-                self.on_changed_objects_fetched(response, force_refresh, ctx);
-            }
-            RequestState::RequestFailedRetryPending(err) => {
-                log::warn!(
-                    "fetch_changed_objects: request failed with error {err:#}. Trying again."
-                );
-            }
-            RequestState::RequestFailed(err) => {
-                log::warn!(
-                    "fetch_changed_objects: request failed with error {err:#}. Retries exhausted."
-                );
-            }
         }
     }
 
@@ -863,7 +698,6 @@ impl UpdateManager {
             },
         ];
 
-        let mut updated_preferences: Vec<Preference> = Vec::new();
         // Handle generic string object updates.
         for (format, objects) in response.updated_generic_string_objects {
             match format {
@@ -872,9 +706,6 @@ impl UpdateManager {
                         .iter()
                         .filter_map(|obj| {
                             let server_obj: Option<&ServerPreference> = obj.into();
-                            if let Some(server_obj) = server_obj {
-                                updated_preferences.push(server_obj.model.string_model.clone());
-                            }
                             server_obj.cloned()
                         })
                         .collect::<Vec<_>>();
@@ -967,21 +798,6 @@ impl UpdateManager {
                         .iter()
                         .filter_map(|obj| {
                             let server_obj: Option<&ServerTemplatableMCPServer> = obj.into();
-                            server_obj.cloned()
-                        })
-                        .collect::<Vec<_>>();
-                    sqlite_events.push(Self::handle_object_updates(
-                        typed_objects,
-                        force_refresh,
-                        !is_first_load,
-                        ctx,
-                    ));
-                }
-                GenericStringObjectFormat::Json(JsonObjectType::CloudEnvironment) => {
-                    let typed_objects = objects
-                        .iter()
-                        .filter_map(|obj| {
-                            let server_obj: Option<&ServerAmbientAgentEnvironment> = obj.into();
                             server_obj.cloned()
                         })
                         .collect::<Vec<_>>();
@@ -1090,62 +906,12 @@ impl UpdateManager {
             });
         }
 
-        // Fetch environment "last used" timestamps separately and merge them into the environments.
-        // This is done as a separate call because the timestamps come from GetCloudEnvironments query
-        // rather than the generic object sync.
-        self.fetch_and_merge_environment_timestamps(ctx);
-
         if !response.mcp_gallery.is_empty() {
             ctx.emit(UpdateManagerEvent::MCPGalleryUpdated {
                 templates: response.mcp_gallery,
             });
         }
 
-        if !updated_preferences.is_empty() {
-            ctx.emit(UpdateManagerEvent::CloudPreferencesUpdated {
-                updated: updated_preferences,
-            });
-        }
-    }
-
-    fn handle_team_memberships_changed(&mut self, ctx: &mut ModelContext<UpdateManager>) {
-        // Immediately check for updates in workspace metadata
-        TeamUpdateManager::handle(ctx).update(ctx, |manager, ctx| {
-            std::mem::drop(manager.refresh_workspace_metadata(ctx));
-        });
-        self.refresh_updated_objects(ctx);
-    }
-
-    fn handle_ambient_task_changed(
-        &mut self,
-        _task_id: String,
-        timestamp: DateTime<Utc>,
-        ctx: &mut ModelContext<UpdateManager>,
-    ) {
-        ctx.emit(UpdateManagerEvent::AmbientTaskUpdated { timestamp });
-    }
-
-    /// Fetches environment "last used" timestamps from the server and merges them
-    /// into the in-memory environment objects.
-    fn fetch_and_merge_environment_timestamps(&mut self, ctx: &mut ModelContext<UpdateManager>) {
-        let object_client = self.object_client.clone();
-        let future = ctx.spawn(
-            async move {
-                object_client
-                    .fetch_environment_last_task_run_timestamps()
-                    .await
-            },
-            |_update_manager, result, ctx| {
-                if let Ok(timestamps) = result {
-                    CloudModel::handle(ctx).update(ctx, |cloud_model, ctx| {
-                        cloud_model.update_environment_last_task_run_timestamps(timestamps, ctx);
-                    });
-                } else if let Err(e) = result {
-                    log::warn!("Failed to fetch environment last task run timestamps: {e:#}");
-                }
-            },
-        );
-        self.spawned_futures.push(future.future_id());
     }
 
     /// Generic handler updating all objects of a given model type from the server (e.g. all updated/deleted notebooks or workflows).
@@ -1228,16 +994,6 @@ impl UpdateManager {
         self.has_initial_load.wait()
     }
 
-    /// Reset the initial-load condition so that subsequent callers of
-    /// [`initial_load_complete`](Self::initial_load_complete) will block until
-    /// the next load finishes. Call this when the user identity changes (e.g.
-    /// after signup/login) to prevent stale cloud data from a previous session
-    /// being used.
-    pub fn reset_initial_load(&self) {
-        log::info!("Resetting initial_load_complete condition for fresh cloud object fetch");
-        self.has_initial_load.reset();
-    }
-
     pub fn received_message_from_server(
         &mut self,
         message: ObjectUpdateMessage,
@@ -1251,9 +1007,6 @@ impl UpdateManager {
             ObjectUpdateMessage::ObjectMetadataChanged { metadata } => {
                 self.handle_cloud_object_metadata_changed_event(metadata, ctx);
             }
-            ObjectUpdateMessage::ObjectPermissionsChanged => {
-                // TODO(CLD-2425): Do nothing, this is handled by ObjectPermissionsChangedV2.
-            }
             ObjectUpdateMessage::ObjectPermissionsChangedV2 {
                 object_uid,
                 permissions,
@@ -1265,20 +1018,6 @@ impl UpdateManager {
                     user_profiles,
                     ctx,
                 );
-            }
-            ObjectUpdateMessage::ObjectDeleted { object_uid } => {
-                self.handle_cloud_object_deleted_event(object_uid, ctx);
-            }
-            ObjectUpdateMessage::ObjectActionOccurred { history } => {
-                self.handle_object_action_event(&history, ctx);
-            }
-            ObjectUpdateMessage::TeamMembershipsChanged => {
-                self.handle_team_memberships_changed(ctx);
-            }
-            ObjectUpdateMessage::AmbientTaskUpdated { task_id, timestamp } => {
-                if FeatureFlag::AmbientAgentsRTC.is_enabled() {
-                    self.handle_ambient_task_changed(task_id, timestamp, ctx);
-                }
             }
         }
     }
@@ -1342,12 +1081,6 @@ impl UpdateManager {
         let cloud_model = CloudModel::as_ref(ctx);
         self.save_in_memory_object_to_sqlite(cloud_model, &uid);
 
-        if let ServerCloudObject::Preference(preference) = &cloud_object {
-            let preference = preference.model.string_model.clone();
-            ctx.emit(UpdateManagerEvent::CloudPreferencesUpdated {
-                updated: vec![preference],
-            });
-        }
     }
 
     /// Compare incoming metadata_ts and in_memory metadata_ts to determine whether to accept a new incoming metadata
@@ -1379,24 +1112,6 @@ impl UpdateManager {
                 }
             }
         });
-    }
-
-    fn handle_cloud_object_deleted_event(
-        &mut self,
-        object_uid: ServerId,
-        ctx: &mut ModelContext<UpdateManager>,
-    ) {
-        self.on_object_delete_success(vec![object_uid.into()], ctx);
-        ctx.notify();
-    }
-
-    fn handle_object_action_event(
-        &mut self,
-        history: &ObjectActionHistory,
-        ctx: &mut ModelContext<UpdateManager>,
-    ) {
-        self.maybe_overwrite_object_action_history(history, ctx);
-        self.sync_actions_for_objects_to_sqlite(vec![&history.uid], ctx);
     }
 
     fn save_in_memory_object_to_sqlite(&mut self, cloud_model: &CloudModel, uid: &ObjectUid) {
@@ -1859,7 +1574,6 @@ impl UpdateManager {
             | ServerCloudObject::AIFact(_)
             | ServerCloudObject::MCPServer(_)
             | ServerCloudObject::TemplatableMCPServer(_)
-            | ServerCloudObject::AmbientAgentEnvironment(_)
             | ServerCloudObject::ScheduledAmbientAgent(_)
             | ServerCloudObject::CloudAgentConfig(_) => {}
         }
@@ -1957,21 +1671,6 @@ impl UpdateManager {
         self.update_object(
             CloudEnvVarCollectionModel::new(env_var_collection),
             env_var_collection_id,
-            revision_ts,
-            ctx,
-        );
-    }
-
-    pub fn update_ambient_agent_environment(
-        &mut self,
-        environment: AmbientAgentEnvironment,
-        environment_id: SyncId,
-        revision_ts: Option<Revision>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.update_object(
-            CloudAmbientAgentEnvironmentModel::new(environment),
-            environment_id,
             revision_ts,
             ctx,
         );
@@ -2256,16 +1955,6 @@ impl UpdateManager {
                         }
                         ObjectType::GenericStringObject(GenericStringObjectFormat::Json(
                             JsonObjectType::TemplatableMCPServer,
-                        )) => {
-                            object_client
-                                .transfer_generic_string_object_owner(
-                                    GenericStringObjectId::from(server_id),
-                                    destination_owner,
-                                )
-                                .await
-                        }
-                        ObjectType::GenericStringObject(GenericStringObjectFormat::Json(
-                            JsonObjectType::CloudEnvironment,
                         )) => {
                             object_client
                                 .transfer_generic_string_object_owner(
@@ -2563,186 +2252,6 @@ impl UpdateManager {
                     },
                     ctx,
                 );
-            },
-        );
-    }
-
-    /// Add guests to an AI conversation.
-    pub fn add_ai_conversation_guests(
-        &mut self,
-        server_id: ServerId,
-        conversation_id: AIConversationId,
-        guest_emails: Vec<String>,
-        access_level: AccessLevel,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.update_ai_conversation_permissions(
-            conversation_id,
-            "add guests",
-            move |object_client| {
-                let guest_emails = guest_emails.clone();
-                async move {
-                    object_client
-                        .add_object_guests(server_id, guest_emails, access_level)
-                        .await
-                }
-            },
-            |data, ctx| {
-                // Update UserProfiles with any new profiles returned
-                if !data.profiles.is_empty() {
-                    UserProfiles::handle(ctx).update(ctx, |user_profiles, _| {
-                        user_profiles.insert_profiles(&data.profiles);
-                    });
-                }
-                Some(data.permissions)
-            },
-            ctx,
-        );
-    }
-
-    /// Update guest access for an AI conversation.
-    pub fn update_ai_conversation_guests(
-        &mut self,
-        server_id: ServerId,
-        conversation_id: AIConversationId,
-        guest_emails: Vec<String>,
-        access_level: AccessLevel,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.update_ai_conversation_permissions(
-            conversation_id,
-            "update guests",
-            move |object_client| {
-                let guest_emails = guest_emails.clone();
-                async move {
-                    object_client
-                        .update_object_guests(server_id, guest_emails, access_level)
-                        .await
-                }
-            },
-            |permissions, _ctx| Some(permissions),
-            ctx,
-        );
-    }
-
-    /// Remove a guest from an AI conversation.
-    pub fn remove_ai_conversation_guest(
-        &mut self,
-        server_id: ServerId,
-        conversation_id: AIConversationId,
-        guest: GuestIdentifier,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.update_ai_conversation_permissions(
-            conversation_id,
-            "remove guest",
-            move |object_client| {
-                let guest = guest.clone();
-                async move { object_client.remove_object_guest(server_id, guest).await }
-            },
-            |permissions, _ctx| Some(permissions),
-            ctx,
-        );
-    }
-
-    /// Set or remove link sharing permissions for an AI conversation.
-    pub fn set_ai_conversation_link_permissions(
-        &mut self,
-        server_id: ServerId,
-        conversation_id: AIConversationId,
-        access_level: Option<SharingAccessLevel>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.update_ai_conversation_permissions(
-            conversation_id,
-            "set link permissions",
-            move |object_client| async move {
-                if let Some(access_level) = access_level {
-                    object_client
-                        .set_object_link_permissions(server_id, access_level)
-                        .await
-                        .map(|_| ())
-                } else {
-                    object_client
-                        .remove_object_link_permissions(server_id)
-                        .await
-                        .map(|_| ())
-                }
-            },
-            move |_result, ctx| {
-                // For link permissions, we manually construct the permissions update
-                // since the API only returns success/failure.
-                // Use the unified helper that checks both in-memory and historical metadata.
-                let mut permissions = BlocklistAIHistoryModel::as_ref(ctx)
-                    .get_server_conversation_metadata(&conversation_id)
-                    .map(|metadata| metadata.permissions.clone())?;
-                permissions.anyone_link_sharing =
-                    access_level.map(|level| crate::cloud_object::ServerLinkSharing {
-                        access_level: level.into(),
-                        source: None,
-                    });
-                Some(permissions)
-            },
-            ctx,
-        );
-    }
-
-    /// Helper for updating AI conversation permissions.
-    ///
-    /// This centralizes the common pattern of:
-    /// 1. Making an API request
-    /// 2. Processing the result to extract permissions
-    /// 3. Updating BlocklistAIHistoryModel with new permissions
-    /// 4. Emitting ConversationMetadataUpdated event
-    fn update_ai_conversation_permissions<P, S, R, F>(
-        &mut self,
-        conversation_id: AIConversationId,
-        operation_name: &'static str,
-        mut update_fn: P,
-        mut get_updated_permissions: F,
-        ctx: &mut ModelContext<Self>,
-    ) where
-        P: 'static + FnMut(Arc<dyn ObjectClient>) -> S,
-        S: warpui::r#async::Spawnable + Future<Output = anyhow::Result<R>>,
-        <S as Future>::Output: warpui::r#async::SpawnableOutput,
-        F: 'static + FnMut(R, &mut AppContext) -> Option<ServerPermissions>,
-    {
-        let object_client = self.object_client.clone();
-
-        ctx.spawn_with_retry_on_error(
-            move || {
-                let object_client = object_client.clone();
-                update_fn(object_client)
-            },
-            *ONLINE_ONLY_OPERATION_RETRY_STRATEGY,
-            move |_me, res, ctx| match res {
-                RequestState::RequestSucceeded(data) => {
-                    if let Some(permissions) = get_updated_permissions(data, ctx) {
-                        // Update BlocklistAIHistoryModel (handles both in-memory and historical)
-                        BlocklistAIHistoryModel::handle(ctx).update(ctx, |model, ctx| {
-                            // Get current metadata from either in-memory conversation or historical
-                            let current_metadata = model
-                                .get_server_conversation_metadata(&conversation_id)
-                                .cloned();
-                            if let Some(mut metadata) = current_metadata {
-                                metadata.permissions = permissions;
-                                model.set_server_metadata_for_conversation(
-                                    conversation_id,
-                                    metadata,
-                                    ctx,
-                                );
-                            }
-                        });
-                    }
-                }
-                RequestState::RequestFailedRetryPending(error) => {
-                    log::warn!("Failed to {operation_name} for AI conversation: {error}. Retrying");
-                }
-                RequestState::RequestFailed(error) => {
-                    log::warn!(
-                        "Failed to {operation_name} for AI conversation: {error}. Not retrying"
-                    );
-                }
             },
         );
     }
@@ -3194,63 +2703,6 @@ impl UpdateManager {
         );
     }
 
-    #[cfg_attr(target_family = "wasm", allow(dead_code))]
-    pub fn create_ambient_agent_environment(
-        &mut self,
-        ambient_agent_environment: AmbientAgentEnvironment,
-        client_id: ClientId,
-        owner: Owner,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.create_object(
-            CloudAmbientAgentEnvironmentModel::new(ambient_agent_environment),
-            owner,
-            client_id,
-            Default::default(),
-            false,
-            None,
-            // When adding the initiated_by parameter to this function call, InitiatedBy::User was set as a default value.
-            // This can be changed to InitiatedBy::System if this action was automatically kicked off by the system and we do not want a user facing toast.
-            InitiatedBy::User,
-            ctx,
-        )
-    }
-
-    #[cfg_attr(target_family = "wasm", allow(dead_code))]
-    pub fn create_scheduled_ambient_agent_online(
-        &mut self,
-        scheduled_ambient_agent: ScheduledAmbientAgent,
-        client_id: ClientId,
-        owner: Owner,
-        ctx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = anyhow::Result<ServerId>> {
-        self.create_object_online(
-            CloudScheduledAmbientAgentModel::new(scheduled_ambient_agent),
-            owner,
-            client_id,
-            Default::default(),
-            false,
-            None,
-            ctx,
-        )
-    }
-
-    #[cfg_attr(target_family = "wasm", allow(dead_code))]
-    pub fn update_scheduled_ambient_agent_online(
-        &mut self,
-        scheduled_ambient_agent: ScheduledAmbientAgent,
-        scheduled_ambient_agent_id: SyncId,
-        revision_ts: Option<Revision>,
-        ctx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = anyhow::Result<()>> {
-        self.update_object_online(
-            CloudScheduledAmbientAgentModel::new(scheduled_ambient_agent),
-            scheduled_ambient_agent_id,
-            revision_ts,
-            ctx,
-        )
-    }
-
     #[allow(dead_code)]
     pub fn create_ai_execution_profile(
         &mut self,
@@ -3646,255 +3098,6 @@ impl UpdateManager {
                 }
             };
         });
-    }
-
-    /// Create a new cloud object as an online-only operation.
-    ///
-    /// This is intended for creating objects where the caller will await completion and
-    /// handle retries, such as the CLI.
-    ///
-    /// The cloud model and SQLite are only updated on success. This is to prevent the
-    /// sync queue from clashing with caller-managed retries and potentially creating
-    /// duplicates of the object.
-    #[allow(clippy::too_many_arguments)]
-    fn create_object_online<K, M>(
-        &mut self,
-        model: M,
-        owner: Owner,
-        client_id: ClientId,
-        entrypoint: CloudObjectEventEntrypoint,
-        force_expand: bool,
-        initial_folder_id: Option<SyncId>,
-        ctx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = anyhow::Result<ServerId>>
-    where
-        K: HashableId
-            + ToServerId
-            + std::fmt::Debug
-            + Into<String>
-            + Clone
-            + Copy
-            + Send
-            + Sync
-            + 'static,
-        M: CloudModelType<IdType = K, CloudObjectType = GenericCloudObject<K, M>> + 'static,
-    {
-        let (tx, rx) = oneshot::channel();
-        let completion = async move { rx.await? };
-
-        let initial_server_folder_id = match initial_folder_id {
-            Some(SyncId::ServerId(id)) => Some(FolderId::from(id)),
-            Some(SyncId::ClientId(_)) => {
-                let _ = tx.send(Err(anyhow::anyhow!("Folder does not exist on the server")));
-                return completion;
-            }
-            None => None,
-        };
-
-        let object_client = self.object_client.clone();
-        let serialized_model = model.serialized();
-        let handle = ctx.spawn(
-            async move {
-                M::send_create_request(
-                    object_client,
-                    CreateObjectRequest {
-                        serialized_model: Some(serialized_model),
-                        // TODO: Need a generic way to access this on cloud object models.
-                        title: None,
-                        owner,
-                        client_id,
-                        initial_folder_id: initial_server_folder_id,
-                        entrypoint,
-                    },
-                )
-                .await
-            },
-            move |me, result, ctx| match result {
-                Ok(CreateCloudObjectResult::Success {
-                    created_cloud_object,
-                }) => {
-                    let server_id = created_cloud_object.server_id_and_type.id;
-
-                    // On success, and only on success, update the in-memory model and SQLite.
-                    let upsert_event = CloudModel::handle(ctx).update(ctx, |cloud_model, ctx| {
-                        // Because we don't fetch the full object from the server on creation, we
-                        // instead create a local object and populate the server metadata. This
-                        // mirrors how we handle SyncQueueEvent::ObjectCreationSuccessful, but
-                        // since this is a fresh object, there are no dependencies or existing
-                        // actions to modify.
-                        let mut object = GenericCloudObject::<K, M>::new_local(
-                            model.clone(),
-                            owner,
-                            initial_folder_id,
-                            client_id,
-                        );
-                        object.set_pending_content_changes_status(
-                            CloudObjectSyncStatus::NoLocalChanges,
-                        );
-                        object.set_server_id(server_id);
-                        let object_id = SyncId::ServerId(server_id);
-                        cloud_model.create_object(object_id, object, ctx);
-                        let server_uid = server_id.uid();
-                        cloud_model.set_latest_revision_and_editor(
-                            &server_uid,
-                            created_cloud_object.revision_and_editor,
-                            ctx,
-                        );
-                        cloud_model.update_object_metadata_last_updated_ts(
-                            &server_uid,
-                            created_cloud_object.metadata_ts,
-                            ctx,
-                        );
-
-                        if force_expand {
-                            cloud_model.force_expand_object_and_ancestors(object_id, ctx);
-                        }
-
-                        cloud_model
-                            .get_object_of_type::<K, M>(&object_id)
-                            .map(|obj| obj.upsert_event())
-                    });
-
-                    // Save the object to SQLite.
-                    if let Some(upsert_event) = upsert_event {
-                        me.save_to_db([upsert_event]);
-                    }
-
-                    // Notify the caller.
-                    let _ = tx.send(Ok(server_id));
-                }
-                Ok(CreateCloudObjectResult::UserFacingError(error)) => {
-                    let _ = tx.send(Err(anyhow::anyhow!(error)));
-                }
-                Ok(CreateCloudObjectResult::GenericStringObjectUniqueKeyConflict) => {
-                    let _ = tx.send(Err(anyhow::anyhow!("Unique key conflict")));
-                }
-                Err(err) => {
-                    let _ = tx.send(Err(err));
-                }
-            },
-        );
-        self.spawned_futures.push(handle.future_id());
-        completion
-    }
-
-    /// Update an existing cloud object as an online-only operation.
-    ///
-    /// This is intended for updating objects where the caller will await completion and
-    /// handle retries, such as the CLI.
-    ///
-    /// The cloud model and SQLite are only updated on success. This is to prevent the
-    /// sync queue from clashing with caller-managed retries.
-    pub fn update_object_online<K, M>(
-        &mut self,
-        model: M,
-        object_id: SyncId,
-        revision_ts: Option<Revision>,
-        ctx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = anyhow::Result<()>>
-    where
-        K: HashableId
-            + ToServerId
-            + std::fmt::Debug
-            + Into<String>
-            + Clone
-            + Copy
-            + Send
-            + Sync
-            + 'static,
-        M: CloudModelType<IdType = K, CloudObjectType = GenericCloudObject<K, M>> + 'static,
-    {
-        let (tx, rx) = oneshot::channel();
-        let completion = async move { rx.await? };
-
-        let server_id = match object_id {
-            SyncId::ServerId(id) => id,
-            SyncId::ClientId(_) => {
-                let _ = tx.send(Err(anyhow::anyhow!("Object does not exist on the server")));
-                return completion;
-            }
-        };
-
-        if let Err(err) = CloudModel::handle(ctx).update(ctx, |cloud_model, _| {
-            match cloud_model.get_object_of_type_mut::<K, M>(&object_id) {
-                Some(object) => {
-                    if object.has_conflicting_changes()
-                        || object.metadata.has_pending_content_changes()
-                        || object.metadata.has_pending_online_only_change()
-                    {
-                        anyhow::bail!("Object has pending changes");
-                    }
-
-                    // Because the content change is not persisted in SQLite, we do not increment
-                    // the in-flight request counter. Since the request counter is persisted, if
-                    // we increment it and the request fails, the object can be stuck in a pending
-                    // state despite not having any changes to sync.
-
-                    Ok(())
-                }
-                None => {
-                    anyhow::bail!("Object is not synced");
-                }
-            }
-        }) {
-            let _ = tx.send(Err(err));
-            return completion;
-        }
-
-        let object_client = self.object_client.clone();
-        let model_to_save = model.clone();
-        let handle = ctx.spawn(
-            async move {
-                model
-                    .send_update_request(object_client, server_id, revision_ts)
-                    .await
-            },
-            move |me, result, ctx| {
-                match result {
-                    Ok(UpdateCloudObjectResult::Success {
-                        revision_and_editor,
-                    }) => {
-                        // On success, and only on success, update the in-memory model and SQLite.
-                        let upsert_event =
-                            CloudModel::handle(ctx).update(ctx, |cloud_model, ctx| {
-                                cloud_model.update_object_from_edit(model_to_save, object_id, ctx);
-                                let server_uid = server_id.uid();
-                                cloud_model.set_latest_revision_and_editor(
-                                    &server_uid,
-                                    revision_and_editor.clone(),
-                                    ctx,
-                                );
-                                cloud_model
-                                    .check_and_maybe_clear_current_conflict(&server_uid, ctx);
-
-                                cloud_model
-                                    .get_by_uid(&server_uid)
-                                    .map(|object| object.upsert_event())
-                            });
-
-                        // Save the object to SQLite.
-                        if let Some(upsert_event) = upsert_event {
-                            me.save_to_db([upsert_event]);
-                        }
-
-                        // Notify the caller.
-                        let _ = tx.send(Ok(()));
-                    }
-                    Ok(UpdateCloudObjectResult::Rejected { .. }) => {
-                        // We don't need to do anything with the conflicting object, since the
-                        // original edit wasn't saved to SQLite.
-                        let _ = tx.send(Err(anyhow::anyhow!(
-                            "Update rejected: object was modified by another client."
-                        )));
-                    }
-                    Err(err) => {
-                        let _ = tx.send(Err(err));
-                    }
-                };
-            },
-        );
-        self.spawned_futures.push(handle.future_id());
-        completion
     }
 
     /// Generic function for updating a cloud object with a new model.

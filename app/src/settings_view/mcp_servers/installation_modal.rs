@@ -419,7 +419,7 @@ impl InstallationModalBody {
         .finish();
 
         let source_text = if is_shared {
-            "Shared from team"
+            "Imported MCP server"
         } else {
             "From another device"
         };

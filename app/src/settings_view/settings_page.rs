@@ -9,23 +9,18 @@ use super::{
     about_page::AboutPageView,
     ai_page::{AISettingsPageAction, AISettingsPageView},
     appearance_page::AppearanceSettingsPageView,
-    billing_and_usage_page::BillingAndUsagePageView,
     code_page::CodeSettingsPageView,
-    environments_page::EnvironmentsPageView,
     features_page::FeaturesPageView,
     keybindings::KeybindingsView,
     main_page::MainSettingsPageView,
     mcp_servers_page::MCPServersSettingsPageView,
     privacy_page::PrivacyPageView,
-    show_blocks_view::ShowBlocksView,
-    teams_page::TeamsPageView,
     warp_drive_page::WarpDriveSettingsPageView,
     warpify_page::WarpifyPageView,
     SettingsSection,
 };
 use crate::{
     appearance::Appearance,
-    settings::CloudPreferencesSettings,
     themes::theme::Fill,
     ui_components::icons::Icon,
     view_components::{Dropdown, SubmittableTextInput},
@@ -108,16 +103,12 @@ pub enum SettingsPageViewHandle {
     Main(ViewHandle<MainSettingsPageView>),
     Appearance(ViewHandle<AppearanceSettingsPageView>),
     Features(ViewHandle<FeaturesPageView>),
-    SharedBlocks(ViewHandle<ShowBlocksView>),
     Keybindings(ViewHandle<KeybindingsView>),
     About(ViewHandle<AboutPageView>),
     Code(ViewHandle<CodeSettingsPageView>),
-    Teams(ViewHandle<TeamsPageView>),
     Privacy(ViewHandle<PrivacyPageView>),
     Warpify(ViewHandle<WarpifyPageView>),
     AI(ViewHandle<AISettingsPageView>),
-    CloudEnvironments(ViewHandle<EnvironmentsPageView>),
-    BillingAndUsage(ViewHandle<BillingAndUsagePageView>),
     MCPServers(ViewHandle<MCPServersSettingsPageView>),
     WarpDrive(ViewHandle<WarpDriveSettingsPageView>),
 }
@@ -129,16 +120,12 @@ impl SettingsPageViewHandle {
             Main(view_handle) => ChildView::new(view_handle).finish(),
             Appearance(view_handle) => ChildView::new(view_handle).finish(),
             Features(view_handle) => ChildView::new(view_handle).finish(),
-            SharedBlocks(view_handle) => ChildView::new(view_handle).finish(),
             Keybindings(view_handle) => ChildView::new(view_handle).finish(),
             About(view_handle) => ChildView::new(view_handle).finish(),
             Code(view_handle) => ChildView::new(view_handle).finish(),
-            Teams(view_handle) => ChildView::new(view_handle).finish(),
             Privacy(view_handle) => ChildView::new(view_handle).finish(),
             Warpify(view_handle) => ChildView::new(view_handle).finish(),
             AI(view_handle) => ChildView::new(view_handle).finish(),
-            CloudEnvironments(view_handle) => ChildView::new(view_handle).finish(),
-            BillingAndUsage(view_handle) => ChildView::new(view_handle).finish(),
             MCPServers(view_handle) => ChildView::new(view_handle).finish(),
             WarpDrive(view_handle) => ChildView::new(view_handle).finish(),
         }
@@ -195,8 +182,6 @@ impl SettingsPage {
 pub enum SettingsPageEvent {
     FocusModal,
     Pane(PaneEventWrapper),
-    EnvironmentSetupModeSelectorToggled { is_open: bool },
-    AgentAssistedEnvironmentModalToggled { is_open: bool },
 }
 
 /// Wrapper for pane events to avoid circular dependency with pane module.
@@ -488,7 +473,7 @@ impl From<bool> for ToggleState {
     }
 }
 
-/// Whether to show an icon indicating a setting is not cloud-synced
+/// Whether to show an icon indicating a setting has sync limitations.
 #[derive(Default, Clone)]
 pub enum LocalOnlyIconState {
     #[default]
@@ -502,44 +487,27 @@ pub enum LocalOnlyIconState {
 impl LocalOnlyIconState {
     /// Creates a `LocalOnlyIconState` for a given setting.
     ///
-    /// This function determines whether to show an icon indicating that a setting
-    /// is not cloud-synced based on the `SyncToCloud` value of the setting.
+    /// Local-first builds do not expose cross-device settings sync, so the indicator remains
+    /// hidden even though upstream setting metadata is still present.
     ///
     /// # Arguments
     ///
     /// * `storage_key` - A string slice that holds the storage key for the setting.
-    /// * `sync_to_cloud` - The `SyncToCloud` value for the setting.
+    /// * `sync_to_cloud` - The upstream sync metadata for the setting.
     /// * `mouse_states` - A mutable reference to a `HashMap` storing `MouseStateHandle`s.
     ///
     /// # Returns
     ///
     /// Returns a `LocalOnlyIconState` enum variant:
-    /// - `LocalOnlyIconState::Visible` with a `MouseStateHandle` if the setting is never synced to cloud.
-    /// - `LocalOnlyIconState::Hidden` if the setting is synced to cloud.
+    /// - `LocalOnlyIconState::Hidden` in this local-first build.
     pub fn for_setting(
         storage_key: &str,
         sync_to_cloud: SyncToCloud,
         mouse_states: &mut HashMap<String, MouseStateHandle>,
         app: &AppContext,
     ) -> Self {
-        if !*CloudPreferencesSettings::as_ref(app).settings_sync_enabled {
-            // Only show the local-only icon if settings sync is enabled.
-            return Self::Hidden;
-        }
-
-        match sync_to_cloud {
-            SyncToCloud::Never => {
-                let mouse_state = mouse_states
-                    .entry(storage_key.to_string())
-                    .or_default()
-                    .clone();
-                Self::Visible {
-                    mouse_state,
-                    custom_tooltip: None,
-                }
-            }
-            _ => Self::Hidden,
-        }
+        let _ = (storage_key, sync_to_cloud, mouse_states, app);
+        Self::Hidden
     }
 }
 
@@ -549,7 +517,7 @@ pub fn render_info_icon<T: Clone + Action>(
 ) -> Box<dyn Element> {
     let tooltip_text = additional_info
         .tooltip_override_text
-        .unwrap_or("Click to learn more in docs".to_owned());
+        .unwrap_or("More information".to_owned());
     let icon = Container::new(
         ConstrainedBox::new(
             Icon::Info
@@ -585,12 +553,12 @@ pub fn render_info_icon<T: Clone + Action>(
             );
         }
         stack.finish()
-    })
-    .with_cursor(Cursor::PointingHand);
+    });
 
     if let Some(on_click_action) = additional_info.on_click_action {
         info_button = info_button
-            .on_click(move |ctx, _, _| ctx.dispatch_typed_action(on_click_action.clone()));
+            .on_click(move |ctx, _, _| ctx.dispatch_typed_action(on_click_action.clone()))
+            .with_cursor(Cursor::PointingHand);
     }
 
     Container::new(Box::new(info_button))

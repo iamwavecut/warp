@@ -14,7 +14,6 @@ mod app_state;
 mod auth;
 mod autoupdate;
 mod banner;
-mod billing;
 mod changelog_model;
 mod chip_configurator;
 mod cloud_object;
@@ -59,7 +58,6 @@ mod plugin;
 mod prefix;
 #[cfg(target_os = "macos")]
 mod preview_config_migration;
-mod pricing;
 mod profiling;
 mod projects;
 mod prompt;
@@ -140,7 +138,6 @@ use ::ai::project_context::model::ProjectContextModel;
 pub use ai::agent::{todos::AIAgentTodoList, AIAgentActionResultType, FileEdit, TodoOperation};
 use ai::agent_conversations_model::AgentConversationsModel;
 use ai::agent_management::AgentNotificationsModel;
-use ai::ambient_agents::scheduled::ScheduledAgentManager;
 use ai::blocklist::{BlocklistAIHistoryModel, BlocklistAIPermissions};
 use ai::execution_profiles::editor::ExecutionProfileEditorManager;
 use ai::execution_profiles::profiles::AIExecutionProfilesModel;
@@ -226,7 +223,6 @@ use crate::server::experiments::ServerExperiments;
 use crate::server::sync_queue::QueueItem;
 pub use crate::server::sync_queue::SyncQueue;
 use crate::session_management::{RunningSessionSummary, SessionNavigationData};
-use crate::settings::cloud_preferences_syncer::initialize_cloud_preferences_syncer;
 use crate::settings::manager::SettingsManager;
 use crate::settings::{AccessibilitySettings, ScrollSettings, SelectionSettings};
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
@@ -265,7 +261,6 @@ use terminal::input;
 use terminal::session_settings::SessionSettings;
 use url::Url;
 use warp_core::execution_mode::{AppExecutionMode, ExecutionMode};
-use warp_managed_secrets::ManagedSecretManager;
 use workspace::sync_inputs::SyncedInputState;
 
 use warpui::{integration::TestDriver, App, AssetProvider, Event};
@@ -558,30 +553,6 @@ pub fn run() -> Result<()> {
     // Parse command-line arguments.
     let args = warp_cli::Args::from_env();
 
-    // Server URL overrides are only honored on internal dev channels. Release channels silently
-    // ignore `--server-root-url` / `--ws-server-url` / `--session-sharing-server-url` (and their
-    // `WARP_*` env-var equivalents) so shipped builds can't be redirected away from their
-    // baked-in server URLs. See `Channel::allows_server_url_overrides`.
-    if ChannelState::channel().allows_server_url_overrides() {
-        if let Some(url) = args.server_root_url() {
-            if let Err(e) = ChannelState::override_server_root_url(url.to_owned()) {
-                eprintln!("Error: Invalid server root URL: {e:#}");
-            }
-        }
-
-        if let Some(url) = args.ws_server_url() {
-            if let Err(e) = ChannelState::override_ws_server_url(url.to_owned()) {
-                eprintln!("Error: Invalid websocket server URL: {e:#}");
-            }
-        }
-
-        if let Some(url) = args.session_sharing_server_url() {
-            if let Err(e) = ChannelState::override_session_sharing_server_url(url.to_owned()) {
-                eprintln!("Error: Invalid session sharing server URL: {e:#}");
-            }
-        }
-    }
-
     if let Some(command) = args.command() {
         #[cfg(windows)]
         if command.prints_to_stdout() {
@@ -607,7 +578,7 @@ pub fn run() -> Result<()> {
             warp_cli::Command::Worker(warp_cli::WorkerCommand::RemoteServerProxy(args)) => {
                 // Proxy is a thin byte bridge (stdin/stdout ↔ Unix socket).
                 // It only needs logging to stderr since stdout is the protocol
-                // channel. No crash reporting, no initialize_app.
+                // channel. No full app initialization.
                 let launch_mode = LaunchMode::RemoteServerProxy;
                 warp_logging::init(warp_logging::LogConfig {
                     is_cli: true,
@@ -617,8 +588,7 @@ pub fn run() -> Result<()> {
             }
             #[cfg(not(target_family = "wasm"))]
             warp_cli::Command::Worker(warp_cli::WorkerCommand::RemoteServerDaemon(args)) => {
-                // Daemon handles its own full initialization (including
-                // initialize_app and crash reporting) inside run_daemon_app.
+                // Daemon handles its own full initialization inside run_daemon_app.
                 return crate::remote_server::run_daemon(args.identity_key.clone());
             }
             #[cfg(not(target_family = "wasm"))]
@@ -1089,18 +1059,6 @@ pub(crate) fn initialize_app(
     let tips_handle = ctx.add_model(|_| user_defaults_on_startup.tips_data);
     let user_default_shell_unsupported_banner_model_handle =
         ctx.add_model(|_| user_defaults_on_startup.user_default_shell_unsupported_banner_state);
-    // Extract the full-file parse error (if any) before the settings_file_error
-    // value is moved below. Only FileParseFailed gates the broken-file guard
-    // in `initialize_cloud_preferences_syncer`; InvalidSettings means TOML
-    // parsed but individual values were wrong, which doesn't mean local
-    // state is unusable.
-    let startup_toml_parse_error_for_syncer = user_defaults_on_startup
-        .settings_file_error
-        .as_ref()
-        .and_then(|err| match err {
-            settings::SettingsFileError::FileParseFailed(msg) => Some(msg.clone()),
-            settings::SettingsFileError::InvalidSettings(_) => None,
-        });
     let settings_file_error = user_defaults_on_startup.settings_file_error;
     ctx.add_singleton_model(move |_ctx| {
         GlobalResourceHandlesProvider::new(GlobalResourceHandles {
@@ -1203,6 +1161,22 @@ pub(crate) fn initialize_app(
         manager.subscribe_to_settings_changes(ctx);
         manager
     });
+    server_api_provider.as_ref(ctx).refresh_local_ai_route(ctx);
+    {
+        let server_api_provider = server_api_provider.clone();
+        ctx.subscribe_to_model(&settings::AISettings::handle(ctx), move |_, _event, ctx| {
+            server_api_provider.as_ref(ctx).refresh_local_ai_route(ctx);
+        });
+    }
+    {
+        let server_api_provider = server_api_provider.clone();
+        ctx.subscribe_to_model(
+            &::ai::api_keys::ApiKeyManager::handle(ctx),
+            move |_, _event, ctx| {
+                server_api_provider.as_ref(ctx).refresh_local_ai_route(ctx);
+            },
+        );
+    }
 
     ctx.add_singleton_model(AntivirusInfo::new);
 
@@ -1233,14 +1207,6 @@ pub(crate) fn initialize_app(
     ctx.add_singleton_model(|_| AIFactManager::new());
     ctx.add_singleton_model(|_| ExecutionProfileEditorManager::default());
     ctx.add_singleton_model(|_| NetworkLogPaneManager::default());
-    ctx.add_singleton_model(|_| pricing::PricingInfoModel::new());
-    ctx.add_singleton_model(|ctx| {
-        // Not using the *Provider types isn't ideal, but it's worth it for the ability to move managed secrets to a separate crate.
-        ManagedSecretManager::new(
-            server_api_provider.as_ref(ctx).get_managed_secrets_client(),
-            auth_state.clone(),
-        )
-    });
 
     #[cfg(target_os = "macos")]
     if !launch_mode.is_headless() {
@@ -1443,7 +1409,6 @@ pub(crate) fn initialize_app(
     prompt::editor_modal::init(ctx);
     ai::blocklist::agent_view::editor::init(ctx);
     undo_close::init(ctx);
-    billing::shared_objects_creation_denied_modal::init(ctx);
     tab_configs::new_worktree_modal::init(ctx);
     tab_configs::params_modal::init(ctx);
     ai::blocklist::init(ctx);
@@ -1451,7 +1416,6 @@ pub(crate) fn initialize_app(
     drive::index::init(ctx);
     drive::sharing::dialog::init(ctx);
     ai_assistant::panel::init(ctx);
-    settings_view::update_environment_form::init(ctx);
     env_vars::env_var_collection_block::init(ctx);
     terminal::ssh::install_tmux::init(ctx);
     terminal::ssh::warpify::init(ctx);
@@ -1460,7 +1424,6 @@ pub(crate) fn initialize_app(
     context_chips::node_version_popup::init(ctx);
     env_vars::view::env_var_collection::init(ctx);
     ai::agent::todos::popup::init(ctx);
-    terminal::view::init_environment::mode_selector::init(ctx);
     coding_entrypoints::project_buttons::init(ctx);
     if FeatureFlag::CodeReviewSaveChanges.is_enabled() {
         code_review::init(ctx);
@@ -1588,27 +1551,12 @@ pub(crate) fn initialize_app(
     // and before the UpdateManager models because they rely on the TeamTester model.
     ctx.add_singleton_model(TeamTesterStatus::new);
 
-    ctx.add_singleton_model(|ctx| {
-        TeamUpdateManager::new(
-            server_api_provider.as_ref(ctx).get_team_client(),
-            persistence_writer.sender(),
-            ctx,
-        )
-    });
+    ctx.add_singleton_model(|ctx| TeamUpdateManager::new(persistence_writer.sender(), ctx));
 
     ctx.add_singleton_model(|ctx| {
         UpdateManager::new(
             persistence_writer.sender(),
             server_api_provider.as_ref(ctx).get_cloud_objects_client(),
-            ctx,
-        )
-    });
-
-    let toml_file_path = settings::user_preferences_toml_file_path();
-    ctx.add_singleton_model(move |ctx| {
-        initialize_cloud_preferences_syncer(
-            toml_file_path,
-            startup_toml_parse_error_for_syncer.as_deref(),
             ctx,
         )
     });
@@ -1691,10 +1639,6 @@ pub(crate) fn initialize_app(
 
     ctx.add_singleton_model(EnvVarCollectionManager::new);
     ctx.add_singleton_model(WorkflowManager::new);
-
-    if FeatureFlag::ScheduledAmbientAgents.is_enabled() {
-        ctx.add_singleton_model(ScheduledAgentManager::new);
-    }
 
     AutoupdateState::register(ctx, server_api.clone());
 
@@ -2286,9 +2230,7 @@ pub fn init_feature_flags() {
         FeatureFlag::CloudObjects,
         FeatureFlag::CloudMode,
         FeatureFlag::CloudModeFromLocalSession,
-        FeatureFlag::CloudModeHostSelector,
         FeatureFlag::CloudModeImageContext,
-        FeatureFlag::WarpManagedSecrets,
         FeatureFlag::OzPlatformSkills,
         FeatureFlag::OzChangelogUpdates,
         FeatureFlag::TeamApiKeys,
@@ -2298,31 +2240,28 @@ pub fn init_feature_flags() {
         FeatureFlag::OrchestrationV2,
         FeatureFlag::Orchestration,
         FeatureFlag::SyncAmbientPlans,
-        FeatureFlag::HandoffCloudCloud,
-        FeatureFlag::HandoffLocalCloud,
-        FeatureFlag::OzHandoff,
-        FeatureFlag::OzIdentityFederation,
         FeatureFlag::OzLaunchModal,
         FeatureFlag::OpenWarpLaunchModal,
-        FeatureFlag::ConversationApi,
         FeatureFlag::CloudConversations,
         FeatureFlag::CloudModeSetupV2,
         FeatureFlag::CloudModeInputV2,
-        FeatureFlag::CreateEnvironmentSlashCommand,
-        FeatureFlag::CloudEnvironments,
         FeatureFlag::RemoteCodebaseIndexing,
-        FeatureFlag::ScheduledAmbientAgents,
         FeatureFlag::AmbientAgentsImageUpload,
         FeatureFlag::AmbientAgentsRTC,
         FeatureFlag::SshRemoteServer,
         FeatureFlag::CreatingSharedSessions,
         FeatureFlag::ViewingSharedSessions,
         FeatureFlag::AgentSharedSessions,
+        FeatureFlag::SharedSessionWriteToLongRunningCommands,
         FeatureFlag::ForceLogin,
         FeatureFlag::UsageBasedPricing,
     ];
     for flag in disabled_flags {
         flag.set_enabled(false);
+    }
+
+    for flag in [FeatureFlag::SoloUserByok] {
+        flag.set_enabled(true);
     }
 
     features::mark_initialized();
@@ -2387,10 +2326,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::SSHTmuxWrapper,
         #[cfg(feature = "shell_selector")]
         FeatureFlag::ShellSelector,
-        #[cfg(feature = "artifact_command")]
-        FeatureFlag::ArtifactCommand,
-        #[cfg(feature = "cloud_environments")]
-        FeatureFlag::CloudEnvironments,
         #[cfg(all(feature = "simulate_github_unauthed", debug_assertions))]
         FeatureFlag::SimulateGithubUnauthed,
         #[cfg(feature = "session_sharing_acls")]
@@ -2419,8 +2354,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::ITermImages,
         #[cfg(feature = "validate_autosuggestions")]
         FeatureFlag::ValidateAutosuggestions,
-        #[cfg(feature = "prompt_suggestions_via_maa")]
-        FeatureFlag::PromptSuggestionsViaMAA,
         #[cfg(feature = "clear_autosuggestion_on_escape")]
         FeatureFlag::ClearAutosuggestionOnEscape,
         #[cfg(feature = "autoupdate_ui_revamp")]
@@ -2477,8 +2410,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::FileRetrievalTools,
         #[cfg(feature = "reload_stale_conversation_files")]
         FeatureFlag::ReloadStaleConversationFiles,
-        #[cfg(feature = "shared_block_title_generation")]
-        FeatureFlag::SharedBlockTitleGeneration,
         #[cfg(feature = "retry_truncated_code_responses")]
         FeatureFlag::RetryTruncatedCodeResponses,
         #[cfg(feature = "read_image_files")]
@@ -2575,8 +2506,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::AmbientAgentsCommandLine,
         #[cfg(feature = "ambient_agents_image_upload")]
         FeatureFlag::AmbientAgentsImageUpload,
-        #[cfg(feature = "scheduled_ambient_agents")]
-        FeatureFlag::ScheduledAmbientAgents,
         #[cfg(feature = "code_launch_modal")]
         FeatureFlag::CodeLaunchModal,
         #[cfg(feature = "mcp_oauth")]
@@ -2597,8 +2526,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::AutoOpenCodeReviewPane,
         #[cfg(feature = "inline_code_review")]
         FeatureFlag::InlineCodeReview,
-        #[cfg(feature = "create_environment_slash_command")]
-        FeatureFlag::CreateEnvironmentSlashCommand,
         #[cfg(feature = "summarize_conversation_command")]
         FeatureFlag::SummarizationConversationCommand,
         #[cfg(feature = "mcp_grouped_server_context")]
@@ -2629,8 +2556,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::AgentView,
         #[cfg(feature = "agent_view_block_context")]
         FeatureFlag::AgentViewBlockContext,
-        #[cfg(feature = "warp_managed_secrets")]
-        FeatureFlag::WarpManagedSecrets,
         #[cfg(feature = "v4a_file_diffs")]
         FeatureFlag::V4AFileDiffs,
         #[cfg(feature = "interactive_conversation_management_view")]
@@ -2683,8 +2608,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::InlineProfileSelector,
         #[cfg(feature = "oz_platform_skills")]
         FeatureFlag::OzPlatformSkills,
-        #[cfg(feature = "oz_identity_federation")]
-        FeatureFlag::OzIdentityFederation,
         #[cfg(feature = "oz_changelog_updates")]
         FeatureFlag::OzChangelogUpdates,
         #[cfg(feature = "bundled_skills")]
@@ -2731,10 +2654,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::TabConfigs,
         #[cfg(feature = "agent_harness")]
         FeatureFlag::AgentHarness,
-        #[cfg(feature = "oz_handoff")]
-        FeatureFlag::OzHandoff,
-        #[cfg(feature = "handoff_local_cloud")]
-        FeatureFlag::HandoffLocalCloud,
         #[cfg(feature = "hoa_notifications")]
         FeatureFlag::HOANotifications,
         #[cfg(feature = "open_code_notifications")]
@@ -2745,16 +2664,10 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::TransferControlTool,
         #[cfg(feature = "warpify_footer")]
         FeatureFlag::WarpifyFooter,
-        #[cfg(feature = "solo_user_byok")]
-        FeatureFlag::SoloUserByok,
-        #[cfg(feature = "skip_firebase_anonymous_user")]
-        FeatureFlag::SkipFirebaseAnonymousUser,
         #[cfg(feature = "hoa_onboarding_flow")]
         FeatureFlag::HOAOnboardingFlow,
         #[cfg(feature = "git_operations_in_code_review")]
         FeatureFlag::GitOperationsInCodeReview,
-        #[cfg(feature = "hoa_remote_control")]
-        FeatureFlag::HOARemoteControl,
         #[cfg(feature = "codex_notifications")]
         FeatureFlag::CodexNotifications,
         #[cfg(feature = "trim_trailing_blank_lines")]
@@ -2765,8 +2678,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::CloudModeInputV2,
         #[cfg(feature = "configurable_context_window")]
         FeatureFlag::ConfigurableContextWindow,
-        #[cfg(feature = "handoff_cloud_cloud")]
-        FeatureFlag::HandoffCloudCloud,
         #[cfg(feature = "git_credential_refresh")]
         FeatureFlag::GitCredentialRefresh,
     ]);

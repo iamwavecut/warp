@@ -11,7 +11,6 @@ use self::{
 use crate::server::cloud_objects::update_manager::InitiatedBy;
 use crate::{
     ai::cloud_agent_config::CloudAgentConfigModel,
-    ai::cloud_environments::CloudAmbientAgentEnvironmentModel,
     ai::{
         ambient_agents::scheduled::CloudScheduledAmbientAgentModel,
         document::ai_document_model::AIDocumentId,
@@ -722,33 +721,7 @@ where
         let link_safe_name = SPACE_DETECT_RE.replace_all(&name_without_unsafe_chars, "-");
         match &self.id {
             SyncId::ClientId(_) => None,
-            SyncId::ServerId(id) => {
-                let object_type = self.object_type();
-                let object_type_for_link = if self
-                    .as_any()
-                    .downcast_ref::<CloudWorkflow>()
-                    .is_some_and(|w| w.model().data.is_agent_mode_workflow())
-                {
-                    "prompt".to_string()
-                } else {
-                    object_type.to_string()
-                };
-
-                let mut link = format!(
-                    "{}/drive/{}/{}-{}",
-                    ChannelState::server_root_url(),
-                    object_type_for_link,
-                    link_safe_name,
-                    id.uid()
-                );
-
-                // If this is a preview build, ensure the link routes to a preview build.
-                if matches!(ChannelState::channel(), Channel::Preview) {
-                    link.push_str("?preview=true");
-                }
-
-                Some(link)
-            }
+            SyncId::ServerId(_) => None,
         }
     }
 
@@ -944,7 +917,7 @@ pub fn extract_server_id_and_object_type_from_warp_drive_link(
 
     let object_type = url.path_segments().and_then(|mut segments| segments.nth(1));
 
-    // Parse the object portion of the path segment (warp.dev/drive/{object})
+    // Parse the object portion of the path segment
     // into an object type
     let object_type = match object_type {
         Some("notebook") => ObjectType::Notebook,
@@ -1058,7 +1031,7 @@ pub trait CloudObjectMetadataExt {
     /// Returns None if the revision and last_editor are None.
     fn semantic_editing_history(&self, app: &AppContext) -> Option<String>;
 
-    /// Returns a semantic summary of the object's creator. For example, "Alice" or "joan@warp.dev".
+    /// Returns a semantic summary of the object's creator. For example, "Alice" or "joan@example.com".
     #[cfg_attr(target_family = "wasm", expect(dead_code))]
     fn semantic_creator(&self, app: &AppContext) -> Option<String>;
 
@@ -1071,7 +1044,7 @@ impl CloudObjectMetadataExt for CloudObjectMetadata {
     fn semantic_editing_history(&self, app: &AppContext) -> Option<String> {
         let user_profiles = UserProfiles::as_ref(app);
 
-        // First, the editor. For example, "Joan Didion" or "joan@warp.dev".
+        // First, the editor. For example, "Joan Didion" or "joan@example.com".
         let editor_string = self
             .last_editor_uid
             .as_ref()
@@ -1184,7 +1157,6 @@ pub enum ServerCloudObject {
     MCPServer(ServerMCPServer),
     AIExecutionProfile(ServerAIExecutionProfile),
     TemplatableMCPServer(ServerTemplatableMCPServer),
-    AmbientAgentEnvironment(ServerAmbientAgentEnvironment),
     ScheduledAmbientAgent(ServerScheduledAmbientAgent),
     CloudAgentConfig(ServerCloudAgentConfig),
 }
@@ -1205,9 +1177,6 @@ impl ServerCloudObject {
             }
             ServerCloudObject::AIExecutionProfile(ai_execution_profile) => {
                 &ai_execution_profile.metadata
-            }
-            ServerCloudObject::AmbientAgentEnvironment(ambient_agent_environment) => {
-                &ambient_agent_environment.metadata
             }
             ServerCloudObject::ScheduledAmbientAgent(scheduled_ambient_agent) => {
                 &scheduled_ambient_agent.metadata
@@ -1231,9 +1200,6 @@ impl ServerCloudObject {
             }
             ServerCloudObject::TemplatableMCPServer(templatable_mcp_server) => {
                 templatable_mcp_server.id.uid()
-            }
-            ServerCloudObject::AmbientAgentEnvironment(ambient_agent_environment) => {
-                ambient_agent_environment.id.uid()
             }
             ServerCloudObject::ScheduledAmbientAgent(scheduled_ambient_agent) => {
                 scheduled_ambient_agent.id.uid()
@@ -1277,11 +1243,6 @@ where
             value.as_any().downcast_ref::<ServerTemplatableMCPServer>()
         {
             ServerCloudObject::TemplatableMCPServer(server_templatable_mcp_server.clone())
-        } else if let Some(server_ambient_agent_environment) = value
-            .as_any()
-            .downcast_ref::<ServerAmbientAgentEnvironment>(
-        ) {
-            ServerCloudObject::AmbientAgentEnvironment(server_ambient_agent_environment.clone())
         } else if let Some(server_scheduled_ambient_agent) =
             value.as_any().downcast_ref::<ServerScheduledAmbientAgent>()
         {
@@ -1392,8 +1353,6 @@ pub type ServerAIExecutionProfile =
     GenericServerObject<GenericStringObjectId, CloudAIExecutionProfileModel>;
 pub type ServerTemplatableMCPServer =
     GenericServerObject<GenericStringObjectId, CloudTemplatableMCPServerModel>;
-pub type ServerAmbientAgentEnvironment =
-    GenericServerObject<GenericStringObjectId, CloudAmbientAgentEnvironmentModel>;
 pub type ServerScheduledAmbientAgent =
     GenericServerObject<GenericStringObjectId, CloudScheduledAmbientAgentModel>;
 pub type ServerCloudAgentConfig = GenericServerObject<GenericStringObjectId, CloudAgentConfigModel>;

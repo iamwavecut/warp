@@ -1,7 +1,6 @@
 use serde::Serialize;
 use std::rc::Rc;
 
-use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::blocklist::prompt::prompt_alert::{
     PromptAlertEvent, PromptAlertState, PromptAlertView,
@@ -28,22 +27,19 @@ use warpui::{
 };
 use warpui::{SingletonEntity, View};
 
-use crate::terminal::view::{ContextMenuAction, InputType, PromptSuggestion};
+use crate::terminal::view::{InputType, PromptSuggestion};
 use crate::ui_components::blended_colors;
 use crate::{appearance::Appearance, terminal::view::TerminalAction};
-use warp_core::channel::ChannelState;
 use warp_core::ui::theme::color::internal_colors::{neutral_2, neutral_3};
 
 use crate::ui_components::icons::Icon as WarpUIIcon;
 
 use crate::ai::agent::{PassiveSuggestionTrigger, StaticQueryType};
-use crate::server::ids::ServerId;
 
 const INLINE_BANNER_SPACING: f32 = 8.;
 const INLINE_BANNER_BUTTON_PADDING: f32 = 8.;
 
-const DELINQUENT_DUE_TO_PAYMENT_ISSUE_TOOLTIP_MESSAGE: &str = "Restricted due to payment issue";
-const OUT_OF_REQUESTS_TOOLTIP_MESSAGE: &str = "Out of credits";
+const LLM_PROVIDER_NOT_CONFIGURED_TOOLTIP_MESSAGE: &str = "Configure an LLM provider to use AI";
 
 /// Types of zero-state prompt suggestions.
 #[derive(Debug, Copy, Clone, Serialize)]
@@ -114,9 +110,6 @@ pub struct PromptSuggestionBannerState {
     /// The conversation that this suggestion should be associated with.
     /// Only populated when a prompt suggestion is generated in the agent view.
     pub conversation_id: Option<AIConversationId>,
-
-    /// The server request token, used to construct a debug link (dogfood only).
-    pub server_request_token: Option<String>,
 }
 
 /// Renders the Prompt Suggestions button, with appropriate hover and click effects.
@@ -128,22 +121,13 @@ fn render_button(
     keystroke: Option<Keystroke>,
     mouse_state: MouseStateHandle,
     on_click: Rc<impl Fn(&mut EventContext) + 'static>,
-    debug_request_token: Option<ServerConversationToken>,
     prompt_alert_state: &PromptAlertState,
     should_shrink: bool,
     appearance: &Appearance,
     app: &AppContext,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
-    let is_button_disabled = matches!(
-        prompt_alert_state,
-        PromptAlertState::NoConnection
-            | PromptAlertState::AnonymousUserRequestLimitHardGate
-            | PromptAlertState::DelinquentDueToPaymentIssue
-            | PromptAlertState::OveragesToggleableButNotEnabled
-            | PromptAlertState::MonthlyOveragesSpendLimitReached
-            | PromptAlertState::RequestLimitReached
-    );
+    let is_button_disabled = matches!(prompt_alert_state, PromptAlertState::ProviderNotConfigured);
     let opacity: f32 = if is_button_disabled { 0.5 } else { 1.0 };
     let opacity_u8 = (opacity * 255.0).round() as u8;
     let hoverable = Hoverable::new(mouse_state.clone(), |mouse_state| {
@@ -274,18 +258,6 @@ fn render_button(
     })
     .with_cursor(Cursor::PointingHand);
 
-    let hoverable = if let Some(token) = debug_request_token {
-        hoverable.on_right_click(move |ctx, _, _| {
-            ctx.dispatch_typed_action(TerminalAction::ContextMenu(
-                ContextMenuAction::CopyServerRequestId {
-                    request_id: token.clone(),
-                },
-            ));
-        })
-    } else {
-        hoverable
-    };
-
     if is_button_disabled {
         hoverable.finish()
     } else {
@@ -297,15 +269,8 @@ fn get_tooltip_text_for_alert_state(alert_state: &PromptAlertState) -> Option<St
     // This is not an exhaustive list; the actual prompt alert component will have more information,
     // so we can keep the tooltip's text relatively minimal and just capture broad groups.
     match alert_state {
-        PromptAlertState::DelinquentDueToPaymentIssue => {
-            Some(DELINQUENT_DUE_TO_PAYMENT_ISSUE_TOOLTIP_MESSAGE.to_string())
-        }
-        PromptAlertState::RequestLimitReached
-        | PromptAlertState::AnonymousUserRequestLimitHardGate
-        | PromptAlertState::AnonymousUserRequestLimitSoftGate
-        | PromptAlertState::OveragesToggleableButNotEnabled
-        | PromptAlertState::MonthlyOveragesSpendLimitReached => {
-            Some(OUT_OF_REQUESTS_TOOLTIP_MESSAGE.to_string())
+        PromptAlertState::ProviderNotConfigured => {
+            Some(LLM_PROVIDER_NOT_CONFIGURED_TOOLTIP_MESSAGE.to_string())
         }
         _ => None,
     }
@@ -314,9 +279,7 @@ fn get_tooltip_text_for_alert_state(alert_state: &PromptAlertState) -> Option<St
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptSuggestionsEvent {
     SignupAnonymousUser,
-    OpenBillingAndUsagePage,
     OpenPrivacyPage,
-    OpenBillingPortal { team_uid: ServerId },
 }
 
 pub struct PromptSuggestionsView {
@@ -355,16 +318,8 @@ impl PromptSuggestionsView {
             PromptAlertEvent::SignupAnonymousUser => {
                 ctx.emit(PromptSuggestionsEvent::SignupAnonymousUser);
             }
-            PromptAlertEvent::OpenBillingAndUsagePage => {
-                ctx.emit(PromptSuggestionsEvent::OpenBillingAndUsagePage);
-            }
             PromptAlertEvent::OpenPrivacyPage => {
                 ctx.emit(PromptSuggestionsEvent::OpenPrivacyPage);
-            }
-            PromptAlertEvent::OpenBillingPortal { team_uid } => {
-                ctx.emit(PromptSuggestionsEvent::OpenBillingPortal {
-                    team_uid: *team_uid,
-                });
             }
         }
     }
@@ -394,15 +349,6 @@ impl View for PromptSuggestionsView {
         };
         let prompt_suggestion = &banner_state.prompt_suggestion;
 
-        let debug_request_token = if ChannelState::enable_debug_features() {
-            banner_state
-                .server_request_token
-                .as_ref()
-                .map(|t| ServerConversationToken::new(t.clone()))
-        } else {
-            None
-        };
-
         inner_banner_flex.add_child(
             Shrinkable::new(
                 1.0,
@@ -419,7 +365,6 @@ impl View for PromptSuggestionsView {
                             },
                         ));
                     }),
-                    debug_request_token,
                     prompt_alert_state,
                     true, // should_shrink
                     appearance,
@@ -461,16 +406,8 @@ impl TypedActionView for PromptSuggestionsView {
             PromptSuggestionsEvent::SignupAnonymousUser => {
                 ctx.emit(PromptSuggestionsEvent::SignupAnonymousUser);
             }
-            PromptSuggestionsEvent::OpenBillingAndUsagePage => {
-                ctx.emit(PromptSuggestionsEvent::OpenBillingAndUsagePage);
-            }
             PromptSuggestionsEvent::OpenPrivacyPage => {
                 ctx.emit(PromptSuggestionsEvent::OpenPrivacyPage);
-            }
-            PromptSuggestionsEvent::OpenBillingPortal { team_uid } => {
-                ctx.emit(PromptSuggestionsEvent::OpenBillingPortal {
-                    team_uid: *team_uid,
-                });
             }
         }
     }

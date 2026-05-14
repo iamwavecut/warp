@@ -1,15 +1,13 @@
-use std::{ffi::OsString, fs, sync::Arc};
+use std::{ffi::OsString, fs};
 
 use tempfile::TempDir;
 use warp_cli::agent::Harness;
 
 use super::{
     build_local_claude_child_command, build_local_codex_child_command,
-    build_local_opencode_child_command, local_child_task_config, normalize_local_child_harness,
+    build_local_opencode_child_command, normalize_local_child_harness,
     prepare_local_harness_child_launch, validate_local_harness_shell,
 };
-use crate::ai::ambient_agents::task::HarnessConfig;
-use crate::server::server_api::ai::MockAIClient;
 use crate::terminal::shell::ShellType;
 
 struct EnvVarGuard {
@@ -145,19 +143,6 @@ fn build_local_codex_child_command_quotes_the_prompt() {
     );
 }
 
-#[test]
-fn local_child_task_config_records_supported_third_party_harnesses() {
-    for harness in [Harness::Claude, Harness::OpenCode, Harness::Codex] {
-        assert_eq!(
-            local_child_task_config(harness),
-            Some(crate::ai::ambient_agents::task::AgentConfigSnapshot {
-                harness: Some(HarnessConfig::from_harness_type(harness)),
-                ..Default::default()
-            }),
-        );
-    }
-}
-
 #[tokio::test]
 #[serial_test::serial]
 async fn prepare_local_codex_child_launch_does_not_rewrite_global_codex_state() {
@@ -170,12 +155,6 @@ async fn prepare_local_codex_child_launch_does_not_rewrite_global_codex_state() 
     let _home = EnvVarGuard::set("HOME", fake_home.path().as_os_str().to_os_string());
     let _path = EnvVarGuard::set("PATH", fake_bin_dir.path().as_os_str().to_os_string());
 
-    let mut ai_client = MockAIClient::new();
-    ai_client
-        .expect_create_agent_task()
-        .times(1)
-        .returning(|_, _, _, _| Ok("550e8400-e29b-41d4-a716-446655440000".parse().unwrap()));
-
     let prepared = prepare_local_harness_child_launch(
         "hello world".to_string(),
         "codex".to_string(),
@@ -183,7 +162,6 @@ async fn prepare_local_codex_child_launch_does_not_rewrite_global_codex_state() 
         Some("parent-run".to_string()),
         Some(ShellType::Zsh),
         Some(working_dir),
-        Arc::new(ai_client),
     )
     .await
     .unwrap();
@@ -207,12 +185,6 @@ async fn prepare_local_claude_child_merges_anthropic_model_env_var() {
     let _home = EnvVarGuard::set("HOME", fake_home.path().as_os_str().to_os_string());
     let _path = EnvVarGuard::set("PATH", fake_bin_dir.path().as_os_str().to_os_string());
 
-    let mut ai_client = MockAIClient::new();
-    ai_client
-        .expect_create_agent_task()
-        .times(1)
-        .returning(|_, _, _, _| Ok("550e8400-e29b-41d4-a716-446655440000".parse().unwrap()));
-
     let prepared = prepare_local_harness_child_launch(
         "hello world".to_string(),
         "claude".to_string(),
@@ -220,7 +192,6 @@ async fn prepare_local_claude_child_merges_anthropic_model_env_var() {
         Some("parent-run".to_string()),
         Some(ShellType::Zsh),
         Some(working_dir),
-        Arc::new(ai_client),
     )
     .await
     .unwrap();
@@ -243,12 +214,6 @@ async fn prepare_local_claude_child_no_anthropic_model_when_empty() {
     let _home = EnvVarGuard::set("HOME", fake_home.path().as_os_str().to_os_string());
     let _path = EnvVarGuard::set("PATH", fake_bin_dir.path().as_os_str().to_os_string());
 
-    let mut ai_client = MockAIClient::new();
-    ai_client
-        .expect_create_agent_task()
-        .times(1)
-        .returning(|_, _, _, _| Ok("550e8400-e29b-41d4-a716-446655440000".parse().unwrap()));
-
     let prepared = prepare_local_harness_child_launch(
         "hello world".to_string(),
         "claude".to_string(),
@@ -256,7 +221,6 @@ async fn prepare_local_claude_child_no_anthropic_model_when_empty() {
         Some("parent-run".to_string()),
         Some(ShellType::Zsh),
         Some(working_dir),
-        Arc::new(ai_client),
     )
     .await
     .unwrap();

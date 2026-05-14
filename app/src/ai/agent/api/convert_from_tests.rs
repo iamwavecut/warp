@@ -7,7 +7,6 @@ use crate::ai::agent::{
     AIAgentActionType, AIAgentOutputMessageType, LifecycleEventType, StartAgentExecutionMode,
 };
 use ai::agent::action::AskUserQuestionType;
-use ai::skills::SkillReference;
 use warp_multi_agent_api as api;
 
 fn start_agent_tool_call_message(
@@ -489,7 +488,7 @@ fn converts_start_agent_with_cancelled_and_blocked_lifecycle_subscription() {
 }
 
 #[test]
-fn converts_remote_start_agent_with_environment_id() {
+fn converts_remote_start_agent_with_environment_id_to_local_defaults() {
     let task_id = TaskId::new("task-id".to_string());
     let message = start_agent_tool_call_message(
         "Agent 5",
@@ -512,21 +511,13 @@ fn converts_remote_start_agent_with_environment_id() {
     assert_eq!(prompt, "run in the remote environment");
     assert_eq!(
         execution_mode,
-        StartAgentExecutionMode::Remote {
-            environment_id: "env-123".to_string(),
-            skill_references: vec![],
-            model_id: String::new(),
-            computer_use_enabled: false,
-            worker_host: String::new(),
-            harness_type: String::new(),
-            title: String::new(),
-        }
+        StartAgentExecutionMode::local_with_defaults()
     );
     assert_eq!(lifecycle_subscription, None);
 }
 
 #[test]
-fn converts_remote_start_agent_v2_with_skill_references() {
+fn converts_remote_start_agent_v2_to_local_harness_and_model() {
     let task_id = TaskId::new("task-id".to_string());
     let message = start_agent_v2_tool_call_message(
         "Agent 6",
@@ -549,17 +540,9 @@ fn converts_remote_start_agent_v2_with_skill_references() {
     assert_eq!(prompt, "run in the remote environment");
     assert_eq!(
         execution_mode,
-        StartAgentExecutionMode::Remote {
-            environment_id: "env-123".to_string(),
-            skill_references: vec![
-                SkillReference::Path("/tmp/SKILL.md".into()),
-                SkillReference::BundledSkillId("review-comments".to_string()),
-            ],
-            model_id: "gpt-test".to_string(),
-            computer_use_enabled: true,
-            worker_host: "worker-host".to_string(),
-            harness_type: "claude-code".to_string(),
-            title: "Remote child".to_string(),
+        StartAgentExecutionMode::Local {
+            harness_type: Some("claude-code".to_string()),
+            model_id: Some("gpt-test".to_string()),
         }
     );
     assert_eq!(lifecycle_subscription, None);

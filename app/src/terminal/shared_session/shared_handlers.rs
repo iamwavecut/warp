@@ -402,7 +402,7 @@ pub(crate) fn apply_cli_agent_state_update(
                 });
             }
 
-            // For cloud agent sessions with non-Oz harnesses, auto-open rich
+            // For agent sessions with non-Oz harnesses, auto-open rich
             // input when creating a new CLI agent session so the viewer gets the
             // composer immediately (byte-sharing has roundtrip lag without it).
             let effective_rich_input_open =

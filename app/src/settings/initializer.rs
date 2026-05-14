@@ -176,5 +176,5 @@ impl Entity for SettingsInitializer {
     type Event = ();
 }
 
-/// Mark CloudPreferencesSyncer as global application state.
+/// Mark SettingsInitializer as global application state.
 impl SingletonEntity for SettingsInitializer {}

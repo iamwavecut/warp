@@ -1,32 +1,18 @@
 use crate::server::server_api::ai::AIClient;
-use crate::settings::AISettings;
-use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::workspaces::workspace::WorkspaceUid;
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Utc};
 use instant::Instant;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use warp_core::user_preferences::GetUserPreferences as _;
 use warp_graphql::scalars::time::ServerTimestamp;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
 
 pub use warp_graphql::billing::BonusGrantType;
 
-/// Threshold of ambient-only credits at which we surface upgrade/CTA UI.
-pub const AMBIENT_AGENT_TRIAL_CREDIT_THRESHOLD: i32 = 20;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BonusGrantScope {
     User,
     Workspace(WorkspaceUid),
-}
-
-#[derive(Clone, Debug, PartialEq, Default)]
-pub enum BuyCreditsBannerDisplayState {
-    #[default]
-    Hidden,
-    OutOfCredits,
-    MonthlyLimitReached,
 }
 
 #[derive(Clone, Debug)]
@@ -41,9 +27,6 @@ pub struct BonusGrant {
     pub request_credits_remaining: i32,
     pub scope: BonusGrantScope,
 }
-
-/// The key for the corresponding entry in UserDefaults.
-const REQUEST_LIMIT_INFO_CACHE_KEY: &str = "AIRequestLimitInfo";
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum RequestLimitRefreshDuration {
@@ -99,6 +82,25 @@ impl Default for RequestLimitInfo {
     }
 }
 
+impl RequestLimitInfo {
+    pub fn new_local_unlimited() -> Self {
+        Self {
+            limit: 999999999,
+            num_requests_used_since_refresh: 0,
+            next_refresh_time: ServerTimestamp::new(Utc::now() + chrono::Duration::days(365)),
+            is_unlimited: true,
+            request_limit_refresh_duration: RequestLimitRefreshDuration::Monthly,
+            is_unlimited_voice: true,
+            voice_request_limit: 999999999,
+            voice_requests_used_since_last_refresh: 0,
+            is_unlimited_codebase_indices: true,
+            max_codebase_indices: 999999,
+            max_files_per_repo: 999999,
+            embedding_generation_batch_size: 100,
+        }
+    }
+}
+
 #[cfg(test)]
 impl RequestLimitInfo {
     pub fn new_for_test(limit: usize, num_requests_used_since_refresh: usize) -> Self {
@@ -142,37 +144,8 @@ impl RequestLimitInfo {
     }
 }
 
-fn cache_request_limit_info(request_limit_info: RequestLimitInfo, app_mut: &mut AppContext) {
-    if let Ok(serialized) = serde_json::to_string(&request_limit_info) {
-        let _ = app_mut
-            .private_user_preferences()
-            .write_value(REQUEST_LIMIT_INFO_CACHE_KEY, serialized);
-    }
-}
-
-fn get_cached_request_limit_info(app_mut: &mut AppContext) -> Option<RequestLimitInfo> {
-    app_mut
-        .private_user_preferences()
-        .read_value(REQUEST_LIMIT_INFO_CACHE_KEY)
-        .unwrap_or_default()
-        .and_then(|serialized| serde_json::from_str(serialized.as_str()).ok())
-}
-
 fn local_request_limit_info() -> RequestLimitInfo {
-    RequestLimitInfo {
-        limit: 999999999,
-        num_requests_used_since_refresh: 0,
-        next_refresh_time: ServerTimestamp::new(Utc::now() + chrono::Duration::days(365)),
-        is_unlimited: true,
-        request_limit_refresh_duration: RequestLimitRefreshDuration::Monthly,
-        is_unlimited_voice: true,
-        voice_request_limit: 999999999,
-        voice_requests_used_since_last_refresh: 0,
-        is_unlimited_codebase_indices: true,
-        max_codebase_indices: 999999,
-        max_files_per_repo: 999999,
-        embedding_generation_batch_size: 100,
-    }
+    RequestLimitInfo::new_local_unlimited()
 }
 
 pub struct AIRequestUsageModel {
@@ -182,9 +155,6 @@ pub struct AIRequestUsageModel {
     request_limit_info: RequestLimitInfo,
 
     bonus_grants: Vec<BonusGrant>,
-
-    /// Whether the buy credits banner has been dismissed by the user.
-    buy_addon_credits_banner_dismissed: bool,
 }
 
 impl Entity for AIRequestUsageModel {
@@ -197,14 +167,13 @@ pub enum AIRequestUsageModelEvent {
 
 impl AIRequestUsageModel {
     pub fn new(_ai_client: Arc<dyn AIClient>, ctx: &mut ModelContext<Self>) -> Self {
-        let _ = get_cached_request_limit_info(ctx);
+        let _ = ctx;
         let request_limit_info = local_request_limit_info();
 
         Self {
             request_limit_info,
             last_update_time: None,
             bonus_grants: vec![],
-            buy_addon_credits_banner_dismissed: false,
         }
     }
 
@@ -214,7 +183,6 @@ impl AIRequestUsageModel {
             last_update_time: None,
             request_limit_info: RequestLimitInfo::default(),
             bonus_grants: vec![],
-            buy_addon_credits_banner_dismissed: false,
         }
     }
 
@@ -226,22 +194,6 @@ impl AIRequestUsageModel {
     pub fn refresh_request_usage_async(&mut self, ctx: &mut ModelContext<Self>) {
         let _ = ctx;
         log::info!("local workflow: skipping server request usage refresh");
-    }
-
-    pub fn update_request_limit_info(
-        &mut self,
-        request_limit_info: RequestLimitInfo,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.last_update_time = Some(Instant::now());
-        self.request_limit_info = request_limit_info;
-        cache_request_limit_info(request_limit_info, ctx);
-
-        AISettings::handle(ctx).update(ctx, |ai_settings, ctx| {
-            ai_settings.update_quota_info(&request_limit_info, ctx);
-        });
-
-        ctx.emit(AIRequestUsageModelEvent::RequestUsageUpdated);
     }
 
     /// Returns the number of remaining requests the user has based on their latest rate limit info.
@@ -285,10 +237,6 @@ impl AIRequestUsageModel {
         self.request_limit_info.num_requests_used_since_refresh
     }
 
-    pub fn request_percentage_used(&self) -> f32 {
-        self.requests_used() as f32 / self.request_limit() as f32
-    }
-
     pub fn request_limit(&self) -> usize {
         self.request_limit_info.limit
     }
@@ -310,106 +258,18 @@ impl AIRequestUsageModel {
         }
     }
 
-    /// Returns whether the user has hit their maximum codebase allowance.
-    /// (If the user is allowed unlimited indices, this is vacuously false.)
-    pub fn hit_codebase_index_limit(&self, current_indices: usize) -> bool {
-        self.codebase_context_limits()
-            .max_indices_allowed
-            .map(|lim| current_indices >= lim)
-            .unwrap_or(false)
-    }
-
     pub fn next_refresh_time(&self) -> DateTime<Utc> {
         self.request_limit_info.next_refresh_time.utc()
-    }
-
-    pub fn next_refresh_time_local(&self) -> DateTime<Local> {
-        self.next_refresh_time().with_timezone(&Local)
     }
 
     pub fn is_unlimited(&self) -> bool {
         self.request_limit_info.is_unlimited
     }
 
-    pub fn refresh_duration_to_string(&self) -> String {
-        match self.request_limit_info.request_limit_refresh_duration {
-            RequestLimitRefreshDuration::Weekly => "weekly".to_string(),
-            RequestLimitRefreshDuration::Monthly => "monthly".to_string(),
-            RequestLimitRefreshDuration::EveryTwoWeeks => "biweekly".to_string(),
-        }
-    }
-
     pub fn bonus_grants(&self) -> &[BonusGrant] {
         &self.bonus_grants
     }
 
-    /// Returns the total remaining ambient-only credits for the user.
-    /// Returns None if the user has never received any ambient-only grants.
-    pub fn ambient_only_credits_remaining(&self) -> Option<i32> {
-        let ambient_grants: Vec<_> = self
-            .bonus_grants
-            .iter()
-            .filter(|g| g.grant_type == BonusGrantType::AmbientOnly)
-            .collect();
-        if ambient_grants.is_empty() {
-            None
-        } else {
-            Some(
-                ambient_grants
-                    .iter()
-                    .map(|g| g.request_credits_remaining)
-                    .sum(),
-            )
-        }
-    }
-
-    pub fn total_workspace_bonus_credits_remaining(&self, uid: WorkspaceUid) -> i32 {
-        let now = Utc::now();
-        self.bonus_grants
-            .iter()
-            .filter(|grant| grant.scope == BonusGrantScope::Workspace(uid))
-            .filter(|grant| grant.expiration.is_none_or(|exp| now < exp))
-            .map(|grant| grant.request_credits_remaining)
-            .sum()
-    }
-
-    pub fn total_current_workspace_bonus_credits_remaining(&self, ctx: &AppContext) -> i32 {
-        UserWorkspaces::as_ref(ctx)
-            .current_workspace()
-            .map(|workspace| self.total_workspace_bonus_credits_remaining(workspace.uid))
-            .unwrap_or(0)
-    }
-
-    pub fn total_user_interactive_bonus_credits_remaining(&self) -> i32 {
-        let now = Utc::now();
-        self.bonus_grants
-            .iter()
-            .filter(|grant| grant.scope == BonusGrantScope::User)
-            .filter(|grant| grant.grant_type != BonusGrantType::AmbientOnly)
-            .filter(|grant| grant.expiration.is_none_or(|exp| now < exp))
-            .map(|grant| grant.request_credits_remaining)
-            .sum()
-    }
-
-    /// Computes the current banner state based on live conditions.
-    /// This is called on-demand and always returns fresh state.
-    pub fn compute_buy_addon_credits_banner_display_state(
-        &self,
-        ctx: &AppContext,
-    ) -> BuyCreditsBannerDisplayState {
-        let _ = (self, ctx);
-        BuyCreditsBannerDisplayState::Hidden
-    }
-
-    pub fn dismiss_buy_credits_banner(&mut self, ctx: &mut ModelContext<Self>) {
-        self.buy_addon_credits_banner_dismissed = true;
-        ctx.notify();
-    }
-
-    pub fn enable_buy_credits_banner(&mut self, ctx: &mut ModelContext<Self>) {
-        self.buy_addon_credits_banner_dismissed = false;
-        ctx.notify();
-    }
 }
 
 /// Voice request usage, only available if built with voice input support.

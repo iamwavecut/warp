@@ -1,14 +1,12 @@
 use crate::appearance::Appearance;
 use crate::root_view::unthemed_window_border;
 
-use crate::server::server_api::auth::UserAuthenticationError;
 use crate::util::bindings::CustomAction;
 use anyhow::{anyhow, Result};
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use url::Url;
 use warp_core::errors::ErrorExt;
-use warp_core::features::FeatureFlag;
 use warpui::elements::ChildAnchor;
 use warpui::elements::Container;
 use warpui::elements::Fill;
@@ -27,7 +25,6 @@ use warpui::TypedActionView;
 
 use crate::auth::auth_view_body::AuthViewBody;
 use crate::modal::Modal;
-use std::collections::HashMap;
 use warpui::elements::ChildView;
 use warpui::ui_components::components::{Coords, UiComponentStyles};
 use warpui::{Element, Entity, View, ViewContext, ViewHandle};
@@ -91,12 +88,6 @@ pub struct AuthView {
     auth_view_variant: AuthViewVariant,
 }
 
-const AUTH_URL_HOST: &str = "auth";
-const AUTH_URL_REFRESH_TOKEN_QUERY_PARAM: &str = "refresh_token";
-const AUTH_URL_NEW_USER_UID_QUERY_PARAM: &str = "user_uid";
-const AUTH_URL_DELETED_ANON_USER_QUERY_PARAM: &str = "deleted_anonymous_user";
-const AUTH_URL_STATE_QUERY_PARAM: &str = "state";
-
 // `AuthRedirectPayload` is returned from the incoming redirect url.
 #[derive(Debug, Clone)]
 pub struct AuthRedirectPayload {
@@ -107,32 +98,12 @@ pub struct AuthRedirectPayload {
 }
 
 impl AuthRedirectPayload {
-    /// Attempts to parse the `AuthRedirectPayload` from URL sent to Warp. To parse successfully, the URL
-    /// must be of format {scheme}://auth/desktop_redirect?refresh_token={token}.
+    /// Remote auth redirects are disabled in this local-first build.
     pub fn from_url(url: Url) -> Result<Self> {
-        if url.host_str() != Some(AUTH_URL_HOST) {
-            return Err(anyhow!("Received URL with unexpected host: {} ", url));
-        }
-        let query_params: HashMap<_, _> = url.query_pairs().into_owned().collect();
-        if let Some(token) = query_params.get(AUTH_URL_REFRESH_TOKEN_QUERY_PARAM) {
-            let user_uid = query_params
-                .get(AUTH_URL_NEW_USER_UID_QUERY_PARAM)
-                .map(|uid| UserUid::new(uid));
-
-            Ok(Self {
-                refresh_token: RefreshToken::new(token),
-                user_uid,
-                deleted_anonymous_user: query_params
-                    .get(AUTH_URL_DELETED_ANON_USER_QUERY_PARAM)
-                    .map(|value| value == "true"),
-                state: query_params.get(AUTH_URL_STATE_QUERY_PARAM).cloned(),
-            })
-        } else {
-            Err(anyhow!(
-                "Received URL without refresh token query param: {}",
-                url
-            ))
-        }
+        let _ = url;
+        Err(anyhow!(
+            "Remote auth redirects are disabled in this local-first build"
+        ))
     }
 
     /// Like [`from_url()`], except first parses the given [`raw_url`] into a [`Url`] struct.
@@ -243,23 +214,14 @@ impl AuthView {
         ctx.emit(AuthViewEvent::Close);
     }
 
-    /// Parses the given 'clipboard_content' string into a URL which is assumed to represent the
-    /// OAuth redirect URL containing the user's refresh token after the user authenticated Warp.
+    /// Ignores pasted remote auth URLs. Local-first builds do not accept hosted auth tokens.
     fn handle_pasted_auth_url(&mut self, pasted_url: String, ctx: &mut ViewContext<Self>) {
+        let _ = pasted_url;
         self.set_auth_token_input_editable(false, ctx);
-        match AuthRedirectPayload::from_raw_url(pasted_url) {
-            Ok(redirect_payload) => {
-                AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                    auth_manager.initialize_user_from_auth_payload(redirect_payload, true, ctx);
-                });
-            }
-            Err(error) => {
-                log::error!("Failed to parse AuthRedirectPayload from redirect URL: {error:#}");
-                self.last_login_failure_reason =
-                    Some(LoginFailureReason::InvalidRedirectUrl { was_pasted: true });
-                self.set_auth_token_input_editable(true, ctx);
-            }
-        }
+        log::info!("Ignoring pasted remote auth URL in local workflow");
+        AuthManager::handle(ctx).update(ctx, |_, ctx| {
+            ctx.emit(AuthManagerEvent::SkippedLogin);
+        });
     }
 
     fn set_auth_token_input_editable(&mut self, is_editable: bool, ctx: &mut ViewContext<Self>) {
@@ -275,15 +237,9 @@ impl AuthView {
     }
 
     pub fn handle_login_later(&mut self, ctx: &mut ViewContext<Self>) {
-        if FeatureFlag::SkipFirebaseAnonymousUser.is_enabled() {
-            AuthManager::handle(ctx).update(ctx, |_, ctx| {
-                ctx.emit(AuthManagerEvent::SkippedLogin);
-            });
-        } else {
-            AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                auth_manager.create_anonymous_user(ctx)
-            });
-        }
+        AuthManager::handle(ctx).update(ctx, |_, ctx| {
+            ctx.emit(AuthManagerEvent::SkippedLogin);
+        });
     }
 
     fn handle_auth_manager_event(&mut self, event: &AuthManagerEvent, ctx: &mut ViewContext<Self>) {
@@ -296,25 +252,10 @@ impl AuthView {
                     log::error!("Failed to log in user: {err:#}");
                 }
 
-                if let UserAuthenticationError::InvalidStateParameter = err {
-                    self.last_login_failure_reason =
-                        Some(LoginFailureReason::InvalidStateParameter);
-                } else if let UserAuthenticationError::MissingStateParameter = err {
-                    self.last_login_failure_reason =
-                        Some(LoginFailureReason::MissingStateParameter);
-                } else {
-                    self.last_login_failure_reason =
-                        Some(LoginFailureReason::FailedUserAuthentication);
-                }
+                self.last_login_failure_reason =
+                    Some(LoginFailureReason::FailedUserAuthentication);
 
                 self.set_auth_token_input_editable(true, ctx);
-            }
-            AuthManagerEvent::CreateAnonymousUserFailed => {
-                self.last_login_failure_reason = Some(LoginFailureReason::FailedUserAuthentication);
-                self.set_auth_token_input_editable(true, ctx);
-            }
-            AuthManagerEvent::MintCustomTokenFailed(_err) => {
-                self.last_login_failure_reason = Some(LoginFailureReason::FailedMintCustomToken);
             }
             _ => {}
         }

@@ -75,8 +75,8 @@ impl View for NeedsSsoLinkView {
         .finish();
 
         LoginErrorModal::new(app)
-            .with_header("Your organization has enabled SSO for your account")
-            .with_detail("Click the button below to link your Warp account to your SSO provider.")
+            .with_header("Hosted SSO is disabled")
+            .with_detail("This local-first build does not link Warp accounts or SSO providers.")
             .with_action(link_sso_button)
             .build()
             .finish()
@@ -89,11 +89,8 @@ impl TypedActionView for NeedsSsoLinkView {
     fn handle_action(&mut self, action: &NeedsSsoLinkViewAction, ctx: &mut ViewContext<Self>) {
         match action {
             NeedsSsoLinkViewAction::ClickedLinkSsoButton => {
-                let email = self.email.as_deref().unwrap_or("");
-
                 AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                    let url = auth_manager.link_sso_url(email);
-                    ctx.open_url(&url);
+                    auth_manager.copy_anonymous_user_linking_url_to_clipboard(ctx);
                 });
             }
         }

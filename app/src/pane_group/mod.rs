@@ -17,9 +17,6 @@ use crate::ai::document::ai_document_model::{AIDocumentId, AIDocumentModel, AIDo
 use crate::ai::execution_profiles::profiles::{AIExecutionProfilesModel, ClientProfileId};
 use crate::ai::llms::LLMId;
 use crate::ai::restored_conversations::RestoredAgentConversations;
-use crate::auth::auth_manager::AuthManager;
-use crate::auth::auth_view_modal::AuthViewVariant;
-use crate::auth::AuthStateProvider;
 use crate::cloud_object::Space;
 #[cfg(feature = "local_fs")]
 use crate::code::editor_management::CodeSource;
@@ -136,16 +133,13 @@ use crate::terminal::shared_session::render_util::ParticipantAvatarParams;
 use crate::terminal::shared_session::role_change_modal::{
     RoleChangeCloseSource, RoleChangeModal, RoleChangeModalEvent,
 };
-use crate::terminal::shared_session::share_modal::{ShareSessionModal, ShareSessionModalEvent};
 use crate::terminal::shared_session::{self, IsSharedSessionCreator, SharedSessionActionSource};
 use crate::terminal::view::ssh_file_upload::FileUploadId;
 use crate::terminal::view::{
     BlockNotification, ConversationRestorationInNewPaneType, ExecuteCommandEvent,
     LeftPanelTargetView, SyncEvent, TerminalViewState,
 };
-use crate::terminal::{
-    MockTerminalManager, ShareBlockModal, ShareBlockModalEvent, ShellLaunchData, ShellLaunchState,
-};
+use crate::terminal::{MockTerminalManager, ShellLaunchData, ShellLaunchState};
 use session_sharing_protocol::sharer::SessionSourceType;
 use settings::Setting as _;
 
@@ -182,7 +176,6 @@ pub use pane::ai_fact_pane::AIFactPane;
 pub use pane::code_diff_pane::CodeDiffPane;
 pub use pane::code_pane::CodePane;
 pub use pane::env_var_collection_pane::EnvVarCollectionPane;
-pub use pane::environment_management_pane::EnvironmentManagementPane;
 pub use pane::execution_profile_editor_pane::ExecutionProfileEditorPane;
 pub use pane::file_pane::FilePane;
 pub use pane::network_log_pane::NetworkLogPane;
@@ -265,8 +258,6 @@ fn resolve_tab_config_shell(name: &str, ctx: &AppContext) -> Option<AvailableShe
 
     AvailableShell::try_from(name).ok()
 }
-const WARP_SHELL_COMPATIBILITY_DOCS: &str =
-    "https://docs.warp.dev/getting-started/supported-shells";
 // Default minimum width for a newly created Agent Mode pane so that it is legible. Called "default"
 // because this value may be too large for small windows. In that case, we fall back to 50% of the
 // window width.
@@ -503,9 +494,6 @@ pub enum Event {
         pane_id: PaneId,
     },
     OpenSettings(SettingsSection),
-    OpenAutoReloadModal {
-        purchased_credits: i32,
-    },
     AskAIAssistant(AskAIType),
     /// Pass input sync event up from underlying TerminalViews
     /// to the Workspace to sync throughout the window.
@@ -683,7 +671,6 @@ pub enum Event {
         initial_content: Option<String>,
     },
     OpenAddRulePane,
-    OpenEnvironmentManagementPane,
     OpenFilesPalette {
         source: PaletteSource,
     },
@@ -747,10 +734,6 @@ pub enum Event {
     OpenLspLogs {
         log_path: PathBuf,
     },
-    ShowCloudAgentCapacityModal {
-        variant: crate::workspace::view::cloud_agent_capacity_modal::CloudAgentCapacityModalVariant,
-    },
-    FreeTierLimitCheckTriggered,
     #[cfg(not(target_family = "wasm"))]
     OpenPluginInstructionsPane(crate::terminal::CLIAgent, PluginModalKind),
 }
@@ -864,20 +847,8 @@ pub struct PaneGroup {
 
     server_api: Arc<ServerApi>,
 
-    /// The terminal session with an open share block modal. Only terminal panes use the share block modal.
-    terminal_with_open_share_block_modal: Option<TerminalPaneId>,
-
-    // We are only holding one instance of share modal view in the pane group and
-    // update it with the correct terminal model and size info when triggered by
-    // the context menu event.
-    share_block_modal: ViewHandle<ShareBlockModal>,
     dragged_border: Option<DraggedBorder>,
     user_default_shell_changed_banner: ViewHandle<Banner<PaneGroupAction>>,
-
-    /// If there is an open share session modal, the pane ID of its terminal. Only terminal panes
-    /// use the share session modal. `None` if no share session modal is open.
-    terminal_with_open_share_session_modal: Option<TerminalPaneId>,
-    share_session_modal: ViewHandle<ShareSessionModal>,
 
     /// If there is a shared session role change modal open, this is the `TerminalPaneId` of the relevant session. Modal is opened whenever a shared session participant attempts to change a
     /// role. For a viewer when they request a role. For a sharer when they receive a role request,
@@ -889,11 +860,6 @@ pub struct PaneGroup {
     active_file_model: ModelHandle<ActiveFileModel>,
     /// If there is an open summarization cancel dialog, the terminal pane ID where summarization is active.
     terminal_with_open_summarization_dialog: Option<TerminalPaneId>,
-
-    /// Pane with an open environment setup mode selector modal (rendered at tab level).
-    pane_with_open_environment_setup_mode_selector: Option<PaneId>,
-    /// Pane with an open agent-assisted environment modal (rendered at tab level).
-    pane_with_open_agent_assisted_environment_modal: Option<PaneId>,
 
     /// If the left panel is open for this pane group
     pub left_panel_open: bool,
@@ -1042,8 +1008,6 @@ type InitialLayoutCallback = Box<
 
 /// The restoration path for an ambient agent pane.
 enum AmbientRestoreKind {
-    /// Active shared session
-    SharedSession { session_id: SessionId },
     /// Conversation data isn't loaded yet — show a loading pane and
     /// defer the real restoration to the pending-restoration subscription
     /// (which waits for the data to be loaded async).
@@ -1324,9 +1288,13 @@ impl PaneGroup {
                 };
 
                 let (view, terminal_manager) = match pane_mode {
-                    PaneMode::Cloud => {
-                        Self::create_ambient_agent_terminal(resources, view_size, ctx)
-                    }
+                    PaneMode::Cloud => Self::create_ambient_agent_terminal(
+                        resources,
+                        user_default_shell_unsupported_banner_model_handle.clone(),
+                        view_size,
+                        model_event_sender.clone(),
+                        ctx,
+                    ),
                     PaneMode::Terminal | PaneMode::Agent => PaneGroup::create_session(
                         // Use cwd from the template iff such path exists, otherwise None
                         // TODO(CORE-3187): On Windows, support WSL directory restoration.
@@ -1835,26 +1803,7 @@ impl PaneGroup {
 
                 let restore_kind = match &task_data {
                     Some((task_id, Some(_))) => {
-                        match AgentConversationsModel::resolve_open_action(
-                            AgentConversationNavigationSubject::Entry(
-                                AgentConversationEntryId::AmbientRun(*task_id),
-                            ),
-                            None,
-                            ctx,
-                        ) {
-                            Some(WorkspaceAction::OpenAmbientAgentSession {
-                                session_id, ..
-                            }) => AmbientRestoreKind::SharedSession { session_id },
-                            // Transcript viewer and other non-session actions depend on conversation metadata from
-                            // BlocklistAIHistoryModel, which is loaded asynchronously.
-                            // Defer to the pending-restoration handler so it can retry once that metadata arrives.
-                            _ => task_data
-                                .as_ref()
-                                .map(|(tid, _)| AmbientRestoreKind::PendingRestoration {
-                                    task_id: *tid,
-                                })
-                                .unwrap_or(AmbientRestoreKind::NewCloudConversation),
-                        }
+                        AmbientRestoreKind::PendingRestoration { task_id: *task_id }
                     }
                     Some((task_id, None)) => {
                         AmbientRestoreKind::PendingRestoration { task_id: *task_id }
@@ -1864,9 +1813,6 @@ impl PaneGroup {
 
                 let mut pending_task: Option<AmbientAgentTaskId> = None;
                 let (terminal_view, terminal_manager) = match restore_kind {
-                    AmbientRestoreKind::SharedSession { session_id } => {
-                        Self::create_shared_session_viewer(session_id, resources, view_size, ctx)
-                    }
                     AmbientRestoreKind::PendingRestoration { task_id } => {
                         let (view, manager) = Self::create_loading_terminal_manager_and_view(
                             resources,
@@ -1878,7 +1824,13 @@ impl PaneGroup {
                         (view, manager)
                     }
                     AmbientRestoreKind::NewCloudConversation => {
-                        Self::create_ambient_agent_terminal(resources, view_size, ctx)
+                        Self::create_ambient_agent_terminal(
+                            resources,
+                            user_default_shell_unsupported_banner_model_handle.clone(),
+                            view_size,
+                            model_event_sender.clone(),
+                            ctx,
+                        )
                     }
                 };
 
@@ -1962,13 +1914,6 @@ impl PaneGroup {
                     };
                     Ok((PaneData::new(pane_id), focus))
                 }
-            }
-            LeafContents::EnvironmentManagement(_) => {
-                // Environment management panes are not restored from persistence.
-                // They are opened on-demand via workspace actions.
-                Err(anyhow::anyhow!(
-                    "Environment management panes are not restored"
-                ))
             }
         };
 
@@ -2505,131 +2450,6 @@ impl PaneGroup {
         most_recent_state
     }
 
-    fn open_share_session_modal(
-        &mut self,
-        terminal_pane_id: TerminalPaneId,
-        open_source: SharedSessionActionSource,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        let Some(terminal_view) = self.terminal_view_from_pane_id(terminal_pane_id, ctx) else {
-            log::warn!("Tried to open share session modal for non-existent terminal pane");
-            return;
-        };
-
-        if AuthStateProvider::as_ref(ctx)
-            .get()
-            .is_anonymous_or_logged_out()
-        {
-            AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
-                auth_manager.attempt_login_gated_feature(
-                    "Share Session",
-                    AuthViewVariant::ShareRequirementCloseable,
-                    ctx,
-                )
-            });
-            return;
-        }
-
-        self.share_session_modal.update(ctx, |modal, ctx| {
-            modal.open(
-                terminal_pane_id,
-                open_source,
-                terminal_view.as_ref(ctx).model.clone(),
-                terminal_view.id(),
-                ctx,
-            );
-        });
-        self.terminal_with_open_share_session_modal = Some(terminal_pane_id);
-        ctx.focus(&self.share_session_modal);
-        ctx.notify();
-    }
-
-    fn open_share_session_denied_modal(
-        &mut self,
-        terminal_pane_id: TerminalPaneId,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.share_session_modal.update(ctx, |modal, ctx| {
-            modal.open_denied(terminal_pane_id, ctx);
-        });
-        self.terminal_with_open_share_session_modal = Some(terminal_pane_id);
-        ctx.focus(&self.share_session_modal);
-        ctx.notify();
-    }
-
-    /// Closes the share session modal if it is open. Does nothing otherwise. Does not change
-    /// which element is focused.
-    fn close_share_session_modal(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(terminal_pane_id) = self.terminal_with_open_share_session_modal.take() else {
-            return;
-        };
-
-        if let Some(terminal_view) = self.terminal_view_from_pane_id(terminal_pane_id, ctx) {
-            terminal_view.update(ctx, |view, ctx| {
-                view.set_show_pane_accent_border(false, ctx)
-            });
-        }
-        ctx.notify();
-    }
-
-    fn handle_share_session_modal_event(
-        &mut self,
-        event: &ShareSessionModalEvent,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            ShareSessionModalEvent::Close => {
-                let Some(terminal_pane_id) = self.terminal_with_open_share_session_modal.take()
-                else {
-                    return;
-                };
-
-                if let Some(pane) = self.focused_pane_content(ctx) {
-                    pane.focus(ctx);
-                }
-
-                if let Some(terminal_view) = self.terminal_view_from_pane_id(terminal_pane_id, ctx)
-                {
-                    terminal_view.update(ctx, |view, ctx| {
-                        view.set_show_pane_accent_border(false, ctx)
-                    });
-                }
-                ctx.notify();
-            }
-            ShareSessionModalEvent::StartSharing {
-                terminal_pane_id,
-                scrollback_type,
-                source,
-            } => {
-                self.terminal_with_open_share_session_modal = None;
-                ctx.notify();
-
-                let Some(terminal_view) = self.terminal_view_from_pane_id(*terminal_pane_id, ctx)
-                else {
-                    return;
-                };
-
-                terminal_view.update(ctx, |view, ctx| {
-                    view.attempt_to_share_session(
-                        *scrollback_type,
-                        Some(*source),
-                        SessionSourceType::default(),
-                        false,
-                        ctx,
-                    );
-                });
-            }
-            ShareSessionModalEvent::Upgrade => {
-                self.terminal_with_open_share_session_modal = None;
-                if let Some(pane) = self.focused_pane_content(ctx) {
-                    pane.focus(ctx);
-                }
-                ctx.emit(Event::OpenSettings(SettingsSection::Teams));
-                ctx.notify();
-            }
-        }
-    }
-
     fn open_shared_session_viewer_request_modal(
         &mut self,
         terminal_pane_id: TerminalPaneId,
@@ -2970,25 +2790,15 @@ impl PaneGroup {
             me.handle_focus_state_event(event, ctx);
         });
 
-        let block_client = ServerApiProvider::as_ref(ctx).get_block_client();
-        let share_modal =
-            ctx.add_typed_action_view(|ctx| ShareBlockModal::new(None, block_client, ctx));
-        ctx.subscribe_to_view(&share_modal, move |me, _, event, ctx| {
-            me.handle_share_block_modal_event(event, ctx);
-        });
-
         ctx.subscribe_to_model(&PaneSettings::handle(ctx), |_, _, _, ctx| {
             ctx.notify();
         });
 
         let user_default_shell_changed_banner = ctx.add_typed_action_view(|_| {
             Banner::<PaneGroupAction>::new_permanently_dismissible(
-                BannerTextContent::formatted_text(vec![
-                    FormattedTextFragment::plain_text(
-                        "Warp doesn't currently support your default shell, falling back to zsh.  ",
-                    ),
-                    FormattedTextFragment::hyperlink("Learn more", WARP_SHELL_COMPATIBILITY_DOCS),
-                ]),
+                BannerTextContent::formatted_text(vec![FormattedTextFragment::plain_text(
+                    "Warp doesn't currently support your default shell, falling back to zsh.",
+                )]),
             )
         });
 
@@ -3016,11 +2826,6 @@ impl PaneGroup {
             },
         );
 
-        let share_session_modal = ctx.add_typed_action_view(ShareSessionModal::new);
-        ctx.subscribe_to_view(&share_session_modal, |me, _, event, ctx| {
-            me.handle_share_session_modal_event(event, ctx);
-        });
-
         let shared_session_role_change_modal = ctx.add_view(RoleChangeModal::new);
         ctx.subscribe_to_view(&shared_session_role_change_modal, |me, _, event, ctx| {
             me.handle_shared_session_role_change_modal_event(event, ctx);
@@ -3042,18 +2847,12 @@ impl PaneGroup {
             pane_history,
             pane_contents,
             server_api,
-            terminal_with_open_share_block_modal: None,
-            share_block_modal: share_modal,
             dragged_border: None,
             user_default_shell_changed_banner,
-            terminal_with_open_share_session_modal: None,
-            share_session_modal,
             terminal_with_shared_session_role_change_modal_open: None,
             shared_session_role_change_modal,
             active_file_model,
             terminal_with_open_summarization_dialog: None,
-            pane_with_open_environment_setup_mode_selector: None,
-            pane_with_open_agent_assisted_environment_modal: None,
             right_panel_open: false,
             left_panel_open: false,
             is_right_panel_maximized: false,
@@ -3367,34 +3166,31 @@ impl PaneGroup {
         (PaneData::new(pane_id), focus)
     }
 
-    fn create_cloud_mode_terminal(
-        resources: TerminalViewResources,
-        view_bounds_size: Vector2F,
-        ctx: &mut ViewContext<Self>,
-    ) -> (
-        ViewHandle<TerminalView>,
-        ModelHandle<Box<dyn TerminalManager>>,
-    ) {
-        let window_id = ctx.window_id();
-        crate::terminal::view::ambient_agent::create_cloud_mode_view(
-            resources,
-            view_bounds_size,
-            window_id,
-            ctx,
-        )
-    }
-
     /// Helper to create the terminal manager and view for an ambient agent pane.
     fn create_ambient_agent_terminal(
         resources: TerminalViewResources,
+        user_default_shell_unsupported_banner_model_handle: ModelHandle<BannerState>,
         view_bounds_size: Vector2F,
+        model_event_sender: Option<SyncSender<ModelEvent>>,
         ctx: &mut ViewContext<Self>,
     ) -> (
         ViewHandle<TerminalView>,
         ModelHandle<Box<dyn TerminalManager>>,
     ) {
-        let (terminal_view, terminal_manager) =
-            Self::create_cloud_mode_terminal(resources, view_bounds_size, ctx);
+        let (terminal_view, terminal_manager) = Self::create_session(
+            None,
+            HashMap::new(),
+            IsSharedSessionCreator::No,
+            resources,
+            None,
+            None,
+            user_default_shell_unsupported_banner_model_handle,
+            view_bounds_size,
+            model_event_sender,
+            None,
+            None,
+            ctx,
+        );
 
         terminal_view.update(ctx, |view, ctx| {
             view.enter_ambient_agent_setup(None, ctx);
@@ -3483,25 +3279,6 @@ impl PaneGroup {
                 None,
                 ctx,
             ) {
-                Some(WorkspaceAction::OpenAmbientAgentSession {
-                    session_id,
-                    task_id: _,
-                }) => {
-                    let (view, terminal_manager) = Self::create_shared_session_viewer(
-                        session_id,
-                        resources.clone(),
-                        view_size,
-                        ctx,
-                    );
-                    let new_pane = TerminalPane::new(
-                        Uuid::new_v4().as_bytes().to_vec(),
-                        terminal_manager,
-                        view,
-                        self.model_event_sender.clone(),
-                        ctx,
-                    );
-                    self.replace_pane(pane_id, new_pane, false, ctx);
-                }
                 Some(WorkspaceAction::OpenConversationTranscriptViewer {
                     conversation_id,
                     ambient_agent_task_id,
@@ -3568,8 +3345,14 @@ impl PaneGroup {
             model_event_sender: self.model_event_sender.clone(),
         };
         let view_size = Self::estimated_view_bounds(ctx).size();
-        let (view, terminal_manager) =
-            Self::create_ambient_agent_terminal(resources, view_size, ctx);
+        let (view, terminal_manager) = Self::create_ambient_agent_terminal(
+            resources,
+            self.user_default_shell_unsupported_banner_model_handle
+                .clone(),
+            view_size,
+            self.model_event_sender.clone(),
+            ctx,
+        );
         let new_pane = TerminalPane::new(
             Uuid::new_v4().as_bytes().to_vec(),
             terminal_manager,
@@ -3583,6 +3366,7 @@ impl PaneGroup {
     /// Initial layout for a [`PaneGroup`] with a single ambient agent pane.
     fn initial_ambient_agent_pane(
         resources: TerminalViewResources,
+        user_default_shell_unsupported_banner_model_handle: ModelHandle<BannerState>,
         view_bounds: RectF,
         model_event_sender: Option<SyncSender<ModelEvent>>,
         pane_contents: &mut HashMap<PaneId, Box<dyn AnyPaneContent>>,
@@ -3591,8 +3375,13 @@ impl PaneGroup {
     ) -> (PaneData, InitialFocus) {
         let uuid = Uuid::new_v4();
 
-        let (terminal_view, terminal_manager) =
-            Self::create_ambient_agent_terminal(resources, view_bounds.size(), ctx);
+        let (terminal_view, terminal_manager) = Self::create_ambient_agent_terminal(
+            resources,
+            user_default_shell_unsupported_banner_model_handle,
+            view_bounds.size(),
+            model_event_sender.clone(),
+            ctx,
+        );
 
         Self::terminal_pane_data(
             uuid.into_bytes().to_vec(),
@@ -3733,6 +3522,7 @@ impl PaneGroup {
                 ),
                 PanesLayout::AmbientAgent => Self::initial_ambient_agent_pane(
                     resources,
+                    unsupported_banner_model_handle,
                     view_bounds,
                     model_event_sender_clone,
                     pane_contents,
@@ -3794,6 +3584,7 @@ impl PaneGroup {
         )
     }
 
+    #[cfg(test)]
     pub fn new_for_shared_session_viewer(
         session_id: SessionId,
         tips_completed: ModelHandle<TipsCompleted>,
@@ -3964,37 +3755,6 @@ impl PaneGroup {
         let ambient_agent_task_id =
             ambient_agent_task_id.or_else(|| Self::ambient_agent_task_id(&cloud_conversation));
 
-        if FeatureFlag::HandoffCloudCloud.is_enabled() {
-            if let Some(task_id) = ambient_agent_task_id {
-                if terminal_view
-                    .as_ref(ctx)
-                    .ambient_agent_view_model()
-                    .is_some()
-                {
-                    Self::load_data_into_restored_ambient_cloud_mode_view(
-                        terminal_view,
-                        cloud_conversation,
-                        task_id,
-                        ctx,
-                    );
-                    ctx.notify();
-                    return;
-                }
-
-                if let Some(pane_id) = self.find_pane_id_for_terminal_view(terminal_view.id(), ctx)
-                {
-                    self.replace_loading_pane_with_restored_ambient_cloud_mode_pane(
-                        pane_id,
-                        cloud_conversation,
-                        task_id,
-                        ctx,
-                    );
-                    ctx.notify();
-                    return;
-                }
-            }
-        }
-
         BlocklistAIHistoryModel::handle(ctx).update(ctx, |history_model, _ctx| {
             history_model.mark_terminal_view_as_conversation_transcript_viewer(terminal_view.id());
         });
@@ -4111,25 +3871,6 @@ impl PaneGroup {
         }
     }
 
-    fn handle_share_block_modal_event(
-        &mut self,
-        event: &ShareBlockModalEvent,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            ShareBlockModalEvent::Close => {
-                self.focus(ctx);
-                self.terminal_with_open_share_block_modal = None;
-                ctx.notify();
-            }
-            ShareBlockModalEvent::ShowToast { message, flavor } => ctx.emit(Event::ShowToast {
-                message: message.clone(),
-                flavor: *flavor,
-                pane_id: None,
-            }),
-        }
-    }
-
     /// Used to add a new pane but not splitting panes.
     pub fn add_terminal_pane(
         &mut self,
@@ -4231,8 +3972,21 @@ impl PaneGroup {
             model_event_sender: self.model_event_sender.clone(),
         };
         let view_bounds = Self::estimated_view_bounds(ctx);
-        let (view, terminal_manager) =
-            Self::create_cloud_mode_terminal(resources, view_bounds.size(), ctx);
+        let (view, terminal_manager) = Self::create_session(
+            None,
+            HashMap::new(),
+            IsSharedSessionCreator::No,
+            resources,
+            None,
+            None,
+            self.user_default_shell_unsupported_banner_model_handle
+                .clone(),
+            view_bounds.size(),
+            self.model_event_sender.clone(),
+            None,
+            None,
+            ctx,
+        );
         let pane_data = TerminalPane::new(
             uuid.as_bytes().to_vec(),
             terminal_manager,
@@ -4879,18 +4633,6 @@ impl PaneGroup {
                 self.hide_closed_pane(pane_id, ctx);
             }
 
-            // Remove opened share modal associated with the closing session.
-            if Some(pane_id) == self.terminal_with_open_share_block_modal.map(Into::into) {
-                self.terminal_with_open_share_block_modal = None;
-            }
-
-            if self.pane_with_open_environment_setup_mode_selector == Some(pane_id) {
-                self.pane_with_open_environment_setup_mode_selector = None;
-            }
-            if self.pane_with_open_agent_assisted_environment_modal == Some(pane_id) {
-                self.pane_with_open_agent_assisted_environment_modal = None;
-            }
-
             self.focus_next_terminal_pane_and_activate_session(
                 pane_id,
                 PaneRemovalReason::Close,
@@ -4910,18 +4652,6 @@ impl PaneGroup {
             }
 
             self.clean_up_pane(pane_id, ctx);
-
-            // Remove opened share modal associated with the closing session.
-            if Some(pane_id) == self.terminal_with_open_share_block_modal.map(Into::into) {
-                self.terminal_with_open_share_block_modal = None;
-            }
-
-            if self.pane_with_open_environment_setup_mode_selector == Some(pane_id) {
-                self.pane_with_open_environment_setup_mode_selector = None;
-            }
-            if self.pane_with_open_agent_assisted_environment_modal == Some(pane_id) {
-                self.pane_with_open_agent_assisted_environment_modal = None;
-            }
 
             self.focus_next_terminal_pane_and_activate_session(
                 pane_id,
@@ -5383,139 +5113,6 @@ impl PaneGroup {
                 cli_conversation.metadata.ambient_agent_task_id
             }
         }
-    }
-
-    fn replace_loading_pane_with_restored_ambient_cloud_mode_pane(
-        &mut self,
-        loading_pane_id: PaneId,
-        cloud_conversation: CloudConversationData,
-        task_id: AmbientAgentTaskId,
-        ctx: &mut ViewContext<Self>,
-    ) -> bool {
-        let resources = TerminalViewResources {
-            tips_completed: self.tips_completed.clone(),
-            server_api: self.server_api.clone(),
-            model_event_sender: self.model_event_sender.clone(),
-        };
-        let view_bounds = Self::estimated_view_bounds(ctx);
-        let (terminal_view, terminal_manager) =
-            Self::create_cloud_mode_terminal(resources, view_bounds.size(), ctx);
-        let terminal_view_id = terminal_view.id();
-
-        Self::load_data_into_restored_ambient_cloud_mode_view(
-            terminal_view.clone(),
-            cloud_conversation,
-            task_id,
-            ctx,
-        );
-
-        let pane_data = TerminalPane::new(
-            Uuid::new_v4().as_bytes().to_vec(),
-            terminal_manager,
-            terminal_view,
-            self.model_event_sender.clone(),
-            ctx,
-        );
-
-        let success = self.replace_pane(loading_pane_id, pane_data, false, ctx);
-        if success {
-            let new_pane_id = self
-                .find_pane_id_for_terminal_view(terminal_view_id, ctx)
-                .unwrap_or(loading_pane_id);
-            self.restore_missing_child_agent_panes_for_terminal_pane_if_needed(new_pane_id, ctx);
-        }
-
-        success
-    }
-
-    fn load_data_into_restored_ambient_cloud_mode_view(
-        terminal_view: ViewHandle<TerminalView>,
-        cloud_conversation: CloudConversationData,
-        task_id: AmbientAgentTaskId,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        let mut conversation_id = None;
-        terminal_view.update(ctx, |view, ctx| {
-            // The cloud-mode terminal model starts with
-            // `is_executing_oz_environment_startup_commands = true`. Clear it
-            // before restoring so that `maybe_insert_setup_command_blocks`
-            // doesn't wrap restored command blocks in a "Running setup
-            // commands..." group.
-            view.model
-                .lock()
-                .block_list_mut()
-                .set_is_executing_oz_environment_startup_commands(false);
-
-            match cloud_conversation {
-                CloudConversationData::Oz(conversation) => {
-                    let id = conversation.id();
-                    view.restore_conversation_after_view_creation(
-                        RestoredAIConversation::new(*conversation),
-                        true,
-                        ctx,
-                    );
-                    view.enter_agent_view(None, Some(id), AgentViewEntryOrigin::CloudAgent, ctx);
-                    conversation_id = Some(id);
-                }
-                CloudConversationData::CLIAgent(cli_conversation) => {
-                    if !FeatureFlag::AgentHarness.is_enabled() {
-                        log::warn!(
-                            "AgentHarness flag is disabled; ignoring CLI agent conversation"
-                        );
-                        return;
-                    }
-                    let harness = match cli_conversation.metadata.harness {
-                        AIAgentHarness::ClaudeCode => Some(Harness::Claude),
-                        AIAgentHarness::Gemini => Some(Harness::Gemini),
-                        AIAgentHarness::Codex => Some(Harness::Codex),
-                        AIAgentHarness::Oz => None,
-                        AIAgentHarness::Unknown => Some(Harness::Unknown),
-                    };
-                    let fallback_title = cli_conversation.metadata.title.clone();
-                    view.restore_conversation_and_directory_context(
-                        CloudConversationData::CLIAgent(cli_conversation),
-                        true,
-                        |_, _| {},
-                        ctx,
-                    );
-                    if let Some(harness) = harness {
-                        if let Some(ambient_agent_view_model) =
-                            view.ambient_agent_view_model().cloned()
-                        {
-                            ambient_agent_view_model.update(ctx, |model, ctx| {
-                                model.set_harness(harness, ctx);
-                            });
-                        }
-                    }
-                    if let Some(vehicle_conversation_id) =
-                        view.enter_agent_view_for_restored_cli_agent(fallback_title, ctx)
-                    {
-                        view.model
-                            .lock()
-                            .block_list_mut()
-                            .attach_non_startup_blocks_to_conversation(vehicle_conversation_id);
-                    }
-                }
-            }
-
-            if let Some(ambient_agent_view_model) = view.ambient_agent_view_model().cloned() {
-                ambient_agent_view_model.update(ctx, |model, ctx| {
-                    model.set_conversation_id(conversation_id);
-                    model.enter_viewing_existing_session(task_id, ctx);
-                });
-            }
-            let status = if view.owned_ambient_agent_task_id(ctx).is_some() {
-                shared_session::SharedSessionStatus::NotShared
-            } else {
-                shared_session::SharedSessionStatus::FinishedViewer
-            };
-            view.model.lock().set_shared_session_status(status);
-            view.insert_conversation_ended_tombstone(ctx);
-        });
-
-        ActiveAgentViewsModel::handle(ctx).update(ctx, |active_views, ctx| {
-            active_views.register_ambient_session(terminal_view.id(), task_id, ctx);
-        });
     }
 
     /// Clear all panes that were hidden due to being closed (for undo functionality)
@@ -6087,6 +5684,7 @@ impl PaneGroup {
         (terminal_view, terminal_manager)
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     fn create_shared_session_viewer(
         session_id: SessionId,
@@ -6287,16 +5885,6 @@ impl PaneGroup {
         cloud_conversation: CloudConversationData,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
-        if FeatureFlag::HandoffCloudCloud.is_enabled() {
-            if let Some(task_id) = Self::ambient_agent_task_id(&cloud_conversation) {
-                return self.replace_loading_pane_with_restored_ambient_cloud_mode_pane(
-                    loading_pane_id,
-                    cloud_conversation,
-                    task_id,
-                    ctx,
-                );
-            }
-        }
         let restoration = match cloud_conversation {
             CloudConversationData::Oz(conversation) => {
                 ConversationRestorationInNewPaneType::Historical {
@@ -7637,16 +7225,6 @@ impl PaneGroup {
             })
     }
 
-    #[cfg(test)]
-    pub fn is_share_session_modal_open(&self) -> bool {
-        self.terminal_with_open_share_session_modal.is_some()
-    }
-
-    #[cfg(test)]
-    pub fn share_session_modal(&self) -> &ViewHandle<ShareSessionModal> {
-        &self.share_session_modal
-    }
-
     pub(crate) fn start_agent_mode_in_new_pane(
         &mut self,
         initial_query: Option<&str>,
@@ -7761,8 +7339,14 @@ impl PaneGroup {
 
         let view_bounds = Self::estimated_view_bounds(ctx);
 
-        let (terminal_view, terminal_manager) =
-            Self::create_ambient_agent_terminal(resources, view_bounds.size(), ctx);
+        let (terminal_view, terminal_manager) = Self::create_ambient_agent_terminal(
+            resources,
+            self.user_default_shell_unsupported_banner_model_handle
+                .clone(),
+            view_bounds.size(),
+            self.model_event_sender.clone(),
+            ctx,
+        );
 
         TerminalPane::new(
             uuid.into_bytes().to_vec(),
@@ -7802,9 +7386,7 @@ impl PaneGroup {
             ctx,
         );
 
-        self.close_share_session_modal(ctx);
         self.close_shared_session_role_change_modal(RoleChangeCloseSource::ViewerRequest, ctx);
-        self.terminal_with_open_share_block_modal = None;
         ctx.notify();
     }
 
@@ -7947,16 +7529,9 @@ impl View for PaneGroup {
 
         let mut stack = Stack::new().with_child(column.finish());
 
-        // Render the share modals on the pane group level so that their
+        // Render the shared-session role modal on the pane group level so that its
         // size is not restricted to within the terminal view.
-        if self.terminal_with_open_share_block_modal.is_some() {
-            stack
-                .add_child(Clipped::new(ChildView::new(&self.share_block_modal).finish()).finish());
-        } else if FeatureFlag::CreatingSharedSessions.is_enabled()
-            && self.terminal_with_open_share_session_modal.is_some()
-        {
-            stack.add_child(ChildView::new(&self.share_session_modal).finish());
-        } else if self
+        if self
             .terminal_with_shared_session_role_change_modal_open
             .is_some()
         {
@@ -7971,44 +7546,6 @@ impl View for PaneGroup {
                 }) {
                     stack.add_child(ChildView::new(&dialog_handle).finish());
                 }
-            }
-        }
-
-        // Render environment setup mode selector at tab level when open.
-        if let Some(pane_id) = self.pane_with_open_environment_setup_mode_selector {
-            let selector_handle = self
-                .terminal_view_from_pane_id(pane_id, app)
-                .and_then(|tv| {
-                    tv.as_ref(app)
-                        .environment_setup_mode_selector_handle()
-                        .cloned()
-                })
-                .or_else(|| {
-                    self.downcast_pane_by_id::<EnvironmentManagementPane>(pane_id)
-                        .and_then(|emp| {
-                            emp.environments_page_view(app)
-                                .as_ref(app)
-                                .environment_setup_mode_selector_handle()
-                                .cloned()
-                        })
-                });
-            if let Some(handle) = selector_handle {
-                stack.add_child(ChildView::new(&handle).finish());
-            }
-        }
-
-        // Render agent-assisted environment modal at tab level when open.
-        if let Some(pane_id) = self.pane_with_open_agent_assisted_environment_modal {
-            if let Some(handle) = self
-                .downcast_pane_by_id::<EnvironmentManagementPane>(pane_id)
-                .and_then(|emp| {
-                    emp.environments_page_view(app)
-                        .as_ref(app)
-                        .agent_assisted_environment_modal_handle(app)
-                        .cloned()
-                })
-            {
-                stack.add_child(ChildView::new(&handle).finish());
             }
         }
 

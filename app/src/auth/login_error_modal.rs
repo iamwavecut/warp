@@ -22,7 +22,7 @@ use crate::{
 /// A full-window login error.
 ///
 /// This is used for uncommon login error states, such as:
-/// * A user needing to link SSO after logging in with an incorrect Firebase provider.
+/// * A user needing to link SSO after logging in with an incorrect provider.
 /// * An error importing the user from a host web application.
 pub struct LoginErrorModal {
     modal_styles: UiComponentStyles,

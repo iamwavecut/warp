@@ -63,8 +63,8 @@ impl FileBasedMCPManager {
             } => {
                 self.remove_servers_for_root_provider(root_path, *provider, ctx);
             }
-            FileMCPWatcherEvent::CloudEnvMcpScanComplete { repo_path } => {
-                self.handle_cloud_environment_scan_complete(repo_path, ctx);
+            FileMCPWatcherEvent::AgentEnvMcpScanComplete { repo_path } => {
+                self.handle_agent_environment_scan_complete(repo_path, ctx);
             }
         }
     }
@@ -311,7 +311,7 @@ impl FileBasedMCPManager {
         }
     }
 
-    fn handle_cloud_environment_scan_complete(
+    fn handle_agent_environment_scan_complete(
         &mut self,
         repo_path: &PathBuf,
         ctx: &mut ModelContext<Self>,
@@ -331,7 +331,7 @@ impl FileBasedMCPManager {
             .unwrap_or_default();
 
         // Pass the UUIDs of all detected file-based MCP servers to the AgentDriver.
-        ctx.emit(FileBasedMCPManagerEvent::CloudEnvMcpScanComplete {
+        ctx.emit(FileBasedMCPManagerEvent::AgentEnvMcpScanComplete {
             repo_path: repo_path.clone(),
             server_uuids,
         });
@@ -456,7 +456,7 @@ pub enum FileBasedMCPManagerEvent {
     PurgeCredentials {
         installation_hashes: Vec<u64>,
     },
-    CloudEnvMcpScanComplete {
+    AgentEnvMcpScanComplete {
         repo_path: PathBuf,
         server_uuids: Vec<Uuid>,
     },

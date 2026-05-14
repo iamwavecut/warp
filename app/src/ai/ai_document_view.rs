@@ -7,7 +7,7 @@ use crate::ai::blocklist::agent_view::AgentViewEntryOrigin;
 use crate::ai::document::ai_document_model::{AIDocumentSaveStatus, AIDocumentUserEditStatus};
 use crate::ai::document::orchestration_config_block::OrchestrationConfigBlockView;
 use crate::appearance::Appearance;
-use crate::drive::{items::WarpDriveItemId, sharing::ShareableObject, CloudObjectTypeAndId};
+use crate::drive::{items::WarpDriveItemId, CloudObjectTypeAndId};
 use crate::notebooks::editor::view::RichTextEditorConfig;
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::pane_group::pane::view::header::components::{
@@ -394,7 +394,7 @@ impl AIDocumentView {
             pane_config.refresh_pane_header_overflow_menu_items(ctx)
         });
 
-        // Create sync button mouse state (for Warp Drive syncing)
+        // Create save button mouse state for locally saved plans.
         let sync_button_mouse_state = MouseStateHandle::default();
 
         // Create Update Agent button
@@ -594,13 +594,8 @@ impl AIDocumentView {
     }
 
     fn update_header_buttons(&mut self, ctx: &mut ViewContext<Self>) {
-        let server_id = AIDocumentModel::as_ref(ctx)
-            .get_current_document(&self.document_id)
-            .and_then(|doc| doc.sync_id)
-            .and_then(|sync_id| sync_id.into_server());
-
         self.pane_configuration.update(ctx, |pc, ctx| {
-            pc.set_shareable_object(server_id.map(ShareableObject::WarpDriveObject), ctx);
+            pc.set_shareable_object(None, ctx);
             pc.refresh_pane_header_overflow_menu_items(ctx);
         });
         ctx.notify();
@@ -660,7 +655,7 @@ impl AIDocumentView {
                 let appearance = Appearance::as_ref(app);
                 let ui_builder = appearance.ui_builder().clone();
                 let tooltip = ui_builder
-                    .tool_tip("Save and auto-sync this plan to your Warp Drive".to_string())
+                    .tool_tip("Save this plan in the local library".to_string())
                     .build()
                     .finish();
                 let sync_button_mouse_state = self.sync_button_mouse_state.clone();
@@ -713,8 +708,7 @@ impl AIDocumentView {
                 let color = theme.nonactive_ui_detail().into_solid();
                 let ui_builder = appearance.ui_builder().clone();
                 let tooltip_text =
-                    "This plan is synced to your Warp Drive and will auto save any edits you make."
-                        .to_string();
+                    "This plan is saved locally and will auto save any edits you make.".to_string();
                 let synced_status_mouse_state = self.synced_status_mouse_state.clone();
                 Container::new(
                     ConstrainedBox::new(
@@ -1001,7 +995,7 @@ impl AIDocumentView {
             model.sync_to_warp_drive(self.document_id, ctx)
         });
         if !success {
-            log::error!("Failed to create Warp Drive notebook");
+            log::error!("Failed to save local plan notebook");
         }
     }
 
@@ -1296,24 +1290,6 @@ impl BackingView for AIDocumentView {
         ctx: &AppContext,
     ) -> Vec<MenuItem<Self::PaneHeaderOverflowMenuAction>> {
         let mut menu_items = vec![];
-
-        // Only show shareable link when the document is synced to Warp Drive
-        if let Some(link) =
-            AIDocumentModel::as_ref(ctx).get_document_warp_drive_object_link(&self.document_id, ctx)
-        {
-            menu_items.push(
-                MenuItemFields::new("Copy link")
-                    .with_on_select_action(AIDocumentAction::CopyLink(link))
-                    .with_icon(Icon::Link)
-                    .into_item(),
-            );
-            menu_items.push(
-                MenuItemFields::new("Show in Warp Drive")
-                    .with_on_select_action(AIDocumentAction::ShowInWarpDrive)
-                    .with_icon(Icon::WarpDrive)
-                    .into_item(),
-            );
-        }
 
         #[cfg(feature = "local_fs")]
         {

@@ -4,9 +4,7 @@ use crate::ai::execution_profiles::{
     profiles::{AIExecutionProfilesModel, AIExecutionProfilesModelEvent, ClientProfileId},
     AIExecutionProfile, ActionPermission, WriteToPtyPermission,
 };
-use crate::ai::llms::{
-    DisableReason, LLMContextWindow, LLMId, LLMInfo, LLMPreferences, LLMPreferencesEvent,
-};
+use crate::ai::llms::{LLMContextWindow, LLMId, LLMInfo, LLMPreferences, LLMPreferencesEvent};
 use crate::ai::paths::host_native_absolute_path;
 use crate::editor::InteractionState;
 use crate::editor::{EditorView, Event as EditorEvent, SingleLineEditorOptions, TextOptions};
@@ -17,7 +15,6 @@ use crate::view_components::{
     action_button::{ActionButton, DangerSecondaryTheme},
     Dropdown, DropdownItem, FilterableDropdown, SubmittableTextInput, SubmittableTextInputEvent,
 };
-use crate::workspace::WorkspaceAction;
 use crate::workspaces::user_workspaces::UserWorkspacesEvent;
 use crate::TemplatableMCPServerManager;
 use crate::UserWorkspaces;
@@ -29,9 +26,6 @@ use ai::api_keys::{ApiKeyManager, ApiKeyManagerEvent};
 use itertools::Itertools;
 use regex::Regex;
 use thousands::Separable;
-use warp_core::ui::theme::color::internal_colors;
-use warpui::fonts::Properties;
-use warpui::platform::Cursor;
 use warpui::ui_components::slider::SliderStateHandle;
 use warpui::ui_components::switch::SwitchStateHandle;
 
@@ -39,80 +33,13 @@ use std::path::{Path, PathBuf};
 use warpui::{
     elements::{
         Align, Border, ChildView, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
-        Container, CrossAxisAlignment, Expanded, Flex, Highlight, MouseStateHandle, ParentElement,
-        PartialClickableElement, ScrollbarWidth, Text,
+        Container, CrossAxisAlignment, Flex, MouseStateHandle, ParentElement, ScrollbarWidth, Text,
     },
     AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
     ViewHandle,
 };
 
 const MODEL_MENU_WIDTH: f32 = 250.;
-
-/// Renders a footer banner for model dropdowns informing free-plan users that
-/// frontier models require an upgrade, with a clickable "Upgrade" link.
-fn render_upgrade_footer(
-    upgrade_mouse_state: MouseStateHandle,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    let appearance = Appearance::as_ref(app);
-    let theme = appearance.theme();
-    let surface = theme.surface_2();
-    let text_color = theme.main_text_color(surface);
-
-    let info_icon = ConstrainedBox::new(
-        warp_core::ui::Icon::Info
-            .to_warpui_icon(text_color)
-            .finish(),
-    )
-    .with_width(16.)
-    .with_height(16.)
-    .finish();
-
-    let label = "Frontier models are unavailable on free plans. Upgrade";
-    let upgrade_start = label.len() - "Upgrade".len();
-    let info_text = Text::new(
-        label,
-        appearance.ui_font_family(),
-        appearance.ui_font_size(),
-    )
-    .with_color(text_color.into())
-    .with_single_highlight(
-        Highlight::new()
-            .with_properties(Properties::default())
-            .with_foreground_color(internal_colors::accent_fg(theme).into()),
-        (upgrade_start..label.len()).collect(),
-    )
-    .with_hoverable_char_range(
-        upgrade_start..label.len(),
-        upgrade_mouse_state,
-        Some(Cursor::PointingHand),
-        |_is_hovered, _ctx, _app| {},
-    )
-    .with_clickable_char_range(upgrade_start..label.len(), move |_modifiers, ctx, _app| {
-        ctx.dispatch_typed_action(WorkspaceAction::ShowUpgrade);
-    })
-    .finish();
-
-    let inner = Container::new(
-        Flex::row()
-            .with_cross_axis_alignment(CrossAxisAlignment::Start)
-            .with_child(
-                Container::new(info_icon)
-                    .with_margin_right(6.)
-                    .with_margin_top(2.)
-                    .finish(),
-            )
-            .with_child(Expanded::new(1., info_text).finish())
-            .finish(),
-    )
-    .with_horizontal_padding(16.)
-    .with_vertical_padding(6.)
-    .with_background(internal_colors::fg_overlay_1(theme))
-    .with_border(Border::top(1.).with_border_color(internal_colors::neutral_3(theme)))
-    .finish();
-
-    Container::new(inner).with_background(surface).finish()
-}
 
 #[derive(Default)]
 struct TooltipMouseStateHandles {
@@ -220,9 +147,6 @@ pub enum ExecutionProfileEditorViewAction {
         id: uuid::Uuid,
     },
     DeleteProfile,
-    SetPlanAutoSync {
-        enabled: bool,
-    },
     SetWebSearchEnabled {
         enabled: bool,
     },
@@ -262,9 +186,7 @@ pub struct ExecutionProfileEditorView {
     profile_name_editor: ViewHandle<EditorView>,
     delete_button: ViewHandle<ActionButton>,
     tooltip_mouse_state_handles: TooltipMouseStateHandles,
-    plan_auto_sync_switch: SwitchStateHandle,
     web_search_switch: SwitchStateHandle,
-    upgrade_footer_mouse_state: MouseStateHandle,
 }
 
 impl ExecutionProfileEditorView {
@@ -642,9 +564,7 @@ impl ExecutionProfileEditorView {
             profile_name_editor,
             delete_button,
             tooltip_mouse_state_handles: Default::default(),
-            plan_auto_sync_switch: Default::default(),
             web_search_switch: Default::default(),
-            upgrade_footer_mouse_state: Default::default(),
         };
 
         ctx.subscribe_to_view(&view.profile_name_editor, |view, _, event, ctx| {
@@ -719,7 +639,6 @@ impl ExecutionProfileEditorView {
                         |prefs| prefs.get_base_llm_choices_for_agent_mode().collect_vec(),
                         |id| ExecutionProfileEditorViewAction::SetBaseModel { id },
                         |prefs| prefs.get_default_base_model().id.clone(),
-                        &me.upgrade_footer_mouse_state,
                         ctx,
                     );
                     Self::refresh_coding_model_dropdown(
@@ -733,7 +652,6 @@ impl ExecutionProfileEditorView {
                         |prefs| prefs.get_cli_agent_llm_choices().collect_vec(),
                         |id| ExecutionProfileEditorViewAction::SetFullTerminalUseModel { id },
                         |prefs| prefs.get_default_cli_agent_model().id.clone(),
-                        &me.upgrade_footer_mouse_state,
                         ctx,
                     );
                     Self::refresh_filterable_model_dropdown(
@@ -742,7 +660,6 @@ impl ExecutionProfileEditorView {
                         |prefs| prefs.get_computer_use_llm_choices().collect_vec(),
                         |id| ExecutionProfileEditorViewAction::SetComputerUseModel { id },
                         |prefs| prefs.get_default_computer_use_model().id.clone(),
-                        &me.upgrade_footer_mouse_state,
                         ctx,
                     );
                     me.sync_context_window_editor(ctx, false);
@@ -754,7 +671,6 @@ impl ExecutionProfileEditorView {
                         |prefs| prefs.get_base_llm_choices_for_agent_mode().collect_vec(),
                         |id| ExecutionProfileEditorViewAction::SetBaseModel { id },
                         |prefs| prefs.get_default_base_model().id.clone(),
-                        &me.upgrade_footer_mouse_state,
                         ctx,
                     );
                     me.sync_context_window_editor(ctx, false);
@@ -782,7 +698,6 @@ impl ExecutionProfileEditorView {
                     |prefs| prefs.get_base_llm_choices_for_agent_mode().collect_vec(),
                     |id| ExecutionProfileEditorViewAction::SetBaseModel { id },
                     |prefs| prefs.get_default_base_model().id.clone(),
-                    &me.upgrade_footer_mouse_state,
                     ctx,
                 );
                 Self::refresh_coding_model_dropdown(
@@ -897,7 +812,6 @@ impl ExecutionProfileEditorView {
             |prefs| prefs.get_base_llm_choices_for_agent_mode().collect_vec(),
             |id| ExecutionProfileEditorViewAction::SetBaseModel { id },
             |prefs| prefs.get_default_base_model().id.clone(),
-            &self.upgrade_footer_mouse_state,
             ctx,
         );
         Self::refresh_coding_model_dropdown(
@@ -911,7 +825,6 @@ impl ExecutionProfileEditorView {
             |prefs| prefs.get_cli_agent_llm_choices().collect_vec(),
             |id| ExecutionProfileEditorViewAction::SetFullTerminalUseModel { id },
             |prefs| prefs.get_default_cli_agent_model().id.clone(),
-            &self.upgrade_footer_mouse_state,
             ctx,
         );
         Self::refresh_filterable_model_dropdown(
@@ -920,7 +833,6 @@ impl ExecutionProfileEditorView {
             |prefs| prefs.get_computer_use_llm_choices().collect_vec(),
             |id| ExecutionProfileEditorViewAction::SetComputerUseModel { id },
             |prefs| prefs.get_default_computer_use_model().id.clone(),
-            &self.upgrade_footer_mouse_state,
             ctx,
         );
 
@@ -1092,7 +1004,6 @@ impl ExecutionProfileEditorView {
         get_choices: G,
         create_action: A,
         get_default_id: D,
-        upgrade_mouse_state: &MouseStateHandle,
         ctx: &mut ViewContext<Self>,
     ) where
         G: FnOnce(&LLMPreferences) -> Vec<&LLMInfo>,
@@ -1112,10 +1023,6 @@ impl ExecutionProfileEditorView {
             let llm_prefs = llm_prefs.as_ref(ctx);
             let choices = get_choices(llm_prefs);
 
-            let has_upgrade_gated_models = choices
-                .iter()
-                .any(|llm| matches!(llm.disable_reason, Some(DisableReason::RequiresUpgrade)));
-
             let items = available_model_menu_items(
                 choices,
                 |llm| create_action(llm.id.clone()).into(),
@@ -1126,16 +1033,7 @@ impl ExecutionProfileEditorView {
                 ctx,
             );
             dropdown.set_rich_items(items, ctx);
-
-            if has_upgrade_gated_models {
-                let mouse_state = upgrade_mouse_state.clone();
-                dropdown.set_footer(
-                    move |app| render_upgrade_footer(mouse_state.clone(), app),
-                    ctx,
-                );
-            } else {
-                dropdown.clear_footer(ctx);
-            }
+            dropdown.clear_footer(ctx);
 
             let llm_prefs = LLMPreferences::handle(ctx);
             let llm_prefs = llm_prefs.as_ref(ctx);
@@ -1655,12 +1553,6 @@ impl TypedActionView for ExecutionProfileEditorView {
                     profiles_model.delete_profile(self.profile_id, ctx);
                 });
                 ctx.emit(ExecutionProfileEditorViewEvent::Pane(PaneEvent::Close));
-            }
-            ExecutionProfileEditorViewAction::SetPlanAutoSync { enabled } => {
-                AIExecutionProfilesModel::handle(ctx).update(ctx, |profiles_model, ctx| {
-                    profiles_model.set_autosync_plans_to_warp_drive(self.profile_id, *enabled, ctx);
-                });
-                ctx.notify();
             }
             ExecutionProfileEditorViewAction::SetWebSearchEnabled { enabled } => {
                 AIExecutionProfilesModel::handle(ctx).update(ctx, |profiles_model, ctx| {

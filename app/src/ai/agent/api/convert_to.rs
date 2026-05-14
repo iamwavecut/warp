@@ -1,4 +1,4 @@
-//! Conversions from application types to MAA API types.
+//! Conversions from application types to agent wire types.
 
 use ai::agent::convert::ConvertToAPITypeError;
 use anyhow::anyhow;
@@ -62,7 +62,7 @@ pub(super) fn convert_input(
     mut inputs: Vec<AIAgentInput>,
 ) -> Result<api::request::Input, ConvertToAPITypeError> {
     if inputs.is_empty() {
-        return Err(anyhow!("Attempted to send multi-agent request with no input").into());
+        return Err(anyhow!("Attempted to send agent request with no input").into());
     }
     let api_context = inputs
         .iter()

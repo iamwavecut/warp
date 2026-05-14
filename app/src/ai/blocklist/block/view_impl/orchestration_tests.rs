@@ -68,7 +68,7 @@ fn start_agent_copy_uses_local_labels_for_local_children() {
 }
 
 #[test]
-fn start_agent_copy_uses_remote_labels_for_remote_children() {
+fn start_agent_copy_uses_local_labels_for_legacy_remote_children() {
     let execution_mode = StartAgentExecutionMode::Remote {
         environment_id: "env-123".to_string(),
         skill_references: vec![],
@@ -79,18 +79,18 @@ fn start_agent_copy_uses_remote_labels_for_remote_children() {
         title: String::new(),
     };
 
-    assert_eq!(start_agent_success_suffix(&execution_mode), " remotely.");
+    assert_eq!(start_agent_success_suffix(&execution_mode), " locally.");
     assert_eq!(
         start_agent_error_prefix(&execution_mode),
-        "Failed to start remote agent "
+        "Failed to start agent "
     );
     assert_eq!(
         start_agent_cancelled_prefix(&execution_mode),
-        "Start remote agent "
+        "Start agent "
     );
     assert_eq!(
         start_agent_in_progress_prefix(&execution_mode),
-        "Starting remote agent "
+        "Starting agent "
     );
 }
 

@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use crate::ai::cloud_environments::{AmbientAgentEnvironment, GithubRepo};
+use crate::ai::agent_environments::{AmbientAgentEnvironment, GithubRepo};
 use crate::terminal::model::session::command_executor::shell_escape_single_quotes;
 use crate::terminal::shell::ShellType;
 use ai::index::full_source_code_embedding::manager::{
@@ -25,7 +25,7 @@ const CODEBASE_INDEX_SYNC_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, thiserror::Error)]
 pub enum PrepareEnvironmentError {
-    #[error("Invalid runtime state - please file a bug report.")]
+    #[error("Invalid runtime state. Check local logs for details.")]
     InvalidRuntimeState,
     #[error("Failed to clone {repo_name}")]
     CloneRepo { repo_name: String },
@@ -37,7 +37,7 @@ pub enum PrepareEnvironmentError {
     TerminalDriver { source: AgentDriverError },
 }
 
-/// Prepare a cloud agent environment within a terminal session. This will:
+/// Prepare an agent environment within a terminal session. This will:
 /// 1. Clone all repositories, skipping any that are already cloned.
 /// 2. Begin codebase indexing for all repositories (Oz harness only).
 /// 3. Run any setup commands.
@@ -110,7 +110,7 @@ async fn prepare_environment_impl(
 
     // Position the session in `working_dir` before running any probes / clones.
     // Routed through the silent executor so we don't add a user-visible `cd`
-    // block to the blocklist — in the common case (cloud agents) the session
+    // block to the blocklist — in the common case the session
     // is already cd'd here by its startup dir, so this is a no-op re-cd and
     // shouldn't appear in the user's terminal history.
     if !cd_in_terminal_silent(working_dir_string.clone(), spawner).await? {
@@ -315,7 +315,7 @@ pub(super) async fn ensure_repo_cloned(
                 DetectedRepositories::handle(ctx).update(ctx, |repos, ctx| {
                     repos.detect_possible_git_repo(
                         &repo_dir_str,
-                        RepoDetectionSource::CloudEnvironmentPrep,
+                        RepoDetectionSource::AgentEnvironmentPrep,
                         ctx,
                     )
                 })

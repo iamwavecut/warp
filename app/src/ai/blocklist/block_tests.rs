@@ -142,7 +142,7 @@ fn agent_cfg() -> RunAgentsAgentRunConfig {
 }
 
 #[test]
-fn remote_arm_propagates_skills_into_skill_references() {
+fn remote_arm_uses_local_defaults_and_model() {
     let skills = vec![
         SkillReference::BundledSkillId("writing-pr-descriptions".to_string()),
         SkillReference::Path(PathBuf::from("/tmp/skill/SKILL.md")),
@@ -159,29 +159,19 @@ fn remote_arm_propagates_skills_into_skill_references() {
         &agent_cfg(),
     )
     .expect("Remote+oz must convert");
-    let StartAgentExecutionMode::Remote {
-        skill_references,
-        environment_id,
-        worker_host,
+    let StartAgentExecutionMode::Local {
         harness_type,
         model_id,
-        computer_use_enabled,
-        title,
     } = mode
     else {
-        panic!("expected Remote start-agent mode");
+        panic!("expected Local start-agent mode");
     };
-    assert_eq!(skill_references, skills);
-    assert_eq!(environment_id, "env-1");
-    assert_eq!(worker_host, "warp");
-    assert_eq!(harness_type, "oz");
-    assert_eq!(model_id, "auto");
-    assert!(computer_use_enabled);
-    assert_eq!(title, "Child");
+    assert_eq!(harness_type, None);
+    assert_eq!(model_id, Some("auto".to_string()));
 }
 
 #[test]
-fn remote_arm_with_empty_skills_propagates_empty_vec() {
+fn remote_arm_with_empty_skills_uses_local_harness() {
     let mode = run_agents_to_start_agent_mode(
         &RunAgentsExecutionMode::Remote {
             environment_id: "env-1".to_string(),
@@ -194,18 +184,20 @@ fn remote_arm_with_empty_skills_propagates_empty_vec() {
         &agent_cfg(),
     )
     .expect("Remote+claude must convert");
-    let StartAgentExecutionMode::Remote {
-        skill_references, ..
+    let StartAgentExecutionMode::Local {
+        harness_type,
+        model_id,
     } = mode
     else {
-        panic!("expected Remote start-agent mode");
+        panic!("expected Local start-agent mode");
     };
-    assert!(skill_references.is_empty());
+    assert_eq!(harness_type, Some("claude".to_string()));
+    assert_eq!(model_id, Some("auto".to_string()));
 }
 
 #[test]
-fn remote_arm_rejects_opencode() {
-    let err = run_agents_to_start_agent_mode(
+fn remote_arm_uses_opencode_as_local_harness() {
+    let mode = run_agents_to_start_agent_mode(
         &RunAgentsExecutionMode::Remote {
             environment_id: "env-1".to_string(),
             worker_host: "warp".to_string(),
@@ -216,8 +208,16 @@ fn remote_arm_rejects_opencode() {
         &[],
         &agent_cfg(),
     )
-    .expect_err("Remote+opencode must be rejected");
-    assert!(err.to_lowercase().contains("opencode"));
+    .expect("Remote+opencode must convert to local opencode");
+    let StartAgentExecutionMode::Local {
+        harness_type,
+        model_id,
+    } = mode
+    else {
+        panic!("expected Local start-agent mode");
+    };
+    assert_eq!(harness_type, Some("opencode".to_string()));
+    assert_eq!(model_id, Some("auto".to_string()));
 }
 
 #[test]

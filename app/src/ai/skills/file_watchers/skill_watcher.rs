@@ -161,7 +161,7 @@ impl SkillWatcher {
 
         // RepositoryMetadataEvent::RepositoryUpdated fires after the file tree is
         // built, so we can query it for skill directories. This covers both local
-        // project repos and environment repos registered via CloudEnvironmentPrep
+        // project repos and environment repos registered via AgentEnvironmentPrep
         // (which flow through DetectedRepositories -> DirectoryWatcher ->
         // RepoMetadataModel).
         ctx.subscribe_to_model(&RepoMetadataModel::handle(ctx), |me, event, ctx| {

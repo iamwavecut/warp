@@ -15,7 +15,6 @@ use url::Url;
 use crate::{
     ai::{blocklist::secret_redaction::find_secrets_in_text, AIRequestUsageModel},
     appearance::Appearance,
-    auth::{auth_state::AuthState, AuthStateProvider, UserUid},
     cloud_object::{
         breadcrumbs::ContainingObject,
         model::{
@@ -320,7 +319,6 @@ pub struct WorkflowView {
     default_argument_id: usize,
     pub(super) ai_metadata_assist_state: AiAssistState,
     revision_ts: Option<Revision>,
-    pub(super) auth_state: Arc<AuthState>,
     pub(super) ai_client: Arc<dyn AIClient>,
     owner: Option<Owner>,
     initial_folder_id: Option<SyncId>,
@@ -467,7 +465,6 @@ impl WorkflowView {
             initial_folder_id: None,
             revision_ts: None,
             command_display_data: WorkflowCommandDisplayData::new_empty(),
-            auth_state: AuthStateProvider::as_ref(ctx).get().clone(),
             ai_client,
             pending_argument_editor_row: None,
             show_enum_creation_dialog: false,
@@ -1951,7 +1948,7 @@ impl WorkflowView {
                 let ui_builder = appearance.ui_builder().clone();
                 edit_button = edit_button.with_tooltip(move || {
                     ui_builder
-                        .tool_tip("Sign in to edit".to_string())
+                        .tool_tip("Hosted editing permissions are disabled".to_string())
                         .build()
                         .finish()
                 });
@@ -2634,29 +2631,10 @@ impl WorkflowView {
                     Err(err) => {
                         let message = err.user_facing_message();
                         if let GeneratedCommandMetadataError::RateLimited = err {
-                            let current_user_id = pane.auth_state.user_id().unwrap_or_default();
-                            if let Some(team) = UserWorkspaces::as_ref(ctx).current_team() {
-                                let current_user_email =
-                                    pane.auth_state.user_email().unwrap_or_default();
-                                let has_admin_permissions = team.has_admin_permissions(&current_user_email);
-                                if team.billing_metadata.can_upgrade_to_higher_tier_plan() {
-                                    if has_admin_permissions {
-                                        pane.display_upgrade_error(Some(team.uid), current_user_id, ctx);
-                                    } else {
-                                        pane.display_error_toast(
-                                            "Looks like you're out of AI credits. Contact a team admin to upgrade for more credits.".to_string(),
-                                            ctx,
-                                        );
-                                    }
-                                } else {
-                                    pane.display_error_toast(
-                                        message.clone(),
-                                        ctx,
-                                    );
-                                }
-                            } else {
-                                pane.display_upgrade_error(None, current_user_id, ctx);
-                            }
+                            pane.display_error_toast(
+                                "The configured AI provider reported a quota or rate-limit error. Check your local or BYOK provider settings.".to_string(),
+                                ctx,
+                            );
                         } else {
                             pane.display_error_toast(
                                 message.clone(),
@@ -2680,35 +2658,6 @@ impl WorkflowView {
         self.ai_metadata_assist_state = AiAssistState::RequestInFlight;
         self.disable_editors(ctx);
         ctx.notify();
-    }
-
-    fn display_upgrade_error(
-        &mut self,
-        team_uid: Option<ServerId>,
-        user_id: UserUid,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        let upgrade_link = team_uid
-            .map(UserWorkspaces::upgrade_link_for_team)
-            .unwrap_or_else(|| UserWorkspaces::upgrade_link(user_id));
-
-        let window_id = ctx.window_id();
-        let toast_link = if self.auth_state.is_anonymous_or_logged_out() {
-            ToastLink::new("Upgrade for more credits.".into())
-                .with_onclick_action(WorkspaceAction::AttemptLoginGatedAIUpgrade)
-        } else {
-            ToastLink::new("Upgrade for more credits.".into()).with_href(upgrade_link)
-        };
-
-        crate::workspace::ToastStack::handle(ctx).update(ctx, |stack, ctx| {
-            stack.add_ephemeral_toast(
-                DismissibleToast::error("Looks like you're out of AI credits.".into())
-                    .with_link(toast_link),
-                window_id,
-                ctx,
-            );
-            ctx.notify();
-        });
     }
 
     // Populate only the missing field in the workflow editor with the generated suggestion from AI.

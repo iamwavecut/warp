@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Context as _};
+use anyhow::Context as _;
 use futures::{
     channel::oneshot,
     future::{self, join_all, Either},
@@ -28,17 +28,14 @@ use uuid::Uuid;
 use ai::skills::{ParsedSkill, SKILL_PROVIDER_DEFINITIONS};
 use warp_cli::agent::{Harness, OutputFormat};
 use warp_cli::mcp::MCPSpec;
-use warp_cli::share::ShareRequest;
 use warp_cli::skill::SkillSpec;
 use warp_core::{features::FeatureFlag, report_error, report_if_error, safe_debug, safe_info};
-use warp_graphql::ai::AgentTaskState;
 use warp_managed_secrets::ManagedSecretValue;
 use warpui::{
     r#async::{FutureExt, TimeoutError},
     AppContext, Entity, ModelContext, ModelHandle, ModelSpawner, SingletonEntity,
 };
 
-use crate::ai::blocklist::task_status_sync_model::TaskStatusSyncModel;
 use crate::ai::document::ai_document_model::{AIDocumentModel, AIDocumentModelEvent};
 use crate::ai::llms::{LLMId, LLMPreferences};
 use crate::ai::mcp::{JSONMCPServer, MCPServerState};
@@ -62,9 +59,9 @@ use crate::terminal::cli_agent_sessions::{
 use crate::{
     ai::{
         agent::{
-            AIAgentActionResultType, AIAgentExchange, AIAgentInput, AIAgentOutput,
-            CancellationReason, RenderableAIError, RequestFileEditsResult,
+            AIAgentExchange, AIAgentInput, AIAgentOutput, CancellationReason, RenderableAIError,
         },
+        agent_environments::{AmbientAgentEnvironment, GithubRepo},
         ambient_agents::{
             conversation_output_status_from_conversation, AmbientAgentTaskId,
             AmbientConversationStatus,
@@ -76,7 +73,6 @@ use crate::{
             },
             BlocklistAIHistoryEvent, BlocklistAIHistoryModel, BlocklistAIPermissions,
         },
-        cloud_environments::{AmbientAgentEnvironment, CloudAmbientAgentEnvironment, GithubRepo},
         execution_profiles::profiles::AIExecutionProfilesModel,
         mcp::{
             file_based_manager::{FileBasedMCPManager, FileBasedMCPManagerEvent},
@@ -89,28 +85,18 @@ use crate::{
     cloud_object::CloudObject,
     server::{
         ids::{ServerId, SyncId},
-        server_api::{
-            ai::AIClient,
-            harness_support::{
-                HarnessSupportClient, ResolvePromptAttachedSkill, ResolvePromptRequest,
-            },
-            ServerApiProvider,
-        },
+        server_api::ServerApiProvider,
     },
     terminal::view::ConversationRestorationInNewPaneType,
 };
 
-pub(crate) mod attachments;
-pub(crate) mod cloud_provider;
 pub(crate) mod environment;
 mod error_classification;
 pub(crate) mod harness;
 pub(super) mod output;
-mod snapshot;
 pub(crate) mod terminal;
 
 use environment::PrepareEnvironmentError;
-pub(crate) use snapshot::upload_snapshot_for_handoff;
 use terminal::TerminalDriverEvent;
 
 const MCP_SERVER_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
@@ -230,28 +216,18 @@ pub struct AgentDriverOptions {
     pub task_id: Option<AmbientAgentTaskId>,
     /// Parent run ID for child orchestration flows, if this task was spawned by another run.
     pub parent_run_id: Option<String>,
-    /// Whether the agent run should share its session.
-    pub should_share: bool,
     /// How long to keep the session alive after the agent run completes, if at all.
     pub idle_on_complete: Option<Duration>,
     /// If set, resume an existing conversation instead of starting fresh. The variant
     /// determines which harness-specific path is taken (Oz transcript restore vs.
     /// third-party-harness payload rehydration).
     pub resume: Option<ResumeOptions>,
-    /// Cloud providers to configure within the agent's session.
-    pub cloud_providers: Vec<Box<dyn cloud_provider::CloudProvider>>,
     /// Resolved environment configuration, if any.
     pub environment: Option<AmbientAgentEnvironment>,
     /// Selected execution harness for this run.
     pub selected_harness: Harness,
     /// Optional model override for third-party local harnesses.
     pub third_party_harness_model_id: Option<String>,
-    /// Whether end-of-run snapshot upload is disabled.
-    pub snapshot_disabled: Option<bool>,
-    /// End-of-run snapshot upload timeout override.
-    pub snapshot_upload_timeout: Option<Duration>,
-    /// Declarations script timeout override.
-    pub snapshot_script_timeout: Option<Duration>,
 }
 
 /// `AgentDriver` is a model for driving an ambient Warp agent to completion.
@@ -294,16 +270,8 @@ pub struct AgentDriver {
     /// preparing the harness runner and cleared afterward.
     resume_payload: Option<ResumePayload>,
 
-    /// Cloud providers set up within this driver session.
-    cloud_providers: Vec<Box<dyn cloud_provider::CloudProvider>>,
-
     /// Resolved environment configuration.
     environment: Option<AmbientAgentEnvironment>,
-
-    // End-of-run snapshot upload controls.
-    snapshot_disabled: bool,
-    snapshot_upload_timeout: Duration,
-    snapshot_script_timeout: Duration,
 
     /// Conversation ID this driver is running.
     run_conversation_id: Option<AIConversationId>,
@@ -311,8 +279,6 @@ pub struct AgentDriver {
     parent_run_id: Option<String>,
     /// Optional model override for third-party local harnesses.
     third_party_harness_model_id: Option<String>,
-    /// Snapshot declarations writer.
-    snapshot_file_writer: Option<snapshot::DeclarationsWriterHandle>,
 }
 
 pub(crate) enum SDKConversationOutputStatus {
@@ -379,7 +345,7 @@ pub enum AgentRunPrompt {
 pub enum AgentDriverError {
     #[error("Terminal session is not available.")]
     TerminalUnavailable,
-    #[error("Invalid runtime state - please file a bug report.")]
+    #[error("Invalid runtime state. Check local logs for details.")]
     InvalidRuntimeState,
     #[error("Requested MCP server not found: {0}")]
     MCPServerNotFound(uuid::Uuid),
@@ -399,19 +365,12 @@ pub enum AgentDriverError {
     AIWorkflowNotFound(String),
     #[error("Terminal bootstrap failed")]
     BootstrapFailed,
-    #[error("Unable to share agent session")]
-    ShareSessionFailed {
-        #[source]
-        error: terminal::ShareSessionError,
-    },
-    #[error("Error syncing Warp Drive")]
+    #[error("Error saving local objects")]
     WarpDriveSyncFailed,
     #[error("Requested environment not found: {0}")]
     EnvironmentNotFound(String),
     #[error("Environment setup failed: {0}")]
     EnvironmentSetupFailed(String),
-    #[error("Cloud provider setup failed")]
-    CloudProviderSetupFailed(#[from] cloud_provider::CloudProviderSetupError),
     #[error("Could not resolve working directory {}", path.display())]
     InvalidWorkingDirectory {
         path: PathBuf,
@@ -501,17 +460,12 @@ impl AgentDriver {
             working_dir,
             task_id,
             parent_run_id,
-            should_share,
             idle_on_complete,
             secrets,
             resume,
-            cloud_providers,
             environment,
             selected_harness,
             third_party_harness_model_id,
-            snapshot_disabled,
-            snapshot_upload_timeout,
-            snapshot_script_timeout,
         } = options;
 
         // Split the unified resume option into the two internal slots that the rest of
@@ -524,9 +478,9 @@ impl AgentDriver {
         };
 
         safe_info!(
-            safe: ("Initializing agent driver: share={should_share}, idle_on_complete={idle_on_complete:?}"),
+            safe: ("Initializing agent driver: idle_on_complete={idle_on_complete:?}"),
             full: (
-                "Initializing agent driver: share={should_share}, idle_on_complete={idle_on_complete:?}, working_dir={}",
+                "Initializing agent driver: idle_on_complete={idle_on_complete:?}, working_dir={}",
                 working_dir.display()
             )
         );
@@ -550,9 +504,6 @@ impl AgentDriver {
                 });
 
         let mut env_vars = build_secret_env_vars(&secrets);
-
-        // Inject cloud provider env vars.
-        cloud_provider::collect_env_vars(&cloud_providers, &mut env_vars)?;
         // Clone before consuming for env vars; the field on `Self` is
         // also needed at register time.
         let parent_run_id_for_self = parent_run_id.clone();
@@ -578,7 +529,6 @@ impl AgentDriver {
             terminal::TerminalDriverOptions {
                 working_dir: working_dir.clone(),
                 env_vars: HashMap::clone(&resolved_env_vars),
-                should_share,
                 task_id,
                 conversation_restoration,
             },
@@ -601,21 +551,6 @@ impl AgentDriver {
             run_conversation_id = Some(conv_id);
         }
 
-        // Spawn the async declarations writer only when the snapshot pipeline will actually
-        // read what it produces: feature enabled, cloud task run, and --no-snapshot not set.
-        let snapshot_disabled_value = snapshot_disabled.unwrap_or(false);
-        let snapshot_file_writer = match task_id {
-            Some(id) if FeatureFlag::OzHandoff.is_enabled() && !snapshot_disabled_value => {
-                let background = ctx.background_executor();
-                Some(snapshot::DeclarationsWriterHandle::new(
-                    id,
-                    working_dir.clone(),
-                    &background,
-                ))
-            }
-            _ => None,
-        };
-
         Ok(Self {
             terminal_driver,
             working_dir,
@@ -627,17 +562,10 @@ impl AgentDriver {
             idle_on_complete,
             restored_conversation_id,
             resume_payload,
-            cloud_providers,
             environment,
-            snapshot_disabled: snapshot_disabled_value,
-            snapshot_upload_timeout: snapshot_upload_timeout
-                .unwrap_or(snapshot::DEFAULT_SNAPSHOT_UPLOAD_TIMEOUT),
-            snapshot_script_timeout: snapshot_script_timeout
-                .unwrap_or(snapshot::DEFAULT_DECLARATIONS_SCRIPT_TIMEOUT),
             run_conversation_id,
             parent_run_id: parent_run_id_for_self,
             third_party_harness_model_id,
-            snapshot_file_writer,
         })
     }
 
@@ -668,15 +596,10 @@ impl AgentDriver {
             idle_on_complete: None,
             restored_conversation_id: None,
             resume_payload: None,
-            cloud_providers: Vec::new(),
             environment: None,
-            snapshot_disabled: false,
-            snapshot_upload_timeout: snapshot::DEFAULT_SNAPSHOT_UPLOAD_TIMEOUT,
-            snapshot_script_timeout: snapshot::DEFAULT_DECLARATIONS_SCRIPT_TIMEOUT,
             run_conversation_id: None,
             parent_run_id: None,
             third_party_harness_model_id: None,
-            snapshot_file_writer: None,
         }
     }
 
@@ -691,16 +614,6 @@ impl AgentDriver {
 
     pub fn set_output_format(&mut self, output_format: OutputFormat) {
         self.output_format = output_format;
-    }
-
-    pub fn add_share_requests(
-        &self,
-        share_requests: impl IntoIterator<Item = ShareRequest>,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        self.terminal_driver.update(ctx, |td, ctx| {
-            td.add_share_requests(share_requests, ctx);
-        });
     }
 
     pub fn run(
@@ -720,8 +633,6 @@ impl AgentDriver {
                 if tx.send(result).is_err() {
                     log::error!("Caller did not wait for agent driver to finish");
                 }
-
-                Self::cleanup(foreground).await;
             },
             |_, _, _| {},
         );
@@ -757,19 +668,6 @@ impl AgentDriver {
             }
 
             result
-        }
-    }
-
-    /// Log all valid environment IDs for the user.
-    pub(super) fn log_valid_environments(app: &AppContext) {
-        let environments = CloudAmbientAgentEnvironment::get_all(app);
-        if environments.is_empty() {
-            log::error!("No environments available for this user.");
-        } else {
-            log::error!("Valid environment IDs:");
-            for env in environments {
-                log::error!("  - {} ({})", env.sync_id(), env.model().string_model.name);
-            }
         }
     }
 
@@ -1098,7 +996,7 @@ impl AgentDriver {
         })
     }
 
-    /// Subscribe to [`FileBasedMCPManagerEvent::CloudEnvMcpScanComplete`]
+    /// Subscribe to [`FileBasedMCPManagerEvent::AgentEnvMcpScanComplete`]
     /// paths and return a receiver that fires with all discovered server UUIDs once every repo
     /// reports in. Must be called **before** `prepare_environment` so no events are missed.
     fn setup_file_based_mcp_discovery(
@@ -1114,7 +1012,7 @@ impl AgentDriver {
         }
 
         log::info!(
-            "Waiting for {} cloud environment repo(s) to report back file-based MCP server UUIDs...",
+            "Waiting for {} agent environment repo(s) to report back file-based MCP server UUIDs...",
             expected_repos.len()
         );
 
@@ -1126,7 +1024,7 @@ impl AgentDriver {
         let manager_clone = file_based_mcp_manager.clone();
 
         ctx.subscribe_to_model(&file_based_mcp_manager, move |_me, event, ctx| {
-            if let FileBasedMCPManagerEvent::CloudEnvMcpScanComplete {
+            if let FileBasedMCPManagerEvent::AgentEnvMcpScanComplete {
                 repo_path,
                 server_uuids,
             } = event
@@ -1136,7 +1034,7 @@ impl AgentDriver {
                     log::info!(
                         "Found file-based MCP server UUIDs in repo {repo_path:?}: {server_uuids:?}"
                     );
-                    // If we've received all UUIDs from all cloud environment repos, send it back to the caller
+                    // If we've received all UUIDs from all agent environment repos, send it back to the caller
                     // and begin waiting for file-based MCP initialization.
                     if pending_repos.is_empty() {
                         let uuids = collected_uuids.clone();
@@ -1399,7 +1297,7 @@ impl AgentDriver {
                     log::info!("No environment skills found");
                 }
                 SkillManager::handle(ctx).update(ctx, |manager, _| {
-                    manager.set_cloud_environment(true);
+                    manager.set_agent_environment(true);
                     manager.handle_skills_added(skills);
                 });
             })
@@ -1463,7 +1361,7 @@ impl AgentDriver {
         let add_result = foreground
             .spawn(move |_, ctx| {
                 SkillManager::handle(ctx).update(ctx, |manager, _| {
-                    manager.set_cloud_environment(true);
+                    manager.set_agent_environment(true);
                     manager.handle_skills_added(skills);
                 });
             })
@@ -1511,8 +1409,6 @@ impl AgentDriver {
 
         // Once the terminal session is bootstrapped, perform cloud provider setup before spawning MCP servers.
         // MCP servers *may* rely on cloud provider credentials.
-        Self::setup_cloud_providers(&foreground).await?;
-
         // For the Oz harness only: set up MCP servers, model overrides, and profile information.
         if matches!(&task.harness, HarnessKind::Oz) {
             // Resolve MCP specs into existing server UUIDs and ephemeral installations.
@@ -1561,14 +1457,6 @@ impl AgentDriver {
                 .await?;
         }
 
-        // For all harnesses: wait for the shared session and prepare the environment.
-        foreground
-            .spawn(|me, ctx| {
-                me.terminal_driver
-                    .update(ctx, |driver, _| driver.wait_for_session_shared())
-            })
-            .await?
-            .await?;
         let global_skill_resolution = Self::resolve_global_skills(&foreground).await?;
         // Clone global skill repos before environment prep can change the
         // terminal's cwd into a single environment repo.
@@ -1585,7 +1473,7 @@ impl AgentDriver {
             environment_skill_repos = environment_github_repos.clone();
 
             // Subscribe to file-based MCP discovery BEFORE prepare_environment triggers the
-            // pipeline so no CloudEnvMcpScanComplete events are missed.
+            // pipeline so no AgentEnvMcpScanComplete events are missed.
             //
             // File-based MCP discovery is Oz-only.
             // TODO(REMOTE-1345): handle MCP setup for third-party harnesses.
@@ -2052,26 +1940,6 @@ impl AgentDriver {
                         .write_exchange_inputs(exchange)
                         .context("Failed to write exchange inputs"));
 
-                    // Forward any successful file-edit paths from this exchange's inputs to the
-                    // snapshot declarations writer so the end-of-run upload covers files written
-                    // outside any declared repo.
-                    if let Some(writer) = me.snapshot_file_writer.as_ref() {
-                        let mut paths = Vec::new();
-                        for input in &exchange.input {
-                            if let AIAgentInput::ActionResult { result, .. } = input {
-                                if let AIAgentActionResultType::RequestFileEdits(
-                                    RequestFileEditsResult::Success { updated_files, .. },
-                                ) = &result.result
-                                {
-                                    for updated in updated_files {
-                                        paths.push(updated.file_context.file_name.clone().into());
-                                    }
-                                }
-                            }
-                        }
-                        writer.append(paths);
-                    }
-
                     // Reset the idle timer only if we've already scheduled one.
                     // This handles the case where a follow-up query creates new exchanges after
                     // the conversation has finished and an idle timer was set.
@@ -2207,7 +2075,7 @@ impl AgentDriver {
             }
         });
 
-        // Subscribe to document model events to emit artifact_created when plans sync to Warp Drive.
+        // Subscribe to document model events to emit artifact_created when plans are saved locally.
         ctx.subscribe_to_model(&AIDocumentModel::handle(ctx), move |me, event, ctx| {
             let AIDocumentModelEvent::DocumentSaveStatusUpdated(document_id) = event else {
                 return;
@@ -2432,71 +2300,8 @@ impl AgentDriver {
         match event {
             TerminalDriverEvent::SlowBootstrap => {
                 eprintln!(
-                    "Warning: Terminal session is slow to bootstrap. See https://docs.warp.dev/support-and-community/troubleshooting-and-support/known-issues#shells to troubleshoot."
+                    "Warning: Terminal session is slow to bootstrap. Check local shell startup configuration to troubleshoot."
                 );
-            }
-            TerminalDriverEvent::EstablishedSharedSession {
-                session_id,
-                join_url,
-            } => {
-                let _ = session_id;
-                write_session_joined(join_url, self.output_format);
-            }
-        }
-    }
-
-    /// Set up each cloud provider in sequence.
-    async fn setup_cloud_providers(spawner: &ModelSpawner<Self>) -> Result<(), AgentDriverError> {
-        let (mut providers, terminal_spawner) = spawner
-            .spawn(|me, ctx| {
-                let terminal_spawner = me.terminal_driver.update(ctx, |_, ctx| ctx.spawner());
-                // Temporarily take all cloud providers so we can move them onto the background thread.
-                //
-                // Since the Vec of cloud providers is owned by the AgentDriver model, which is
-                // itself owned by the UI framework, we can only mutate them in-place on the UI thread.
-                // So that `CloudProvider::setup` can be `async` _and_ take `&mut self`, the
-                // `setup_cloud_providers` future takes ownership of all the providers, and then moves
-                // them back to the UI thread. This is somewhat similar to how views and models are removed
-                // from the UI framework temporarily while being mutated.
-                let providers = std::mem::take(&mut me.cloud_providers);
-                (providers, terminal_spawner)
-            })
-            .await?;
-
-        let mut result = Ok(());
-
-        for provider in providers.iter_mut() {
-            let provider_result = provider.setup(terminal_spawner.clone()).await;
-            if provider_result.is_err() {
-                result = provider_result;
-                break;
-            }
-        }
-
-        // Restore the cloud providers.
-        spawner
-            .spawn(move |me, _| {
-                me.cloud_providers = providers;
-            })
-            .await?;
-
-        result?;
-        Ok(())
-    }
-
-    /// Perform cleanup after the agent has finished running.
-    async fn cleanup(spawner: ModelSpawner<Self>) {
-        let Ok(providers) = spawner
-            .spawn(|me, _| std::mem::take(&mut me.cloud_providers))
-            .await
-        else {
-            log::error!("Unable to retrieve cloud providers for cleanup");
-            return;
-        };
-
-        for provider in providers {
-            if let Err(err) = provider.cleanup().await {
-                report_error!(anyhow!(err).context("Unable to clean up cloud provider"));
             }
         }
     }
@@ -2642,18 +2447,6 @@ pub(super) fn write_run_started(run_id: &str, output_format: OutputFormat) {
         OutputFormat::Text | OutputFormat::Pretty => output::text::run_started(run_id, buf),
     })
     .context("Failed to write run ID"));
-}
-
-/// Write the session URL to stdout using the appropriate output format
-fn write_session_joined(join_url: &str, output_format: OutputFormat) {
-    report_if_error!(output::with_stdout_buffered(|buf| match output_format {
-        OutputFormat::Json | OutputFormat::Ndjson =>
-            output::json::shared_session_established(join_url, buf),
-        OutputFormat::Text | OutputFormat::Pretty => {
-            output::text::shared_session_established(join_url, buf)
-        }
-    })
-    .context("Failed to write shared session event"));
 }
 
 #[cfg(test)]

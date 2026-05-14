@@ -7,7 +7,6 @@ use itertools::Itertools as _;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use warp_cli::agent::Harness;
-use warp_core::features::FeatureFlag;
 use warp_multi_agent_api::response_event::stream_finished::ConversationUsageMetadata;
 use warp_multi_agent_api::{
     client_action::{Action, StartNewConversation},
@@ -33,7 +32,6 @@ use crate::ai::document::ai_document_model::AIDocumentModel;
 use crate::input_suggestions::HistoryOrder;
 use crate::persistence::model::AgentConversationData;
 use crate::persistence::ModelEvent;
-use crate::server::server_api::ServerApiProvider;
 use crate::terminal::model::block::BlockId;
 use crate::terminal::view::blocklist_filter;
 use crate::GlobalResourceHandlesProvider;
@@ -56,8 +54,8 @@ use super::RequestInput;
 
 mod conversation_loader;
 pub use conversation_loader::{
-    convert_persisted_conversation_to_ai_conversation_with_metadata, load_conversation_from_server,
-    CLIAgentConversation, CloudConversationData,
+    convert_persisted_conversation_to_ai_conversation_with_metadata, CLIAgentConversation,
+    CloudConversationData,
 };
 
 pub(super) const MAX_HISTORICAL_CONVERSATIONS: usize = 100;
@@ -125,44 +123,6 @@ impl From<&AIConversation> for AIConversationMetadata {
 }
 
 impl AIConversationMetadata {
-    /// Create metadata from server-fetched GraphQL data.
-    /// This is used when loading conversations from the cloud.
-    pub fn from_server_metadata(
-        conversation_id: AIConversationId,
-        server_conversation_metadata: ServerAIConversationMetadata,
-    ) -> Self {
-        let title = server_conversation_metadata.title.clone();
-        let last_modified_at = server_conversation_metadata
-            .metadata
-            .metadata_last_updated_ts
-            .utc()
-            .naive_utc();
-        let credits_spent = Some(server_conversation_metadata.usage.credits_spent);
-        let server_conversation_token = Some(
-            server_conversation_metadata
-                .server_conversation_token
-                .clone(),
-        );
-        let initial_working_directory = server_conversation_metadata.working_directory.clone();
-        let artifacts = server_conversation_metadata.artifacts.clone();
-
-        Self {
-            id: conversation_id,
-            title,
-            // Server doesn't currently provide initial query in metadata
-            // This is used to allow searching by initial query in command palette.
-            initial_query: String::new(),
-            last_modified_at,
-            initial_working_directory,
-            credits_spent,
-            server_conversation_token,
-            has_local_data: false,
-            has_cloud_data: true, // Server metadata implies cloud data exists
-            artifacts,
-            server_conversation_metadata: Some(server_conversation_metadata),
-        }
-    }
-
     /// Whether this conversation is owned by an ambient agent run rather than
     /// being a direct user conversation.
     pub fn is_ambient_agent_conversation(&self) -> bool {
@@ -1097,10 +1057,9 @@ impl BlocklistAIHistoryModel {
     /// (e.g., `FORK_PREFIX` for forks, `PRE_REWIND_PREFIX` for pre-rewind backups).
     ///
     /// When `preserve_task_ids` is true, the forked conversation reuses the source's task ids
-    /// instead of minting new ones. Used by local-to-cloud handoff so the local
-    /// fork's task store matches the cloud-side fork. The cloud agent's
-    /// `ClientAction`s reference those task ids; if we minted new ones locally
-    /// they would fail to resolve.
+    /// instead of minting new ones. This preserves references for imported or
+    /// replayed task histories whose client actions already point at concrete
+    /// task ids.
     pub fn fork_conversation(
         &mut self,
         source_conversation: &AIConversation,
@@ -1433,48 +1392,6 @@ impl BlocklistAIHistoryModel {
             log::warn!("Failed to mark exchange as completed: {e}");
         }
 
-        // If this conversation doesn't have server metadata yet, and it has a server conversation token,
-        // fetch the metadata from the server.
-        let should_fetch_metadata = FeatureFlag::CloudConversations.is_enabled()
-            && conversation.server_metadata().is_none()
-            && conversation.server_conversation_token().is_some();
-
-        if should_fetch_metadata {
-            let server_token = conversation
-                .server_conversation_token()
-                .unwrap()
-                .as_str()
-                .to_string();
-
-            let server_api = ServerApiProvider::as_ref(ctx).get_ai_client();
-            ctx.spawn(
-                async move {
-                    server_api
-                        .list_ai_conversation_metadata(Some(vec![server_token]))
-                        .await
-                },
-                move |model, result, ctx| match result {
-                    Ok(mut metadata_list) if !metadata_list.is_empty() => {
-                        if let Some(metadata) = metadata_list.pop() {
-                            model.set_server_metadata_for_conversation(
-                                conversation_id,
-                                metadata,
-                                ctx,
-                            );
-                        }
-                    }
-                    Ok(_) => {
-                        log::warn!("No metadata returned for conversation {}", conversation_id);
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to fetch metadata for conversation {}: {e:#}",
-                            conversation_id
-                        );
-                    }
-                },
-            );
-        }
     }
 
     pub fn set_exchange_time_to_first_token(
@@ -1774,7 +1691,7 @@ impl BlocklistAIHistoryModel {
                     // For child agent conversations, skip the first exchange — it
                     // contains the synthetic orchestrator prompt, not user input.
                     // TODO(QUALITY-636): Replace positional skip with an
-                    // `is_agent_initiated` field on the MAA UserQuery proto
+                    // `is_agent_initiated` field on the agent UserQuery proto
                     // message so the flag survives server restoration.
                     let skip_count = if conversation.is_child_agent_conversation() {
                         1
@@ -1973,14 +1890,14 @@ impl BlocklistAIHistoryModel {
             .copied()
     }
 
-    /// Returns local conversation metadata,
+    /// Returns locally backed conversation metadata,
     /// (excluding conversations from ambient agent runs).
     pub fn get_local_conversations_metadata(
         &self,
     ) -> impl Iterator<Item = &AIConversationMetadata> {
         self.all_conversations_metadata
             .values()
-            .filter(|m| !m.is_ambient_agent_conversation())
+            .filter(|m| m.has_local_data && !m.is_ambient_agent_conversation())
     }
 
     /// Returns conversation metadata for a specific conversation ID.
@@ -1989,39 +1906,6 @@ impl BlocklistAIHistoryModel {
         conversation_id: &AIConversationId,
     ) -> Option<&AIConversationMetadata> {
         self.all_conversations_metadata.get(conversation_id)
-    }
-
-    /// Returns whether a conversation can be shared.
-    ///
-    /// A conversation can be shared if we have server metadata available
-    /// (either from a loaded conversation or from conversation metadata).
-    pub fn can_conversation_be_shared(&self, conversation_id: &AIConversationId) -> bool {
-        self.get_server_conversation_metadata(conversation_id)
-            .is_some()
-    }
-
-    /// Returns the server conversation metadata, used by the sharing dialog.
-    ///
-    /// This checks:
-    /// 1. If the conversation is loaded in memory, returns from its server metadata
-    /// 2. Otherwise, falls back to data stored in conversation metadata
-    pub fn get_server_conversation_metadata(
-        &self,
-        conversation_id: &AIConversationId,
-    ) -> Option<&ServerAIConversationMetadata> {
-        // Check if conversation exists in memory and has server metadata
-        if let Some(conversation) = self.conversation(conversation_id) {
-            if let Some(m) = conversation.server_metadata() {
-                return Some(m);
-            }
-        }
-
-        // Fall back to conversation metadata
-        if let Some(metadata) = self.get_conversation_metadata(conversation_id) {
-            return metadata.server_conversation_metadata.as_ref();
-        }
-
-        None
     }
 
     /// Finds an AIConversationId by its server conversation token.

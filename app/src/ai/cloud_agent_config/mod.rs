@@ -75,7 +75,7 @@ impl StringModel for AgentConfig {
     type CloudObjectType = CloudAgentConfig;
 
     fn model_type_name(&self) -> &'static str {
-        "Cloud agent config"
+        "Agent config"
     }
 
     fn should_enforce_revisions() -> bool {

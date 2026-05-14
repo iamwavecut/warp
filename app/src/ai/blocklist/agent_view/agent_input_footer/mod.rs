@@ -1,6 +1,5 @@
 pub(super) mod chips;
 pub mod editor;
-mod environment_selector;
 pub mod toolbar_item;
 
 use crate::{
@@ -15,7 +14,6 @@ use crate::{
         AIRequestUsageModel,
     },
     appearance::Appearance,
-    auth::{AuthManager, AuthStateProvider},
     completer::SessionContext,
     context_chips::{
         self,
@@ -82,11 +80,10 @@ use tokio::fs;
 use voice_input::{StartListeningError, VoiceSessionResult};
 
 use warp_core::{
-    context_flag::ContextFlag,
     report_if_error,
     ui::{
         color::{blend::Blend, contrast::MinimumAllowedContrast, ContrastingColor},
-        theme::{color::internal_colors, AnsiColorIdentifier, Fill},
+        theme::{color::internal_colors, Fill},
     },
 };
 #[cfg(feature = "voice_input")]
@@ -94,7 +91,7 @@ use warpui::r#async::SpawnedFutureHandle;
 use warpui::{
     elements::{
         Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
-        CrossAxisAlignment, DispatchEventResult, Element, EventHandler, Expanded, Flex,
+        CrossAxisAlignment, DispatchEventResult, Element, Empty, EventHandler, Expanded, Flex,
         MainAxisAlignment, MainAxisSize, OffsetPositioning, ParentElement, PositionedElementAnchor,
         PositionedElementOffsetBounds, Radius, Shrinkable, Stack, Text, Wrap, WrapFill,
         WrapFillEntireRun, DEFAULT_UI_LINE_HEIGHT_RATIO,
@@ -103,13 +100,9 @@ use warpui::{
     ViewHandle,
 };
 
-#[cfg(feature = "local_fs")]
-pub(crate) use self::environment_selector::sort_environments_by_recency;
 #[cfg(not(target_family = "wasm"))]
 use warpui::r#async::Timer;
 
-pub(crate) use self::environment_selector::{EnvironmentSelector, EnvironmentSelectorEvent};
-#[cfg(not(target_family = "wasm"))]
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::{
     compare_versions, plugin_manager_for, plugin_manager_for_with_shell, CliAgentPluginManager,
@@ -125,9 +118,6 @@ const DISABLE_NLD_TOOLTIP: &str = "Disable terminal command autodetection";
 
 const FAST_FORWARD_ON_TOOLTIP: &str = "Turn off auto-approve all agent actions";
 const FAST_FORWARD_OFF_TOOLTIP: &str = "Auto-approve all agent actions for this task";
-
-const START_REMOTE_CONTROL_TOOLTIP: &str = "Start remote control";
-const START_REMOTE_CONTROL_LOGIN_REQUIRED_TOOLTIP: &str = "Log in to use /remote-control";
 
 const CLOUD_MODE_V2_FOOTER_GAP: f32 = 4.;
 
@@ -179,12 +169,9 @@ pub struct AgentInputFooter {
     mic_button: ViewHandle<ActionButton>,
     nld_button: ViewHandle<ActionButton>,
     file_button: ViewHandle<ActionButton>,
-    start_remote_control_button: ViewHandle<ActionButton>,
-    stop_remote_control_button: ViewHandle<ActionButton>,
     context_window_button: ViewHandle<ActionButton>,
     model_selector: ViewHandle<ProfileModelSelector>,
     ftu_callout_close_button: ViewHandle<ActionButton>,
-    environment_selector: Option<ViewHandle<EnvironmentSelector>>,
     prompt_alert: ViewHandle<PromptAlertView>,
     ambient_agent_view_model: Option<ModelHandle<AmbientAgentViewModel>>,
     left_display_chips: Vec<ViewHandle<DisplayChip>>,
@@ -215,11 +202,6 @@ pub struct AgentInputFooter {
 
     // Fast-forward (auto-approve) toggle button shown in the agent view footer.
     fast_forward_button: ViewHandle<ActionButton>,
-
-    // "Hand off to cloud" chip. Visibility is gated on native/local handoff
-    // availability. Per-conversation eligibility is enforced by
-    // `Workspace::start_local_to_cloud_handoff`.
-    handoff_to_cloud_button: ViewHandle<ActionButton>,
 
     // CLI agent voice input state (self-contained, bypasses editor voice flow).
     #[cfg(feature = "voice_input")]
@@ -339,20 +321,6 @@ impl AgentInputFooter {
                 .with_tooltip_alignment(TooltipAlignment::Left)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(TerminalAction::ToggleAutoexecuteMode);
-                })
-        });
-
-        // "Hand off to cloud" chip. On click dispatches the workspace action that
-        // splits a new cloud-mode pane next to the local pane; that pane handles
-        // the rest of the handoff flow when native/local handoff is available.
-        let handoff_to_cloud_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("", AgentInputButtonTheme)
-                .with_icon(Icon::UploadCloud)
-                .with_tooltip("Hand off to cloud")
-                .with_size(button_size)
-                .with_tooltip_alignment(TooltipAlignment::Left)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(AgentInputFooterAction::OpenHandoffPane);
                 })
         });
 
@@ -556,29 +524,6 @@ impl AgentInputFooter {
             },
         );
 
-        let start_remote_control_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("/remote-control", RemoteControlButtonTheme)
-                .with_icon(Icon::Phone01)
-                .with_tooltip(START_REMOTE_CONTROL_TOOLTIP)
-                .with_size(cli_button_size)
-                .with_tooltip_alignment(TooltipAlignment::Left)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(AgentInputFooterAction::StartRemoteControl);
-                })
-        });
-
-        let stop_remote_control_button = ctx.add_typed_action_view(|_ctx| {
-            ActionButton::new("Stop sharing", RemoteControlButtonTheme)
-                .with_icon(Icon::StopFilled)
-                .with_icon_ansi_color(AnsiColorIdentifier::Red)
-                .with_tooltip("Stop sharing")
-                .with_size(cli_button_size)
-                .with_tooltip_alignment(TooltipAlignment::Left)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(AgentInputFooterAction::StopRemoteControl);
-                })
-        });
-
         let context_window_button = ctx.add_typed_action_view(|_ctx| {
             ActionButton::new("", AgentInputButtonTheme)
                 .with_icon(Icon::ConversationContext0)
@@ -604,33 +549,6 @@ impl AgentInputFooter {
         ctx.subscribe_to_view(&profile_model_selector_full, |me, _, event, ctx| {
             me.handle_profile_model_selector_event(event, ctx);
         });
-
-        let environment_selector =
-            ambient_agent_view_model
-                .as_ref()
-                .map(|ambient_agent_view_model| {
-                    ctx.add_typed_action_view(|ctx| {
-                        EnvironmentSelector::new(
-                            menu_positioning_provider.clone(),
-                            ambient_agent_view_model.clone(),
-                            ctx,
-                        )
-                    })
-                });
-
-        if let Some(environment_selector) = environment_selector.as_ref() {
-            ctx.subscribe_to_view(environment_selector, |_, _, event, ctx| match event {
-                EnvironmentSelectorEvent::MenuVisibilityChanged { open } => {
-                    ctx.emit(AgentInputFooterEvent::ToggledChipMenu { open: *open });
-                    if !*open {
-                        ctx.emit(AgentInputFooterEvent::EnvironmentSelectorClosed);
-                    }
-                }
-                EnvironmentSelectorEvent::OpenEnvironmentManagementPane => {
-                    ctx.emit(AgentInputFooterEvent::OpenEnvironmentManagementPane);
-                }
-            });
-        }
 
         if let Some(ambient_agent_view_model) = ambient_agent_view_model.as_ref() {
             ctx.subscribe_to_model(ambient_agent_view_model, |_, _, _, ctx| {
@@ -661,13 +579,6 @@ impl AgentInputFooter {
             if let ModelEvent::AgentTaggedInChanged { .. } = event {
                 me.update_ftu_callout_render_state(ctx);
             }
-        });
-
-        // Keep the remote-control chip in sync with login state so we can
-        // disable it and swap the tooltip when the user is anonymous or
-        // logged out.
-        ctx.subscribe_to_model(&AuthManager::handle(ctx), |me, _, _, ctx| {
-            me.sync_remote_control_button(ctx);
         });
 
         let prompt_for_session_settings = prompt.clone();
@@ -757,8 +668,6 @@ impl AgentInputFooter {
             file_explorer_button,
             rich_input_button,
             settings_button,
-            start_remote_control_button,
-            stop_remote_control_button,
             install_plugin_button,
             plugin_instructions_button,
             update_plugin_button,
@@ -768,7 +677,6 @@ impl AgentInputFooter {
             plugin_chip_ready: false,
             context_window_button,
             model_selector: profile_model_selector_full,
-            environment_selector,
             prompt_alert,
             terminal_model,
             render_ftu_callout: false,
@@ -777,7 +685,6 @@ impl AgentInputFooter {
             cli_display_chips: vec![],
             display_chip_config,
             fast_forward_button,
-            handoff_to_cloud_button,
             #[cfg(feature = "voice_input")]
             cli_voice_input_state: CLIVoiceInputState::default(),
             #[cfg(feature = "voice_input")]
@@ -793,7 +700,6 @@ impl AgentInputFooter {
             v2_model_selector,
         };
         me.sync_fast_forward_button(ctx);
-        me.sync_remote_control_button(ctx);
         me.update_context_window_button(ctx);
         me.update_display_chips(&prompt, ctx);
         me.update_ftu_callout_render_state(ctx);
@@ -823,18 +729,6 @@ impl AgentInputFooter {
         }
     }
 
-    pub fn is_v2_environment_selector_open(&self, app: &AppContext) -> bool {
-        self.environment_selector
-            .as_ref()
-            .is_some_and(|s| s.as_ref(app).is_menu_open())
-    }
-
-    pub fn open_v2_environment_selector(&mut self, ctx: &mut ViewContext<Self>) {
-        if let Some(selector) = self.environment_selector.clone() {
-            selector.update(ctx, |s, ctx| s.open_menu(ctx));
-        }
-    }
-
     fn should_render_cloud_mode_v2(&self, app: &AppContext) -> bool {
         FeatureFlag::CloudModeInputV2.is_enabled()
             && FeatureFlag::CloudMode.is_enabled()
@@ -849,14 +743,6 @@ impl AgentInputFooter {
     }
 
     fn render_cloud_mode_v2_footer(&self, app: &AppContext) -> Box<dyn Element> {
-        let mut left = Flex::row()
-            .with_main_axis_size(MainAxisSize::Min)
-            .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_spacing(CLOUD_MODE_V2_FOOTER_GAP);
-        if let Some(environment_selector) = self.environment_selector.as_ref() {
-            left = left.with_child(ChildView::new(environment_selector).finish());
-        }
-
         let mut right = Flex::row()
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -889,7 +775,7 @@ impl AgentInputFooter {
             .with_main_axis_size(MainAxisSize::Max)
             .with_main_axis_alignment(MainAxisAlignment::SpaceBetween)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(left.finish())
+            .with_child(Empty::new().finish())
             .with_child(right.finish())
             .finish()
     }
@@ -1316,9 +1202,8 @@ impl AgentInputFooter {
             return None;
         }
 
-        // Hide ShareSession for shared ambient (cloud) agent sessions —
-        // it doesn't make sense to offer remote-control when already
-        // viewing a cloud agent's shared session.
+        // Legacy toolbar configs may still contain ShareSession; hosted
+        // remote control is not rendered in this local-first build.
         if matches!(item, AgentToolbarItemKind::ShareSession)
             && self.terminal_model.lock().is_shared_ambient_agent_session()
         {
@@ -1346,27 +1231,15 @@ impl AgentInputFooter {
                 None
             }
             AgentToolbarItemKind::ShareSession => {
-                let enabled = FeatureFlag::CreatingSharedSessions.is_enabled()
-                    && FeatureFlag::HOARemoteControl.is_enabled()
-                    && ContextFlag::CreateSharedSession.is_enabled();
-                if !enabled {
-                    return None;
-                }
-
-                let button = if shared_status.is_sharer() {
-                    &self.stop_remote_control_button
-                } else {
-                    &self.start_remote_control_button
-                };
-                Some(ChildView::new(button).finish())
+                let _ = shared_status;
+                None
             }
             AgentToolbarItemKind::Settings => Some(ChildView::new(&self.settings_button).finish()),
             // Handled by the available_in() guard above; included for exhaustiveness.
             AgentToolbarItemKind::ModelSelector
             | AgentToolbarItemKind::NLDToggle
             | AgentToolbarItemKind::ContextWindowUsage
-            | AgentToolbarItemKind::FastForwardToggle
-            | AgentToolbarItemKind::HandoffToCloud => None,
+            | AgentToolbarItemKind::FastForwardToggle => None,
         }
     }
 
@@ -1491,12 +1364,7 @@ impl AgentInputFooter {
             .all_display_chips()
             .any(|chip| chip.as_ref(app).display_chip_kind().has_open_menu());
 
-        let has_open_env_selector = self
-            .environment_selector
-            .as_ref()
-            .is_some_and(|selector| selector.as_ref(app).is_menu_open());
-
-        has_open_display_chip || has_open_env_selector
+        has_open_display_chip
     }
 
     pub fn is_model_selector_open(&self, app: &AppContext) -> bool {
@@ -1634,11 +1502,6 @@ impl AgentInputFooter {
 
         match &self.cli_voice_input_state {
             CLIVoiceInputState::Stopped => {
-                if !crate::ai::AIRequestUsageModel::as_ref(ctx).can_request_voice() {
-                    self.show_cli_voice_error_toast("Voice input limit reached", ctx);
-                    return;
-                }
-
                 let session_result = voice_input::VoiceInput::handle(ctx)
                     .update(ctx, |voice_input, ctx| {
                         voice_input.start_listening(ctx, source.clone())
@@ -1740,15 +1603,10 @@ impl AgentInputFooter {
                     }
                 }
             }
-            Err(e) => match e {
-                TranscribeError::QuotaLimit => {
-                    self.show_cli_voice_error_toast("Voice input limit reached", ctx);
-                }
-                _ => {
-                    log::error!("Failed to transcribe CLI voice input: {e:?}");
-                    self.show_cli_voice_error_toast("Failed to transcribe voice input", ctx);
-                }
-            },
+            Err(e) => {
+                log::error!("Failed to transcribe CLI voice input: {e:?}");
+                self.show_cli_voice_error_toast("Failed to transcribe voice input", ctx);
+            }
         }
 
         self.cli_voice_input_state = CLIVoiceInputState::Stopped;
@@ -1833,24 +1691,6 @@ impl AgentInputFooter {
         });
     }
 
-    /// Disable the start-remote-control chip and swap its tooltip when the
-    /// user is anonymous or logged out, since session sharing requires a
-    /// real account.
-    fn sync_remote_control_button(&self, ctx: &mut ViewContext<Self>) {
-        let login_required = AuthStateProvider::as_ref(ctx)
-            .get()
-            .is_anonymous_or_logged_out();
-        let tooltip = if login_required {
-            START_REMOTE_CONTROL_LOGIN_REQUIRED_TOOLTIP
-        } else {
-            START_REMOTE_CONTROL_TOOLTIP
-        };
-        self.start_remote_control_button.update(ctx, |button, ctx| {
-            button.set_disabled(login_required, ctx);
-            button.set_tooltip(Some(tooltip), ctx);
-        });
-    }
-
     fn update_context_window_button(&mut self, ctx: &mut ViewContext<Self>) {
         if let Some(conversation) =
             BlocklistAIHistoryModel::as_ref(ctx).active_conversation(self.terminal_view_id)
@@ -1926,33 +1766,12 @@ impl AgentInputFooter {
                 has_conversation.then(|| ChildView::new(&self.context_window_button).finish())
             }
             AgentToolbarItemKind::ShareSession => {
-                let enabled = FeatureFlag::CreatingSharedSessions.is_enabled()
-                    && FeatureFlag::HOARemoteControl.is_enabled()
-                    && ContextFlag::CreateSharedSession.is_enabled();
-                if !enabled {
-                    return None;
-                }
-                let button = if shared_status.is_sharer() {
-                    &self.stop_remote_control_button
-                } else {
-                    &self.start_remote_control_button
-                };
-                Some(ChildView::new(button).finish())
+                let _ = shared_status;
+                None
             }
             AgentToolbarItemKind::FastForwardToggle => FeatureFlag::FastForwardAutoexecuteButton
                 .is_enabled()
                 .then(|| ChildView::new(&self.fast_forward_button).finish()),
-            AgentToolbarItemKind::HandoffToCloud => {
-                if !AgentToolbarItemKind::handoff_to_cloud_available() {
-                    return None;
-                }
-
-                if is_cloud_mode {
-                    return None;
-                }
-
-                Some(ChildView::new(&self.handoff_to_cloud_button).finish())
-            }
             // Handled by the available_in() guard above; included for exhaustiveness.
             AgentToolbarItemKind::FileExplorer
             | AgentToolbarItemKind::RichInput
@@ -2017,20 +1836,6 @@ impl View for AgentInputFooter {
             .with_main_axis_alignment(MainAxisAlignment::Start)
             .with_run_spacing(4.)
             .with_spacing(4.);
-
-        let is_ambient_agent = FeatureFlag::CloudMode.is_enabled()
-            && self
-                .ambient_agent_view_model
-                .as_ref()
-                .is_some_and(|ambient_agent_model| {
-                    ambient_agent_model.as_ref(app).is_ambient_agent()
-                });
-        if is_ambient_agent {
-            if let Some(environment_selector) = self.environment_selector.as_ref() {
-                left_buttons =
-                    left_buttons.with_child(ChildView::new(environment_selector).finish());
-            }
-        }
 
         let terminal_model = self.terminal_model.lock();
         let shared_status = terminal_model.shared_session_status();
@@ -2213,12 +2018,7 @@ pub enum AgentInputFooterAction {
     OpenPluginInstallInstructionsPane,
     OpenPluginUpdateInstructionsPane,
     DismissPluginChip,
-    StartRemoteControl,
-    StopRemoteControl,
     OpenCodingAgentSettings,
-    /// Open the local-to-cloud handoff pane. Dispatched by the
-    /// "Hand off to cloud" footer chip.
-    OpenHandoffPane,
     ShowContextMenu {
         position: Vector2F,
     },
@@ -2351,25 +2151,12 @@ impl TypedActionView for AgentInputFooter {
                 }
                 ctx.notify();
             }
-            AgentInputFooterAction::StartRemoteControl => {
-                ctx.emit(AgentInputFooterEvent::StartRemoteControl);
-            }
-            AgentInputFooterAction::StopRemoteControl => {
-                ctx.emit(AgentInputFooterEvent::StopRemoteControl);
-            }
             AgentInputFooterAction::OpenCodingAgentSettings => {
                 #[cfg(not(target_family = "wasm"))]
                 ctx.dispatch_typed_action_deferred(WorkspaceAction::ScrollToSettingsWidget {
                     page: SettingsSection::ThirdPartyCLIAgents,
                     widget_id: crate::settings_view::cli_agent_settings_widget_id(),
                 });
-            }
-            AgentInputFooterAction::OpenHandoffPane => {
-                if AgentToolbarItemKind::handoff_to_cloud_available() {
-                    ctx.emit(AgentInputFooterEvent::OpenHandoffPane {
-                        initial_prompt: None,
-                    });
-                }
             }
             AgentInputFooterAction::ShowContextMenu { position } => {
                 ctx.emit(AgentInputFooterEvent::ShowContextMenu {
@@ -2389,8 +2176,6 @@ pub enum AgentInputFooterEvent {
     InsertIntoCLIRichInput(String),
     ToggleCodeReviewPane(CLIAgent),
     ToggleFileExplorer(CLIAgent),
-    StartRemoteControl,
-    StopRemoteControl,
     OpenRichInput,
     HideRichInput,
     ToggledChipMenu {
@@ -2400,7 +2185,6 @@ pub enum AgentInputFooterEvent {
     PromptAlert(PromptAlertEvent),
     ModelSelectorOpened,
     ModelSelectorClosed,
-    EnvironmentSelectorClosed,
     ToggleInlineModelSelector {
         initial_tab: InlineModelSelectorTab,
     },
@@ -2413,15 +2197,9 @@ pub enum AgentInputFooterEvent {
     ShowContextMenu {
         position: Vector2F,
     },
-    OpenEnvironmentManagementPane,
     PluginInstalled(CLIAgent),
     #[cfg(not(target_family = "wasm"))]
     OpenPluginInstructionsPane(CLIAgent, PluginModalKind),
-    /// Local-to-cloud handoff chip clicked. The terminal `Input` subscriber
-    /// forwards this to `WorkspaceAction::OpenLocalToCloudHandoffPane`.
-    OpenHandoffPane {
-        initial_prompt: Option<String>,
-    },
 }
 
 impl Entity for AgentInputFooter {
@@ -2476,31 +2254,6 @@ impl ActionButtonTheme for AgentInputButtonTheme {
         } else {
             None
         }
-    }
-}
-
-struct RemoteControlButtonTheme;
-
-impl ActionButtonTheme for RemoteControlButtonTheme {
-    fn background(&self, hovered: bool, appearance: &Appearance) -> Option<Fill> {
-        AgentInputButtonTheme.background(hovered, appearance)
-    }
-
-    fn text_color(
-        &self,
-        hovered: bool,
-        background: Option<Fill>,
-        appearance: &Appearance,
-    ) -> ColorU {
-        AgentInputButtonTheme.text_color(hovered, background, appearance)
-    }
-
-    fn border(&self, appearance: &Appearance) -> Option<ColorU> {
-        AgentInputButtonTheme.border(appearance)
-    }
-
-    fn should_opt_out_of_contrast_adjustment(&self) -> bool {
-        AgentInputButtonTheme.should_opt_out_of_contrast_adjustment()
     }
 }
 

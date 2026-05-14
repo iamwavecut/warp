@@ -10,32 +10,18 @@ use warpui::{
 
 use crate::appearance::Appearance;
 
-const LOGIN_TROUBLESHOOTING_DOCS_URL: &str =
-    "https://docs.warp.dev/support-and-community/troubleshooting-and-support/troubleshooting-login-issues";
-
 /// Represents reasons why login failed.
 pub enum LoginFailureReason {
     InvalidRedirectUrl { was_pasted: bool },
     FailedUserAuthentication,
-    FailedMintCustomToken,
-    InvalidStateParameter,
-    MissingStateParameter,
 }
 
 impl LoginFailureReason {
     /// Returns an error message to be presented to the user when login fails.
     pub(crate) fn to_formatted_text(&self) -> FormattedText {
         fn with_troubleshooting_text(
-            mut fragments: Vec<FormattedTextFragment>,
+            fragments: Vec<FormattedTextFragment>,
         ) -> Vec<FormattedTextFragment> {
-            fragments.extend([
-                FormattedTextFragment::plain_text(" Not the first time? See our "),
-                FormattedTextFragment::hyperlink(
-                    "troubleshooting docs",
-                    LOGIN_TROUBLESHOOTING_DOCS_URL,
-                ),
-                FormattedTextFragment::plain_text("."),
-            ]);
             fragments
         }
         let fragments = match self {
@@ -51,16 +37,6 @@ impl LoginFailureReason {
             LoginFailureReason::FailedUserAuthentication => {
                 with_troubleshooting_text(vec![FormattedTextFragment::plain_text(
                     "Request to log in failed.",
-                )])
-            }
-            LoginFailureReason::FailedMintCustomToken => {
-                with_troubleshooting_text(vec![FormattedTextFragment::plain_text(
-                    "Request to sign up failed.",
-                )])
-            }
-            LoginFailureReason::InvalidStateParameter | LoginFailureReason::MissingStateParameter => {
-                with_troubleshooting_text(vec![FormattedTextFragment::plain_text(
-                    "The redirect URL pasted did not originate from this app. Please click the button below to try again.",
                 )])
             }
         };
