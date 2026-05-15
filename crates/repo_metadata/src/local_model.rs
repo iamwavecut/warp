@@ -990,7 +990,6 @@ impl LocalRepoMetadataModel {
                                 safe: ("Repository exceeded max file limit; indexed in degraded mode"),
                                 full: ("Repository {repo_path_str} exceeded max file limit ({MAX_FILES_PER_REPO}); indexed only first level — subdirectories load on expand")
                             );
-                            send_telemetry_from_ctx!(RepoMetadataTelemetryEvent::BuildTreeFailed { error: format!("{:#}", BuildTreeError::ExceededMaxFileLimit) }, ctx);
                         } else {
                             log::info!(
                                 "Successfully indexed repository: {} with {} files",

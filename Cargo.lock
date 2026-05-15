@@ -5709,6 +5709,7 @@ dependencies = [
  "cfg-if",
  "futures",
  "http 1.4.0",
+ "log",
  "oauth2",
  "prevent_sleep",
  "prost 0.14.3",
