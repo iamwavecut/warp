@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ffi::OsString, fs, path::Path, sync::Arc, time::Duration};
+use std::{collections::HashMap, ffi::OsString, fs, path::Path, time::Duration};
 
 use futures::channel::oneshot;
 use warp_cli::agent::Harness;
@@ -11,10 +11,7 @@ use warp_util::standardized_path::StandardizedPath;
 use warpui::{App, SingletonEntity as _};
 
 use super::{build_secret_env_vars, AgentDriver, IdleTimeoutSender};
-use crate::ai::agent::{
-    task::TaskId, AIAgentActionResult, AIAgentActionResultType, AIAgentInput, AIAgentOutput,
-    AIAgentOutputMessage, ArtifactCreatedData, MessageId,
-};
+use crate::ai::agent::{AIAgentOutput, AIAgentOutputMessage, ArtifactCreatedData, MessageId};
 use crate::ai::mcp::parsing::normalize_mcp_json;
 use crate::ai::{agent_sdk::task_env_vars, ambient_agents::AmbientAgentTaskId};
 use crate::{

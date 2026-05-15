@@ -3,7 +3,7 @@ use onboarding::slides::{AgentAutonomy, AgentDevelopmentSettings, ProjectOnboard
 use onboarding::SelectedSettings;
 use serde_json::json;
 use warp_core::user_preferences::GetUserPreferences;
-use warpui::{App, SingletonEntity};
+use warpui::App;
 
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::execution_profiles::{AIExecutionProfile, ActionPermission};

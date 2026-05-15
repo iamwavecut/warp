@@ -14,7 +14,6 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use warp_core::ui::Icon;
 
-pub mod manager;
 pub mod templatable_manager;
 #[cfg(not(target_family = "wasm"))]
 pub use templatable_manager::McpIntegration;
@@ -40,7 +39,6 @@ cfg_if::cfg_if! {
 
 pub mod gallery;
 pub use gallery::MCPGalleryManager;
-use warpui::SingletonEntity as _;
 pub mod templatable;
 pub use templatable::JsonTemplate;
 pub use templatable::{TemplatableMCPServer, TemplateVariable};

@@ -721,8 +721,7 @@ impl AgentDriver {
                 }
                 TemplatableMCPServerManagerEvent::ServerInstallationAdded(_)
                 | TemplatableMCPServerManagerEvent::ServerInstallationDeleted(_)
-                | TemplatableMCPServerManagerEvent::TemplatableMCPServersUpdated
-                | TemplatableMCPServerManagerEvent::LegacyServerConverted => {}
+                | TemplatableMCPServerManagerEvent::TemplatableMCPServersUpdated => {}
             },
         );
     }

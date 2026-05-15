@@ -106,6 +106,7 @@ impl OrchestrationEditState {
         state
     }
 
+    #[cfg(test)]
     pub fn toggle_execution_mode_to_remote(&mut self, _remote: bool) {
         self.execution_mode = RunAgentsExecutionMode::Local;
         self.sanitize_for_local_execution();

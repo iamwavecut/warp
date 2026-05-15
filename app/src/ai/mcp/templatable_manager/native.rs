@@ -5,7 +5,6 @@ use crate::ai::mcp::templatable_manager::oauth::{
 };
 use crate::ai::mcp::FileBasedMCPManager;
 use itertools::Itertools;
-use std::sync::Arc;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -23,9 +22,7 @@ use crate::{
         logs, templatable_installation::VariableValue, StaticEnvVar,
         TemplatableMCPServerInstallation, TransportType,
     },
-    persistence::{
-        database_file_path_for_scope, establish_ro_connection, ModelEvent, PersistenceScope,
-    },
+    persistence::ModelEvent,
     settings::AISettings,
     view_components::DismissibleToast,
     workspace::ToastStack,
@@ -34,7 +31,6 @@ use crate::{
 use async_compat::CompatExt as _;
 use cfg_if::cfg_if;
 use futures::FutureExt as _;
-use parking_lot::Mutex;
 use rmcp::{transport::ConfigureCommandExt as _, ServiceExt as _};
 use simple_logger::manager::LogManager;
 use simple_logger::SimpleLogger;
@@ -165,14 +161,6 @@ impl TemplatableMCPServerManager {
             FileBasedMCPManagerEvent::AgentEnvMcpScanComplete { .. } => {}
         });
 
-        let database_connection = database_file_path_for_scope(&PersistenceScope::App)
-            .to_str()
-            .and_then(|db_url| {
-                establish_ro_connection(db_url)
-                    .ok()
-                    .map(|conn| Arc::new(Mutex::new(conn)))
-            });
-
         let mut me = Self {
             local_templatable_mcp_servers: Default::default(),
             server_states: Default::default(),
@@ -181,7 +169,6 @@ impl TemplatableMCPServerManager {
             server_credentials: Default::default(),
             file_based_server_credentials: Default::default(),
             locally_installed_servers,
-            database_connection,
             server_error_messages: Default::default(),
             spawner: Some(ctx.spawner()),
             pending_reconnections: Default::default(),

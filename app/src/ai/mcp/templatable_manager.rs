@@ -12,13 +12,7 @@ mod wasm;
 #[cfg(all(test, not(target_family = "wasm")))]
 mod utils_tests;
 
-#[cfg(not(target_family = "wasm"))]
-use diesel::SqliteConnection;
-#[cfg(not(target_family = "wasm"))]
-use parking_lot::Mutex;
 use std::collections::{HashMap, HashSet};
-#[cfg(not(target_family = "wasm"))]
-use std::sync::Arc;
 
 use crate::ai::mcp::FileBasedMCPManager;
 use crate::ai::mcp::{
@@ -62,8 +56,6 @@ pub struct TemplatableMCPServerManager {
     /// Cached credentials for file-based servers, keyed by installation hash.
     #[cfg(not(target_family = "wasm"))]
     file_based_server_credentials: oauth::FileBasedPersistedCredentialsMap,
-    #[cfg(not(target_family = "wasm"))]
-    database_connection: Option<Arc<Mutex<SqliteConnection>>>,
     /// Error messages for failed servers, keyed by installation UUID.
     server_error_messages: HashMap<Uuid, String>,
     /// Spawner for running tasks in the context of this manager.
@@ -360,7 +352,6 @@ pub enum TemplatableMCPServerManagerEvent {
     #[allow(dead_code)]
     ServerInstallationDeleted(Uuid),
     TemplatableMCPServersUpdated,
-    LegacyServerConverted,
 }
 
 impl Entity for TemplatableMCPServerManager {

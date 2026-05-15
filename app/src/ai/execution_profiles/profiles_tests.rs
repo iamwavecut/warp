@@ -1,6 +1,6 @@
 use serde_json::Value;
 use warp_core::user_preferences::GetUserPreferences;
-use warpui::{App, SingletonEntity};
+use warpui::App;
 
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::execution_profiles::ActionPermission;

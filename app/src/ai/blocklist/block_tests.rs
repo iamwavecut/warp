@@ -9,7 +9,6 @@ use ai::agent::action::{RunAgentsAgentRunConfig, RunAgentsExecutionMode};
 use ai::skills::SkillReference;
 use settings::Setting;
 use std::path::PathBuf;
-use warp_core::features::FeatureFlag;
 use warpui::{App, SingletonEntity};
 
 #[test]

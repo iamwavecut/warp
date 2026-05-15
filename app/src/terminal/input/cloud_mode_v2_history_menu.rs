@@ -170,10 +170,6 @@ impl CloudModeV2HistoryMenuView {
             .update(ctx, |v, ctx| v.accept_selected_item(false, ctx));
     }
 
-    pub fn arm_initial_buffer_sync(&mut self, _ctx: &mut ViewContext<Self>) {
-        self.pending_initial_buffer_sync = true;
-    }
-
     pub fn has_selection(&self, app: &AppContext) -> bool {
         self.menu_view
             .as_ref(app)
