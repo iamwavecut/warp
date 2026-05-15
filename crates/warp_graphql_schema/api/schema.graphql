@@ -3240,7 +3240,6 @@ type Tier {
   sharedWorkflowsPolicy: SharedWorkflowsPolicy
   singleSignOnPolicy: SingleSignOnPolicy
   teamSizePolicy: TeamSizePolicy
-  usageBasedPricingPolicy: UsageBasedPricingPolicy
   warpAiPolicy: WarpAiPolicy
   warpBasicPolicy: WarpBasicPolicy
 }
@@ -3569,7 +3568,6 @@ input UpdateWorkspaceSettingsInput {
   setLlmSettings: LlmSettingsInput
   setSandboxedAgentSettings: SandboxedAgentSettingsInput
   setSecretRedactionSettings: SecretRedactionSettingsInput
-  setUsageBasedPricingSettings: UsageBasedPricingSettingsInput
   workspaceUid: String!
 }
 
@@ -3635,20 +3633,6 @@ type UploadField {
 }
 
 union UploadFieldValue = ContentCRC32CFieldValue | ContentDataFieldValue | StaticUploadFieldValue
-
-type UsageBasedPricingPolicy {
-  toggleable: Boolean!
-}
-
-type UsageBasedPricingSettings {
-  enabled: Boolean!
-  maxMonthlySpendCents: Int
-}
-
-input UsageBasedPricingSettingsInput {
-  enabled: Boolean
-  maxMonthlySpendCents: Int
-}
 
 type UsageEntry {
   costCents: Int!
@@ -3947,7 +3931,6 @@ type WorkspaceSettings {
   llmSettings: LlmSettings!
   sandboxedAgentSettings: SandboxedAgentSettings
   secretRedactionSettings: SecretRedactionSettings!
-  usageBasedPricingSettings: UsageBasedPricingSettings!
 }
 
 enum WriteToPtyAutonomyValue {
