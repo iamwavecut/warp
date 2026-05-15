@@ -246,9 +246,7 @@ impl<T: EventLoopSender> RemoteServerController<T> {
                 "Remote server preinstall check classified as unsupported, falling back to legacy SSH: session={session_id:?} status={:?}",
                 check.status
             );
-            RemoteServerManager::handle(ctx).update(ctx, |mgr, ctx| {
-                mgr.mark_setup_unsupported(session_id, reason, ctx);
-            });
+            let _ = reason;
             self.flush_stashed_bootstrap(session_info, ctx);
             return;
         }

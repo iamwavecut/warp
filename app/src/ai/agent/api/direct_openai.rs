@@ -1519,6 +1519,7 @@ fn request_tool_result_to_message_tool_result(
         }
         RequestResult::AskUserQuestion(result) => MessageResult::AskUserQuestion(result),
         RequestResult::StartAgentV2(result) => MessageResult::StartAgentV2(result),
+        RequestResult::UploadFileArtifact(result) => MessageResult::UploadFileArtifact(result),
         RequestResult::RunAgentsResult(result) => MessageResult::RunAgentsResult(result),
     }
 }

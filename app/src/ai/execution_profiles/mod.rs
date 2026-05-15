@@ -284,6 +284,14 @@ impl Default for AIExecutionProfile {
 }
 
 impl AIExecutionProfile {
+    pub fn display_name(&self) -> String {
+        if self.name.is_empty() {
+            "Default".to_string()
+        } else {
+            self.name.clone()
+        }
+    }
+
     pub fn create_default_from_legacy_settings(app: &AppContext) -> Self {
         // Note that the legacy "Autonomy" and "Code Access" settings are not imported here.
         // The "Code Access" setting defaulted to "Always Ask", which is the most restrictive, so

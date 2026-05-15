@@ -40,7 +40,7 @@ cfg_if::cfg_if! {
 
 pub mod gallery;
 pub use gallery::MCPGalleryManager;
-use warpui::{AppContext, SingletonEntity as _};
+use warpui::SingletonEntity as _;
 pub mod templatable;
 pub use templatable::JsonTemplate;
 pub use templatable::{TemplatableMCPServer, TemplateVariable};
@@ -467,7 +467,7 @@ impl MCPServer {
     }
 }
 
-#[derive(Debug, Clone, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub enum MCPServerUpdate {
     Gallery {
         name: String,

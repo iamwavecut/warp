@@ -145,7 +145,7 @@ impl CloudModeV2HistoryMenuView {
     }
 
     pub fn select_up(&self, ctx: &mut ViewContext<Self>) {
-        self.inner.update(ctx, |v, ctx| v.select_up(ctx));
+        self.menu_view.update(ctx, |v, ctx| v.select_up(ctx));
     }
 
     pub fn select_down(&self, ctx: &mut ViewContext<Self>) {

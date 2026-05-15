@@ -12,7 +12,6 @@ use warpui::{
     },
     keymap::Keystroke,
     text_layout::TextAlignment,
-    ui_components::components::UiComponent as _,
     AppContext, Element, Entity, ModelHandle, SingletonEntity as _, TypedActionView, View,
     ViewContext,
 };
@@ -49,7 +48,6 @@ impl View for IntroSlide {
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
-        let theme = appearance.theme();
         let content = self.render_centered_content(appearance);
         let constrained = ConstrainedBox::new(content).with_max_width(421.).finish();
         // Background is rendered by the parent onboarding view (including background images).

@@ -521,6 +521,7 @@ fn write_tool_call_args(out: &mut String, tool: &Tool) {
         | Tool::InitProject(_)
         | Tool::Server(_)
         | Tool::Subagent(_)
+        | Tool::UploadFileArtifact(_)
         | Tool::TransferShellCommandControlToUser(_) => {}
     }
 }
@@ -1042,6 +1043,7 @@ fn write_tool_call_result_content(out: &mut String, result: &ToolCallResultType)
         | ToolCallResultType::SuggestPrompt(_)
         | ToolCallResultType::OpenCodeReview(_)
         | ToolCallResultType::InitProject(_)
+        | ToolCallResultType::UploadFileArtifact(_)
         | ToolCallResultType::TransferShellCommandControlToUser(_)
         | ToolCallResultType::SuggestCreatePlan(_)
         | ToolCallResultType::SuggestPlan(_) => {

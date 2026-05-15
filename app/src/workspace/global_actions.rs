@@ -1,5 +1,4 @@
 use crate::app_state::get_app_state;
-use crate::auth;
 use crate::network::NetworkStatus;
 use crate::persistence::ModelEvent;
 use crate::terminal::alt_screen_reporting::AltScreenReporting;

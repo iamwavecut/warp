@@ -236,7 +236,6 @@ async fn prepare_local_claude_child_no_anthropic_model_when_empty() {
 
 #[tokio::test]
 async fn prepare_local_harness_child_launch_rejects_disabled_claude_before_shell_validation() {
-    let ai_client = Arc::new(MockAIClient::new());
     let result = prepare_local_harness_child_launch(
         "hello world".to_string(),
         "claude".to_string(),
@@ -244,7 +243,6 @@ async fn prepare_local_harness_child_launch_rejects_disabled_claude_before_shell
         Some("parent-run".to_string()),
         None,
         None,
-        ai_client,
     )
     .await;
 

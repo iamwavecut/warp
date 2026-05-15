@@ -1526,6 +1526,7 @@ pub(crate) fn convert_tool_call_result_to_input(
         // Deprecated/unused result types or absent result.
         Some(ToolCallResultType::SuggestCreatePlan(..))
         | Some(ToolCallResultType::SuggestPlan(..))
+        | Some(ToolCallResultType::UploadFileArtifact(..))
         | None => {
             log::warn!("No result present for tool call ID: {tool_call_id}");
             None
@@ -1658,7 +1659,9 @@ fn create_cancelled_result_for_tool_call(
             AIAgentActionResultType::RunAgents(ai::agent::action_result::RunAgentsResult::Cancelled)
         }
         // These tools are deprecated.
-        ToolType::SuggestCreatePlan(_) | ToolType::SuggestPlan(_) => return None,
+        ToolType::SuggestCreatePlan(_)
+        | ToolType::SuggestPlan(_)
+        | ToolType::UploadFileArtifact(_) => return None,
     };
 
     Some(AIAgentInput::ActionResult {

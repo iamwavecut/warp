@@ -30,7 +30,6 @@ use crate::ai::mcp::{
 };
 use crate::ai::request_usage_model::AIRequestUsageModel;
 use crate::search::slash_command_menu::static_commands::commands;
-use crate::settings::AISettings;
 use crate::terminal::input::buffer_model::{InputBufferModel, InputBufferUpdateEvent};
 use crate::terminal::input::message_bar::attached_context::{
     AttachedBlocksMessageProducer, AttachedContextArgs, AttachedTextSelectionMessageProducer,

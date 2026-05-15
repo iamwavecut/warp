@@ -6,12 +6,15 @@ use crate::ai::mcp::templatable_manager::oauth::{
 use crate::ai::mcp::FileBasedMCPManager;
 use itertools::Itertools;
 use std::sync::Arc;
-use std::{collections::HashMap, future::Future};
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+};
 
 use crate::ai::mcp::http_client::build_client_with_headers;
 use crate::ai::mcp::templatable::GalleryData;
 use crate::ai::mcp::templatable_manager::FigmaMcpStatus;
-use crate::ai::mcp::{JsonTemplate, MCPGalleryManager, MCPServerUpdate};
+use crate::ai::mcp::{JsonTemplate, MCPGalleryManager, MCPServer, MCPServerUpdate};
 
 use crate::ai::mcp::parsing::resolve_json;
 use crate::ai::mcp::TemplatableMCPServer;

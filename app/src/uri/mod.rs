@@ -16,7 +16,8 @@ use crate::workspace::{Workspace, WorkspaceAction, WorkspaceRegistry};
 use crate::{view_components::DismissibleToast, workspace::ToastStack};
 
 use crate::settings_view::SettingsSection;
-use crate::user_config::load_launch_configs;
+use crate::tab_configs::TabConfig;
+use crate::user_config::{load_launch_configs, load_tab_configs, tab_configs_dir};
 use crate::{quake_mode_window_id, quake_mode_window_is_open, safe_info, ChannelState, OpenPath};
 use anyhow::{anyhow, ensure, Result};
 use itertools::Itertools;
@@ -56,6 +57,14 @@ pub enum UriHost {
     Mcp,
     /// Opens a new tab with the Codex model and starts a conversation.
     Codex,
+    /// Opens a local tab config by file name.
+    TabConfig,
+    /// Hosted shared-session URIs are ignored in this local-first build.
+    SharedSession,
+    /// Hosted conversation URIs are ignored in this local-first build.
+    Conversation,
+    /// Hosted Warp Drive URIs are ignored in this local-first build.
+    Drive,
 }
 
 impl FromStr for UriHost {
@@ -70,6 +79,10 @@ impl FromStr for UriHost {
             "home" => Ok(Self::Home),
             "mcp" => Ok(Self::Mcp),
             "codex" => Ok(Self::Codex),
+            "tab_config" => Ok(Self::TabConfig),
+            "session" | "shared_session" => Ok(Self::SharedSession),
+            "conversation" => Ok(Self::Conversation),
+            "drive" => Ok(Self::Drive),
             _ => Err(anyhow!("Received url with unexpected host: {}", s)),
         }
     }
@@ -239,6 +252,8 @@ impl UriHost {
             Self::Mcp => W::Nothing,
             // Codex opens a new tab with AI mode, use default behavior
             Self::Codex => W::default(),
+            Self::TabConfig => W::default(),
+            Self::SharedSession | Self::Conversation | Self::Drive => W::Nothing,
         }
     }
 }
@@ -917,9 +932,15 @@ fn validate_custom_uri(url: &Url) -> Result<UriHost> {
 
     // Check if this host is allowed to have arbitrary paths.
     let host_allows_arbitrary_path = match host {
-        UriHost::Action | UriHost::Launch | UriHost::Settings | UriHost::Mcp | UriHost::Codex => {
-            true
-        }
+        UriHost::Action
+        | UriHost::Launch
+        | UriHost::Settings
+        | UriHost::Mcp
+        | UriHost::Codex
+        | UriHost::TabConfig
+        | UriHost::SharedSession
+        | UriHost::Conversation
+        | UriHost::Drive => true,
         // Auth and Home only allow the desktop redirect path
         UriHost::Auth | UriHost::Home => false,
     };

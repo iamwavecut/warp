@@ -5,7 +5,7 @@ use std::sync::Arc;
 use chrono::{OutOfRangeError, Utc};
 use futures::stream::AbortHandle;
 
-use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
+use warpui::{Entity, ModelContext};
 
 use crate::{
     ai::RequestLimitInfo,
@@ -166,7 +166,6 @@ impl Requests {
                                 },
                             });
 
-                            cache_request_limit_info(request_limit_info, ctx);
                             model.request_limit_info = request_limit_info;
 
                             // If the transcript was already marked as summarized before,
@@ -178,7 +177,6 @@ impl Requests {
 
                         }
                         Ok(GenerateDialogueResult::Failure { request_limit_info }) if request_limit_info.limit <= request_limit_info.num_requests_used_since_refresh => {
-                            cache_request_limit_info(request_limit_info, ctx);
                             model.request_limit_info = request_limit_info;
                             let next_time = if let Some(next_refresh_time) = model.serialized_time_until_refresh() {
                                 format!("after {next_refresh_time}")

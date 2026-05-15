@@ -3,7 +3,7 @@ use warpui::{prelude::ChildView, Element, EntityId, View, ViewContext, ViewHandl
 use crate::{
     ai::{
         agent::{conversation::AIConversationId, AIAgentExchangeId},
-        blocklist::{agent_view::AgentViewEntryOrigin, AIBlock},
+        blocklist::{agent_view::AgentViewEntryOrigin, block::PendingUserQueryBlock, AIBlock},
     },
     env_vars::env_var_collection_block::EnvVarCollectionBlock,
     terminal::{

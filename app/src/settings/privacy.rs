@@ -7,7 +7,7 @@ use crate::terminal::safe_mode_settings::SafeModeSettings;
 
 use settings::{
     macros::{maybe_define_setting, register_settings_events},
-    RespectUserSyncSetting, Setting, SupportedPlatforms, SyncToCloud,
+    ChangeEventReason, RespectUserSyncSetting, Setting, SupportedPlatforms, SyncToCloud,
 };
 
 use serde::{Deserialize, Serialize};

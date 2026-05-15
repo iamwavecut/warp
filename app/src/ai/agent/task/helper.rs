@@ -136,6 +136,7 @@ impl ToolExt for api::message::tool_call::Tool {
             Tool::Server(_) => "server",
             Tool::Subagent(_) => "subagent",
             Tool::AskUserQuestion(_) => "ask_user_question",
+            Tool::UploadFileArtifact(_) => "upload_file_artifact",
             Tool::SendMessageToAgent(_) => "send_message_to_agent",
             Tool::TransferShellCommandControlToUser(_) => "transfer_shell_command_control",
             Tool::RunAgents(_) => "orchestrate",

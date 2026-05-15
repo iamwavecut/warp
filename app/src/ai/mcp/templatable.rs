@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::DateTime;
+use chrono::Utc;
 use handlebars::get_arguments;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -175,7 +175,7 @@ impl TemplatableMCPServer {
                         json: normalized_json,
                         variables,
                     },
-                    version: DateTime::now().timestamp(),
+                    version: Utc::now().timestamp(),
                     gallery_data: None,
                 }
             })

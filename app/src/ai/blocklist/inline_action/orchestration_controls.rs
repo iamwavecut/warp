@@ -87,24 +87,34 @@ impl OrchestrationEditState {
         harness_type: &str,
         _execution_mode: &RunAgentsExecutionMode,
     ) -> Self {
-        Self {
+        let mut state = Self {
             model_id: model_id.to_string(),
             harness_type: harness_type.to_string(),
             execution_mode: RunAgentsExecutionMode::Local,
-        }
+        };
+        state.sanitize_for_local_execution();
+        state
     }
 
     pub fn from_orchestration_config(config: &OrchestrationConfig) -> Self {
-        Self {
+        let mut state = Self {
             model_id: config.model_id.clone(),
             harness_type: config.harness_type.clone(),
             execution_mode: RunAgentsExecutionMode::Local,
-        }
+        };
+        state.sanitize_for_local_execution();
+        state
+    }
+
+    pub fn toggle_execution_mode_to_remote(&mut self, _remote: bool) {
+        self.execution_mode = RunAgentsExecutionMode::Local;
+        self.sanitize_for_local_execution();
     }
 
     /// Returns `Some(reason)` if Accept / Apply must be disabled.
     pub fn accept_disabled_reason(&self) -> Option<&'static str> {
-        None
+        Harness::parse_local_child_harness(&self.harness_type)
+            .and_then(local_child_harness_disabled_message)
     }
 
     /// Fills in empty fields from the approved orchestration config.

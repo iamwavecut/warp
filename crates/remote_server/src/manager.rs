@@ -27,8 +27,6 @@ use crate::setup::RemoteOs;
 use crate::setup::RemotePlatform;
 use crate::setup::RemoteServerSetupState;
 #[cfg(not(target_family = "wasm"))]
-use crate::setup::UnsupportedReason;
-#[cfg(not(target_family = "wasm"))]
 use crate::transport::Connection;
 use crate::transport::{Error, InstallSource, RemoteTransport};
 use crate::HostId;
@@ -713,19 +711,6 @@ impl RemoteServerManager {
                     let platform = match platform_result {
                         Ok(p) => Some(p),
                         Err(e) => {
-                            if let Some(reason) = UnsupportedReason::from_transport_error(&e) {
-                                log::info!(
-                                    "Remote server platform is unsupported, falling back to legacy SSH: session={session_id:?}"
-                                );
-                                Self::emit_unsupported_preinstall_check(
-                                    &spawner,
-                                    session_id,
-                                    None,
-                                    PreinstallCheckResult::unsupported(reason),
-                                )
-                                .await;
-                                return;
-                            }
                             log::warn!(
                                 "Remote server platform detection failed: session={session_id:?} error={e}"
                             );
@@ -811,7 +796,9 @@ impl RemoteServerManager {
                 if let Err(error) = &check_result {
                     ctx.emit(RemoteServerManagerEvent::SetupStateChanged {
                         session_id,
-                        state: RemoteServerSetupState::from(error),
+                        state: RemoteServerSetupState::Failed {
+                            error: format!("{error:#}"),
+                        },
                     });
                 }
                 ctx.emit(RemoteServerManagerEvent::BinaryCheckComplete {
@@ -899,7 +886,9 @@ impl RemoteServerManager {
                             if let Err(error) = &outcome.result {
                                 ctx.emit(RemoteServerManagerEvent::SetupStateChanged {
                                     session_id,
-                                    state: RemoteServerSetupState::from(error),
+                                    state: RemoteServerSetupState::Failed {
+                                        error: format!("{error:#}"),
+                                    },
                                 });
                             }
                             ctx.emit(RemoteServerManagerEvent::BinaryInstallComplete {

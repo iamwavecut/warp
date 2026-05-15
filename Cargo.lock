@@ -13192,6 +13192,7 @@ dependencies = [
  "command-corrections",
  "command-signatures-v2",
  "computer_use",
+ "concat-idents",
  "core-foundation 0.10.1",
  "counter 0.6.0",
  "csv",
