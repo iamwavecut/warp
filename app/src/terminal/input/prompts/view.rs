@@ -4,17 +4,17 @@ use warpui::{Element, Entity, ModelHandle, View, ViewContext, ViewHandle};
 use crate::ai::blocklist::agent_view::AgentViewController;
 use crate::search::data_source::Query;
 use crate::search::mixer::SearchMixer;
-use crate::server::ids::SyncId;
 use crate::terminal::input::buffer_model::{InputBufferModel, InputBufferUpdateEvent};
 use crate::terminal::input::inline_menu::{InlineMenuEvent, InlineMenuPositioner, InlineMenuView};
 use crate::terminal::input::prompts::{AcceptPrompt, PromptsMenuDataSource};
 use crate::terminal::input::suggestions_mode_model::{
     InputSuggestionsModeEvent, InputSuggestionsModeModel,
 };
+use crate::workflows::workflow::Workflow;
 
 #[derive(Debug, Clone)]
 pub enum InlinePromptsMenuEvent {
-    SelectedPrompt { id: SyncId },
+    SelectedPrompt { workflow: Workflow },
 }
 
 pub struct InlinePromptsMenuView {
@@ -53,7 +53,9 @@ impl InlinePromptsMenuView {
 
         ctx.subscribe_to_view(&menu_view, |_, _, event, ctx| {
             if let InlineMenuEvent::AcceptedItem { item, .. } = event {
-                ctx.emit(InlinePromptsMenuEvent::SelectedPrompt { id: item.id });
+                ctx.emit(InlinePromptsMenuEvent::SelectedPrompt {
+                    workflow: item.workflow.clone(),
+                });
             }
         });
 

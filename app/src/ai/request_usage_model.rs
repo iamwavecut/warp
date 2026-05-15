@@ -118,12 +118,6 @@ pub struct CodebaseContextUsageLimit {
     pub embedding_generation_batch_size: usize,
 }
 
-/// Contains all usage-related information fetched from the server.
-pub struct RequestUsageInfo {
-    pub request_limit_info: RequestLimitInfo,
-    pub bonus_grants: Vec<BonusGrant>,
-}
-
 #[cfg(feature = "agent_mode_evals")]
 impl RequestLimitInfo {
     pub fn new_for_evals() -> Self {
@@ -158,11 +152,7 @@ pub struct AIRequestUsageModel {
 }
 
 impl Entity for AIRequestUsageModel {
-    type Event = AIRequestUsageModelEvent;
-}
-
-pub enum AIRequestUsageModelEvent {
-    RequestUsageUpdated,
+    type Event = ();
 }
 
 impl AIRequestUsageModel {
@@ -217,19 +207,14 @@ impl AIRequestUsageModel {
         self.requests_remaining() > 0
     }
 
-    /// Returns `true` if the user meets one of the following conditions:
-    /// 1. user has ai credits from the plan base limit
-    /// 2. user has overage enabled
-    /// 3. user has bonus grants (either team grants or user grants)
-    /// 4. user's team plan has pay-as-you-go enabled (enterprise only)
-    /// 5. user's team is on enterprise with bonus grants auto-reload enable (enterprise only)
-    /// 6. user has BYOK enabled and has provided at least one API key
-    /// Use this method as the starting point for AI availability checking.
+    /// Local-first builds do not gate AI availability on hosted billing,
+    /// quotas, overages, or bonus-credit state.
     pub fn has_any_ai_remaining(&self, ctx: &AppContext) -> bool {
         let _ = (self, ctx);
         true
     }
 
+    #[cfg(test)]
     pub fn requests_used(&self) -> usize {
         if self.next_refresh_time() <= Utc::now() {
             return 0;
@@ -237,6 +222,7 @@ impl AIRequestUsageModel {
         self.request_limit_info.num_requests_used_since_refresh
     }
 
+    #[cfg(test)]
     pub fn request_limit(&self) -> usize {
         self.request_limit_info.limit
     }
@@ -269,7 +255,6 @@ impl AIRequestUsageModel {
     pub fn bonus_grants(&self) -> &[BonusGrant] {
         &self.bonus_grants
     }
-
 }
 
 /// Voice request usage, only available if built with voice input support.

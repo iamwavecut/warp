@@ -1,6 +1,6 @@
 [package]
 name = "markdown_parser"
-authors = ["Warp Team <dev@warp.dev>"]
+authors = ["Local-first Warp fork contributors"]
 version = "0.1.0"
 edition = "2024"
 publish.workspace = true
@@ -16,4 +16,3 @@ nom.workspace = true
 html5ever.workspace = true
 markup5ever_rcdom = "0.35.0"
 serde_yaml.workspace = true
-thiserror.workspace = true

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use warp_cli::WorkerCommand;
-use warp_core::channel::{Channel, ChannelConfig, ChannelState, OzConfig, WarpServerConfig};
+use warp_core::channel::{Channel, ChannelConfig, ChannelState, WarpServerConfig};
 use warp_core::AppId;
 
 #[derive(Debug, Default, Parser, Clone)]
@@ -31,15 +31,7 @@ pub fn main() -> Result<()> {
                 // black-hole server traffic.
                 server_root_url: "http://192.0.2.0:9".into(),
                 rtc_server_url: "ws://192.0.2.0:9/graphql/v2".into(),
-                session_sharing_server_url: None,
             },
-            oz_config: OzConfig {
-                // Use an IP in the IANA testing range, with the TCP discard port, to
-                // black-hole server traffic.
-                oz_root_url: "http://192.0.2.0:9".into(),
-                workload_audience_url: None,
-            },
-            autoupdate_config: None,
             mcp_static_config: None,
         },
     ));

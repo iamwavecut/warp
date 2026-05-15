@@ -21,7 +21,7 @@ On Finder/Dock launches, Warp inherits launchd's minimal `PATH`. `git` itself st
 - Capture returns `None` (wasm / `LocalShellState` not loaded / shell errored) → callers forward `None` → subprocess uses inherited `PATH`. Behavior no worse than today.
 - On Linux/Windows the same code path runs; no special-casing.
 ## Testing and validation
-No unit tests — the plumbing is a thin `Option<&str>` forward and the real-world condition (launchd minimal `PATH`) isn't reproducible in a test harness. Manual validation per `PRODUCT.md` "Validation". UI regression coverage via `verify-ui-change-in-cloud`.
+No unit tests — the plumbing is a thin `Option<&str>` forward and the real-world condition (launchd minimal `PATH`) isn't reproducible in a test harness. Manual validation per `PRODUCT.md` "Validation".
 ## Risks
 - **First-click latency:** first git-op in a session awaits the shell capture (<1s typical). Absorbed by existing loading state. Prewarming on panel mount is an easy follow-up if it's ever user-visible.
 - **Hook behavior change:** LFS hooks that silently no-op today (because `git-lfs` is missing) will actually run for Finder-launched Warp. Intended per PRODUCT.md.

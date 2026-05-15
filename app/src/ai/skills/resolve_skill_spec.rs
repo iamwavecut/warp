@@ -33,8 +33,6 @@ pub struct ResolvedSkill {
     pub skill_path: PathBuf,
     pub name: String,
     pub instructions: String,
-    /// The full parsed skill, used for proto conversion when sending to server.
-    pub parsed_skill: ParsedSkill,
 }
 
 fn resolve_from_skill_dirs_by_directory_scan(
@@ -471,7 +469,6 @@ fn to_resolved_skill(skill_path: PathBuf, parsed: ParsedSkill) -> ResolvedSkill 
         name: parsed.name.clone(),
         instructions,
         skill_path,
-        parsed_skill: parsed,
     }
 }
 

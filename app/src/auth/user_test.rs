@@ -10,11 +10,7 @@ fn test_user_profile_metadata() {
             display_name: Some("Test User".to_string()),
             photo_url: Some("https://photourl.example.com/1234".to_string()),
         },
-        needs_sso_link: true,
-        anonymous_user_type: None,
         is_on_work_domain: false,
-        linked_at: None,
-        personal_object_limits: None,
         principal_type: PrincipalType::User,
         global_skills: Vec::new(),
     };
@@ -24,7 +20,6 @@ fn test_user_profile_metadata() {
         user.metadata.photo_url.as_deref(),
         Some("https://photourl.example.com/1234")
     );
-    assert!(user.needs_sso_link);
 }
 
 #[test]

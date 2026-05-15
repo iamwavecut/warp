@@ -7,17 +7,15 @@ use crate::{
         BulkCreateCloudObjectResult, BulkCreateGenericStringObjectsRequest,
         CreateCloudObjectResult, CreateObjectRequest, GenericStringObjectFormat,
         GenericStringObjectUniqueKey, ObjectDeleteResult, ObjectMetadataUpdateResult,
-        ObjectPermissionUpdateResult, ObjectPermissionsUpdateData, ObjectType, ObjectsToUpdate,
-        Owner, Revision, ServerFolder, ServerMetadata, ServerNotebook, ServerObject,
-        ServerPermissions, ServerWorkflow, UpdateCloudObjectResult,
+        ObjectPermissionUpdateResult, ObjectPermissionsUpdateData, ObjectType, Owner, Revision,
+        ServerFolder, ServerMetadata, ServerNotebook, ServerObject, ServerPermissions,
+        ServerWorkflow, UpdateCloudObjectResult,
     },
     drive::{folders::FolderId, sharing::SharingAccessLevel},
     notebooks::NotebookId,
     server::{
-        cloud_objects::update_manager::{GetCloudObjectResponse, InitialLoadResponse},
-        ids::ServerId,
-        server_api::ServerApi,
-        sync_queue::SerializedModel,
+        cloud_objects::update_manager::GetCloudObjectResponse, ids::ServerId,
+        server_api::ServerApi, sync_queue::SerializedModel,
     },
     workflows::WorkflowId,
 };
@@ -26,7 +24,6 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 #[cfg(test)]
 use mockall::{automock, predicate::*};
-use std::collections::HashMap;
 use warp_graphql::object_permissions::AccessLevel;
 
 /// Identifies a guest to remove from an object.
@@ -110,12 +107,6 @@ pub trait ObjectClient: 'static + Send + Sync {
     /// Sets the current editor of the notebook to be null
     async fn give_up_notebook_edit_access(&self, notebook_id: NotebookId)
         -> Result<ServerMetadata>;
-
-    async fn fetch_changed_objects(
-        &self,
-        objects_to_update: ObjectsToUpdate,
-        force_refresh: bool,
-    ) -> Result<InitialLoadResponse>;
 
     async fn fetch_single_cloud_object(&self, id: ServerId) -> Result<GetCloudObjectResponse>;
 
@@ -274,14 +265,6 @@ impl ObjectClient for ServerApi {
         _notebook_id: NotebookId,
     ) -> Result<ServerMetadata> {
         Err(Self::backend_disabled_error())
-    }
-
-    async fn fetch_changed_objects(
-        &self,
-        _objects_to_update: ObjectsToUpdate,
-        _force_refresh: bool,
-    ) -> Result<InitialLoadResponse> {
-        Ok(InitialLoadResponse::default())
     }
 
     async fn fetch_single_cloud_object(&self, _id: ServerId) -> Result<GetCloudObjectResponse> {

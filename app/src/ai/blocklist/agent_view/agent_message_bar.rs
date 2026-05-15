@@ -28,9 +28,7 @@ use crate::ai::mcp::{
     templatable_manager::{FigmaMcpStatus, TemplatableMCPServerManagerEvent},
     TemplatableMCPServerManager,
 };
-use crate::ai::request_usage_model::{
-    AIRequestUsageModel, AIRequestUsageModelEvent, AMBIENT_AGENT_TRIAL_CREDIT_THRESHOLD,
-};
+use crate::ai::request_usage_model::AIRequestUsageModel;
 use crate::search::slash_command_menu::static_commands::commands;
 use crate::settings::AISettings;
 use crate::terminal::input::buffer_model::{InputBufferModel, InputBufferUpdateEvent};
@@ -68,7 +66,6 @@ pub struct AgentMessageBarMouseStates {
     pub toggle_plan: MouseStateHandle,
     pub toggle_conversation_menu: MouseStateHandle,
     pub toggle_code_review: MouseStateHandle,
-    pub handoff_to_cloud: MouseStateHandle,
     pub clear_attached_context: MouseStateHandle,
     /// Mouse state handle for the "Get Figma MCP" contextual button.
     pub figma_install_button: MouseStateHandle,
@@ -217,10 +214,8 @@ impl AgentMessageBar {
             );
         }
 
-        ctx.subscribe_to_model(&AIRequestUsageModel::handle(ctx), |_, _, event, ctx| {
-            if matches!(event, AIRequestUsageModelEvent::RequestUsageUpdated) {
-                ctx.notify();
-            }
+        ctx.subscribe_to_model(&AIRequestUsageModel::handle(ctx), |_, _, _, ctx| {
+            ctx.notify();
         });
 
         Self {
@@ -557,33 +552,6 @@ impl MessageProvider<AgentMessageArgs<'_>> for ZeroStateMessageProducer {
         let is_cloud_agent =
             is_in_cloud_context(agent_view_controller.agent_view_state(), terminal_model);
 
-        // Handoff to cloud only available for local agents.
-        if !is_cloud_agent && AISettings::as_ref(app).is_ampersand_handoff_enabled(app) {
-            items.push(
-                MessageItem::clickable(
-                    vec![
-                        MessageItem::Keystroke {
-                            keystroke: Keystroke {
-                                key: "&".to_owned(),
-                                ..Default::default()
-                            },
-                            color: color_override_for_shortcuts_and_commands,
-                            background_color: bg_color_override_for_shortcuts_and_commands,
-                        },
-                        MessageItem::Text {
-                            content: "send task to the cloud".into(),
-                            color: color_override_for_shortcuts_and_commands,
-                        },
-                    ],
-                    |ctx| {
-                        ctx.dispatch_typed_action(InputAction::ActivateCloudHandoff);
-                    },
-                    mouse_states.handoff_to_cloud.clone(),
-                )
-                .with_is_disabled(!is_buffer_empty),
-            );
-        }
-
         let plan_count = AIDocumentModel::as_ref(app)
             .get_all_documents_for_conversation(active_conversation.id())
             .len();
@@ -610,10 +578,7 @@ impl MessageProvider<AgentMessageArgs<'_>> for ZeroStateMessageProducer {
 
         // Code review only works locally.
         #[cfg(not(target_family = "wasm"))]
-        if !is_cloud_agent
-            && !AISettings::as_ref(app).is_cloud_handoff_enabled(app)
-            && *TabSettings::as_ref(app).show_code_review_button
-        {
+        if !is_cloud_agent && *TabSettings::as_ref(app).show_code_review_button {
             let code_review_keystroke = if OperatingSystem::get().is_mac() {
                 Keystroke::parse("cmd-shift-+").expect("keystroke should parse")
             } else {

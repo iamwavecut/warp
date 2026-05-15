@@ -178,8 +178,10 @@ impl SuggestedAgentModeWorkflowModal {
                 self.close(ctx);
             }
             WorkflowViewEvent::CreatedWorkflow(created_workflow_id) => {
-                if let Some(SuggestedAgentModeWorkflowAndId { sync_id, workflow }) =
-                    &self.workflow_and_id
+                if let Some(SuggestedAgentModeWorkflowAndId {
+                    sync_id,
+                    workflow: _,
+                }) = &self.workflow_and_id
                 {
                     if sync_id == created_workflow_id {
                         ctx.emit(SuggestedAgentModeWorkflowModalEvent::WorkflowCreated);

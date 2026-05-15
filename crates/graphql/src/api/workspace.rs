@@ -53,7 +53,6 @@ pub struct WorkspaceSettings {
     pub is_discoverable: bool,
     pub is_invite_link_enabled: bool,
     pub llm_settings: LlmSettings,
-    pub cloud_conversation_storage_settings: CloudConversationStorageSettings,
     pub ai_permissions_settings: AiPermissionsSettings,
     pub link_sharing_settings: LinkSharingSettings,
     pub secret_redaction_settings: SecretRedactionSettings,
@@ -62,11 +61,6 @@ pub struct WorkspaceSettings {
     pub codebase_context_settings: CodebaseContextSettings,
     pub sandboxed_agent_settings: Option<SandboxedAgentSettings>,
     pub ambient_agent_settings: Option<AmbientAgentSettings>,
-}
-
-#[derive(cynic::QueryFragment, Debug, Clone)]
-pub struct CloudConversationStorageSettings {
-    pub setting: AdminEnablementSetting,
 }
 
 #[derive(cynic::QueryFragment, Debug, Clone)]

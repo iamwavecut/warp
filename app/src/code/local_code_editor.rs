@@ -1969,7 +1969,7 @@ impl LocalCodeEditorView {
             return;
         };
 
-        let server_type_name = self
+        let _server_type_name = self
             .lsp_server
             .as_ref()
             .map(|s| s.as_ref(ctx).server_name());

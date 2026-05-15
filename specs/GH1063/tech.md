@@ -151,8 +151,8 @@ Manual verification artifacts:
 - Screenshots of (a) settings sidebar with the "Agents" umbrella expanded,
   (b) the AI settings page heading, and (c) the onboarding agent slide in both
   feature-flag states.
-- After implementation, invoke the `verify-ui-change-in-cloud` skill per the
-  repository rule for user-facing client changes.
+- After implementation, do a local manual UI check for the user-facing client
+  changes.
 
 ## Risks and mitigations
 

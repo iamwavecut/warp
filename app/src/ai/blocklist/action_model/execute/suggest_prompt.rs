@@ -42,7 +42,7 @@ impl PromptSuggestionExecutor {
     pub(super) fn execute(
         &mut self,
         input: ExecuteActionInput,
-        ctx: &mut ModelContext<Self>,
+        _ctx: &mut ModelContext<Self>,
     ) -> impl Into<AnyActionExecution> {
         let AIAgentAction {
             action: AIAgentActionType::SuggestPrompt(request),

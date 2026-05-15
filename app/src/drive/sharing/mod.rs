@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use chrono::{DateTime, Local};
 use session_sharing_protocol::common::SessionId;
-use warp_core::{channel::ChannelState, ui::appearance::Appearance};
+use warp_core::ui::appearance::Appearance;
 use warpui::{
     color::ColorU,
     ui_components::components::{UiComponent, UiComponentStyles},
@@ -57,8 +57,7 @@ impl ShareableObject {
 
 /// Whether not a shared object's contents are editable by the current user.
 ///
-/// This is not purely a function of their access level since anonymous users are not allowed to
-/// edit (due to the lack of attribution).
+/// This is not purely a function of access level because hosted sharing can ask for login.
 #[derive(Debug, Clone, Copy)]
 pub enum ContentEditability {
     ReadOnly,

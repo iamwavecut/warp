@@ -49,8 +49,6 @@ impl DestructiveMCPConfirmationDialogDisplayOptions {
 #[derive(Debug, Clone)]
 pub enum DestructiveMCPConfirmationDialogVariant {
     DeleteLocal,
-    DeleteShared,
-    Unshare,
 }
 
 impl From<&DestructiveMCPConfirmationDialogVariant>
@@ -58,24 +56,15 @@ impl From<&DestructiveMCPConfirmationDialogVariant>
 {
     fn from(variant: &DestructiveMCPConfirmationDialogVariant) -> Self {
         match *variant {
-            DestructiveMCPConfirmationDialogVariant::DeleteLocal => DestructiveMCPConfirmationDialogDisplayOptions::new(
-                "Delete MCP server?".to_string(),
-                "This will uninstall and remove this MCP server from all your devices.".to_string(),
-                "Delete MCP".to_string(),
-                "Cancel".to_string(),
-            ),
-            DestructiveMCPConfirmationDialogVariant::DeleteShared => DestructiveMCPConfirmationDialogDisplayOptions::new(
-                "Delete imported MCP server?".to_string(),
-                "This will uninstall and remove this MCP server from this local profile. Hosted team removal is disabled in this build.".to_string(),
-                "Delete MCP".to_string(),
-                "Cancel".to_string(),
-            ),
-            DestructiveMCPConfirmationDialogVariant::Unshare => DestructiveMCPConfirmationDialogDisplayOptions::new(
-                "Remove hosted MCP sharing?".to_string(),
-                "Hosted MCP sharing is disabled in this local-first build. This only affects the local profile.".to_string(),
-                "Remove locally".to_string(),
-                "Cancel".to_string(),
-            ),
+            DestructiveMCPConfirmationDialogVariant::DeleteLocal => {
+                DestructiveMCPConfirmationDialogDisplayOptions::new(
+                    "Delete MCP server?".to_string(),
+                    "This will uninstall and remove this MCP server from this local profile."
+                        .to_string(),
+                    "Delete MCP".to_string(),
+                    "Cancel".to_string(),
+                )
+            }
         }
     }
 }

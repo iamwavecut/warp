@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use async_stream::stream;
+use chrono::{DateTime, Local};
 use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -10,7 +11,8 @@ use uuid::Uuid;
 use warp_multi_agent_api as api;
 
 use crate::ai::agent::{
-    AIAgentActionResult, AIAgentContext, AIAgentInput, AnyFileContent, MarkdownActionResult,
+    AIAgentActionResult, AIAgentActionResultType, AIAgentAttachment, AIAgentContext, AIAgentInput,
+    AnyFileContent, DriveObjectPayload, MarkdownActionResult, UserQueryMode,
 };
 use crate::ai::llms::LLMId;
 use crate::server::server_api::AIApiError;
@@ -18,6 +20,7 @@ use crate::settings::{normalize_custom_provider_env_var, CustomProviderConfig};
 use ::ai::api_keys::ApiKeys;
 
 use super::ResponseStream;
+use crate::ai::block_context::BlockContext;
 
 const CUSTOM_MODEL_PREFIX: &str = "custom/";
 const MAX_CONTEXT_CHARS: usize = 24_000;
@@ -1177,6 +1180,14 @@ fn mcp_context_summary(context: &crate::ai::agent::MCPContext) -> String {
         })
         .collect::<Vec<_>>();
 
+    #[allow(deprecated)]
+    lines.extend(
+        context
+            .resources
+            .iter()
+            .map(|resource| format!("- resource `{}`", resource.uri)),
+    );
+
     for server in &context.servers {
         lines.push(format!(
             "Server `{}` id={} {}",
@@ -1228,9 +1239,14 @@ fn api_messages_from_inputs(
                         context: None,
                         referenced_attachments: referenced_attachments
                             .iter()
-                            .map(|(key, attachment)| (key.clone(), attachment.clone().into()))
+                            .map(|(key, attachment)| {
+                                (
+                                    key.clone(),
+                                    api_attachment_from_agent_attachment(attachment.clone()),
+                                )
+                            })
                             .collect(),
-                        mode: Some((*user_query_mode).into()),
+                        mode: Some(api_user_query_mode(*user_query_mode)),
                         intended_agent: intended_agent
                             .map(|agent| agent.into())
                             .unwrap_or_default(),
@@ -1259,11 +1275,7 @@ fn api_messages_from_inputs(
 fn api_tool_call_result_from_action_result(
     result: &AIAgentActionResult,
 ) -> Option<api::message::ToolCallResult> {
-    let input: api::request::input::user_inputs::user_input::Input =
-        result.clone().try_into().ok()?;
-    let api::request::input::user_inputs::user_input::Input::ToolCallResult(result) = input else {
-        return None;
-    };
+    let result = request_tool_call_result_from_action_result(result)?;
 
     Some(api::message::ToolCallResult {
         tool_call_id: result.tool_call_id,
@@ -1271,6 +1283,191 @@ fn api_tool_call_result_from_action_result(
         result: result
             .result
             .map(request_tool_result_to_message_tool_result),
+    })
+}
+
+fn api_user_query_mode(value: UserQueryMode) -> api::UserQueryMode {
+    match value {
+        UserQueryMode::Normal => api::UserQueryMode { r#type: None },
+        UserQueryMode::Plan => api::UserQueryMode {
+            r#type: Some(api::user_query_mode::Type::Plan(())),
+        },
+        UserQueryMode::Orchestrate => api::UserQueryMode {
+            r#type: Some(api::user_query_mode::Type::Orchestrate(())),
+        },
+    }
+}
+
+fn api_attachment_from_agent_attachment(attachment: AIAgentAttachment) -> api::Attachment {
+    match attachment {
+        AIAgentAttachment::PlainText(text) => api::Attachment {
+            value: Some(api::attachment::Value::PlainText(text)),
+        },
+        AIAgentAttachment::Block(block) => api::Attachment {
+            value: Some(api::attachment::Value::ExecutedShellCommand(
+                api_executed_shell_command_from_block(block),
+            )),
+        },
+        AIAgentAttachment::DriveObject { uid, payload } => api::Attachment {
+            value: Some(api::attachment::Value::DriveObject(api::DriveObject {
+                uid,
+                object_payload: payload.map(|p| match p {
+                    DriveObjectPayload::Workflow {
+                        name,
+                        description,
+                        command,
+                    } => api::drive_object::ObjectPayload::Workflow(api::Workflow {
+                        name,
+                        description,
+                        command,
+                    }),
+                    DriveObjectPayload::Notebook { title, content } => {
+                        api::drive_object::ObjectPayload::Notebook(api::Notebook { title, content })
+                    }
+                    DriveObjectPayload::GenericStringObject {
+                        payload,
+                        object_type,
+                    } => api::drive_object::ObjectPayload::GenericStringObject(
+                        api::GenericStringObject {
+                            payload,
+                            object_type,
+                        },
+                    ),
+                }),
+            })),
+        },
+        #[allow(deprecated)]
+        AIAgentAttachment::DiffHunk {
+            file_path,
+            line_range,
+            diff_content,
+            lines_added,
+            lines_removed,
+            current,
+            base,
+        } => api::Attachment {
+            value: Some(api::attachment::Value::DiffHunk(api::DiffHunk {
+                file_path,
+                line_range: Some(api::FileContentLineRange {
+                    start: line_range.start.as_usize() as u32,
+                    end: line_range.end.as_usize() as u32,
+                }),
+                diff_content,
+                lines_added,
+                lines_removed,
+                current: current.map(Into::into),
+                base: Some(base.into()),
+            })),
+        },
+        AIAgentAttachment::DocumentContent {
+            document_id,
+            content,
+            line_range,
+            ..
+        } => api::Attachment {
+            value: Some(api::attachment::Value::DocumentContent(
+                api::DocumentContent {
+                    document_id,
+                    content,
+                    line_range: line_range.map(|range| api::FileContentLineRange {
+                        start: range.start.as_usize() as u32,
+                        end: range.end.as_usize() as u32,
+                    }),
+                },
+            )),
+        },
+        AIAgentAttachment::DiffSet {
+            file_diffs,
+            current,
+            base,
+        } => api::Attachment {
+            value: Some(api::attachment::Value::DiffSet(api::DiffSet {
+                hunks: file_diffs
+                    .into_iter()
+                    .flat_map(|(file_path, hunks)| {
+                        hunks
+                            .into_iter()
+                            .map(move |hunk| hunk.convert_to_api(file_path.clone()))
+                    })
+                    .collect(),
+                curr_ref: current.map(Into::into),
+                base_ref: Some(base.into()),
+            })),
+        },
+        AIAgentAttachment::FilePathReference { file_path, .. } => api::Attachment {
+            value: Some(api::attachment::Value::FilePathReference(
+                api::FilePathReference { file_path },
+            )),
+        },
+    }
+}
+
+fn api_executed_shell_command_from_block(block: BlockContext) -> api::ExecutedShellCommand {
+    api::ExecutedShellCommand {
+        command: block.command,
+        output: block.output,
+        exit_code: block.exit_code.value(),
+        command_id: block.id.into(),
+        is_auto_attached: block.is_auto_attached,
+        started_ts: block.started_ts.map(local_datetime_to_timestamp),
+        finished_ts: block.finished_ts.map(local_datetime_to_timestamp),
+    }
+}
+
+fn local_datetime_to_timestamp(timestamp: DateTime<Local>) -> prost_types::Timestamp {
+    prost_types::Timestamp {
+        seconds: timestamp.timestamp(),
+        nanos: timestamp.timestamp_subsec_nanos() as i32,
+    }
+}
+
+fn request_tool_call_result_from_action_result(
+    action_result: &AIAgentActionResult,
+) -> Option<api::request::input::ToolCallResult> {
+    let result = match action_result.result.clone() {
+        AIAgentActionResultType::RequestCommandOutput(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::WriteToLongRunningShellCommand(result) => {
+            Some(result.try_into().ok()?)
+        }
+        AIAgentActionResultType::ReadFiles(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::SearchCodebase(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::RequestFileEdits(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::Grep(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::FileGlob(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::FileGlobV2(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::ReadMCPResource(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::CallMCPTool(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::ReadSkill(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::SuggestNewConversation(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::SuggestPrompt(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::OpenCodeReview => Some(
+            api::request::input::tool_call_result::Result::OpenCodeReview(
+                api::OpenCodeReviewResult {},
+            ),
+        ),
+        AIAgentActionResultType::InsertReviewComments(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::InitProject => Some(
+            api::request::input::tool_call_result::Result::InitProject(api::InitProjectResult {}),
+        ),
+        AIAgentActionResultType::ReadDocuments(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::EditDocuments(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::CreateDocuments(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::ReadShellCommandOutput(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::UseComputer(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::RequestComputerUse(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::FetchConversation(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::StartAgent(result) => Some(result.into()),
+        AIAgentActionResultType::SendMessageToAgent(result) => Some(result.into()),
+        AIAgentActionResultType::TransferShellCommandControlToUser(result) => {
+            Some(result.try_into().ok()?)
+        }
+        AIAgentActionResultType::AskUserQuestion(result) => Some(result.into()),
+        AIAgentActionResultType::RunAgents(result) => Some(result.try_into().ok()?),
+    };
+
+    Some(api::request::input::ToolCallResult {
+        tool_call_id: action_result.id.to_string(),
+        result,
     })
 }
 
@@ -1322,7 +1519,6 @@ fn request_tool_result_to_message_tool_result(
         }
         RequestResult::AskUserQuestion(result) => MessageResult::AskUserQuestion(result),
         RequestResult::StartAgentV2(result) => MessageResult::StartAgentV2(result),
-        RequestResult::UploadFileArtifact(result) => MessageResult::UploadFileArtifact(result),
         RequestResult::RunAgentsResult(result) => MessageResult::RunAgentsResult(result),
     }
 }

@@ -24,8 +24,8 @@ use crate::{
 };
 
 use super::{
-    get_server_output_id, is_file_path, is_git_repository, ActionExecution, AnyActionExecution,
-    ExecuteActionInput, PreprocessActionInput,
+    is_file_path, is_git_repository, ActionExecution, AnyActionExecution, ExecuteActionInput,
+    PreprocessActionInput,
 };
 
 const GREP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -198,7 +198,7 @@ impl GrepExecutor {
                     Err(_) => Err(GrepError::new("Grep operation timed out".to_string())),
                 }
             },
-            move |result, ctx| match result {
+            move |result, _ctx| match result {
                 Ok(grep_result) => {
                     if let GrepResult::Error(ref e) = grep_result {
                         log::warn!("Executing grep resulted in error: {e:?}");

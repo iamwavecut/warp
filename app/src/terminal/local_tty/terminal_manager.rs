@@ -3,10 +3,7 @@ use crate::ai::llms::{LLMPreferences, LLMPreferencesEvent};
 use crate::auth::auth_state::AuthState;
 use crate::auth::AuthStateProvider;
 use crate::terminal::model::terminal_model::ExitReason;
-use crate::terminal::shared_session::replay_agent_conversations::reconstruct_response_events_from_conversations;
 use crate::terminal::shared_session::shared_handlers::{
-    apply_auto_approve_agent_actions_update, apply_cli_agent_state_update, apply_input_mode_update,
-    apply_selected_agent_model_update, apply_selected_conversation_update,
     build_selected_conversation_update, RemoteUpdateGuard,
 };
 use crate::terminal::shell::ShellName;
@@ -20,17 +17,11 @@ use std::rc::Rc;
 use std::sync::mpsc::{SendError, SyncSender};
 use std::{collections::HashMap, ffi::OsString, path::PathBuf, sync::Arc, thread::JoinHandle};
 
-use session_sharing_protocol::sharer::{
-    AddGuestsResponse, FailedToInitializeSessionReason, Lifetime, LinkAccessLevelUpdateResponse,
-    QuotaType, RemoveGuestResponse, SessionEndedReason, SessionSourceType,
-    TeamAccessLevelUpdateResponse, UpdatePendingUserRoleResponse,
-};
+use session_sharing_protocol::sharer::{Lifetime, SessionEndedReason, SessionSourceType};
 
 use crate::editor::CrdtOperation;
 use crate::network::{NetworkStatusEvent, NetworkStatusKind};
 use crate::terminal::available_shells::{AvailableShell, AvailableShells};
-use crate::terminal::shared_session::permissions_manager::SessionPermissionsManager;
-use crate::terminal::shared_session::presence_manager::PresenceManager;
 use crate::terminal::ShellLaunchData;
 use crate::terminal::ShellLaunchState;
 use crate::view_components::ToastFlavor;
@@ -42,9 +33,7 @@ use crate::terminal::cli_agent_sessions::{
     CLIAgentInputState, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
 use session_sharing_protocol::common::{
-    ActivePrompt, AgentPromptFailureReason, CLIAgentSessionState, CommandExecutionFailureReason,
-    ControlAction, ControlActionFailureReason, SelectedAgentModel,
-    UniversalDeveloperInputContextUpdate, WriteToPtyFailureReason,
+    ActivePrompt, CLIAgentSessionState, SelectedAgentModel, UniversalDeveloperInputContextUpdate,
 };
 #[cfg(not(any(test, feature = "integration_tests")))]
 use session_sharing_protocol::common::{
@@ -57,7 +46,6 @@ use warpui::{AppContext, ModelContext, ModelHandle, SingletonEntity, ViewHandle,
 use warp_core::execution_mode::AppExecutionMode;
 
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
-use crate::ai::agent::conversation::AIConversation;
 use crate::ai::blocklist::agent_view::{AgentViewController, AgentViewControllerEvent};
 use crate::ai::blocklist::{
     BlocklistAIContextEvent, BlocklistAIContextModel, BlocklistAIControllerEvent,
@@ -81,10 +69,8 @@ use crate::terminal::model_events::ModelEventDispatcher;
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
 use crate::terminal::session_settings::{SessionSettings, SessionSettingsChangedEvent};
 use crate::terminal::shared_session::manager::Manager;
-use crate::terminal::shared_session::settings::SharedSessionSettings;
 use crate::terminal::shared_session::sharer::network::{
-    failed_to_add_guests_user_error, failed_to_initialize_session_user_error,
-    session_terminated_reason_string, Network, NetworkEvent,
+    failed_to_initialize_session_user_error, Network, NetworkEvent,
 };
 use crate::terminal::shared_session::{
     IsSharedSessionCreator, SharedSessionActionSource, SharedSessionScrollbackType,
@@ -110,7 +96,6 @@ use super::recorder;
 use super::shell::ShellStarter;
 use super::{event_loop::EventLoop, shell::ShellStarterSource};
 
-use crate::server::server_api::ServerApiProvider;
 #[cfg(unix)]
 use {
     super::terminal_attributes::TerminalAttributesPoller,
@@ -122,8 +107,6 @@ use {
 type PtyController = writeable_pty::PtyController<mio_channel::Sender<Message>>;
 type RemoteServerController =
     writeable_pty::remote_server_controller::RemoteServerController<mio_channel::Sender<Message>>;
-
-const ACL_UPDATE_FAILURE_RESPONSE: &str = "Something went wrong. Please try again.";
 
 /// Whether the given CRDT operation should be dropped when broadcasting
 /// sharer input to viewers. In ambient agent sessions the sharer is a
@@ -592,8 +575,8 @@ impl TerminalManager {
                         }
                     }
                     AgentViewControllerEvent::ExitedAgentView {
-                        origin,
-                        final_exchange_count,
+                        origin: _,
+                        final_exchange_count: _,
                         ..
                     } => {
                         if conversation_remote_update_guard.should_broadcast() {
@@ -1216,50 +1199,6 @@ impl TerminalManager {
         );
     }
 
-    /// Streams all historical agent conversations from this terminal to viewers.
-    /// This is called when starting a shared  session mid-conversation so that viewers
-    /// can see all conversation history and properly continue conversations.
-    fn stream_historical_agent_conversations(
-        terminal_view: &ViewHandle<TerminalView>,
-        model: &Arc<FairMutex<TerminalModel>>,
-        ctx: &mut AppContext,
-    ) {
-        // Get all conversations for this terminal view
-        // Any conversation could be continued during session sharing
-        let conversations: Vec<AIConversation> = BlocklistAIHistoryModel::as_ref(ctx)
-            .all_live_conversations_for_terminal_view(terminal_view.id())
-            .filter(|conv| conv.exchange_count() > 0)
-            .cloned()
-            .collect();
-
-        if conversations.is_empty() {
-            return;
-        }
-
-        // Get the sharer's participant id to use for historical conversations
-        let sharer_id = terminal_view
-            .as_ref(ctx)
-            .shared_session_presence_manager()
-            .map(|manager| manager.as_ref(ctx).sharer_id());
-
-        model
-            .lock()
-            .send_agent_conversation_replay_started_for_shared_session();
-
-        // Reconstruct and send all conversations' messages as ResponseEvent objects
-        // Exchanges are sorted chronologically to handle interleaved conversations
-        // Historical events use the original conversation token, so no need to pass forked_from.
-        let events = reconstruct_response_events_from_conversations(&conversations);
-        for event in events {
-            model
-                .lock()
-                .send_agent_response_for_shared_session(&event, sharer_id.clone(), None);
-        }
-        model
-            .lock()
-            .send_agent_conversation_replay_ended_for_shared_session();
-    }
-
     /// Send selected_conversation update to viewers based on current selection.
     fn send_selected_conversation_update_for_sharer(
         session_sharer: &Rc<RefCell<Option<ModelHandle<Network>>>>,
@@ -1288,7 +1227,6 @@ impl TerminalManager {
         source_type: SessionSourceType,
         model: Arc<FairMutex<TerminalModel>>,
         window_id: WindowId,
-        sharer_remote_update_guard: RemoteUpdateGuard,
         ctx: &mut AppContext,
     ) {
         let mut session_sharer = shared_session_model.borrow_mut();
@@ -1315,7 +1253,7 @@ impl TerminalManager {
         // Snapshot the conversation the user has selected at click time so the
         // share is linked to that run, even if selection drifts before the
         // server confirms session creation.
-        let selected_conversation_id = terminal_view
+        let _selected_conversation_id = terminal_view
             .as_ref(ctx)
             .ai_context_model()
             .as_ref(ctx)
@@ -1456,7 +1394,8 @@ impl TerminalManager {
             .set_ordered_terminal_events_for_shared_session_tx(events_tx);
 
         let shared_session_model_clone = shared_session_model.clone();
-        ctx.subscribe_to_model(&network, move |network, event, ctx| match event {
+        ctx.subscribe_to_model(&network, move |_network, event, ctx| match event {
+            #[cfg(any(test, feature = "integration_tests"))]
             NetworkEvent::SharedSessionCreatedSuccessfully {
                 session_id,
                 sharer_id,
@@ -1501,7 +1440,7 @@ impl TerminalManager {
                     .cloned()
                     .collect();
                 if !init_input_ops.is_empty() {
-                    network.update(ctx, |network, _ctx| {
+                    _network.update(ctx, |network, _ctx| {
                         network.send_input_update(
                             model.lock().block_list().active_block_id(),
                             init_input_ops.iter(),
@@ -1509,16 +1448,11 @@ impl TerminalManager {
                     });
                 }
 
-                // Stream historical agent conversations so viewers have conversation and task context.
-                if FeatureFlag::AgentSharedSessions.is_enabled() {
-                    Self::stream_historical_agent_conversations(&terminal_view, &model, ctx);
-                }
-
                 let session_id_for_link = *session_id;
 
                 // Read task_id lazily so we still pick up a server-assigned
                 // task_id that arrived after the user clicked share.
-                let task_id = selected_conversation_id.and_then(|conversation_id| {
+                let task_id = _selected_conversation_id.and_then(|conversation_id| {
                     BlocklistAIHistoryModel::as_ref(ctx)
                         .conversation(&conversation_id)
                         .and_then(|c| c.task_id())
@@ -1528,10 +1462,7 @@ impl TerminalManager {
                     let _ = (task_id, session_id_for_link);
                 }
             }
-            NetworkEvent::FailedToCreateSharedSession {
-                reason,
-                cause,
-            } => {
+            NetworkEvent::FailedToCreateSharedSession { reason, cause } => {
                 log::warn!("Failed to create shared session: reason={reason:?}, cause={cause:?}");
 
                 model
@@ -1545,16 +1476,7 @@ impl TerminalManager {
                 terminal_view.update(ctx, |view, ctx| {
                     let reason_string = failed_to_initialize_session_user_error(reason);
 
-                    if matches!(
-                        reason,
-                        FailedToInitializeSessionReason::NoUserQuotaRemaining {
-                            quota_type: QuotaType::SessionsCreated
-                        }
-                    ) {
-                        view.open_share_session_denied_modal(ctx);
-                    } else {
-                        view.show_persistent_toast(reason_string.clone(), ToastFlavor::Error, ctx);
-                    }
+                    view.show_persistent_toast(reason_string.clone(), ToastFlavor::Error, ctx);
 
                     ctx.emit(TerminalViewEvent::FailedToShareSession {
                         reason: reason_string,
@@ -1564,567 +1486,6 @@ impl TerminalManager {
 
                 // Drop the network so we can create a new one when trying again.
                 shared_session_model_clone.borrow_mut().take();
-            }
-            NetworkEvent::SessionTerminated { reason } => {
-                Self::shared_session_terminated(
-                    &terminal_view,
-                    shared_session_model_clone.clone(),
-                    model.clone(),
-                    ctx,
-                );
-
-                let max_session_size = network.as_ref(ctx).max_session_size();
-                terminal_view.update(ctx, |view, ctx| {
-                    let reason_string = session_terminated_reason_string(reason, max_session_size);
-                    view.show_persistent_toast(reason_string, ToastFlavor::Error, ctx);
-                });
-            }
-            NetworkEvent::Reconnecting => {
-                // TODO(roland): add some limiting in a time frame to avoid possible infinite retry in this case:
-                // Server disconnects
-                // ---- begin loop
-                // We reconnect here, and it's successful
-                // The server immediately replies with a retryable error, or terminates the connection unexpectedly
-                // We emit an event and attempt to reconnect immediately
-                // ---- end loop
-                terminal_view.update(ctx, |view, ctx| {
-                    view.on_shared_session_reconnection_status_changed(true, ctx)
-                });
-            }
-            NetworkEvent::ReconnectedSuccessfully => {
-                terminal_view.update(ctx, |view, ctx| {
-                    view.on_shared_session_reconnection_status_changed(false, ctx)
-                });
-            }
-            NetworkEvent::FailedToReconnect => {
-                Self::shared_session_terminated(
-                    &terminal_view,
-                    shared_session_model_clone.clone(),
-                    model.clone(),
-                    ctx,
-                );
-
-                terminal_view.update(ctx, |view, ctx| {
-                    view.show_persistent_toast(
-                        "Something went wrong. Please try sharing again.".to_string(),
-                        ToastFlavor::Error,
-                        ctx,
-                    );
-                });
-            }
-            NetworkEvent::ControlActionRequested {
-                participant_id,
-                request_id,
-                action,
-            } => {
-                if !FeatureFlag::AgentSharedSessions.is_enabled() {
-                    return;
-                }
-
-                let viewer_is_executor = terminal_view
-                    .as_ref(ctx)
-                    .shared_session_presence_manager()
-                    .and_then(|manager| manager.as_ref(ctx).viewer_role(participant_id))
-                    .map(|role| role.can_execute())
-                    .unwrap_or_else(|| {
-                        log::warn!("Failed to get viewer's role during control action request");
-                        false
-                    });
-
-                if !viewer_is_executor {
-                    network.update(ctx, |network, _ctx| {
-                        network.send_control_action_rejection(
-                            participant_id.clone(),
-                            request_id.clone(),
-                            ControlActionFailureReason::InsufficientPermissions,
-                        );
-                    });
-                    return;
-                };
-
-                match action {
-                    ControlAction::CancelConversation {
-                        server_conversation_token,
-                    } => {
-                        terminal_view.update(ctx, |view, ctx| {
-                            view.ai_controller().update(ctx, |controller, ctx| {
-                                controller
-                                    .handle_shared_session_cancel_action(*server_conversation_token, ctx);
-                            });
-                        });
-                    }
-                }
-            }
-            NetworkEvent::ParticipantListUpdated(participant_list) => {
-                let was_viewer_driven_sizing_eligible = terminal_view
-                    .update(ctx, |view, ctx| view.is_viewer_driven_sizing_eligible(true, ctx));
-
-                if let Some(presence_manager) =
-                    terminal_view.as_ref(ctx).shared_session_presence_manager()
-                {
-                    presence_manager.update(ctx, |presence_manager, ctx| {
-                        presence_manager.update_participants(*participant_list.clone(), ctx)
-                    });
-                }
-
-                // Check eligibility from the incoming participant list directly,
-                // since the presence manager processes new viewers asynchronously.
-                if was_viewer_driven_sizing_eligible {
-                    let is_ambient_agent = terminal_view
-                        .as_ref(ctx)
-                        .is_shared_session_for_ambient_agent();
-                    // We never want to reset back to the sharer size if we are an agent,
-                    // since it was a default. Prefer to keep the viewer-set size for transcript
-                    // persistence.
-                    if !is_ambient_agent {
-                        let sharer_uid =
-                            participant_list.sharer.info.profile_data.firebase_uid.as_str();
-                        let still_eligible =
-                            PresenceManager::single_distinct_present_viewer_uid_from_viewers(
-                                participant_list.viewers.iter(),
-                            )
-                            .is_some_and(|viewer_uid| viewer_uid == sharer_uid);
-                        if !still_eligible {
-                            terminal_view.update(ctx, |view, ctx| {
-                                view.restore_pty_to_sharer_size(ctx);
-                            });
-                        }
-                    }
-                }
-
-                if let Some(session_id) = terminal_view.as_ref(ctx).shared_session_id().cloned() {
-                    SessionPermissionsManager::handle(ctx).update(
-                        ctx,
-                        |permissions_manager, ctx| {
-                            permissions_manager.updated_guests(
-                                ctx,
-                                session_id,
-                                participant_list.guests.clone(),
-                                participant_list.pending_guests.clone(),
-                            );
-                        },
-                    );
-                }
-            }
-            NetworkEvent::ParticipantPresenceUpdated(update) => {
-                terminal_view.update(ctx, |view, ctx| {
-                    view.on_participant_presence_updated(update, ctx);
-                });
-            }
-            NetworkEvent::RoleRequested {
-                participant_id,
-                role_request_id,
-                role,
-            } => {
-                terminal_view.update(ctx, |view, ctx| {
-                    view.on_role_requested(
-                        participant_id.clone(),
-                        role_request_id.clone(),
-                        *role,
-                        ctx,
-                    );
-                });
-            }
-            NetworkEvent::RoleRequestCancelled {
-                participant_id,
-                role_request_id,
-            } => {
-                terminal_view.update(ctx, |view, ctx| {
-                    view.on_role_request_cancelled(
-                        participant_id.clone(),
-                        role_request_id.clone(),
-                        ctx,
-                    );
-                });
-            }
-            NetworkEvent::ParticipantRoleChanged {
-                participant_id,
-                role,
-            } => {
-                terminal_view.update(ctx, |view, ctx| {
-                    view.on_participant_role_changed(participant_id, *role, ctx);
-                });
-            }
-            NetworkEvent::InputUpdated {
-                block_id,
-                operations,
-            } => {
-                // For the sharer, we're always up to speed so if this block ID
-                // is not the latest, then it's an old block ID and we don't need
-                // these operations.
-                if model.lock().block_list().active_block_id() != block_id {
-                    return;
-                }
-
-                terminal_view.update(ctx, |view, ctx| {
-                    view.input().update(ctx, |input, ctx| {
-                        input.process_remote_edits(block_id, operations.clone(), ctx);
-                    });
-                });
-            }
-            NetworkEvent::CommandExecutionRequested {
-                id,
-                participant_id,
-                block_id,
-                command,
-            } => {
-                let (is_block_id_latest, is_currently_long_running) = {
-                    let model = model.lock();
-                    let active_block = model.block_list().active_block();
-                    (
-                        active_block.id() == block_id,
-                        active_block.is_active_and_long_running(),
-                    )
-                };
-
-                // If the viewer is trying to execute for an old block ID (they can never be ahead)
-                // or the active block is long running, we need to reject this request.
-                if !is_block_id_latest || is_currently_long_running {
-                    network.update(ctx, |network, _ctx| {
-                        network.send_command_execution_rejection(
-                            id.clone(),
-                            participant_id.clone(),
-                            CommandExecutionFailureReason::StaleBuffer,
-                        );
-                    });
-                    return;
-                }
-
-                // If the viewer is no longer an executor, we need to reject the request.
-                let Some(viewer_role) = terminal_view
-                    .as_ref(ctx)
-                    .shared_session_presence_manager()
-                    .and_then(|manager| manager.as_ref(ctx).viewer_role(participant_id))
-                else {
-                    log::warn!("Failed to get viewer's role during command");
-                    return;
-                };
-                if !viewer_role.can_execute() {
-                    network.update(ctx, |network, _ctx| {
-                        network.send_command_execution_rejection(
-                            id.clone(),
-                            participant_id.clone(),
-                            CommandExecutionFailureReason::InsufficientPermissions,
-                        );
-                    });
-                    return;
-                }
-
-                terminal_view.update(ctx, |view, ctx| {
-                    view.input().update(ctx, |input, ctx| {
-                        input.try_execute_command_on_behalf_of_shared_session_participant(
-                            command,
-                            participant_id.clone(),
-                            ctx,
-                        );
-                    });
-                });
-            }
-            NetworkEvent::WriteToPtyRequested { id, bytes } => {
-                if !FeatureFlag::SharedSessionWriteToLongRunningCommands.is_enabled() {
-                    return;
-                }
-
-                let is_currently_long_running = {
-                    let model = model.lock();
-                    model
-                        .block_list()
-                        .active_block()
-                        .is_active_and_long_running()
-                };
-                if !is_currently_long_running {
-                    network.update(ctx, |network, _ctx| {
-                        network.send_write_to_pty_rejection(
-                            id.clone(),
-                            WriteToPtyFailureReason::StaleBuffer,
-                        );
-                    });
-                    return;
-                }
-
-                // If the viewer is no longer an executor, we need to reject the request.
-                let Some(viewer_role) = terminal_view
-                    .as_ref(ctx)
-                    .shared_session_presence_manager()
-                    .and_then(|manager| manager.as_ref(ctx).viewer_role(&id.participant_id))
-                else {
-                    log::warn!("Failed to get viewer's role during write to pty requested");
-                    return;
-                };
-                if !viewer_role.can_execute() {
-                    network.update(ctx, |network, _ctx| {
-                        network.send_write_to_pty_rejection(
-                            id.clone(),
-                            WriteToPtyFailureReason::InsufficientPermissions,
-                        );
-                    });
-                    return;
-                }
-
-                terminal_view.update(ctx, |view, ctx| {
-                    view.write_viewer_bytes_to_pty(bytes.clone(), ctx);
-                });
-            }
-            NetworkEvent::AgentPromptRequested {
-                id,
-                participant_id,
-                request,
-            } => {
-                if !FeatureFlag::AgentSharedSessions.is_enabled() {
-                    return;
-                }
-
-                // Validate permissions for the participant that initiated the prompt.
-                // For viewers, we require Executor role. For the sharer, we allow the prompt
-                // even if they are not present in the viewer list.
-                let mut is_sharer = false;
-                let viewer_role_opt = terminal_view
-                    .as_ref(ctx)
-                    .shared_session_presence_manager()
-                    .and_then(|manager| {
-                        let manager_ref = manager.as_ref(ctx);
-                        if manager_ref.sharer_id() == *participant_id {
-                            is_sharer = true;
-                            None
-                        } else {
-                            manager_ref.viewer_role(participant_id)
-                        }
-                    });
-
-                if !is_sharer {
-                    let Some(viewer_role) = viewer_role_opt else {
-                        log::warn!(
-                            "Failed to get viewer's role during agent prompt request for participant_id={participant_id} (not sharer)"
-                        );
-                        network.update(ctx, |network, _ctx| {
-                            network.send_agent_prompt_rejection(
-                                id.clone(),
-                                participant_id.clone(),
-                                AgentPromptFailureReason::InsufficientPermissions,
-                            );
-                        });
-                        return;
-                    };
-
-                    if !viewer_role.can_execute() {
-                        network.update(ctx, |network, _ctx| {
-                            network.send_agent_prompt_rejection(
-                                id.clone(),
-                                participant_id.clone(),
-                                AgentPromptFailureReason::InsufficientPermissions,
-                            );
-                        });
-                        return;
-                    }
-
-                    // Reject the prompt if AI is disabled on the sharer's machine.
-                    // TODO(APP-2894): We should create a failure variant that better matches the error.
-                    if !crate::settings::ai::AISettings::as_ref(ctx).is_any_ai_enabled(ctx) {
-                        network.update(ctx, |network, _ctx| {
-                            network.send_agent_prompt_rejection(
-                                id.clone(),
-                                participant_id.clone(),
-                                AgentPromptFailureReason::InvalidConversation,
-                            );
-                        });
-                        return;
-                    }
-                }
-
-                // If a third-party CLI harness (e.g. Claude Code) is running, write
-                // the follow-up prompt directly to the PTY. The CLI handles it as
-                // interactive input.
-                let terminal_view_id = terminal_view.id();
-                let has_active_cli_agent = CLIAgentSessionsModel::as_ref(ctx)
-                    .session(terminal_view_id)
-                    .is_some();
-                if has_active_cli_agent {
-                    // Reuse the rich input submit pipeline so agent-specific
-                    // strategies are applied. Bypasses the rich-input-UI side effects
-  					// (diagnostics, draft clear, editor buffer clear, pending-image consumption).
-                    terminal_view.update(ctx, |view, ctx| {
-                        view.submit_text_to_cli_agent_pty(request.prompt.clone(), ctx);
-                    });
-                    return;
-                }
-
-                // Execute the agent prompt in the Oz-harness case
-                terminal_view.update(ctx, |view, ctx| {
-                    // Clear the sharer's input (as the prompt in the input is now being executed)
-                    view.input().update(ctx, |input, ctx| {
-                        input.unfreeze_and_clear_agent_input(ctx);
-                    });
-
-                    view.ai_controller().update(ctx, |ai_controller, ctx| {
-                        ai_controller.execute_agent_prompt_for_shared_session(
-                            request.prompt.clone(),
-                            request.server_conversation_token,
-                            request.attachments.clone(),
-                            participant_id.clone(),
-                            ctx,
-                        );
-                    });
-                });
-            }
-            NetworkEvent::LinkAccessLevelUpdateResponse { response } => {
-                terminal_view.update(ctx, |view, ctx| match response {
-                    LinkAccessLevelUpdateResponse::Ok { role } => {
-                        let Some(session_id) = view.shared_session_id() else {
-                            return;
-                        };
-                        SessionPermissionsManager::handle(ctx).update(
-                            ctx,
-                            |permissions_manager, ctx| {
-                                permissions_manager.updated_link_permissions(
-                                    *session_id,
-                                    *role,
-                                    ctx,
-                                );
-                            },
-                        );
-                    }
-                    LinkAccessLevelUpdateResponse::Error => {
-                        let reason_string =
-                            "Failed to update permissions for shared session".to_owned();
-                        view.show_persistent_toast(reason_string, ToastFlavor::Error, ctx);
-                    }
-                });
-            }
-            NetworkEvent::TeamAccessLevelUpdateResponse { response } => {
-                terminal_view.update(ctx, |view, ctx| match response {
-                    TeamAccessLevelUpdateResponse::Success { team_acl, .. } => {
-                        let Some(session_id) = view.shared_session_id() else {
-                            return;
-                        };
-                        SessionPermissionsManager::handle(ctx).update(
-                            ctx,
-                            |permissions_manager, ctx| {
-                                permissions_manager.updated_team_permissions(
-                                    *session_id,
-                                    team_acl.clone(),
-                                    ctx,
-                                );
-                            },
-                        );
-                    }
-                    TeamAccessLevelUpdateResponse::Error(_) => {
-                        view.show_persistent_toast(
-                            ACL_UPDATE_FAILURE_RESPONSE.to_owned(),
-                            crate::view_components::ToastFlavor::Error,
-                            ctx,
-                        );
-                    }
-                });
-            }
-            NetworkEvent::AddGuestsResponse { response } => {
-                if let AddGuestsResponse::Error(reason) = response {
-                    terminal_view.update(ctx, |view, ctx| {
-                        let reason_string = failed_to_add_guests_user_error(reason);
-                        view.show_persistent_toast(reason_string, ToastFlavor::Error, ctx);
-                    });
-                }
-            }
-            NetworkEvent::RemoveGuestResponse { response } => {
-                if let RemoveGuestResponse::Error(_) = response {
-                    terminal_view.update(ctx, |view, ctx| {
-                        view.show_persistent_toast(
-                            ACL_UPDATE_FAILURE_RESPONSE.to_owned(),
-                            crate::view_components::ToastFlavor::Error,
-                            ctx,
-                        );
-                    });
-                }
-            }
-            NetworkEvent::UpdatePendingUserRoleResponse { response } => {
-                if let UpdatePendingUserRoleResponse::Error(_) = response {
-                    terminal_view.update(ctx, |view, ctx| {
-                        view.show_persistent_toast(
-                            ACL_UPDATE_FAILURE_RESPONSE.to_owned(),
-                            crate::view_components::ToastFlavor::Error,
-                            ctx,
-                        );
-                    });
-                }
-            }
-            NetworkEvent::ViewerTerminalSizeReported {
-                window_size,
-            } => {
-                if !*SharedSessionSettings::as_ref(ctx).viewer_driven_sizing_enabled {
-                    return;
-                }
-                let eligible = terminal_view
-                    .update(ctx, |view, ctx| view.is_viewer_driven_sizing_eligible(true, ctx));
-                if eligible {
-                    terminal_view.update(ctx, |view, ctx| {
-                        view.resize_from_viewer_report(*window_size, ctx);
-                    });
-                }
-            }
-            NetworkEvent::UniversalDeveloperInputContextUpdated(context_update) => {
-                let active_remote_update = sharer_remote_update_guard.start_remote_update();
-
-                if let Some(ref model) = context_update.selected_model {
-                    let terminal_view_id = terminal_view.id();
-
-                    // Update LLMPreferences to match the selected model received from the server.
-                    apply_selected_agent_model_update(terminal_view_id, model, &active_remote_update, ctx);
-                }
-                if let Some(ref input_mode) = context_update.input_mode {
-                    let weak_view_handle = terminal_view.downgrade();
-                    apply_input_mode_update(&weak_view_handle, input_mode, &active_remote_update, ctx);
-                }
-                if let Some(ref selected_conversation) = context_update.selected_conversation {
-                    let weak_view_handle = terminal_view.downgrade();
-                    apply_selected_conversation_update(
-                        &weak_view_handle,
-                        selected_conversation,
-                        &active_remote_update,
-                        ctx,
-                    );
-                }
-                if let Some(auto_approve) = context_update.auto_approve_agent_actions {
-                    let weak_view_handle = terminal_view.downgrade();
-                    apply_auto_approve_agent_actions_update(
-                        &weak_view_handle,
-                        auto_approve,
-                        &active_remote_update,
-                        ctx,
-                    );
-                }
-
-                // Apply CLI agent rich input state from the viewer.
-                if let Some(ref cli_agent_session) = context_update.cli_agent_session {
-                    let weak_view_handle = terminal_view.downgrade();
-                    apply_cli_agent_state_update(
-                        &weak_view_handle,
-                        cli_agent_session,
-                        &active_remote_update,
-                        ctx,
-                    );
-                }
-
-                // Only apply agent control / tagged-in updates if there is an active long-running command.
-                if model
-                    .lock()
-                    .block_list()
-                    .active_block()
-                    .is_active_and_long_running()
-                {
-                    if let Some(interaction_state) =
-                        context_update.long_running_command_agent_interaction_state
-                    {
-                        log::info!(
-                            "[sharer] UniversalDeveloperInputContextUpdated: \
-                             applying LRC interaction_state={interaction_state:?}"
-                        );
-                        terminal_view.update(ctx, |view, ctx| {
-                            view.apply_long_running_command_agent_interaction_state(
-                                interaction_state,
-                                ctx,
-                            );
-                        });
-                    }
-                }
             }
         });
 
@@ -2160,18 +1521,6 @@ impl TerminalManager {
         terminal_view.update(ctx, |view, ctx| {
             view.on_session_share_ended(ctx);
         });
-    }
-
-    /// Called when the server terminates the current session.
-    fn shared_session_terminated(
-        terminal_view: &ViewHandle<TerminalView>,
-        session_sharer: Rc<RefCell<Option<ModelHandle<Network>>>>,
-        model: Arc<FairMutex<TerminalModel>>,
-        ctx: &mut AppContext,
-    ) {
-        Self::cleanup_shared_session(terminal_view, model, ctx);
-        // Drop the ModelHandle<Network> and set session_sharer to None.
-        session_sharer.borrow_mut().take();
     }
 
     /// Called when the client explicitly wants to end the current session.
@@ -2230,7 +1579,6 @@ impl TerminalManager {
                     source_type.clone(),
                     model.clone(),
                     window_id,
-                    sharer_remote_update_guard.clone(),
                     ctx,
                 );
             }
@@ -2504,8 +1852,8 @@ pub fn get_shell_starter(
 
 fn get_shell_starter_internal(
     shell_starter_source: ShellStarterSource,
-    background_executor: Arc<Background>,
-    auth_state: &AuthState,
+    _background_executor: Arc<Background>,
+    _auth_state: &AuthState,
 ) -> ShellStarter {
     match shell_starter_source {
         ShellStarterSource::Override(shell_starter) => shell_starter,

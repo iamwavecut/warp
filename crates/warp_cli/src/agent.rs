@@ -2,10 +2,7 @@ use std::{fmt, path::PathBuf};
 
 use clap::{Args, Subcommand, ValueEnum};
 
-use crate::{
-    config_file::ConfigFileArgs, mcp::MCPSpec, model::ModelArgs, scope::ObjectScope,
-    share::ShareArgs, skill::SkillSpec,
-};
+use crate::{config_file::ConfigFileArgs, mcp::MCPSpec, model::ModelArgs, skill::SkillSpec};
 
 /// Output format for agent results.
 #[derive(Debug, Copy, Clone, ValueEnum, Eq, PartialEq, Default)]
@@ -35,38 +32,30 @@ impl fmt::Display for OutputFormat {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Prompt {
     PlainText(String),
-    SavedPrompt(String),
 }
 
 impl fmt::Display for Prompt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Prompt::PlainText(text) => write!(f, "Prompt: {text}"),
-            Prompt::SavedPrompt(id) => write!(f, "Saved Prompt ID: {id}"),
         }
     }
 }
 
-/// Prompt arguments - mutually exclusive prompt or saved-prompt.
+/// Prompt arguments.
 /// The required constraint is enforced at the command level via ArgGroup.
 #[derive(Debug, Clone, Args)]
-#[group(multiple = false)]
 pub struct PromptArg {
     /// Prompt for the agent to carry out.
     #[arg(long = "prompt", short = 'p')]
     pub prompt: Option<String>,
-    /// The saved AI prompt to run, identified by id.
-    #[arg(long = "saved-prompt")]
-    pub saved_prompt: Option<String>,
 }
 
 impl PromptArg {
     pub fn to_prompt(&self) -> Option<Prompt> {
-        match (self.prompt.as_ref(), self.saved_prompt.as_ref()) {
-            (Some(prompt), None) => Some(Prompt::PlainText(prompt.clone())),
-            (None, Some(saved_prompt)) => Some(Prompt::SavedPrompt(saved_prompt.clone())),
-            _ => None,
-        }
+        self.prompt
+            .as_ref()
+            .map(|prompt| Prompt::PlainText(prompt.clone()))
     }
 }
 
@@ -123,7 +112,7 @@ impl HiddenComputerUseArgs {
     Debug, Copy, Clone, ValueEnum, Eq, PartialEq, Default, serde::Serialize, serde::Deserialize,
 )]
 pub enum Harness {
-    /// Use Warp's built-in MAA infrastructure (default).
+    /// Use the local Oz harness (default).
     #[default]
     #[value(name = "oz")]
     Oz,
@@ -139,10 +128,9 @@ pub enum Harness {
     /// Delegate to the `codex` CLI.
     #[value(name = "codex")]
     Codex,
-    /// A harness produced by a newer client/server that this client doesn't
-    /// recognize. Surfaced via deserialization fallbacks (e.g. unknown GraphQL
-    /// enum values, unknown `harness_type` strings); never selectable from the
-    /// CLI or harness dropdown.
+    /// A harness produced by newer persisted state that this client doesn't
+    /// recognize. Surfaced via deserialization fallbacks; never selectable from
+    /// the CLI or harness dropdown.
     #[value(skip)]
     Unknown,
 }
@@ -174,7 +162,7 @@ impl Harness {
     /// Parses a harness config-name string (the lowercase name written into
     /// `HarnessConfig::harness_type` by the spawner, e.g. `"claude"`, `"gemini"`, `"oz"`)
     /// into a [`Harness`] variant. Inverse of [`Harness::config_name`]. Returns `None` for
-    /// unrecognized names so callers can distinguish a future-server harness from a
+    /// unrecognized names so callers can distinguish a future persisted harness from a
     /// round-tripped [`Harness::Unknown`]; callers that want to fall back to `Unknown`
     /// should `.unwrap_or(Harness::Unknown)`. UI surfaces should treat `Unknown` as a
     /// non-Oz, non-runnable harness.
@@ -229,8 +217,6 @@ pub enum AgentProfileCommand {
 pub enum AgentCommand {
     /// Run a new Oz agent.
     Run(RunAgentArgs),
-    /// Dispatch an Oz agent that runs remotely.
-    RunCloud(RunCloudArgs),
     /// Manage agent profiles.
     #[command(subcommand)]
     Profile(AgentProfileCommand),
@@ -245,7 +231,7 @@ pub enum AgentCommand {
         clap::ArgGroup::new("prompt_group")
             .required(true)
             .multiple(true)
-            .args(["prompt", "saved_prompt", "task_id", "skill"])
+            .args(["prompt", "skill"])
     )
 )]
 pub struct RunAgentArgs {
@@ -280,8 +266,6 @@ pub struct RunAgentArgs {
     /// Display agent progress in the Warp interface.
     #[arg(long = "gui", hide = true)]
     pub gui: bool,
-    #[command(flatten)]
-    pub share: ShareArgs,
     /// MCP servers to start before executing the agent.
     ///
     /// Can be specified as:
@@ -308,23 +292,11 @@ pub struct RunAgentArgs {
     )]
     pub idle_on_complete: Option<humantime::Duration>,
 
-    /// Identifier for the task that spawned this agent, used to report progress.
-    ///
-    /// When `--conversation` is omitted, the conversation id is read off the server-side
-    /// task metadata. Some worker follow-up call sites still pass both flags, so keep
-    /// accepting the compatibility shape until all producers have been updated.
-    #[arg(long = "task-id", hide = true, conflicts_with_all = ["prompt", "saved_prompt", "file"])]
-    pub task_id: Option<String>,
-
     /// Whether we are running the agent in a sandboxed environment.
     #[arg(long = "sandboxed", hide = true)]
     pub sandboxed: bool,
     #[command(flatten)]
     pub computer_use: HiddenComputerUseArgs,
-
-    /// Continue an existing cloud conversation by ID.
-    #[arg(long = "conversation", value_name = "ID")]
-    pub conversation: Option<String>,
 
     /// Agent profile to configure the terminal session.
     #[arg(long = "profile", value_name = "ID")]
@@ -345,103 +317,6 @@ impl RunAgentArgs {
         specs.extend(self.mcp_servers.iter().cloned().map(MCPSpec::Uuid));
         specs
     }
-}
-
-#[derive(Debug, Clone, Args)]
-#[command(
-    name = "run-cloud",
-    visible_alias = "ra",
-    alias = "run-ambient",
-    group(
-        clap::ArgGroup::new("prompt_group")
-            .required(true)
-            .multiple(true)
-            .args(["prompt", "saved_prompt", "skill"])
-    )
-)]
-pub struct RunCloudArgs {
-    #[command(flatten)]
-    pub prompt_arg: PromptArg,
-
-    #[command(flatten)]
-    pub model: ModelArgs,
-
-    #[command(flatten)]
-    pub config_file: ConfigFileArgs,
-
-    /// Use a skill as the base prompt for the agent.
-    ///
-    /// Format: `skill_name`, `repo:skill_name`, or `org/repo:skill_name`
-    ///
-    /// Skills are searched in `.agents/skills/`, `.warp/skills/`, `.claude/skills/`, and `.codex/skills/` directories.
-    /// If a repo is specified, searches only that repo. If org is also specified,
-    /// validates the repo's git remote matches the expected org.
-    ///
-    /// When used with --prompt, the skill provides the base context and the prompt is the task.
-    ///
-    #[arg(long = "skill", value_name = "SPEC")]
-    pub skill: Option<SkillSpec>,
-
-    /// Name for this agent task.
-    #[arg(long = "name", short = 'n')]
-    pub name: Option<String>,
-
-    /// MCP servers to start before executing the agent.
-    ///
-    /// Can be specified as:
-    /// - A path to a JSON file containing MCP configuration
-    /// - Inline JSON with MCP server configuration
-    ///
-    /// Can be specified multiple times to include multiple servers.
-    #[arg(long = "mcp", value_name = "SPEC")]
-    pub mcp_specs: Vec<MCPSpec>,
-
-    /// Open the agent's session in Warp once it's available.
-    #[arg(long = "open")]
-    pub open: bool,
-
-    /// Continue an existing cloud conversation by ID.
-    #[arg(long = "conversation", value_name = "ID")]
-    pub conversation: Option<String>,
-
-    #[command(flatten)]
-    pub scope: ObjectScope,
-
-    /// Where this job should be hosted. Setting "warp" runs it on Warp's infrastructure. Any other
-    /// value is treated is a self-hosted job and the value will be matched with the self-hosted
-    /// worker's name.
-    #[arg(long = "host", value_name = "WORKER_ID")]
-    pub worker_host: Option<String>,
-
-    /// Path to a file to attach to the agent query.
-    ///
-    /// Can be specified multiple times to attach multiple files (maximum 5).
-    ///
-    /// Example: --attach file1.png --attach file2.txt
-    #[arg(
-        long = "attach",
-        value_name = "PATH",
-        num_args = 1,
-        action = clap::ArgAction::Append,
-        value_parser = clap::value_parser!(PathBuf),
-    )]
-    pub attachment_paths: Vec<PathBuf>,
-
-    #[command(flatten)]
-    pub computer_use: ComputerUseArgs,
-    /// Execution harness for the agent run.
-    ///
-    /// "oz" (default) uses Warp's built-in agent infrastructure.
-    /// "claude" delegates to the `claude` CLI.
-    #[arg(long = "harness", value_name = "HARNESS", default_value_t = Harness::Oz, hide = true)]
-    pub harness: Harness,
-
-    /// Name of a managed secret for Claude Code harness authentication.
-    ///
-    /// Resolved server-side and injected into the agent container.
-    /// Only valid when --harness is set to "claude".
-    #[arg(long = "claude-auth-secret", value_name = "NAME", hide = true)]
-    pub claude_auth_secret: Option<String>,
 }
 
 /// Arguments for listing available agents.

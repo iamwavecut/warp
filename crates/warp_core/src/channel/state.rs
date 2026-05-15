@@ -5,7 +5,7 @@ use url::{Origin, Url};
 
 use crate::AppId;
 use crate::{
-    channel::config::{ChannelConfig, McpOAuthProviderConfig, OzConfig, WarpServerConfig},
+    channel::config::{ChannelConfig, McpOAuthProviderConfig, WarpServerConfig},
     features::FeatureFlag,
 };
 
@@ -43,8 +43,6 @@ impl ChannelState {
                 app_id,
                 logfile_name: "".into(),
                 server_config: WarpServerConfig::production(),
-                oz_config: OzConfig::production(),
-                autoupdate_config: None,
                 mcp_static_config: None,
             },
         }
@@ -137,16 +135,6 @@ impl ChannelState {
         CHANNEL_STATE.lock().config.logfile_name.clone()
     }
 
-    pub fn releases_base_url() -> Cow<'static, str> {
-        CHANNEL_STATE
-            .lock()
-            .config
-            .autoupdate_config
-            .as_ref()
-            .map(|ac| ac.releases_base_url.clone())
-            .unwrap_or_default()
-    }
-
     pub fn ws_server_url() -> Cow<'static, str> {
         CHANNEL_STATE
             .lock()
@@ -175,37 +163,12 @@ impl ChannelState {
         }
     }
 
-    pub fn session_sharing_server_url() -> Option<Cow<'static, str>> {
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "test-util")] {
-                Some(Cow::Borrowed("fake_session_sharing_url"))
-            } else {
-                CHANNEL_STATE.lock().config.server_config.session_sharing_server_url.clone()
-            }
-        }
-    }
-
-    pub fn oz_root_url() -> Cow<'static, str> {
-        CHANNEL_STATE.lock().config.oz_config.oz_root_url.clone()
-    }
-
     pub fn server_root_url() -> Cow<'static, str> {
         cfg_if::cfg_if! {
             if #[cfg(feature = "test-util")] {
                 Cow::Owned(MOCK_SERVER_URL.clone())
             } else {
                 CHANNEL_STATE.lock().config.server_config.server_root_url.clone()
-            }
-        }
-    }
-
-    pub fn workload_audience_url() -> Cow<'static, str> {
-        let state = CHANNEL_STATE.lock();
-        match &state.config.oz_config.workload_audience_url {
-            Some(url) => url.clone(),
-            None => {
-                drop(state);
-                Self::server_root_url()
             }
         }
     }
@@ -236,16 +199,6 @@ impl ChannelState {
     #[cfg(not(feature = "test-util"))]
     pub fn app_version() -> Option<&'static str> {
         option_env!("GIT_RELEASE_TAG")
-    }
-
-    pub fn show_autoupdate_menu_items() -> bool {
-        CHANNEL_STATE
-            .lock()
-            .config
-            .autoupdate_config
-            .as_ref()
-            .map(|ac| ac.show_autoupdate_menu_items)
-            .unwrap_or_default()
     }
 
     /// Returns the MCP OAuth provider config matching the given client ID, if any.

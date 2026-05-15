@@ -2,7 +2,7 @@
 name = "warp_files"
 version = "0.1.0"
 edition = "2021"
-authors = ["Warp Team <dev@warp.dev>"]
+authors = ["Local-first Warp fork contributors"]
 publish.workspace = true
 license.workspace = true
 
@@ -11,7 +11,6 @@ anyhow = "1.0"
 async-channel.workspace = true
 async-fs.workspace = true
 futures.workspace = true
-thiserror.workspace = true
 warpui.workspace = true
 remote_server.workspace = true
 warp_core.workspace = true

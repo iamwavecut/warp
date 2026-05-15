@@ -23,7 +23,7 @@ default-members = [
 ]
 
 [workspace.package]
-authors = ["Warp Team <dev@warp.dev>"]
+authors = ["Local-first Warp fork contributors"]
 license = "AGPL-3.0-only"
 publish = false
 

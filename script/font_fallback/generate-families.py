@@ -3,34 +3,47 @@ Generates the `ExternalFontFamily` definitions used in `app/src/font_fallback.rs
 These definitions contain the URLs to each external fallback font we use in Warp.
 Generated code is sent to stdout.
 
-This script will read our cloud storage bucket to retrieve the names of the fonts
-we support, and generate the code required to initialize static references for
-each font family.
-
-Assumes that the fallback fonts in the prod `warp-static-assets` bucket are
-identical to the ones stored in the staging `warp-server-staging-static-assets`
-bucket.
+This script reads fallback fonts from a local directory and generates the code
+required to initialize static references for each font family.
 
 Usage:
-1. Make sure the gcloud CLI is installed and you are authed via `gcloud auth login`.
+1. Put fallback `.ttf` files under `downloaded_fonts/`, grouped by family, or set
+   `WARP_FALLBACK_FONTS_DIR` to another local directory.
 2. Run `python3 generate_families.py`
 3. Manually inspect the name for each font. The script will generate the name in
    title-case, but this isn't correct for some fonts (e.g. Noto Sans SC).
 '''
 
-import subprocess
+import os
+import sys
 from collections import defaultdict
+
+FONT_SOURCE_DIR = os.environ.get("WARP_FALLBACK_FONTS_DIR", "downloaded_fonts")
 
 
 def list_fonts():
-    command = "gcloud storage ls --recursive 'gs://warp-static-assets/fallback-fonts/**.ttf'"
-    return subprocess.check_output(command, shell=True, text=True).splitlines()
+    if not os.path.isdir(FONT_SOURCE_DIR):
+        sys.exit(f"Fallback font directory not found: {FONT_SOURCE_DIR}")
+
+    font_paths = []
+    for root, _, files in os.walk(FONT_SOURCE_DIR):
+        for filename in files:
+            if not filename.endswith(".ttf"):
+                continue
+            relative_path = os.path.relpath(os.path.join(root, filename), FONT_SOURCE_DIR)
+            parts = relative_path.split(os.sep)
+            if len(parts) == 1:
+                family_name = os.path.splitext(filename)[0]
+                font_paths.append(f"{family_name}/{filename}")
+            else:
+                font_paths.append("/".join(parts))
+    return font_paths
 
 
 def generate_families(font_uris):
     family_map = defaultdict(list)
     for uri in font_uris:
-        parts = uri.removeprefix("gs://warp-static-assets/fallback-fonts/").split('/')
+        parts = uri.split('/')
         family_name = parts[0]
         font_name = parts[1]
         family_map[family_name].append(font_name)

@@ -783,9 +783,9 @@ impl OrchestrationEventService {
         }
     }
 
-    /// Accepts pre-built events from the v2 streamer and enqueues them
-    /// for drain by the controller via the normal v1 path.
+    /// Accepts pre-built events from tests and enqueues them for drain by the controller.
     /// Lifecycle events go through coalescing and cap enforcement.
+    #[cfg(test)]
     pub fn enqueue_event_batch(
         &mut self,
         conversation_id: AIConversationId,
@@ -808,7 +808,7 @@ impl OrchestrationEventService {
         ctx.emit(OrchestrationEventServiceEvent::EventsReady { conversation_id });
     }
 
-    #[cfg(any(test, not(target_family = "wasm")))]
+    #[cfg(test)]
     pub fn has_pending_events(&self, conversation_id: AIConversationId) -> bool {
         self.pending_events
             .get(&conversation_id)

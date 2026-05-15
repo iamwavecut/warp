@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use warp_core::{settings::Setting, ui::appearance::Appearance};
 
 use warpui::{

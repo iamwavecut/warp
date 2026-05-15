@@ -15,10 +15,10 @@ use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::color::internal_colors;
 use warp_util::path::user_friendly_path;
 use warpui::elements::{
-    ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
-    DispatchEventResult, Element, EventHandler, Flex, Highlight, Hoverable, MainAxisAlignment,
-    MainAxisSize, MouseInBehavior, MouseStateHandle, OffsetPositioning, ParentAnchor,
-    ParentElement, ParentOffsetBounds, Radius, SavePosition, Shrinkable, Stack, Text,
+    ChildAnchor, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DispatchEventResult,
+    Element, EventHandler, Flex, Highlight, Hoverable, MainAxisAlignment, MainAxisSize,
+    MouseInBehavior, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
+    ParentOffsetBounds, Radius, SavePosition, Shrinkable, Stack, Text,
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
@@ -387,7 +387,11 @@ pub fn render_item(props: ItemProps<'_>, app: &AppContext) -> Box<dyn Element> {
         .finish();
 
     let position_id = conversation_item_position_id(&conversation_id);
-    SavePosition::new(Stack::new().with_child(event_handler).finish(), &position_id).finish()
+    SavePosition::new(
+        Stack::new().with_child(event_handler).finish(),
+        &position_id,
+    )
+    .finish()
 }
 
 /// Returns the secondary label for a conversation list item:

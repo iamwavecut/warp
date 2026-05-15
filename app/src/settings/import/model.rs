@@ -11,8 +11,6 @@ use warpui::Entity;
 use warpui::ModelContext;
 use warpui::SingletonEntity;
 
-#[cfg(target_os = "macos")]
-use super::config::HotkeyError;
 use super::config::SettingType;
 use super::config::ThemeType;
 

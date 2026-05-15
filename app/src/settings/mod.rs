@@ -4,7 +4,6 @@ mod alias_expansion;
 pub mod app_icon;
 pub mod app_installation_detection;
 mod block_visibility;
-mod changelog;
 pub mod cloud_preferences;
 mod code;
 mod debug;
@@ -40,7 +39,6 @@ pub use accessibility::*;
 pub use ai::*;
 pub use alias_expansion::*;
 pub use block_visibility::*;
-pub use changelog::*;
 pub use cloud_preferences::*;
 pub use code::*;
 pub use debug::*;
@@ -63,8 +61,6 @@ pub use select::*;
 pub use ssh::*;
 pub use theme::*;
 pub use vim_banner::*;
-use warp_core::user_preferences::GetUserPreferences as _;
-
 /// Describes errors encountered when loading settings from `settings.toml`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SettingsFileError {
@@ -123,7 +119,6 @@ use crate::{
 use lazy_static::lazy_static;
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use settings::Setting as _;
 use std::{collections::HashMap, ops::Mul, path::PathBuf};
 use warp_core::features::FeatureFlag;
@@ -133,7 +128,6 @@ use warpui::{
 };
 
 // The following are user preferences keys.
-pub const CHANGELOG_VERSIONS: &str = "ChangelogVersions";
 pub const RESTORE_SESSION: &str = "RestoreSession";
 pub const INPUT_MODE: &str = "InputMode";
 pub const ACTIVATION_HOTKEY_ENABLED: &str = "ActivationHotkeyEnabled";
@@ -479,44 +473,6 @@ pub enum EnforceMinimumContrast {
 }
 
 impl Settings {
-    pub fn has_changelog_been_shown(changelog_version: &str, ctx: &mut AppContext) -> bool {
-        let changelog_versions = ctx
-            .private_user_preferences()
-            .read_value(CHANGELOG_VERSIONS)
-            .unwrap_or_default();
-        changelog_versions.is_some_and(|versions| -> bool {
-            let res = serde_json::from_str::<Value>(&versions);
-            match res {
-                Ok(versions) => versions[&changelog_version].as_bool().unwrap_or(false),
-                Err(e) => {
-                    log::warn!("Error deserializing changelog user default {e}");
-                    false
-                }
-            }
-        })
-    }
-
-    pub fn mark_changelog_shown(changelog_version: &str, ctx: &mut AppContext) -> bool {
-        ctx.private_user_preferences()
-            .read_value(CHANGELOG_VERSIONS)
-            .unwrap_or_default()
-            .map_or(Ok(json!({})), |versions| {
-                serde_json::from_str::<Value>(&versions)
-            })
-            .is_ok_and(|mut versions| {
-                log::info!(
-                    "Marking changelog {changelog_version} as shown in versions {versions:?}"
-                );
-
-                versions[&changelog_version] = Value::Bool(true);
-                let _ = ctx.private_user_preferences().write_value(
-                    CHANGELOG_VERSIONS,
-                    serde_json::to_string(&versions).expect("changelog versions should serialize"),
-                );
-                true
-            })
-    }
-
     pub fn theme_for_theme_kind(theme_kind: &ThemeKind, ctx: &mut AppContext) -> WarpTheme {
         match theme_kind {
             ThemeKind::InMemory(in_memory_theme) => in_memory_theme.theme(),

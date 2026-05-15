@@ -25,7 +25,6 @@ use crate::{
     },
     drive::{
         cloud_object_styling::warp_drive_icon_color,
-        drive_helpers::has_feature_gated_anonymous_user_reached_workflow_limit,
         items::WarpDriveItemId,
         sharing::{ContentEditability, ShareableObject, SharingAccessLevel},
         workflows::{
@@ -68,13 +67,13 @@ use crate::{
         icons::Icon,
     },
     util::bindings::CustomAction,
-    view_components::{DismissibleToast, ToastLink, ToastType},
+    view_components::{DismissibleToast, ToastType},
     workflows::{
         workflow::{Argument, Workflow},
         CloudWorkflow,
     },
-    workspace::{ToastStack, WorkspaceAction},
-    FeatureFlag, UserWorkspaces,
+    workspace::ToastStack,
+    FeatureFlag,
 };
 
 use warp_core::{context_flag::ContextFlag, settings::Setting, ui::theme::AnsiColorIdentifier};
@@ -558,9 +557,7 @@ impl WorkflowView {
         event: &UpdateManagerEvent,
         ctx: &mut ViewContext<Self>,
     ) {
-        let UpdateManagerEvent::ObjectOperationComplete { result } = event else {
-            return;
-        };
+        let UpdateManagerEvent::ObjectOperationComplete { result } = event;
 
         if let (ObjectOperation::Create { .. }, OperationSuccessType::Success) =
             (&result.operation, &result.success_type)
@@ -637,37 +634,33 @@ impl WorkflowView {
         window_id: WindowId,
         ctx: &mut ViewContext<Self>,
     ) {
-        let initial_load_complete = UpdateManager::as_ref(ctx).initial_load_complete();
-        // TODO @ianhodge CLD-2002: it could be nice to have a loading screen here while we wait for the load
         let settings = settings.clone();
-        ctx.spawn(initial_load_complete, move |me, _, ctx| {
-            let workflow = CloudModel::as_ref(ctx).get_workflow(&workflow_id).cloned();
-            // If either the focused folder or the workflow can't be found in cloudmodel, fetch the object from the server
-            let fetch_needed = workflow.is_none()
-                || settings
-                    .focused_folder_id
-                    .map(SyncId::ServerId)
-                    .map(|folder_id| CloudModel::as_ref(ctx).get_folder(&folder_id).is_none())
-                    .unwrap_or(false);
-            if fetch_needed {
-                if let Some(server_id) = workflow_id.into_server() {
-                    me.fetch_and_load_workflow(server_id, &settings, mode, window_id, ctx);
-                } else {
-                    log::warn!("Tried to load workflow without server id {workflow_id:?}");
-                }
-            } else if let Some(workflow) = workflow {
-                me.load(workflow, &settings, mode, ctx);
+        let workflow = CloudModel::as_ref(ctx).get_workflow(&workflow_id).cloned();
+        // If either the focused folder or the workflow can't be found in cloudmodel, fetch the object from the server
+        let fetch_needed = workflow.is_none()
+            || settings
+                .focused_folder_id
+                .map(SyncId::ServerId)
+                .map(|folder_id| CloudModel::as_ref(ctx).get_folder(&folder_id).is_none())
+                .unwrap_or(false);
+        if fetch_needed {
+            if let Some(server_id) = workflow_id.into_server() {
+                self.fetch_and_load_workflow(server_id, &settings, mode, window_id, ctx);
             } else {
-                ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                    toast_stack.add_ephemeral_toast_by_type(
-                        ToastType::CloudObjectNotFound,
-                        window_id,
-                        ctx,
-                    );
-                });
-                log::warn!("Tried to open unknown workflow {workflow_id:?}");
+                log::warn!("Tried to load workflow without server id {workflow_id:?}");
             }
-        });
+        } else if let Some(workflow) = workflow {
+            self.load(workflow, &settings, mode, ctx);
+        } else {
+            ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+                toast_stack.add_ephemeral_toast_by_type(
+                    ToastType::CloudObjectNotFound,
+                    window_id,
+                    ctx,
+                );
+            });
+            log::warn!("Tried to open unknown workflow {workflow_id:?}");
+        }
     }
 
     fn fetch_and_load_workflow(
@@ -2006,10 +1999,6 @@ impl WorkflowView {
     }
 
     fn untrash_object(&self, ctx: &mut ViewContext<Self>) {
-        if has_feature_gated_anonymous_user_reached_workflow_limit(ctx) {
-            return;
-        }
-
         UpdateManager::handle(ctx).update(ctx, move |update_manager, ctx| {
             update_manager.untrash_object(
                 CloudObjectTypeAndId::from_id_and_type(self.workflow_id, ObjectType::Workflow),

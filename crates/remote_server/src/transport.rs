@@ -23,14 +23,13 @@ use crate::manager::RemoteServerExitStatus;
 use crate::setup::{PreinstallCheckResult, RemotePlatform};
 use serde::Serialize;
 
-/// How the remote server binary was installed. Used to distinguish direct
-/// remote downloads from client-side SCP uploads.
+/// How the remote server binary was installed.
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallSource {
-    /// The remote host downloaded the binary directly from the CDN.
+    /// The remote host performed the install.
     Server,
-    /// The client downloaded the binary locally and uploaded it via SCP.
+    /// The client uploaded the binary.
     Client,
 }
 
@@ -256,14 +255,13 @@ pub trait RemoteTransport: Send + Sync + std::fmt::Debug {
         executor: std::sync::Arc<executor::Background>,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<Connection>> + Send>>;
 
-    /// Remove the remote server binary, forcing a reinstall on the next
-    /// [`install_binary`] call.
+    /// Remove the remote server binary, forcing setup to fail or use a
+    /// manually managed replacement on the next [`install_binary`] call.
     ///
     /// Called by the manager after the initialize handshake reports a
     /// version that disagrees with the client's: the file at the expected
-    /// path is stale/wrong, so we remove it so the next setup sees a miss
-    /// and reinstalls from the CDN instead of looping on the same bad
-    /// binary.
+    /// path is stale/wrong, so we remove it instead of looping on the same
+    /// bad binary.
     ///
     /// [`install_binary`]: RemoteTransport::install_binary
     fn remove_remote_server_binary(

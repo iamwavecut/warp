@@ -26,8 +26,6 @@ impl TeamUpdateManager {
         Self::new(Default::default(), ctx)
     }
 
-    pub fn start_polling_for_workspace_metadata_updates(&mut self, _ctx: &mut ModelContext<Self>) {}
-
     pub fn stop_polling_for_workspace_metadata_updates(&mut self) {}
 
     /// Hosted workspace metadata refresh is disabled. The receiver resolves immediately so

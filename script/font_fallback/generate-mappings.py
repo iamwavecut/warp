@@ -3,27 +3,22 @@ Generates the match statement used in `app/src/font_fallback.rs` to map Unicode
 code points to fallback fonts. Should be used in tandem with `generate-families.py`.
 Generated code is sent to stdout.
 
-This script will read our cloud storage bucket to download the font data for each
-fallback font that we support. A directory "downloaded_fonts" will be created in
-the directory where the script is executed to contain the downloaded fonts. If
-that directory already exists, it is assumed that the fonts have previously been
-downloaded and skips downloading them again.
+This script reads fallback fonts from a local directory. The directory must
+already exist and contain the supported fallback font files.
 
-Assumptions:
-- The fallback fonts in the prod `warp-static-assets` bucket are identical to the
-  ones stored in the staging `warp-server-staging-static-assets` bucket.
-- For each font family in the bucket, there is a variant that contains "Regular"
-  in the filename.
+Assumption:
+- For each font family, there is a variant that contains "Regular" in the
+  filename.
 
 Usage:
 1. Install the dependencies in `requirements.txt`.
-2. Make sure the gcloud CLI is installed and you are authed via `gcloud auth login`.
+2. Put fallback `.ttf` files under `downloaded_fonts/`, or set
+   `WARP_FALLBACK_FONTS_DIR` to another local directory.
 3. Make sure you're running the script from `scripts/font_fallback`.
 4. Run `python3 generate-mappings.py`.
 '''
 
 import os
-import subprocess
 import sys
 from operator import itemgetter
 from fontTools.ttLib import TTFont
@@ -65,19 +60,14 @@ FONTS_NOT_TO_COALESCE = set([
 
 HACK_FONT_FILEPATH = "../../app/assets/bundled/fonts/hack/Hack-Regular.ttf"
 ROBOTO_FONT_FILEPATH = "../../app/assets/bundled/fonts/roboto/Roboto-Regular.ttf"
-FONT_DOWNLOAD_DIR = "./downloaded_fonts"
+FONT_DOWNLOAD_DIR = os.environ.get("WARP_FALLBACK_FONTS_DIR", "./downloaded_fonts")
 
 
-def download_fallback_fonts():
-    if os.path.exists(FONT_DOWNLOAD_DIR):
-        # Fonts already exist, no need to download
+def validate_fallback_fonts_dir():
+    if os.path.isdir(FONT_DOWNLOAD_DIR):
         return
 
-    os.mkdir(FONT_DOWNLOAD_DIR)
-    command = f"gcloud storage cp 'gs://warp-static-assets/fallback-fonts/**/*Regular*.ttf' '{FONT_DOWNLOAD_DIR}'"
-    return_code = subprocess.call(command, shell=True)
-    if return_code != 0:
-        sys.exit("Failed to download fonts from GCP")
+    sys.exit(f"Fallback font directory not found: {FONT_DOWNLOAD_DIR}")
 
 
 def get_global_order(font_name):
@@ -245,7 +235,7 @@ def print_match_statement(font_ranges_map):
 def main():
     default_fonts = get_default_fonts()
 
-    download_fallback_fonts()
+    validate_fallback_fonts_dir()
     fallback_fonts = get_fallback_fonts(FONT_DOWNLOAD_DIR)
 
     generate_mapping(default_fonts, fallback_fonts)

@@ -359,7 +359,7 @@ impl AvailableLLMs {
 
     /// Returns the info for the given id only if the model is usable (present
     /// and not effectively disabled for the current user).
-    fn usable_info_for_id(&self, id: &LLMId, app: &AppContext) -> Option<&LLMInfo> {
+    fn usable_info_for_id(&self, id: &LLMId, _app: &AppContext) -> Option<&LLMInfo> {
         self.info_for_id(id).filter(|info| {
             info.disable_reason
                 .as_ref()

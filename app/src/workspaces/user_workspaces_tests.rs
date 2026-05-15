@@ -68,12 +68,6 @@ fn initialize_app(
     app.add_singleton_model(CodeSettings::new_with_defaults);
     app.add_singleton_model(AISettings::new_with_defaults);
     app.add_singleton_model(FocusedTerminalInfo::new);
-
-    // The start of polling is normally triggered by authentication completion, but
-    // we need to do it manually for tests.
-    TeamTesterStatus::handle(app).update(app, |team_tester, ctx| {
-        team_tester.initiate_data_pollers(false, ctx);
-    });
 }
 
 #[test]

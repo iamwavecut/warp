@@ -50,7 +50,7 @@ pub(crate) mod commit;
 pub(crate) mod pr;
 pub(crate) mod push;
 
-pub use commit::{CommitIntent, CommitState, CommitSubAction};
+pub use commit::{CommitState, CommitSubAction};
 pub use pr::{PrState, PrSubAction};
 pub use push::{PushState, PushSubAction};
 

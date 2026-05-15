@@ -12,7 +12,6 @@ use crate::util::openable_file_type::{
     is_file_openable_in_warp, is_markdown_file, is_runnable_shell_script, starts_with_shebang,
 };
 use crate::workspace::active_terminal_in_window;
-use crate::workspace::util::PaneViewLocator;
 use crate::workspace::{Workspace, WorkspaceAction, WorkspaceRegistry};
 use crate::{view_components::DismissibleToast, workspace::ToastStack};
 
@@ -28,7 +27,7 @@ use url::Url;
 use warpui::notification::UserNotification;
 use warpui::{platform::TerminationMode, SingletonEntity as _, TypedActionView};
 
-use warpui::{AppContext, ViewHandle, WindowId};
+use warpui::{AppContext, WindowId};
 
 use self::docker::open_docker_container;
 
@@ -44,17 +43,10 @@ pub struct OpenMCPSettingsArgs {
 #[derive(Debug, PartialEq, Eq)]
 pub enum UriHost {
     Auth,
-    Team,
     /// A host prefix for all actions (e.g.: new tab, new window).
     Action,
     /// A host prefix for all actions that involve launch configurations
     Launch,
-    /// Supports joining shared sessions via a warp:// URI.
-    SharedSession,
-    /// Supports viewing AI conversations via a warp:// URI.
-    Conversation,
-    /// Supports WD object actions
-    Drive,
     /// Supports opening warp's settings panel via URI
     Settings,
     /// A host prefix for a general-purpose home/landing page. Unlike other intent URIs, the home
@@ -107,10 +99,6 @@ impl UriHost {
                             log::Level::Info,
                         );
                     });
-            }
-            UriHost::Team => {
-                let _ = (primary_window_id, url, ctx);
-                log::info!("Ignoring hosted team URI in local-first build");
             }
             UriHost::Action => {
                 match Action::parse(url) {
@@ -242,9 +230,9 @@ impl UriHost {
             Self::Auth => W::ShowPrimaryWindow(WindowActivationFallbackBehavior::NewWindow {
                 replace_existing: true,
             }),
-            Self::Team | Self::Drive | Self::Settings => W::default(),
+            Self::Settings => W::default(),
             // These URLs always open new windows.
-            Self::Launch | Self::SharedSession | Self::Conversation | Self::Home => W::Nothing,
+            Self::Launch | Self::Home => W::Nothing,
             // This will actually be handled by [`Action::window_behavior_hint`].
             Self::Action => W::Nothing,
             // TODO(vorporeal): probably want to focus the window with the MCP pane open
@@ -883,28 +871,6 @@ fn execute_file(window_id: WindowId, path_str: &str, ctx: &mut AppContext) {
     });
 }
 
-fn open_window_with_action(active_window_id: Option<WindowId>, action: &str, ctx: &mut AppContext) {
-    if let Some(primary_window_id) = active_window_id {
-        // Dispatch action to primary window
-        if let Some(root_view_id) = ctx.root_view_id(primary_window_id) {
-            ctx.dispatch_action(
-                primary_window_id,
-                &[root_view_id],
-                action,
-                &(),
-                log::Level::Info,
-            );
-        }
-    } else {
-        log::warn!("no primary window id to dispatch action to");
-
-        // Open a new window and dispatch action there
-        ctx.dispatch_global_action("root_view:open_new", &());
-        // TODO: Note we cannot just dispatch here as it will be a no-op.
-        // Need to send a callback once window is fully open.
-    }
-}
-
 /// Helper function to dispatch an action to an existing window
 /// or create new window if none exist.
 fn dispatch_action_in_new_or_existing_window<T: 'static>(
@@ -951,15 +917,9 @@ fn validate_custom_uri(url: &Url) -> Result<UriHost> {
 
     // Check if this host is allowed to have arbitrary paths.
     let host_allows_arbitrary_path = match host {
-        UriHost::Action
-        | UriHost::Launch
-        | UriHost::SharedSession
-        | UriHost::Conversation
-        | UriHost::Drive
-        | UriHost::Team
-        | UriHost::Settings
-        | UriHost::Mcp
-        | UriHost::Codex => true,
+        UriHost::Action | UriHost::Launch | UriHost::Settings | UriHost::Mcp | UriHost::Codex => {
+            true
+        }
         // Auth and Home only allow the desktop redirect path
         UriHost::Auth | UriHost::Home => false,
     };
@@ -993,21 +953,6 @@ fn safe_url_log_fields(url: &Url) -> String {
         url.host_str().unwrap_or("-"),
         url.path(),
     )
-}
-
-fn decode_uuid_hex(hex: &str) -> Option<Vec<u8>> {
-    let hex = hex.as_bytes();
-    if hex.len() != 32 {
-        return None;
-    }
-
-    hex.chunks_exact(2)
-        .map(|pair| {
-            let high = (pair[0] as char).to_digit(16)?;
-            let low = (pair[1] as char).to_digit(16)?;
-            Some(((high << 4) | low) as u8)
-        })
-        .collect()
 }
 
 #[cfg(test)]

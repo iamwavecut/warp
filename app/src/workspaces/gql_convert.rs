@@ -4,26 +4,24 @@ use super::{
     user_workspaces::WorkspacesMetadataResponse,
     workspace::{
         AIAutonomyPolicy, AddonCreditsSettings, AdminEnablementSetting, AiAutonomySettings,
-        AiPermissionsSettings, AmbientAgentsPolicy, BillingMetadata,
-        CloudConversationStorageSettings, CodebaseContextSettings, CustomerType, DelinquencyStatus,
-        EmailInvite, EnterpriseSecretRegex, HostEnablementSetting, InstanceShape,
-        InviteLinkDomainRestriction, LinkSharingSettings, LlmSettings, SandboxedAgentSettings,
-        SecretRedactionSettings, SessionSharingPolicy, SharedNotebooksPolicy,
-        SharedWorkflowsPolicy, Tier, WarpAiPolicy, Workspace, WorkspaceInviteCode,
-        WorkspaceMember, WorkspaceMemberUsageInfo, WorkspaceSettings, WorkspaceSizePolicy,
+        AiPermissionsSettings, AmbientAgentsPolicy, BillingMetadata, CodebaseContextSettings,
+        CustomerType, DelinquencyStatus, EmailInvite, EnterpriseSecretRegex, HostEnablementSetting,
+        InstanceShape, InviteLinkDomainRestriction, LinkSharingSettings, LlmSettings,
+        SandboxedAgentSettings, SecretRedactionSettings, SessionSharingPolicy,
+        SharedNotebooksPolicy, SharedWorkflowsPolicy, Tier, WarpAiPolicy, Workspace,
+        WorkspaceInviteCode, WorkspaceMember, WorkspaceMemberUsageInfo, WorkspaceSettings,
+        WorkspaceSizePolicy,
     },
 };
 use crate::cloud_object::{
-    ServerCloudAgentConfig, ServerCloudObject, ServerEnvVarCollection, ServerFolder,
-    ServerMCPServer, ServerNotebook, ServerPreference, ServerScheduledAmbientAgent,
-    ServerTemplatableMCPServer, ServerWorkflow, ServerWorkflowEnum,
+    ServerCloudObject, ServerEnvVarCollection, ServerFolder, ServerNotebook, ServerPreference,
+    ServerWorkflow, ServerWorkflowEnum,
 };
 use crate::{
-    ai::blocklist::usage::conversation_usage_view::ConversationUsageInfo,
     ai::execution_profiles::{ActionPermission, ComputerUsePermission, WriteToPtyPermission},
     ai::{BonusGrant, BonusGrantScope},
     auth::UserUid,
-    cloud_object::{ServerAIExecutionProfile, ServerAIFact},
+    cloud_object::ServerAIFact,
     report_error,
     server::ids::ServerId,
     settings::AgentModeCommandExecutionPredicate,
@@ -53,9 +51,7 @@ use warp_graphql::{
         Tier as GqlTier, WarpAiPolicy as GqlWarpAiPolicy,
     },
     object::CloudObjectWithDescendants,
-    queries::{
-        get_conversation_usage as gql_usage, get_workspaces_metadata_for_user::User as GqlUser,
-    },
+    queries::get_workspaces_metadata_for_user::User as GqlUser,
     user::{DiscoverableTeamData as GqlDiscoverableTeamData, PublicUserProfile},
     workspace::{
         AdminEnablementSetting as GqlAdminEnablementSetting, AiAutonomyValue as GqlAiAutonomyValue,
@@ -209,29 +205,6 @@ impl From<GqlAiAutonomyPolicy> for AIAutonomyPolicy {
         Self {
             is_enabled: gql_ai_autonomy_policy.enabled,
             toggleable: gql_ai_autonomy_policy.toggleable,
-        }
-    }
-}
-
-impl From<&gql_usage::ConversationUsage> for ConversationUsageInfo {
-    fn from(gql: &gql_usage::ConversationUsage) -> Self {
-        let persistence::model::ConversationUsageMetadata {
-            credits_spent,
-            token_usage: models,
-            tool_usage_metadata: tool,
-            context_window_usage,
-            ..
-        } = (&gql.usage_metadata).into();
-        ConversationUsageInfo {
-            credits_spent,
-            credits_spent_for_last_block: None,
-            tool_calls: tool.total_tool_calls(),
-            models,
-            context_window_usage,
-            files_changed: tool.apply_file_diff_stats.files_changed,
-            lines_added: tool.apply_file_diff_stats.lines_added,
-            lines_removed: tool.apply_file_diff_stats.lines_removed,
-            commands_executed: tool.run_command_stats.commands_executed,
         }
     }
 }
@@ -604,12 +577,6 @@ impl From<GqlWorkspaceSettings> for WorkspaceSettings {
     fn from(gql_workspace_settings: GqlWorkspaceSettings) -> WorkspaceSettings {
         Self {
             llm_settings: gql_workspace_settings.llm_settings.into(),
-            cloud_conversation_storage_settings: CloudConversationStorageSettings {
-                setting: gql_workspace_settings
-                    .cloud_conversation_storage_settings
-                    .setting
-                    .into(),
-            },
             ai_permissions_settings: AiPermissionsSettings {
                 allow_ai_in_remote_sessions: gql_workspace_settings
                     .ai_permissions_settings
@@ -945,53 +912,6 @@ impl TryFrom<warp_graphql::generic_string_object::GenericStringObject> for Serve
     }
 }
 
-impl TryFrom<warp_graphql::generic_string_object::GenericStringObject>
-    for ServerAIExecutionProfile
-{
-    type Error = anyhow::Error;
-
-    fn try_from(
-        gso: warp_graphql::generic_string_object::GenericStringObject,
-    ) -> Result<Self, Self::Error> {
-        ServerAIExecutionProfile::try_from_graphql_fields(
-            ServerId::from_string_lossy(gso.metadata.uid.inner()),
-            Some(gso.serialized_model),
-            gso.metadata.try_into()?,
-            gso.permissions.try_into()?,
-        )
-    }
-}
-impl TryFrom<warp_graphql::generic_string_object::GenericStringObject> for ServerMCPServer {
-    type Error = anyhow::Error;
-
-    fn try_from(
-        gso: warp_graphql::generic_string_object::GenericStringObject,
-    ) -> Result<Self, Self::Error> {
-        ServerMCPServer::try_from_graphql_fields(
-            ServerId::from_string_lossy(gso.metadata.uid.inner()),
-            Some(gso.serialized_model),
-            gso.metadata.try_into()?,
-            gso.permissions.try_into()?,
-        )
-    }
-}
-
-impl TryFrom<warp_graphql::generic_string_object::GenericStringObject>
-    for ServerTemplatableMCPServer
-{
-    type Error = anyhow::Error;
-    fn try_from(
-        gso: warp_graphql::generic_string_object::GenericStringObject,
-    ) -> Result<Self, Self::Error> {
-        ServerTemplatableMCPServer::try_from_graphql_fields(
-            ServerId::from_string_lossy(gso.metadata.uid.inner()),
-            Some(gso.serialized_model),
-            gso.metadata.try_into()?,
-            gso.permissions.try_into()?,
-        )
-    }
-}
-
 impl TryFrom<warp_graphql::generic_string_object::GenericStringObject> for ServerPreference {
     type Error = anyhow::Error;
 
@@ -999,38 +919,6 @@ impl TryFrom<warp_graphql::generic_string_object::GenericStringObject> for Serve
         gso: warp_graphql::generic_string_object::GenericStringObject,
     ) -> Result<Self, Self::Error> {
         ServerPreference::try_from_graphql_fields(
-            ServerId::from_string_lossy(gso.metadata.uid.inner()),
-            Some(gso.serialized_model),
-            gso.metadata.try_into()?,
-            gso.permissions.try_into()?,
-        )
-    }
-}
-
-impl TryFrom<warp_graphql::generic_string_object::GenericStringObject>
-    for ServerScheduledAmbientAgent
-{
-    type Error = anyhow::Error;
-
-    fn try_from(
-        gso: warp_graphql::generic_string_object::GenericStringObject,
-    ) -> Result<Self, Self::Error> {
-        ServerScheduledAmbientAgent::try_from_graphql_fields(
-            ServerId::from_string_lossy(gso.metadata.uid.inner()),
-            Some(gso.serialized_model),
-            gso.metadata.try_into()?,
-            gso.permissions.try_into()?,
-        )
-    }
-}
-
-impl TryFrom<warp_graphql::generic_string_object::GenericStringObject> for ServerCloudAgentConfig {
-    type Error = anyhow::Error;
-
-    fn try_from(
-        gso: warp_graphql::generic_string_object::GenericStringObject,
-    ) -> Result<Self, Self::Error> {
-        ServerCloudAgentConfig::try_from_graphql_fields(
             ServerId::from_string_lossy(gso.metadata.uid.inner()),
             Some(gso.serialized_model),
             gso.metadata.try_into()?,
@@ -1063,21 +951,6 @@ impl TryFrom<warp_graphql::object::CloudObject> for ServerCloudObject {
                     }
                     warp_graphql::generic_string_object::GenericStringObjectFormat::JsonAIFact => {
                         Ok(ServerCloudObject::AIFact(gso.try_into()?))
-                    }
-                    warp_graphql::generic_string_object::GenericStringObjectFormat::JsonMCPServer => {
-                        Ok(ServerCloudObject::MCPServer(gso.try_into()?))
-                    }
-                    warp_graphql::generic_string_object::GenericStringObjectFormat::JsonAIExecutionProfile => {
-                        Ok(ServerCloudObject::AIExecutionProfile(gso.try_into()?))
-                    }
-                    warp_graphql::generic_string_object::GenericStringObjectFormat::JsonTemplatableMCPServer => {
-                        Ok(ServerCloudObject::TemplatableMCPServer(gso.try_into()?))
-                    }
-                    warp_graphql::generic_string_object::GenericStringObjectFormat::JsonScheduledAmbientAgent => {
-                        Ok(ServerCloudObject::ScheduledAmbientAgent(gso.try_into()?))
-                    }
-                    warp_graphql::generic_string_object::GenericStringObjectFormat::JsonCloudEnvironment => {
-                        Err(anyhow!("cloud environments are disabled in this local-first build"))
                     }
                 }
             }
@@ -1117,21 +990,6 @@ impl TryFrom<CloudObjectWithDescendants> for ServerCloudObject {
                 }
                 warp_graphql::generic_string_object::GenericStringObjectFormat::JsonAIFact => {
                     Ok(ServerCloudObject::AIFact(gso.try_into()?))
-                }
-                warp_graphql::generic_string_object::GenericStringObjectFormat::JsonMCPServer => {
-                    Ok(ServerCloudObject::MCPServer(gso.try_into()?))
-                }
-                warp_graphql::generic_string_object::GenericStringObjectFormat::JsonAIExecutionProfile => {
-                    Ok(ServerCloudObject::AIExecutionProfile(gso.try_into()?))
-                }
-                warp_graphql::generic_string_object::GenericStringObjectFormat::JsonTemplatableMCPServer => {
-                    Ok(ServerCloudObject::TemplatableMCPServer(gso.try_into()?))
-                }
-                warp_graphql::generic_string_object::GenericStringObjectFormat::JsonScheduledAmbientAgent => {
-                    Ok(ServerCloudObject::ScheduledAmbientAgent(gso.try_into()?))
-                }
-                warp_graphql::generic_string_object::GenericStringObjectFormat::JsonCloudEnvironment => {
-                    Err(anyhow!("cloud environments are disabled in this local-first build"))
                 }
             }
             CloudObjectWithDescendants::Notebook(notebook) => Ok(ServerCloudObject::Notebook(notebook.try_into()?)),

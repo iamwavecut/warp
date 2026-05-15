@@ -1,60 +1,36 @@
 use super::history_model::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel};
+#[cfg(test)]
 use super::orchestration_events::{
     build_lifecycle_event, LifecycleEventDetailPayload, LifecycleEventDetailStage,
     OrchestrationEventService, PendingEvent, PendingEventDetail,
 };
+#[cfg(test)]
+use crate::ai::agent::ReceivedMessageInput;
 use crate::ai::agent::{
     conversation::{AIAgentHarness, AIConversationId, ConversationStatus},
-    AIAgentExchangeId, AIAgentOutputMessageType, ReceivedMessageInput,
+    AIAgentExchangeId, AIAgentOutputMessageType,
 };
 #[cfg(test)]
 use crate::server::server_api::ai::AIClient;
+#[cfg(test)]
 use crate::server::server_api::ai::AgentRunEvent;
 #[cfg(test)]
 use crate::server::server_api::ServerApi;
-use futures::channel::mpsc;
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 use std::sync::Arc;
-use std::time::Duration;
+#[cfg(test)]
 use uuid::Uuid;
 use warp_cli::agent::Harness;
 use warp_core::features::FeatureFlag;
+#[cfg(test)]
 use warp_multi_agent_api as api;
-use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::{
     Entity, EntityId, GetSingletonModelHandle, ModelContext, SingletonEntity, UpdateModel,
 };
 
-/// How often (milliseconds) the drain timer checks for SSE events.
-const SSE_DRAIN_INTERVAL_MS: u64 = 500;
 /// Cap killed-run tombstones while keeping normal sessions well below the limit.
 const MAX_KILLED_RUN_IDS: usize = 1024;
-
-/// Per-event item delivered from the SSE background task to the entity.
-struct SseStreamItem {
-    event: AgentRunEvent,
-    fetched_message: Option<ReceivedMessageInput>,
-}
-
-/// State for a single active SSE connection.
-struct SseConnectionState {
-    /// Receives parsed events from the background SSE task.
-    event_receiver: mpsc::UnboundedReceiver<SseStreamItem>,
-    /// Generation counter; used to discard stale callbacks after reconnect.
-    generation: u64,
-    /// Abort handle for the spawned SSE driver task, used to cancel on teardown.
-    abort_handle: futures::future::AbortHandle,
-}
-
-/// State for a wake-only listener. Unlike `SseConnectionState`, this listener
-/// never forwards or persists events; it stops on the first event and asks the
-/// controller to cold-start the dormant Claude run so the parent bridge can
-/// take over delivery.
-struct WakeConnectionState {
-    generation: u64,
-    task: SpawnedFutureHandle,
-}
 
 /// All per-conversation streaming state. Created lazily on first access
 /// (via `entry().or_default()`) and dropped when the conversation is
@@ -83,13 +59,6 @@ struct ConversationStreamState {
     /// metadata, so this lets us recognize dormant local Claude children
     /// without relying on `ServerAIConversationMetadata`.
     harness: Option<Harness>,
-    /// Active SSE connection, if one is open.
-    sse_connection: Option<SseConnectionState>,
-    /// Active wake-only listener for dormant local Claude children, if one is
-    /// open. This is separate from generic SSE because generic delivery would
-    /// hydrate messages and advance the shared cursor before Claude's parent
-    /// bridge can consume them.
-    wake_connection: Option<WakeConnectionState>,
 }
 
 /// Async network coordinator for v2 orchestration event delivery via SSE.
@@ -108,10 +77,6 @@ pub struct OrchestrationEventStreamer {
     /// Run IDs killed locally; kept briefly to drop late server events.
     killed_run_ids: HashSet<String>,
     killed_run_id_order: VecDeque<String>,
-}
-
-pub enum OrchestrationEventStreamerEvent {
-    DormantClaudeWakeReady { conversation_id: AIConversationId },
 }
 
 impl OrchestrationEventStreamer {
@@ -439,19 +404,8 @@ impl OrchestrationEventStreamer {
         removed_run_id: Option<String>,
         ctx: &mut ModelContext<Self>,
     ) {
-        // Drop all per-conversation streamer state in one go (cursor,
-        // pending IDs, consumers, watched run_ids, SSE connection).
-        // Dropping the SSE receiver causes the driver task's next send
-        // to fail and exit; the drain timer's `is_current` check then
-        // no-ops on its next tick.
-        if let Some(mut stream) = self.streams.remove(&conversation_id) {
-            if let Some(connection) = stream.sse_connection.take() {
-                connection.abort_handle.abort();
-            }
-            if let Some(connection) = stream.wake_connection.take() {
-                connection.task.abort();
-            }
-        }
+        // Drop all per-conversation streamer state in one go.
+        self.streams.remove(&conversation_id);
 
         if let Some(run_id) = removed_run_id.as_deref() {
             let mut affected = Vec::new();
@@ -617,33 +571,6 @@ impl OrchestrationEventStreamer {
         has_parent || self.is_parent_agent_conversation(conversation_id, ctx)
     }
 
-    /// True iff this conversation should hold the wake-only listener used for
-    /// dormant local Claude children. Generic SSE intentionally stays closed
-    /// for these conversations so it cannot hydrate messages or advance the
-    /// local cursor before Claude's parent bridge starts.
-    fn is_dormant_claude_wake_listener_eligible(
-        &self,
-        conversation_id: AIConversationId,
-        ctx: &warpui::AppContext,
-    ) -> bool {
-        self.has_active_consumer(conversation_id)
-            && !self.is_remote_run_view(conversation_id, ctx)
-            && self.should_skip_sse_for_dormant_local_claude_child(conversation_id, ctx)
-            && self.self_run_id(conversation_id, ctx).is_some()
-    }
-
-    /// Returns the list of run_ids to subscribe to for `conversation_id`.
-    /// Includes both the conversation's own `self_run_id` (when it is a
-    /// child) and any registered child run_ids (when the conversation
-    /// is a parent). Both contributions live in `watched_run_ids`
-    /// already, so this is a straight clone.
-    fn run_ids_for_sse(&self, conversation_id: AIConversationId) -> Vec<String> {
-        self.streams
-            .get(&conversation_id)
-            .map(|s| s.watched_run_ids.iter().cloned().collect())
-            .unwrap_or_default()
-    }
-
     /// Re-evaluates eligibility and either opens / reconnects or tears
     /// down the SSE connection for the given conversation.
     fn reevaluate_eligibility(
@@ -651,62 +578,8 @@ impl OrchestrationEventStreamer {
         conversation_id: AIConversationId,
         ctx: &mut ModelContext<Self>,
     ) {
-        let eligible = self.is_eligible(conversation_id, ctx);
-        let connected = self
-            .streams
-            .get(&conversation_id)
-            .is_some_and(|s| s.sse_connection.is_some());
-
-        match (eligible, connected) {
-            (true, false) => self.start_sse_connection(conversation_id, ctx),
-            (true, true) => {
-                // Already connected; reconnect with the current run_ids
-                // list (in case the parent role's contribution
-                // changed).
-                self.reconnect_sse(conversation_id, ctx);
-            }
-            (false, true) => self.teardown_sse(conversation_id, ctx),
-            (false, false) => {}
-        }
-
-        let wake_eligible = self.is_dormant_claude_wake_listener_eligible(conversation_id, ctx);
-        let wake_connected = self
-            .streams
-            .get(&conversation_id)
-            .is_some_and(|s| s.wake_connection.is_some());
-
-        match (wake_eligible, wake_connected) {
-            (true, false) => self.start_dormant_claude_wake_listener(conversation_id, ctx),
-            (true, true) => {}
-            (false, true) => self.teardown_dormant_claude_wake_listener(conversation_id),
-            (false, false) => {}
-        }
-    }
-
-    /// Opens a wake-only listener for a dormant local Claude child. The
-    /// listener observes the child's run_id, stops on the first event, and
-    /// emits a controller signal without enqueueing any event data or
-    /// persisting any cursor. The Claude parent bridge will consume the event
-    /// after the CLI has been relaunched.
-    fn start_dormant_claude_wake_listener(
-        &mut self,
-        conversation_id: AIConversationId,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let _ = (conversation_id, ctx);
-        log::debug!("Dormant Claude wake listener is disabled in this local-first build");
-    }
-
-    fn teardown_dormant_claude_wake_listener(&mut self, conversation_id: AIConversationId) {
-        if let Some(stream) = self.streams.get_mut(&conversation_id) {
-            if let Some(connection) = stream.wake_connection.take() {
-                log::info!(
-                    "Tearing down dormant Claude wake listener for {conversation_id:?} \
-                     (gen={})",
-                    connection.generation
-                );
-                connection.task.abort();
-            }
+        if self.is_eligible(conversation_id, ctx) {
+            self.start_sse_connection(conversation_id, ctx);
         }
     }
 
@@ -721,75 +594,10 @@ impl OrchestrationEventStreamer {
         log::debug!("Hosted orchestration SSE is disabled in this local-first build");
     }
 
-    /// Periodically fires to drain buffered SSE events into the event
-    /// service.
-    fn start_sse_drain_timer(
-        &self,
-        conversation_id: AIConversationId,
-        generation: u64,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        ctx.spawn(
-            async move {
-                Timer::after(Duration::from_millis(SSE_DRAIN_INTERVAL_MS)).await;
-            },
-            move |me, _, ctx| {
-                let is_current = me
-                    .streams
-                    .get(&conversation_id)
-                    .and_then(|s| s.sse_connection.as_ref())
-                    .is_some_and(|c| c.generation == generation);
-                if !is_current {
-                    return;
-                }
-                me.drain_sse_events(conversation_id, ctx);
-                me.start_sse_drain_timer(conversation_id, generation, ctx);
-            },
-        );
-    }
-
-    /// Drains all buffered SSE events and feeds them through the
-    /// `handle_event_batch` sink.
-    fn drain_sse_events(
-        &mut self,
-        conversation_id: AIConversationId,
-        ctx: &mut ModelContext<Self>,
-    ) {
-        let cursor;
-        let mut events = Vec::new();
-        let mut messages = Vec::new();
-        {
-            let Some(stream) = self.streams.get_mut(&conversation_id) else {
-                return;
-            };
-            cursor = stream.event_cursor;
-            let Some(sse) = stream.sse_connection.as_mut() else {
-                return;
-            };
-
-            while let Ok(Some(item)) = sse.event_receiver.try_next() {
-                // Deduplicate: discard events at or below the cursor.
-                if item.event.sequence > cursor {
-                    if let Some(msg) = item.fetched_message {
-                        messages.push(msg);
-                    }
-                    events.push(item.event);
-                }
-            }
-        }
-
-        if events.is_empty() {
-            return;
-        }
-
-        let self_run_id = self.self_run_id(conversation_id, ctx).unwrap_or_default();
-
-        self.handle_event_batch(conversation_id, &self_run_id, cursor, events, messages, ctx);
-    }
-
     /// Feeds a batch of fetched events through the OrchestrationEventService,
     /// updating the in-memory and persisted cursors and tracking message
     /// IDs awaiting delivery confirmation.
+    #[cfg(test)]
     fn handle_event_batch(
         &mut self,
         conversation_id: AIConversationId,
@@ -857,45 +665,15 @@ impl OrchestrationEventStreamer {
             svc.enqueue_event_batch(conversation_id, pending, ctx);
         });
     }
-
-    /// Tears down the current SSE connection and (if still eligible)
-    /// opens a new one with the latest run_ids list and cursor.
-    fn reconnect_sse(&mut self, conversation_id: AIConversationId, ctx: &mut ModelContext<Self>) {
-        // Drain buffered events before dropping the channel so we don't
-        // discard already-fetched message bodies.
-        self.drain_sse_events(conversation_id, ctx);
-        if let Some(stream) = self.streams.get_mut(&conversation_id) {
-            if let Some(connection) = stream.sse_connection.take() {
-                connection.abort_handle.abort();
-            }
-        }
-
-        if self.is_eligible(conversation_id, ctx) {
-            self.start_sse_connection(conversation_id, ctx);
-        }
-    }
-
-    /// Drops the SSE connection for a no-longer-eligible conversation.
-    /// Leaves `watched_run_ids` and `consumers` alone — those reflect
-    /// external state and are pruned through their own paths.
-    fn teardown_sse(&mut self, conversation_id: AIConversationId, ctx: &mut ModelContext<Self>) {
-        // Drain anything buffered so we don't lose hydrated messages.
-        self.drain_sse_events(conversation_id, ctx);
-        if let Some(stream) = self.streams.get_mut(&conversation_id) {
-            if let Some(connection) = stream.sse_connection.take() {
-                log::info!("Tearing down SSE for {conversation_id:?} (no longer eligible)");
-                connection.abort_handle.abort();
-            }
-        }
-    }
 }
 
 impl Entity for OrchestrationEventStreamer {
-    type Event = OrchestrationEventStreamerEvent;
+    type Event = ();
 }
 
 impl SingletonEntity for OrchestrationEventStreamer {}
 
+#[cfg(test)]
 fn parse_occurred_at(s: &str) -> prost_types::Timestamp {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| prost_types::Timestamp {
@@ -911,6 +689,7 @@ fn parse_occurred_at(s: &str) -> prost_types::Timestamp {
         })
 }
 
+#[cfg(test)]
 fn convert_lifecycle_events(events: &[AgentRunEvent], self_run_id: &str) -> Vec<api::AgentEvent> {
     events
         .iter()
@@ -956,6 +735,7 @@ fn convert_lifecycle_events(events: &[AgentRunEvent], self_run_id: &str) -> Vec<
         .collect()
 }
 
+#[cfg(test)]
 fn build_pending_events(
     events: &[AgentRunEvent],
     messages: Vec<ReceivedMessageInput>,

@@ -7,7 +7,6 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
-chrono.workspace = true
 clap = { workspace = true, features = ["derive", "env"] }
 cfg-if = { workspace = true }
 humantime.workspace = true
@@ -32,6 +31,3 @@ cfg_aliases.workspace = true
 [features]
 plugin_host = []
 integration_tests = []
-
-[dev-dependencies]
-serial_test = "0.8.0"

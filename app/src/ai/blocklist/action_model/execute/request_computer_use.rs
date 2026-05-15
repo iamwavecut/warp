@@ -56,18 +56,18 @@ impl RequestComputerUseExecutor {
     pub(super) fn execute(
         &mut self,
         input: ExecuteActionInput,
-        ctx: &mut ModelContext<Self>,
+        _ctx: &mut ModelContext<Self>,
     ) -> impl Into<AnyActionExecution> {
         let ExecuteActionInput {
             action,
-            conversation_id,
+            conversation_id: _,
         } = input;
         let AIAgentActionType::RequestComputerUse(request) = &action.action else {
             return ActionExecution::InvalidAction;
         };
 
         // If we're executing, that implies that computer use has been approved.
-        let is_autoexecuted = self.autoexecuted_actions.remove(&action.id);
+        let _is_autoexecuted = self.autoexecuted_actions.remove(&action.id);
 
         let screenshot_params = request.screenshot_params;
         let mut actor = computer_use::create_actor();

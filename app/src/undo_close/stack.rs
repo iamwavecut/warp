@@ -7,7 +7,6 @@ use warpui::{
 use crate::{
     ai::active_agent_views_model::ActiveAgentViewsModel,
     ai::blocklist::BlocklistAIHistoryModel,
-    interaction_sources::UndoCloseItemType,
     pane_group::{PaneGroup, PaneId},
     tab::TabData,
     workspace::Workspace,

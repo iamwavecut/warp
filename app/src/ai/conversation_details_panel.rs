@@ -8,7 +8,6 @@ use parking_lot::RwLock;
 use pathfinder_color::ColorU;
 use warp_cli::agent::Harness;
 use warp_cli::skill::SkillSpec;
-use warp_core::features::FeatureFlag;
 use warp_core::ui::color::coloru_with_opacity;
 use warpui::{
     clipboard::ClipboardContent,
@@ -117,10 +116,7 @@ struct PanelMouseStates {
     copy_conversation_id: MouseStateHandle,
     copy_run_id: MouseStateHandle,
     copy_error: MouseStateHandle,
-    inference_info_tooltip: MouseStateHandle,
-    compute_info_tooltip: MouseStateHandle,
     skill_source_link: MouseStateHandle,
-    executor_agent_link: MouseStateHandle,
 }
 
 /// Tracks which copy button action was last triggered (for checkmark feedback).
@@ -783,11 +779,11 @@ impl ConversationDetailsPanel {
                 // Send diagnostics based on panel mode
                 match &self.data.mode {
                     PanelMode::Conversation {
-                        ai_conversation_id: Some(conversation_id),
+                        ai_conversation_id: Some(_conversation_id),
                         ..
                     } => {}
                     PanelMode::Task {
-                        task_id: Some(task_id),
+                        task_id: Some(_task_id),
                         ..
                     } => {}
                     _ => {}
@@ -817,11 +813,11 @@ impl ConversationDetailsPanel {
             AgentDetailsButtonEvent::CopyLink { link } => {
                 match &self.data.mode {
                     PanelMode::Conversation {
-                        ai_conversation_id: Some(conversation_id),
+                        ai_conversation_id: Some(_conversation_id),
                         ..
                     } => {}
                     PanelMode::Task {
-                        task_id: Some(task_id),
+                        task_id: Some(_task_id),
                         ..
                     } => {}
                     _ => {}

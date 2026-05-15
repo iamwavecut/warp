@@ -18,7 +18,7 @@ use warpui::{
 
 use crate::search::data_source::QueryFilter;
 use crate::search::item::SearchItemDetail;
-use crate::search::mixer::{AddAsyncSourceOptions, SearchMixer, SearchMixerEvent};
+use crate::search::mixer::{SearchMixer, SearchMixerEvent};
 use crate::search::result_renderer::{QueryResultRenderer, QueryResultRendererStyles};
 use crate::search::slash_command_menu::static_commands::commands::COMMAND_REGISTRY;
 use crate::terminal::input::buffer_model::{InputBufferModel, InputBufferUpdateEvent};
@@ -26,8 +26,8 @@ use crate::terminal::input::inline_menu::styles as inline_styles;
 use crate::terminal::input::slash_command_model::{SlashCommandEntryState, SlashCommandModel};
 use crate::terminal::input::slash_commands::view::{slash_command_query, CloseReason};
 use crate::terminal::input::slash_commands::{
-    saved_prompts_data_source, AcceptSlashCommandOrSavedPrompt, SlashCommandDataSource,
-    SlashCommandsEvent, UpdatedActiveCommands, ZeroStateDataSource,
+    AcceptSlashCommandOrLocalPrompt, SlashCommandDataSource, SlashCommandsEvent,
+    UpdatedActiveCommands, ZeroStateDataSource,
 };
 use crate::terminal::input::suggestions_mode_model::{
     InputSuggestionsModeEvent, InputSuggestionsModeModel,
@@ -117,18 +117,18 @@ impl Section {
         }
     }
 
-    fn for_action(action: &AcceptSlashCommandOrSavedPrompt) -> Self {
+    fn for_action(action: &AcceptSlashCommandOrLocalPrompt) -> Self {
         match action {
-            AcceptSlashCommandOrSavedPrompt::SlashCommand { .. } => Self::Commands,
-            AcceptSlashCommandOrSavedPrompt::Skill { .. } => Self::Skills,
-            AcceptSlashCommandOrSavedPrompt::SavedPrompt { .. } => Self::Prompts,
+            AcceptSlashCommandOrLocalPrompt::SlashCommand { .. } => Self::Commands,
+            AcceptSlashCommandOrLocalPrompt::Skill { .. } => Self::Skills,
+            AcceptSlashCommandOrLocalPrompt::LocalPrompt { .. } => Self::Prompts,
         }
     }
 }
 
 struct RenderedSection {
     section: Section,
-    items: Vec<QueryResultRenderer<AcceptSlashCommandOrSavedPrompt>>,
+    items: Vec<QueryResultRenderer<AcceptSlashCommandOrLocalPrompt>>,
 }
 
 #[derive(Clone, Copy)]
@@ -162,7 +162,7 @@ enum MenuState {
         show_more_mouse_states: HashMap<Section, MouseStateHandle>,
     },
     SearchActive {
-        results: Vec<QueryResultRenderer<AcceptSlashCommandOrSavedPrompt>>,
+        results: Vec<QueryResultRenderer<AcceptSlashCommandOrLocalPrompt>>,
         selected_idx: Option<usize>,
     },
 }
@@ -181,7 +181,7 @@ impl MenuState {
 #[derive(Debug, Clone)]
 pub enum CloudModeV2SlashCommandAction {
     Accept {
-        item: AcceptSlashCommandOrSavedPrompt,
+        item: AcceptSlashCommandOrLocalPrompt,
         cmd_or_ctrl_enter: bool,
     },
     HoverIdx(usize),
@@ -190,7 +190,7 @@ pub enum CloudModeV2SlashCommandAction {
 }
 
 pub struct CloudModeV2SlashCommandView {
-    mixer: ModelHandle<SearchMixer<AcceptSlashCommandOrSavedPrompt>>,
+    mixer: ModelHandle<SearchMixer<AcceptSlashCommandOrLocalPrompt>>,
     suggestions_mode_model: ModelHandle<InputSuggestionsModeModel>,
     input_buffer_model: ModelHandle<InputBufferModel>,
     scroll_state: ClippedScrollStateHandle,
@@ -219,23 +219,12 @@ impl CloudModeV2SlashCommandView {
 
         let zero_state_source =
             ctx.add_model(|_| ZeroStateDataSource::new(&slash_commands_source, true));
-        let saved_prompts_source = saved_prompts_data_source();
 
         let mixer = ctx.add_model(|ctx| {
-            let mut mixer = SearchMixer::<AcceptSlashCommandOrSavedPrompt>::new();
+            let mut mixer = SearchMixer::<AcceptSlashCommandOrLocalPrompt>::new();
             mixer.add_sync_source(
                 slash_commands_source.clone(),
                 [QueryFilter::StaticSlashCommands],
-            );
-            mixer.add_async_source(
-                saved_prompts_source,
-                [QueryFilter::StaticSlashCommands],
-                AddAsyncSourceOptions {
-                    debounce_interval: None,
-                    run_in_zero_state: false,
-                    run_when_unfiltered: false,
-                },
-                ctx,
             );
             mixer.add_sync_source(
                 zero_state_source.clone(),
@@ -432,7 +421,7 @@ impl CloudModeV2SlashCommandView {
 
     fn rebuild_from_results(&mut self, ctx: &mut ViewContext<Self>) {
         let on_click_fn = |_idx: usize,
-                           item: AcceptSlashCommandOrSavedPrompt,
+                           item: AcceptSlashCommandOrLocalPrompt,
                            evt_ctx: &mut warpui::EventContext| {
             evt_ctx.dispatch_typed_action(CloudModeV2SlashCommandAction::Accept {
                 item,
@@ -440,7 +429,7 @@ impl CloudModeV2SlashCommandView {
             });
         };
 
-        let renderers: Vec<QueryResultRenderer<AcceptSlashCommandOrSavedPrompt>> = self
+        let renderers: Vec<QueryResultRenderer<AcceptSlashCommandOrLocalPrompt>> = self
             .mixer
             .as_ref(ctx)
             .results()
@@ -527,21 +516,23 @@ impl CloudModeV2SlashCommandView {
 
     fn emit_selection(
         &self,
-        action: &AcceptSlashCommandOrSavedPrompt,
+        action: &AcceptSlashCommandOrLocalPrompt,
         cmd_or_ctrl_enter: bool,
         ctx: &mut ViewContext<Self>,
     ) {
         match action {
-            AcceptSlashCommandOrSavedPrompt::SlashCommand { id } => {
+            AcceptSlashCommandOrLocalPrompt::SlashCommand { id } => {
                 ctx.emit(SlashCommandsEvent::SelectedStaticCommand {
                     id: *id,
                     cmd_or_ctrl_enter,
                 });
             }
-            AcceptSlashCommandOrSavedPrompt::SavedPrompt { id } => {
-                ctx.emit(SlashCommandsEvent::SelectedSavedPrompt { id: *id });
+            AcceptSlashCommandOrLocalPrompt::LocalPrompt { workflow } => {
+                ctx.emit(SlashCommandsEvent::SelectedLocalPrompt {
+                    workflow: workflow.clone(),
+                });
             }
-            AcceptSlashCommandOrSavedPrompt::Skill { name, reference } => {
+            AcceptSlashCommandOrLocalPrompt::Skill { name, reference } => {
                 ctx.emit(SlashCommandsEvent::SelectedSkill {
                     reference: reference.clone(),
                     name: name.clone(),
@@ -718,7 +709,7 @@ fn matches_originating_command(
     else {
         return false;
     };
-    let AcceptSlashCommandOrSavedPrompt::SlashCommand { id } = item.search_result.accept_result()
+    let AcceptSlashCommandOrLocalPrompt::SlashCommand { id } = item.search_result.accept_result()
     else {
         return false;
     };
@@ -852,7 +843,7 @@ impl CloudModeV2SlashCommandView {
 
     fn render_search_active(
         &self,
-        results: &[QueryResultRenderer<AcceptSlashCommandOrSavedPrompt>],
+        results: &[QueryResultRenderer<AcceptSlashCommandOrLocalPrompt>],
         selected_idx: Option<usize>,
         app: &AppContext,
     ) -> Box<dyn Element> {

@@ -105,7 +105,7 @@ pub fn run(identity_key: &str) -> anyhow::Result<()> {
     }
 
     // Clean up socket/PID files from previous daemon versions so stale
-    // daemons left over after autoupdate don't linger.
+    // daemons do not linger after an upgrade.
     cleanup_old_versions(identity_key);
 
     // ---- Acquire exclusive flock on the PID file --------------------------------

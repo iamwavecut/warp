@@ -2,16 +2,13 @@ use vec1::{vec1, Vec1};
 use warp_core::{features::FeatureFlag, ui::builder::AnimatedButtonOptions};
 use warpui::{
     elements::{
-        Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Element, Flex, Icon,
+        Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Element, Flex,
         MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, SavePosition, Shrinkable,
     },
     fonts::Weight,
     platform::Cursor,
     presenter::ChildView,
-    ui_components::{
-        button::ButtonVariant,
-        components::{Coords, UiComponent, UiComponentStyles},
-    },
+    ui_components::components::{UiComponent, UiComponentStyles},
     windowing::{StateEvent, WindowManager},
     AppContext, Entity, EntityId, FocusContext, ModelHandle, SingletonEntity, TypedActionView,
     View, ViewContext, ViewHandle, WindowId,
@@ -19,16 +16,12 @@ use warpui::{
 
 use super::{
     keybindings_page::KeybindingsEvent,
-    section_views::{
-        FOOTER_ICON_SIZE, HEADER_FONT_SIZE, ICON_PADDING, KEYBOARD_ICON_SIZE, SCROLLBAR_OFFSET,
-        SECTION_SPACING,
-    },
+    section_views::{HEADER_FONT_SIZE, ICON_PADDING, KEYBOARD_ICON_SIZE, SECTION_SPACING},
     KeybindingsView, ResourceCenterMainEvent, ResourceCenterMainView, TipsCompleted,
 };
 use crate::ui_components::{buttons::icon_button, window_focus_dimming::WindowFocusDimming};
 use crate::{
     appearance::Appearance,
-    changelog_model::ChangelogModel,
     ui_components::icons,
     workspace::{WorkspaceAction, PANEL_HEADER_HEIGHT},
 };
@@ -56,8 +49,6 @@ struct MouseStateHandles {
     navigate_back: MouseStateHandle,
     open_keybindings: MouseStateHandle,
     close: MouseStateHandle,
-    // Footer mouse state handles
-    view_user_docs: MouseStateHandle,
 }
 
 pub enum ResourceCenterEvent {
@@ -80,17 +71,12 @@ pub enum ResourceCenterAction {
 }
 
 impl ResourceCenterView {
-    pub fn new(
-        ctx: &mut ViewContext<Self>,
-        tips_completed: ModelHandle<TipsCompleted>,
-        changelog_model_handle: ModelHandle<ChangelogModel>,
-    ) -> Self {
+    pub fn new(ctx: &mut ViewContext<Self>, tips_completed: ModelHandle<TipsCompleted>) -> Self {
         let main_view = ResourceCenterPageView {
             page: ResourceCenterPage::Main,
             page_view_handle: ResourceCenterViewHandle::Main(Self::build_main_view(
                 ctx,
                 tips_completed,
-                changelog_model_handle,
             )),
         };
         let keybindings_view = ResourceCenterPageView {
@@ -123,11 +109,9 @@ impl ResourceCenterView {
     fn build_main_view(
         ctx: &mut ViewContext<Self>,
         tips_completed: ModelHandle<TipsCompleted>,
-        changelog_model_handle: ModelHandle<ChangelogModel>,
     ) -> ViewHandle<ResourceCenterMainView> {
-        let main_view = ctx.add_typed_action_view(|ctx| {
-            ResourceCenterMainView::new(ctx, tips_completed.clone(), changelog_model_handle)
-        });
+        let main_view = ctx
+            .add_typed_action_view(|ctx| ResourceCenterMainView::new(ctx, tips_completed.clone()));
 
         ctx.subscribe_to_view(&main_view, move |me, _, event, ctx| {
             me.handle_main_event(event, ctx);

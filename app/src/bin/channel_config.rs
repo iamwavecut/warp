@@ -71,9 +71,7 @@ pub fn load_config_from_generator(channel: &str) -> ChannelConfig {
             if err.kind() == std::io::ErrorKind::NotFound {
                 panic!(
                     "\n\n'{CONFIG_BIN_NAME}' was not found on PATH.\n\n\
-                     To build internal channels, run:\n\
-                     \n\
-                     \x20 ./script/install_channel_config\n\n"
+                     Local-first builds should use the OSS channel or embed a local channel config.\n\n"
                 )
             }
             panic!("Failed to execute '{CONFIG_BIN_NAME}': {err}")

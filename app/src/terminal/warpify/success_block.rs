@@ -14,7 +14,8 @@ use parking_lot::RwLock;
 use warp_core::semantic_selection::SemanticSelection;
 use warp_core::ui::theme::WarpTheme;
 use warpui::elements::{
-    CrossAxisAlignment, Icon, MainAxisAlignment, MainAxisSize, SelectableArea, SelectionHandle, Text,
+    CrossAxisAlignment, Icon, MainAxisAlignment, MainAxisSize, SelectableArea, SelectionHandle,
+    Text,
 };
 use warpui::{
     elements::{Border, Container, Flex, ParentElement},

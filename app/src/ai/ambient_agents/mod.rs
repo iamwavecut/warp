@@ -8,12 +8,11 @@ use std::str::FromStr;
 use uuid::{NonNilUuid, Uuid};
 
 pub mod github_auth_notifier;
-pub mod scheduled;
 pub mod task;
 
 pub use task::{
     cancel_task_silently, cancel_task_with_toast, AgentConfigSnapshot, AgentSource,
-    AmbientAgentTask, AmbientAgentTaskState, TaskStatusMessage,
+    AmbientAgentTask, AmbientAgentTaskState,
 };
 
 #[derive(Debug, thiserror::Error)]

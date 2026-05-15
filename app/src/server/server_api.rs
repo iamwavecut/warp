@@ -1,7 +1,6 @@
 pub mod ai;
 pub mod auth;
 pub mod object;
-pub(crate) mod presigned_upload;
 pub mod team;
 pub mod workspace;
 
@@ -12,12 +11,10 @@ use crate::ai::predict::generate_ai_input_suggestions::GenerateAIInputSuggestion
 use crate::ai::predict::generate_am_query_suggestions;
 use crate::ai::predict::generate_am_query_suggestions::GenerateAMQuerySuggestionsRequest;
 use crate::ai::predict::predict_am_queries::{PredictAMQueriesRequest, PredictAMQueriesResponse};
-use crate::ai::voice::transcribe::{TranscribeRequest, TranscribeResponse};
 use crate::auth::auth_state::AuthState;
 use crate::settings::AISettings;
 use ai::AIClient;
 use auth::AuthClient;
-use channel_versions::ChannelVersions;
 use object::ObjectClient;
 use team::TeamClient;
 use warp_core::context_flag::ContextFlag;
@@ -32,7 +29,6 @@ use chrono::{DateTime, FixedOffset};
 use instant::Instant;
 use parking_lot::Mutex;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Arc;
 use warpui::Entity;
@@ -40,18 +36,6 @@ use warpui::SingletonEntity;
 
 use super::experiments::ServerExperiment;
 use super::experiments::ServerExperiments;
-
-/// ResponseType received by Client
-#[derive(thiserror::Error, Debug, Serialize, Deserialize)]
-#[error("{error}")]
-pub struct ClientError {
-    pub error: String,
-    // We unconditionally check for GitHub auth errors in any public API response. It'd be much better
-    // to have the server return error codes that we can parse, but this isn't yet supported.
-    // See REMOTE-666
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub auth_url: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 pub struct ServerTime {
@@ -94,13 +78,6 @@ pub enum AIApiError {
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
-
-    #[error("Got error when streaming {stream_type}: {source:#}")]
-    Stream {
-        stream_type: &'static str,
-        #[source]
-        source: anyhow::Error,
-    },
 }
 
 impl From<http_client::ResponseError> for AIApiError {
@@ -157,29 +134,6 @@ impl AIApiError {
         AIApiError::Transport(err)
     }
 
-    /// Format a stream error into a human-readable error message. This will read the response
-    /// body if there is one.
-    async fn from_stream_error(stream_type: &'static str, err: reqwest_eventsource::Error) -> Self {
-        match err {
-            reqwest_eventsource::Error::InvalidStatusCode(status, res) => Self::ErrorStatus(
-                status,
-                res.text()
-                    .await
-                    .unwrap_or_else(|e| format!("(no response body: {e:#})")),
-            ),
-            reqwest_eventsource::Error::Transport(err) => Self::from_transport_error(err),
-            err => AIApiError::Stream {
-                stream_type,
-                // On WASM, `reqwest_eventsource::Error` doesn't implement `Into<anyhow::Error>` or
-                // `Send` because it may contain a `wasm_bindgen` JS value.
-                #[cfg(target_family = "wasm")]
-                source: anyhow!("{err:#?}"),
-                #[cfg(not(target_family = "wasm"))]
-                source: anyhow!(err),
-            },
-        }
-    }
-
     /// Returns whether or not the error can be retried.
     pub fn is_retryable(&self) -> bool {
         // Don't retry client errors, except for timeouts and quota limits.
@@ -209,7 +163,6 @@ impl ErrorExt for AIApiError {
             AIApiError::Deserialization(_) => true,
             AIApiError::Transport(error) => error.is_actionable(),
             AIApiError::Other(error) => error.is_actionable(),
-            AIApiError::Stream { source, .. } => source.is_actionable(),
             AIApiError::ErrorStatus(_, _) => self.is_retryable(),
             AIApiError::NoContextFound => false,
         }
@@ -265,18 +218,10 @@ fn json_like_slice(content: &str) -> Option<&str> {
     (end >= start).then_some(content[start..=end].trim())
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum TranscribeError {
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
-}
-
 cfg_if::cfg_if! {
     if #[cfg(target_family = "wasm")] {
-        // The WASM version of this type has no bound on `Send`, which is not implemented on
-        // `wasm_bindgen::JsValue`, which is ultimately used in reqwest_eventsource::Error. Furthermore,
-        // `Send` is an unnecessary bound when targeting wasm because the browser is single-threaded (and
-        // we don't leverage WebWorkers for async execution in WoW).
+        // `Send` is an unnecessary bound when targeting wasm because the browser is single-threaded
+        // and we don't leverage WebWorkers for async execution in WoW.
         pub type AIOutputStream<T> = futures::stream::LocalBoxStream<'static, Result<T, Arc<AIApiError>>>;
     } else {
         pub type AIOutputStream<T> = futures::stream::BoxStream<'static, Result<T, Arc<AIApiError>>>;
@@ -452,14 +397,6 @@ impl ServerApi {
         .await
     }
 
-    pub async fn transcribe(
-        &self,
-        request: &TranscribeRequest,
-    ) -> Result<TranscribeResponse, TranscribeError> {
-        let _ = request;
-        Err(TranscribeError::Other(Self::backend_disabled_error()))
-    }
-
     pub async fn generate_multi_agent_output(
         &self,
         request: &warp_multi_agent_api::Request,
@@ -496,15 +433,6 @@ impl ServerApi {
         };
         self.set_server_time(server_time.clone());
         Ok(server_time)
-    }
-
-    pub async fn fetch_channel_versions(
-        &self,
-        include_changelogs: bool,
-        is_daily: bool,
-    ) -> Result<ChannelVersions> {
-        let _ = (include_changelogs, is_daily);
-        Err(Self::backend_disabled_error())
     }
 }
 

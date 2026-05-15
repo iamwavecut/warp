@@ -43,22 +43,6 @@ pub async fn generate_multi_agent_output(
     Ok(Box::pin(response_stream.take_until(cancellation_rx)))
 }
 
-fn api_keys_with_warp_credit_fallback_setting(
-    api_keys: Option<api::request::settings::ApiKeys>,
-    allow_use_of_warp_credits: bool,
-) -> Option<api::request::settings::ApiKeys> {
-    match api_keys {
-        Some(mut api_keys) => {
-            api_keys.allow_use_of_warp_credits = allow_use_of_warp_credits;
-            Some(api_keys)
-        }
-        None if allow_use_of_warp_credits => Some(api::request::settings::ApiKeys {
-            allow_use_of_warp_credits: true,
-            ..Default::default()
-        }),
-        None => None,
-    }
-}
 fn get_supported_tools(params: &RequestParams) -> Vec<api::ToolType> {
     let mut supported_tools = vec![
         api::ToolType::Grep,
@@ -140,38 +124,6 @@ fn get_supported_tools(params: &RequestParams) -> Vec<api::ToolType> {
     }
 
     supported_tools
-}
-
-fn get_supported_cli_agent_tools(params: &RequestParams) -> Vec<api::ToolType> {
-    let mut supported_cli_agent_tools = vec![
-        api::ToolType::WriteToLongRunningShellCommand,
-        api::ToolType::ReadShellCommandOutput,
-        api::ToolType::Grep,
-        api::ToolType::FileGlob,
-        api::ToolType::FileGlobV2,
-    ];
-
-    if FeatureFlag::TransferControlTool.is_enabled() {
-        supported_cli_agent_tools.push(api::ToolType::TransferShellCommandControlToUser);
-    }
-
-    match params.session_context.session_type() {
-        None | Some(SessionType::Local) => {
-            supported_cli_agent_tools
-                .extend(&[api::ToolType::ReadFiles, api::ToolType::SearchCodebase]);
-        }
-        Some(SessionType::WarpifiedRemote { host_id: Some(_) }) => {
-            supported_cli_agent_tools.push(api::ToolType::ReadFiles);
-            if FeatureFlag::RemoteCodebaseIndexing.is_enabled()
-                && params.remote_codebase_search_available
-            {
-                supported_cli_agent_tools.push(api::ToolType::SearchCodebase);
-            }
-        }
-        Some(SessionType::WarpifiedRemote { host_id: None }) => {}
-    }
-
-    supported_cli_agent_tools
 }
 
 #[cfg(test)]

@@ -10,17 +10,9 @@ use self::{
 };
 use crate::server::cloud_objects::update_manager::InitiatedBy;
 use crate::{
-    ai::cloud_agent_config::CloudAgentConfigModel,
-    ai::{
-        ambient_agents::scheduled::CloudScheduledAmbientAgentModel,
-        document::ai_document_model::AIDocumentId,
-        execution_profiles::CloudAIExecutionProfileModel,
-        facts::CloudAIFactModel,
-        mcp::{templatable::CloudTemplatableMCPServerModel, CloudMCPServerModel},
-    },
+    ai::{document::ai_document_model::AIDocumentId, facts::CloudAIFactModel},
     appearance::Appearance,
     auth::UserUid,
-    channel::ChannelState,
     drive::{
         folders::{CloudFolderModel, FolderId},
         items::WarpDriveItem,
@@ -40,8 +32,7 @@ use crate::{
     settings::cloud_preferences::CloudPreferenceModel,
     util::time_format::format_approx_duration_from_now_utc,
     workflows::{
-        workflow_enum::CloudWorkflowEnumModel, CloudWorkflow, CloudWorkflowModel, WorkflowId,
-        WorkflowSource,
+        workflow_enum::CloudWorkflowEnumModel, CloudWorkflowModel, WorkflowId, WorkflowSource,
     },
     workspaces::{
         user_profiles::{UserProfileWithUID, UserProfiles},
@@ -61,7 +52,7 @@ use std::{
     sync::Arc,
 };
 use url::Url;
-use warp_core::{channel::Channel, features::FeatureFlag};
+use warp_core::features::FeatureFlag;
 use warp_graphql::{
     queries::get_updated_cloud_objects::UpdatedObjectInput, scalars::time::ServerTimestamp,
 };
@@ -718,7 +709,7 @@ where
         // First remove all the url unsafe chars
         let name_without_unsafe_chars = SAFE_URL_CHAR_RE.replace_all(display_name.trim(), "");
         // Then turn all the spaces into dashes
-        let link_safe_name = SPACE_DETECT_RE.replace_all(&name_without_unsafe_chars, "-");
+        let _link_safe_name = SPACE_DETECT_RE.replace_all(&name_without_unsafe_chars, "-");
         match &self.id {
             SyncId::ClientId(_) => None,
             SyncId::ServerId(_) => None,
@@ -1154,11 +1145,6 @@ pub enum ServerCloudObject {
     EnvVarCollection(ServerEnvVarCollection),
     WorkflowEnum(ServerWorkflowEnum),
     AIFact(ServerAIFact),
-    MCPServer(ServerMCPServer),
-    AIExecutionProfile(ServerAIExecutionProfile),
-    TemplatableMCPServer(ServerTemplatableMCPServer),
-    ScheduledAmbientAgent(ServerScheduledAmbientAgent),
-    CloudAgentConfig(ServerCloudAgentConfig),
 }
 
 impl ServerCloudObject {
@@ -1171,17 +1157,6 @@ impl ServerCloudObject {
             ServerCloudObject::EnvVarCollection(env_var_collection) => &env_var_collection.metadata,
             ServerCloudObject::WorkflowEnum(workflow_enum) => &workflow_enum.metadata,
             ServerCloudObject::AIFact(aifact) => &aifact.metadata,
-            ServerCloudObject::MCPServer(mcp_server) => &mcp_server.metadata,
-            ServerCloudObject::TemplatableMCPServer(templatable_mcp_server) => {
-                &templatable_mcp_server.metadata
-            }
-            ServerCloudObject::AIExecutionProfile(ai_execution_profile) => {
-                &ai_execution_profile.metadata
-            }
-            ServerCloudObject::ScheduledAmbientAgent(scheduled_ambient_agent) => {
-                &scheduled_ambient_agent.metadata
-            }
-            ServerCloudObject::CloudAgentConfig(cloud_agent_config) => &cloud_agent_config.metadata,
         }
     }
 
@@ -1194,17 +1169,6 @@ impl ServerCloudObject {
             ServerCloudObject::EnvVarCollection(env_var_collection) => env_var_collection.id.uid(),
             ServerCloudObject::WorkflowEnum(workflow_enum) => workflow_enum.id.uid(),
             ServerCloudObject::AIFact(aifact) => aifact.id.uid(),
-            ServerCloudObject::MCPServer(mcp_server) => mcp_server.id.uid(),
-            ServerCloudObject::AIExecutionProfile(ai_execution_profile) => {
-                ai_execution_profile.id.uid()
-            }
-            ServerCloudObject::TemplatableMCPServer(templatable_mcp_server) => {
-                templatable_mcp_server.id.uid()
-            }
-            ServerCloudObject::ScheduledAmbientAgent(scheduled_ambient_agent) => {
-                scheduled_ambient_agent.id.uid()
-            }
-            ServerCloudObject::CloudAgentConfig(cloud_agent_config) => cloud_agent_config.id.uid(),
         }
     }
 }
@@ -1233,24 +1197,6 @@ where
             ServerCloudObject::WorkflowEnum(server_workflow_enum.clone())
         } else if let Some(server_aifact) = value.as_any().downcast_ref::<ServerAIFact>() {
             ServerCloudObject::AIFact(server_aifact.clone())
-        } else if let Some(server_mcp_server) = value.as_any().downcast_ref::<ServerMCPServer>() {
-            ServerCloudObject::MCPServer(server_mcp_server.clone())
-        } else if let Some(server_ai_execution_profile) =
-            value.as_any().downcast_ref::<ServerAIExecutionProfile>()
-        {
-            ServerCloudObject::AIExecutionProfile(server_ai_execution_profile.clone())
-        } else if let Some(server_templatable_mcp_server) =
-            value.as_any().downcast_ref::<ServerTemplatableMCPServer>()
-        {
-            ServerCloudObject::TemplatableMCPServer(server_templatable_mcp_server.clone())
-        } else if let Some(server_scheduled_ambient_agent) =
-            value.as_any().downcast_ref::<ServerScheduledAmbientAgent>()
-        {
-            ServerCloudObject::ScheduledAmbientAgent(server_scheduled_ambient_agent.clone())
-        } else if let Some(server_cloud_agent_config) =
-            value.as_any().downcast_ref::<ServerCloudAgentConfig>()
-        {
-            ServerCloudObject::CloudAgentConfig(server_cloud_agent_config.clone())
         } else {
             panic!("Unknown server object type");
         }
@@ -1348,15 +1294,6 @@ pub type ServerEnvVarCollection =
     GenericServerObject<GenericStringObjectId, CloudEnvVarCollectionModel>;
 pub type ServerWorkflowEnum = GenericServerObject<GenericStringObjectId, CloudWorkflowEnumModel>;
 pub type ServerAIFact = GenericServerObject<GenericStringObjectId, CloudAIFactModel>;
-pub type ServerMCPServer = GenericServerObject<GenericStringObjectId, CloudMCPServerModel>;
-pub type ServerAIExecutionProfile =
-    GenericServerObject<GenericStringObjectId, CloudAIExecutionProfileModel>;
-pub type ServerTemplatableMCPServer =
-    GenericServerObject<GenericStringObjectId, CloudTemplatableMCPServerModel>;
-pub type ServerScheduledAmbientAgent =
-    GenericServerObject<GenericStringObjectId, CloudScheduledAmbientAgentModel>;
-pub type ServerCloudAgentConfig = GenericServerObject<GenericStringObjectId, CloudAgentConfigModel>;
-
 impl<T, S> GenericServerObject<GenericStringObjectId, GenericStringModel<T, S>>
 where
     T: StringModel<

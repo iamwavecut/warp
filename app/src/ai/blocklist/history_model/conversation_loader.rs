@@ -6,7 +6,7 @@ use std::future::Future;
 use futures::FutureExt;
 use itertools::Itertools as _;
 use persistence::model::AgentConversationRecord;
-use warpui::{AppContext, SingletonEntity};
+use warpui::AppContext;
 
 use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::agent::conversation::{
@@ -113,7 +113,7 @@ impl BlocklistAIHistoryModel {
     pub fn load_conversation_data(
         &self,
         conversation_id: AIConversationId,
-        ctx: &AppContext,
+        _ctx: &AppContext,
     ) -> warpui::r#async::BoxFuture<'static, Option<CloudConversationData>> {
         // First check if the conversation is already in memory
         if let Some(conversation) = self.conversations_by_id.get(&conversation_id) {

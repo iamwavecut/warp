@@ -1,8 +1,6 @@
-mod saved_prompts;
 mod zero_state;
 
 use ai::skills::SkillProvider;
-pub(crate) use saved_prompts::*;
 use warp_core::features::FeatureFlag;
 pub use zero_state::*;
 
@@ -22,14 +20,17 @@ use crate::search::data_source::{Query, QueryResult};
 use crate::search::mixer::DataSourceRunErrorWrapper;
 use crate::search::slash_command_menu::fuzzy_match::SlashCommandFuzzyMatchResult;
 use crate::search::slash_command_menu::static_commands::Availability;
+use crate::search::FuzzyMatchWorkflowResult;
 use crate::terminal::cli_agent_sessions::{
     CLIAgentInputState, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
 use crate::terminal::model::session::SessionType;
 use crate::terminal::view::ambient_agent::AmbientAgentViewModel;
+use crate::user_config::WarpConfig;
+use crate::workflows::workflow::Workflow;
 use warp_core::ui::Icon as WarpIcon;
 
-use super::AcceptSlashCommandOrSavedPrompt;
+use super::AcceptSlashCommandOrLocalPrompt;
 use crate::{
     ai::blocklist::{
         agent_view::{AgentViewController, AgentViewControllerEvent},
@@ -169,11 +170,7 @@ impl SlashCommandDataSource {
         // Recompute when task data is updated so task-aware commands can react
         // once the task fetch resolves.
         ctx.subscribe_to_model(&AgentConversationsModel::handle(ctx), |me, event, ctx| {
-            if matches!(
-                event,
-                AgentConversationsModelEvent::TasksUpdated
-                    | AgentConversationsModelEvent::NewTasksReceived
-            ) {
+            if matches!(event, AgentConversationsModelEvent::TasksUpdated) {
                 me.recompute_active_commands(ctx);
             }
         });
@@ -366,7 +363,7 @@ impl SlashCommandDataSource {
 }
 
 impl SyncDataSource for SlashCommandDataSource {
-    type Action = AcceptSlashCommandOrSavedPrompt;
+    type Action = AcceptSlashCommandOrLocalPrompt;
 
     fn run_query(
         &self,
@@ -470,6 +467,47 @@ impl SyncDataSource for SlashCommandDataSource {
             }
         }
 
+        if AISettings::as_ref(app).is_any_ai_enabled(app) {
+            let prefix_char =
+                (query_text.chars().count() == 1).then(|| query_text.chars().next().unwrap());
+
+            for workflow in WarpConfig::as_ref(app)
+                .local_user_workflows()
+                .iter()
+                .filter(|workflow| workflow.is_agent_mode_workflow())
+            {
+                if let Some(query_char) = prefix_char {
+                    if workflow.name_starts_with_char_ignore_case(query_char) {
+                        results.push(QueryResult::from(
+                            InlineItem::from_local_prompt(workflow, app)
+                                .with_name_match_result(Some(fuzzy_match::FuzzyMatchResult {
+                                    score: 100,
+                                    matched_indices: vec![0],
+                                }))
+                                .with_score(OrderedFloat(100.0)),
+                        ));
+                    }
+                    continue;
+                }
+
+                let Some(match_result) =
+                    FuzzyMatchWorkflowResult::try_match(&query_text, workflow, "")
+                else {
+                    continue;
+                };
+                let score = match_result.score();
+                if score <= OrderedFloat(25.0) {
+                    continue;
+                }
+                results.push(QueryResult::from(
+                    InlineItem::from_local_prompt(workflow, app)
+                        .with_name_match_result(match_result.name_match_result)
+                        .with_description_match_result(match_result.content_match_result)
+                        .with_score(score),
+                ));
+            }
+        }
+
         Ok(results)
     }
 }
@@ -502,7 +540,7 @@ impl Entity for SlashCommandDataSource {
 
 #[derive(Debug, Clone)]
 pub struct InlineItem {
-    pub action: AcceptSlashCommandOrSavedPrompt,
+    pub action: AcceptSlashCommandOrLocalPrompt,
     pub icon_path: &'static str,
     pub name: String,
     pub description: Option<String>,
@@ -521,7 +559,7 @@ impl InlineItem {
     ) -> Self {
         let appearance = Appearance::as_ref(app);
         Self {
-            action: AcceptSlashCommandOrSavedPrompt::SlashCommand { id: *command_id },
+            action: AcceptSlashCommandOrLocalPrompt::SlashCommand { id: *command_id },
             icon_path: command.icon_path,
             name: command.name.to_owned(),
             description: Some(command.description.to_owned()),
@@ -533,18 +571,15 @@ impl InlineItem {
         }
     }
 
-    pub(crate) fn from_saved_prompt(
-        saved_prompt: &crate::workflows::CloudWorkflow,
-        app: &AppContext,
-    ) -> Self {
+    pub(crate) fn from_local_prompt(workflow: &Workflow, app: &AppContext) -> Self {
         let appearance = Appearance::as_ref(app);
         Self {
-            action: AcceptSlashCommandOrSavedPrompt::SavedPrompt {
-                id: saved_prompt.id,
+            action: AcceptSlashCommandOrLocalPrompt::LocalPrompt {
+                workflow: workflow.clone(),
             },
             icon_path: "bundled/svg/prompt.svg",
-            name: saved_prompt.model().data.name().to_owned(),
-            description: None,
+            name: workflow.name().to_owned(),
+            description: workflow.description().cloned(),
             font_family: appearance.ui_font_family(),
             name_match_result: None,
             description_match_result: None,
@@ -571,7 +606,7 @@ impl InlineItem {
         };
 
         Self {
-            action: AcceptSlashCommandOrSavedPrompt::Skill {
+            action: AcceptSlashCommandOrLocalPrompt::Skill {
                 reference: skill.reference.clone(),
                 name: skill.name.clone(),
             },

@@ -3,9 +3,9 @@ use std::fmt;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GithubRepo {
-    /// Repository owner (e.g. "warpdotdev")
+    /// Repository owner.
     pub owner: String,
-    /// Repository name (e.g. "warp-internal")
+    /// Repository name.
     pub repo: String,
 }
 
@@ -86,23 +86,4 @@ pub struct AmbientAgentEnvironment {
     /// Optional provider configurations for automatic auth.
     #[serde(default, skip_serializing_if = "ProvidersConfig::is_empty")]
     pub providers: ProvidersConfig,
-}
-
-impl AmbientAgentEnvironment {
-    pub fn new(
-        name: String,
-        description: Option<String>,
-        github_repos: Vec<GithubRepo>,
-        docker_image: String,
-        setup_commands: Vec<String>,
-    ) -> Self {
-        Self {
-            name,
-            description,
-            github_repos,
-            base_image: BaseImage::DockerImage(docker_image),
-            setup_commands,
-            providers: ProvidersConfig::default(),
-        }
-    }
 }

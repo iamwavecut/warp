@@ -9,9 +9,8 @@ use crate::{
     integration_testing::{
         step::assert_no_pending_model_events,
         terminal::{
-            assert_long_running_block_executing_for_single_terminal_in_tab,
-            execute_command_for_single_terminal_in_tab, util::ExpectedExitStatus,
-            validate_block_output, wait_until_bootstrapped_pane,
+            assert_long_running_block_executing_for_single_terminal_in_tab, validate_block_output,
+            wait_until_bootstrapped_pane,
         },
         view_getters::{single_terminal_view, terminal_view},
     },
@@ -20,14 +19,9 @@ use crate::{
 
 use super::util::{remote_server_ssh_command, remote_server_user_host, ssh_command, user_host};
 
-/// Sets environment variables needed by the Google Cloud SDK.
-pub fn setup_gcloud_sdk() -> TestStep {
-    execute_command_for_single_terminal_in_tab(
-        0,
-        "export CLOUDSDK_CONFIG=\"$ORIGINAL_HOME/.config/gcloud\"".into(),
-        ExpectedExitStatus::Success,
-        (),
-    )
+/// Marks the remote SSH integration environment as externally configured.
+pub fn setup_remote_ssh_test_env() -> TestStep {
+    TestStep::new("Use externally configured SSH integration environment")
 }
 
 /// Initiates an SSH connection, executing the necessary command and then

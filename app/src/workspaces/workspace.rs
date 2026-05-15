@@ -107,31 +107,8 @@ impl Workspace {
         false
     }
 
-    pub fn are_overages_remaining(&self) -> bool {
-        false
-    }
-
     pub fn is_byo_api_key_enabled(&self) -> bool {
         true
-    }
-
-    /// Returns true if the workspace has reached or exceeded its monthly addon credits spend limit.
-    pub fn is_at_addon_credits_monthly_limit(&self) -> bool {
-        false
-    }
-
-    /// Returns true if purchasing addon credits at the given price would reach or exceed the monthly limit.
-    pub fn would_addon_purchase_reach_limit(&self, _price_cents: i32) -> bool {
-        false
-    }
-
-    /// Returns the price in cents for the selected auto-reload credit denomination.
-    /// Returns None if auto-reload is not configured or if the denomination can't be found in pricing options.
-    pub fn get_auto_reload_price_cents(
-        &self,
-        _addon_credits_options: &[warp_graphql::billing::AddonCreditsOption],
-    ) -> Option<i32> {
-        None
     }
 }
 
@@ -569,11 +546,6 @@ pub enum AdminEnablementSetting {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct CloudConversationStorageSettings {
-    pub setting: AdminEnablementSetting,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AiPermissionsSettings {
     pub allow_ai_in_remote_sessions: bool,
     #[serde(with = "serde_regex")]
@@ -675,7 +647,6 @@ pub struct SandboxedAgentSettings {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct WorkspaceSettings {
     pub llm_settings: LlmSettings,
-    pub cloud_conversation_storage_settings: CloudConversationStorageSettings,
     pub link_sharing_settings: LinkSharingSettings,
     pub secret_redaction_settings: SecretRedactionSettings,
     pub ai_permissions_settings: AiPermissionsSettings,

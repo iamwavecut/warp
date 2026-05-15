@@ -69,6 +69,6 @@ Interaction details and invariants:
   3. Select a repo from the dropdown, confirm it appears in the list below with the `Unassigned` dot selected.
   4. With all known repos added, confirm the control falls back to the plain button and clicking it opens the native folder picker.
   5. Pick a folder via either the dropdown footer or the fallback button, confirm it is added to the list just like the prior file-picker flow.
-- Visual check via `verify-ui-change-in-cloud` that the dropdown renders correctly when candidates exist and that the plain fallback button appears when there are none.
+- Visual check that the dropdown renders correctly when candidates exist and that the plain fallback button appears when there are none.
 ## Open questions
 - None at spec creation.

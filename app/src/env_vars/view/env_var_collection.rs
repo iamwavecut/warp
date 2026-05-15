@@ -604,28 +604,23 @@ impl EnvVarCollectionView {
         window_id: WindowId,
         ctx: &mut ViewContext<Self>,
     ) {
-        let initial_load_complete = UpdateManager::handle(ctx).update(ctx, |update_manager, _| {
-            update_manager.initial_load_complete()
-        });
-        ctx.spawn(initial_load_complete, move |me, _, ctx| {
-            let env_var_collection = CloudModel::as_ref(ctx)
-                .get_env_var_collection(&env_var_collection_id)
-                .cloned();
-            if let Some(env_var_collection) = env_var_collection {
-                me.load(env_var_collection, ctx);
-            } else if let Some(server_id) = env_var_collection_id.into_server() {
-                me.fetch_and_load_env_var_collection(server_id, window_id, ctx);
-            } else {
-                ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                    toast_stack.add_ephemeral_toast_by_type(
-                        ToastType::CloudObjectNotFound,
-                        window_id,
-                        ctx,
-                    );
-                });
-                log::warn!("Tried to open unknown env var collection {env_var_collection_id:?}");
-            }
-        });
+        let env_var_collection = CloudModel::as_ref(ctx)
+            .get_env_var_collection(&env_var_collection_id)
+            .cloned();
+        if let Some(env_var_collection) = env_var_collection {
+            self.load(env_var_collection, ctx);
+        } else if let Some(server_id) = env_var_collection_id.into_server() {
+            self.fetch_and_load_env_var_collection(server_id, window_id, ctx);
+        } else {
+            ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+                toast_stack.add_ephemeral_toast_by_type(
+                    ToastType::CloudObjectNotFound,
+                    window_id,
+                    ctx,
+                );
+            });
+            log::warn!("Tried to open unknown env var collection {env_var_collection_id:?}");
+        }
     }
 
     fn fetch_and_load_env_var_collection(

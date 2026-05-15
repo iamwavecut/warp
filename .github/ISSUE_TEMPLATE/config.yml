@@ -1,14 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Warp GitHub Search
-    url: https://github.com/warpdotdev/warp/issues?q=is%3Aissue+is%3Aopen+a+sort%3Areactions-%2B1-desc
-    about: Search Warp's open bugs and enhancements.
-  - name: Warp Changelog
-    url: https://docs.warp.dev/changelog
-    about: See our changelog to learn about new features, improvements, bug fixes, and Oz updates.
-  - name: Warp Homepage
-    url: https://www.warp.dev/
-    about: Homepage for all things Warp.
-  - name: Warp Licenses
-    url: https://docs.warp.dev/support-and-community/privacy-security-and-licensing/open-source-licenses
-    about: See the open source projects Warp depends on and their licenses.
+  - name: Local-first fork issues
+    url: https://github.com/iamwavecut/warp/issues
+    about: Search or file issues for this local-first fork.

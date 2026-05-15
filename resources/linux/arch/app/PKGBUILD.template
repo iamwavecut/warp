@@ -1,9 +1,9 @@
 pkgname=warp-terminal@@CHANNEL_SUFFIX@@
 pkgver=@@VERSION@@
 pkgrel=@@RELEASE@@
-pkgdesc="Warp, the Rust-based terminal for developers and teams"
+pkgdesc="WarpOss, a local-first terminal with BYOK AI"
 arch=('@@ARCH@@')
-url="https://warp.dev"
+url="https://github.com/iamwavecut/warp"
 license=('custom')
 depends=(
 	'curl'

@@ -1,5 +1,4 @@
-//! This module contains all auxiliary code for hitting the PredictAMQueries endpoint in
-//! warp-server that serves Agent Predict.
+//! This module contains request and response types for local Agent Predict query completion.
 
 mod api;
 

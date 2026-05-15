@@ -1,49 +1,62 @@
-/// The command used to proxy ssh requests through GCP's Identity-Aware Proxy.
-const PROXY_COMMAND: &str = "gcloud compute start-iap-tunnel ubuntu-14-04 25784 --listen-on-stdin --project=warp-ssh-integration-testing --zone=us-east4-a";
-/// The command used to proxy remote-server ssh requests through GCP's Identity-Aware Proxy.
-const REMOTE_SERVER_PROXY_COMMAND: &str = "gcloud compute start-iap-tunnel ssh-remote-server-testing 22 --listen-on-stdin --project=warp-ssh-integration-testing --zone=us-east4-b";
-
 /// Produces a user/host pair for testing a given remote shell.
 pub fn user_host(shell: &str) -> String {
-    format!("{shell}@ubuntu-14-04")
+    std::env::var("WARP_INTEGRATION_SSH_USER_HOST").unwrap_or_else(|_| format!("{shell}@localhost"))
 }
 /// Produces a user/host pair for remote-server tests.
 pub fn remote_server_user_host(shell: &str) -> String {
-    format!("{shell}@ssh-remote-server-testing")
+    std::env::var("WARP_INTEGRATION_REMOTE_SERVER_USER_HOST")
+        .unwrap_or_else(|_| format!("{shell}@localhost"))
 }
 
 /// Produces the full ssh command to run to ssh into a given remote shell.
 pub fn ssh_command(shell: &str, should_use_ssh_wrapper: bool) -> String {
-    [
+    let mut args = vec![
         if should_use_ssh_wrapper {
-            "ssh"
+            "ssh".to_string()
         } else {
-            "command ssh"
+            "command ssh".to_string()
         },
-        &user_host(shell),
-        "-p 25784",
-        &format!("-o ProxyCommand=\"{PROXY_COMMAND}\""),
-        "-o StrictHostKeyChecking=no",
-        "-o UserKnownHostsFile=/dev/null",
-    ]
-    .join(" ")
+        user_host(shell),
+    ];
+    let port = std::env::var("WARP_INTEGRATION_SSH_PORT").unwrap_or_else(|_| "22".to_string());
+    let proxy_command = std::env::var("WARP_INTEGRATION_SSH_PROXY_COMMAND").ok();
+    args.push("-p".to_string());
+    args.push(port);
+    let proxy_arg = proxy_command.map(|command| format!("-o ProxyCommand=\"{command}\""));
+    if let Some(proxy_arg) = proxy_arg {
+        args.push(proxy_arg);
+    }
+    args.extend([
+        "-o StrictHostKeyChecking=no".to_string(),
+        "-o UserKnownHostsFile=/dev/null".to_string(),
+    ]);
+    args.join(" ")
 }
 
 /// Produces the full ssh command to connect to the dedicated remote-server test host.
 pub fn remote_server_ssh_command(shell: &str, should_use_ssh_wrapper: bool) -> String {
-    [
+    let mut args = vec![
         if should_use_ssh_wrapper {
-            "ssh"
+            "ssh".to_string()
         } else {
-            "command ssh"
+            "command ssh".to_string()
         },
-        &remote_server_user_host(shell),
-        "-p 22",
-        &format!("-o ProxyCommand=\"{REMOTE_SERVER_PROXY_COMMAND}\""),
-        "-o PreferredAuthentications=password",
-        "-o PubkeyAuthentication=no",
-        "-o StrictHostKeyChecking=no",
-        "-o UserKnownHostsFile=/dev/null",
-    ]
-    .join(" ")
+        remote_server_user_host(shell),
+    ];
+    let port =
+        std::env::var("WARP_INTEGRATION_REMOTE_SERVER_PORT").unwrap_or_else(|_| "22".to_string());
+    let proxy_command = std::env::var("WARP_INTEGRATION_REMOTE_SERVER_PROXY_COMMAND").ok();
+    args.push("-p".to_string());
+    args.push(port);
+    let proxy_arg = proxy_command.map(|command| format!("-o ProxyCommand=\"{command}\""));
+    if let Some(proxy_arg) = proxy_arg {
+        args.push(proxy_arg);
+    }
+    args.extend([
+        "-o PreferredAuthentications=password".to_string(),
+        "-o PubkeyAuthentication=no".to_string(),
+        "-o StrictHostKeyChecking=no".to_string(),
+        "-o UserKnownHostsFile=/dev/null".to_string(),
+    ]);
+    args.join(" ")
 }

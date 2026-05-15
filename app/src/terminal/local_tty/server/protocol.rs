@@ -8,8 +8,6 @@ use itertools::Itertools;
 use nix::{cmsg_space, errno::Errno, sys::socket};
 use serde::{Deserialize, Serialize};
 
-use crate::terminal::local_tty::PtySpawnResult;
-
 use super::api;
 
 /// The size of a usize, in bytes.

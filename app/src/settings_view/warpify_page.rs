@@ -503,12 +503,10 @@ struct TitleWidget {
 
 impl TitleWidget {
     fn render_top_of_page(&self, appearance: &Appearance, _app: &AppContext) -> Box<dyn Element> {
-        let warpify_description = vec![
-            FormattedTextFragment::plain_text(
-                "Configure whether Warp attempts to “Warpify” (add support for blocks, \
+        let warpify_description = vec![FormattedTextFragment::plain_text(
+            "Configure whether Warp attempts to “Warpify” (add support for blocks, \
                     input modes, etc) certain shells.",
-            ),
-        ];
+        )];
 
         let warpify_description = FormattedTextElement::new(
             FormattedText::new([FormattedTextLine::Line(warpify_description)]),
@@ -519,7 +517,7 @@ impl TitleWidget {
             self.learn_more_highlight_index.clone(),
         )
         .with_hyperlink_font_color(appearance.theme().accent().into_solid())
-        .register_default_click_handlers(|url, _, ctx| {
+        .register_default_click_handlers(|url, _, _ctx| {
             let _ = url;
             log::info!("Ignoring hosted documentation link in local-first build");
         })

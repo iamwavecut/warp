@@ -21,8 +21,8 @@ use super::super::terminal::{CommandHandle, TerminalDriver};
 use super::super::{AgentDriver, AgentDriverError};
 use super::json_utils::{read_json_file_or_default, write_json_file};
 use super::{
-    write_temp_file, HarnessCleanupDisposition, HarnessRunner, JSONMCPServer, ResumePayload,
-    SavePoint, ThirdPartyHarness,
+    write_temp_file, HarnessCleanupDisposition, HarnessRunner, JSONMCPServer, SavePoint,
+    ThirdPartyHarness,
 };
 
 pub(crate) struct GeminiHarness;
@@ -55,7 +55,6 @@ impl ThirdPartyHarness for GeminiHarness {
         _task_id: Option<AmbientAgentTaskId>,
         _server_api: Arc<ServerApi>,
         terminal_driver: ModelHandle<TerminalDriver>,
-        _resume: Option<ResumePayload>,
         _resolved_env_vars: &HashMap<OsString, OsString>,
         _resolved_secrets: &HashMap<String, ManagedSecretValue>,
         _resolved_mcp_servers: &HashMap<String, JSONMCPServer>,

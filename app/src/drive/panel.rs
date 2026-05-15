@@ -11,7 +11,7 @@ use crate::{
     ai::{document::ai_document_model::AIDocumentId, facts::CloudAIFactModel},
     cloud_object::{
         model::{persistence::CloudModel, view::CloudViewModel},
-        CloudObjectEventEntrypoint, GenericStringObjectFormat, JsonObjectType, Owner, Space,
+        CloudObjectEventEntrypoint, Owner, Space,
     },
     env_vars::{manager::EnvVarCollectionSource, CloudEnvVarCollection},
     interaction_sources::SharingDialogSource,
@@ -25,11 +25,6 @@ use crate::{
 };
 
 use super::{
-    drive_helpers::{
-        has_feature_gated_anonymous_user_reached_env_var_limit,
-        has_feature_gated_anonymous_user_reached_notebook_limit,
-        has_feature_gated_anonymous_user_reached_workflow_limit,
-    },
     index::{DriveIndex, DriveIndexAction, DriveIndexEvent},
     items::WarpDriveItemId,
     CloudObjectTypeAndId, DriveObjectType,
@@ -366,28 +361,7 @@ impl DrivePanel {
                     }
                     _ => (),
                 },
-                Space::Personal => match cloud_object_type_and_id {
-                    CloudObjectTypeAndId::Notebook(_) => {
-                        if has_feature_gated_anonymous_user_reached_notebook_limit(ctx) {
-                            return;
-                        }
-                    }
-                    CloudObjectTypeAndId::Workflow(_) => {
-                        if has_feature_gated_anonymous_user_reached_workflow_limit(ctx) {
-                            return;
-                        }
-                    }
-                    CloudObjectTypeAndId::GenericStringObject {
-                        object_type:
-                            GenericStringObjectFormat::Json(JsonObjectType::EnvVarCollection),
-                        id: _,
-                    } => {
-                        if has_feature_gated_anonymous_user_reached_env_var_limit(ctx) {
-                            return;
-                        }
-                    }
-                    _ => {}
-                },
+                Space::Personal => {}
                 // We're reliant on server checks here, since the client doesn't know how many
                 // objects are in the owning drive.
                 Space::Shared => (),

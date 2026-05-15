@@ -3,21 +3,14 @@ use std::env;
 use std::ffi::CStr;
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
 use parking_lot::RwLock;
-use uuid::Uuid;
 use warpui::{AppContext, Entity, SingletonEntity};
 
-use crate::cloud_object::{GenericStringObjectFormat, JsonObjectType, ObjectType};
-
 use super::{
-    anonymous_id::get_or_create_anonymous_id,
     credentials::Credentials,
-    user::{AnonymousUserType, PersonalObjectLimits, PrincipalType, User},
+    user::{PrincipalType, User},
     UserUid,
 };
-
-const ANONYMOUS_USER_NOTIFICATION_BLOCK_TIMER: Duration = Duration::days(7);
 
 /// Describes what persistence action to take based on the current auth state.
 pub(super) enum PersistAction {
@@ -33,18 +26,15 @@ pub struct AuthState {
     /// The currently logged-in User. None if the user isn't logged in currently.
     user: RwLock<Option<User>>,
 
-    /// An anonymous UUID. Can be used to consistently identify an anonymous user who is not logged in.
-    anonymous_id: Uuid,
-
     /// The current authentication credentials.
     credentials: RwLock<Option<Credentials>>,
 }
 
 impl AuthState {
     fn new(ctx: &AppContext) -> Self {
+        let _ = ctx;
         Self {
             user: RwLock::new(None),
-            anonymous_id: get_or_create_anonymous_id(ctx),
             credentials: RwLock::new(None),
         }
     }
@@ -53,7 +43,6 @@ impl AuthState {
     pub fn new_for_test() -> Self {
         Self {
             user: RwLock::new(Some(User::test())),
-            anonymous_id: Uuid::new_v4(),
             credentials: RwLock::new(Some(Credentials::Test)),
         }
     }
@@ -62,7 +51,6 @@ impl AuthState {
     pub fn new_logged_out_for_test() -> Self {
         Self {
             user: RwLock::new(None),
-            anonymous_id: Uuid::new_v4(),
             credentials: RwLock::new(None),
         }
     }
@@ -129,17 +117,6 @@ impl AuthState {
         true
     }
 
-    /// Returns whether the user should be treated as not having a full account.
-    /// True if the user is anonymous OR if there is no user at all (fully logged out).
-    ///
-    /// Note: uses `unwrap_or(true)` intentionally (not `unwrap_or_default()`) so that
-    /// during the transient state where credentials exist but user data hasn't loaded
-    /// yet, the user is conservatively treated as lacking a full account.
-    pub fn is_anonymous_or_logged_out(&self) -> bool {
-        let _ = self;
-        false
-    }
-
     /// Returns the cached access token, if any exists. This method *will not* check if the JWT is
     /// still valid! Usually, you want to use [`ServerApi::get_or_refresh_access_token`] instead!
     pub fn get_access_token_ignoring_validity(&self) -> Option<String> {
@@ -169,10 +146,7 @@ impl AuthState {
         Some(local_system_display_name())
     }
 
-    /// Returns the user's email. Note the non-obvious semantics of this function:
-    /// If the user is logged in and not anonymous, the email will always be populated.
-    /// If the user is logged in and anonymous, their email will be an empty string.
-    /// If the user is not logged in, their email will be `None`.
+    /// Returns the user's email if this local profile has one.
     pub fn user_email(&self) -> Option<String> {
         let _ = self;
         None
@@ -196,93 +170,10 @@ impl AuthState {
         })
     }
 
-    /// Returns whether or not the user is anonymous.
-    /// Local-first sessions use a local non-anonymous user by default.
-    /// Returns `None` if there is no user data.
-    pub fn is_user_anonymous(&self) -> Option<bool> {
-        self.user
-            .read()
-            .as_ref()
-            .map(|user| user.is_user_anonymous())
-    }
-
-    /// Returns whether or not the user is a "web client anonymous user", aka their account
-    /// originated from viewing Warp on web.
-    pub fn is_user_web_anonymous_user(&self) -> Option<bool> {
-        self.user.read().as_ref().map(|user| {
-            user.anonymous_user_type() == Some(AnonymousUserType::WebClientAnonymousUser)
-                && user.linked_at().is_none()
-        })
-    }
-
-    /// Returns whether or not the user is a feature gated anonymous user.
-    pub fn is_anonymous_user_feature_gated(&self) -> Option<bool> {
-        self.user.read().as_ref().map(|user| {
-            if !self.is_user_anonymous().unwrap_or_default() {
-                return false;
-            }
-
-            matches!(
-                user.anonymous_user_type(),
-                Some(AnonymousUserType::NativeClientAnonymousUserFeatureGated)
-            )
-        })
-    }
-
-    /// Returns whether or not the anonymous user is past any local object limits.
-    pub fn is_anonymous_user_past_object_limit(
-        &self,
-        object_type: ObjectType,
-        num_objects: usize,
-    ) -> Option<bool> {
-        self.user.read().as_ref().map(|user| {
-            if !self.is_anonymous_user_feature_gated().unwrap_or_default() {
-                return false;
-            }
-
-            if let Some(limits) = user.personal_object_limits() {
-                match object_type {
-                    ObjectType::Notebook => num_objects > limits.notebook_limit,
-                    ObjectType::Workflow => num_objects > limits.workflow_limit,
-                    ObjectType::GenericStringObject(GenericStringObjectFormat::Json(
-                        JsonObjectType::EnvVarCollection,
-                    )) => num_objects > limits.env_var_limit,
-                    _ => false,
-                }
-            } else {
-                false
-            }
-        })
-    }
-
     /// Returns the user's profile photo URL, if one exists.
     pub fn user_photo_url(&self) -> Option<String> {
         let _ = self;
         None
-    }
-
-    /// Returns whether or not the user needs to link their account to an SSO provider.
-    pub fn needs_sso_link(&self) -> Option<bool> {
-        self.user.read().as_ref().map(|user| user.needs_sso_link)
-    }
-
-    /// Returns the anonymous user type.
-    /// Note that a `Some()` value here does NOT mean the user is still anonymous;
-    /// they might have since signed up, but we keep their anonymous user type around.
-    pub fn anonymous_user_type(&self) -> Option<AnonymousUserType> {
-        self.user
-            .read()
-            .as_ref()
-            .and_then(|user| user.anonymous_user_type())
-    }
-
-    /// Returns the personal object limits the user has.
-    /// Currently, only anonymous users have limits.
-    pub fn personal_object_limits(&self) -> Option<PersonalObjectLimits> {
-        self.user
-            .read()
-            .as_ref()
-            .and_then(|user| user.personal_object_limits())
     }
 
     /// Set whether or not the user is onboarded.
@@ -295,26 +186,6 @@ impl AuthState {
     /// If the user is logged in, returns their local user id. Otherwise, returns None.
     pub fn user_id(&self) -> Option<UserUid> {
         self.user.read().as_ref().map(|user| user.local_id)
-    }
-
-    /// Returns the user's anonymous id.
-    /// The anonymous id will be consistent across the app's lifetime. It is a random UUID.
-    pub fn anonymous_id(&self) -> String {
-        self.anonymous_id.to_string()
-    }
-
-    /// Returns whether or not the renotification block to encourage anonymous users to sign up
-    /// has expired.
-    pub fn anonymous_user_renotification_block_expired(
-        &self,
-        last_time_opt: Option<String>,
-    ) -> bool {
-        self.is_anonymous_user_feature_gated().unwrap_or_default()
-            && last_time_opt
-                .and_then(|last_time_string| last_time_string.parse::<DateTime<Utc>>().ok())
-                .is_none_or(|last_time| {
-                    Utc::now() - ANONYMOUS_USER_NOTIFICATION_BLOCK_TIMER >= last_time
-                })
     }
 
     /// Returns whether or not the user is on a work domain.
@@ -360,7 +231,6 @@ impl AuthStateProvider {
         Self {
             auth_state: Arc::new(AuthState {
                 user: RwLock::new(None),
-                anonymous_id: Uuid::new_v4(),
                 credentials: RwLock::new(None),
             }),
         }

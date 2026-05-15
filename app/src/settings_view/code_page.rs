@@ -508,7 +508,6 @@ impl View for CodeSettingsPageView {
 
 #[derive(Debug, Clone)]
 pub enum CodeSettingsPageEvent {
-    SignupAnonymousUser,
     OpenLspLogs { log_path: PathBuf },
     OpenProjectRules { rule_paths: Vec<PathBuf> },
 }
@@ -521,7 +520,6 @@ pub enum CodeSettingsPageAction {
     ManualResync(PathBuf),
     DeleteIndex(PathBuf),
     ManualAddDirectory,
-    SignupAnonymousUser,
     /// Toggle an LSP server on/off for a workspace.
     ToggleLspServer {
         workspace_path: PathBuf,
@@ -573,7 +571,7 @@ impl TypedActionView for CodeSettingsPageView {
 
                 CodeSettings::handle(ctx).update(ctx, |settings, ctx| {
                     match settings.codebase_context_enabled.toggle_and_save_value(ctx) {
-                        Ok(new_value) => {}
+                        Ok(_new_value) => {}
                         Err(e) => {
                             log::warn!("Failed to set value for Codebase Context: {e:?}");
                         }
@@ -585,7 +583,7 @@ impl TypedActionView for CodeSettingsPageView {
             CodeSettingsPageAction::ToggleAutoIndexing => {
                 CodeSettings::handle(ctx).update(ctx, |settings, ctx| {
                     match settings.auto_indexing_enabled.toggle_and_save_value(ctx) {
-                        Ok(new_value) => {}
+                        Ok(_new_value) => {}
                         Err(e) => {
                             log::warn!("Failed to set value for auto indexing: {e:?}");
                         }
@@ -606,9 +604,6 @@ impl TypedActionView for CodeSettingsPageView {
             }
             CodeSettingsPageAction::ManualAddDirectory => {
                 self.open_directory_picker(ctx);
-            }
-            CodeSettingsPageAction::SignupAnonymousUser => {
-                ctx.emit(CodeSettingsPageEvent::SignupAnonymousUser);
             }
             CodeSettingsPageAction::ToggleLspServer {
                 workspace_path,
@@ -642,7 +637,7 @@ impl TypedActionView for CodeSettingsPageView {
                 ctx.notify();
             }
             CodeSettingsPageAction::RestartLspServer { server } => {
-                let server_name = server.as_ref(ctx).server_name();
+                let _server_name = server.as_ref(ctx).server_name();
 
                 server.update(ctx, |server, ctx| {
                     server.restart(ctx);

@@ -1,10 +1,4 @@
-//! Rust version of `GenerateAIInputSuggestionsRequest` and its fields.
-//!
-//! These types correspond to the warp-go types defined in
-//! warp-server/model/types/generate_ai_input_suggestions/request.go.
-//!
-//! Documentation on the types here is directly borrowed from the documentation on the go schema;
-//! see the go schema for the source-of-truth.
+//! Request types for local AI input suggestions.
 
 use serde::{Deserialize, Serialize};
 

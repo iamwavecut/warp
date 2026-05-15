@@ -44,16 +44,3 @@ impl AuthToken {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct RefreshToken(String);
-
-impl RefreshToken {
-    pub fn new(token: impl Into<String>) -> Self {
-        Self(token.into())
-    }
-
-    pub fn get(&self) -> &str {
-        self.0.as_str()
-    }
-}

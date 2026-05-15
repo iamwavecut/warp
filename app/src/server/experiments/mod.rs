@@ -13,15 +13,13 @@
 
 use crate::features::FeatureFlag;
 use warpui::AppContext;
-#[cfg(not(test))]
-use warpui::SingletonEntity as _;
 #[cfg(test)]
 use warpui::SingletonEntity;
 
 mod convert;
 mod model;
 
-pub use model::{Event as ServerExperimentsEvent, ServerExperiments};
+pub use model::ServerExperiments;
 
 /// The known server-side experiments.
 #[allow(clippy::enum_variant_names)]

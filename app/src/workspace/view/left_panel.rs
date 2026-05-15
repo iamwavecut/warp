@@ -23,9 +23,6 @@ use crate::code::buffer_location::LocalOrRemotePath;
 use crate::code::file_tree::FileTreeEvent;
 use crate::coding_panel_enablement_state::CodingPanelEnablementState;
 use crate::drive::panel::{DrivePanel, DrivePanelEvent};
-#[cfg(feature = "local_fs")]
-use crate::interaction_sources::CodePanelsFileOpenEntrypoint;
-use crate::interaction_sources::{FileTreeSource, WarpDriveSource};
 use crate::pane_group::working_directories::WorkingDirectory;
 use crate::pane_group::{PaneGroup, WorkingDirectoriesEvent, WorkingDirectoriesModel};
 use crate::settings_view::keybindings::{KeybindingChangedEvent, KeybindingChangedNotifier};

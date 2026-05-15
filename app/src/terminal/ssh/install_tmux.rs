@@ -376,9 +376,7 @@ impl View for SshInstallTmuxBlock {
             "In order to Warpify your SSH session, tmux must be installed. "
         };
 
-        let warpify_description = vec![
-            FormattedTextFragment::plain_text(explanation),
-        ];
+        let warpify_description = vec![FormattedTextFragment::plain_text(explanation)];
 
         let text_color =
             blended_colors::text_sub(appearance.theme(), appearance.theme().surface_1());

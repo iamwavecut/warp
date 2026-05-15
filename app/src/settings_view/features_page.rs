@@ -21,9 +21,8 @@ use super::keybindings::KeyBindingModifyingState;
 #[cfg(feature = "local_tty")]
 use super::settings_page::render_sub_sub_header;
 use super::settings_page::{
-    add_setting, build_reset_button, render_body_item_label, render_dropdown_item_label,
-    render_local_only_icon, Category, LocalOnlyIconState, MatchData, PageType, SettingsWidget,
-    TOGGLE_BUTTON_RIGHT_PADDING,
+    add_setting, build_reset_button, render_body_item_label, render_dropdown_item_label, Category,
+    LocalOnlyIconState, MatchData, PageType, SettingsWidget, TOGGLE_BUTTON_RIGHT_PADDING,
 };
 use super::settings_page::{
     render_body_item, render_dropdown_item, AdditionalInfo, SettingsPageMeta,
@@ -41,15 +40,14 @@ use crate::search::command_search::settings::{
 };
 use crate::settings::ai::AISettings;
 use crate::settings::{
-    AISettingsChangedEvent, ScrollSettingsChangedEvent, ShowChangelogAfterUpdate,
-    UserNativeRedirectPreference,
+    AISettingsChangedEvent, ScrollSettingsChangedEvent, UserNativeRedirectPreference,
 };
 use crate::settings::{
     AliasExpansionEnabled, AliasExpansionSettings, AppEditorSettings, AtContextMenuInTerminalMode,
-    AutocompleteSymbols, AutosuggestionKeybindingHint, ChangelogSettings, CodeSettings,
-    CommandCorrections, CompletionsOpenWhileTyping, CopyOnSelect, CtrlTabBehavior,
-    DefaultSessionMode, EnableSlashCommandsInTerminal, EnableSshWrapper, ErrorUnderliningEnabled,
-    ExtraMetaKeys, GPUSettings, GlobalHotkeyMode, InputSettings, InputSettingsChangedEvent,
+    AutocompleteSymbols, AutosuggestionKeybindingHint, CodeSettings, CommandCorrections,
+    CompletionsOpenWhileTyping, CopyOnSelect, CtrlTabBehavior, DefaultSessionMode,
+    EnableSlashCommandsInTerminal, EnableSshWrapper, ErrorUnderliningEnabled, ExtraMetaKeys,
+    GPUSettings, GlobalHotkeyMode, InputSettings, InputSettingsChangedEvent,
     LinuxSelectionClipboard, MiddleClickPasteEnabled, MouseScrollMultiplier,
     OutlineCodebaseSymbolsForAtContextMenu, PreferLowPowerGPU, PreferredGraphicsBackend,
     QuakeModeSettings, ScrollSettings, SelectionSettings, ShowAutosuggestionIgnoreButton,
@@ -632,7 +630,6 @@ pub enum FeaturesPageAction {
     SearchForKeybinding(String),
     ToggleAutosuggestions,
     ToggleConfirmCloseSession,
-    ToggleShowChangelogAfterUpdate,
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     ToggleForceX11,
     ToggleAutosuggestionKeybindingHint,
@@ -703,16 +700,11 @@ fn block_maximum_rows_description() -> String {
     )
 }
 
-fn to_string(b: bool) -> String {
-    format!("{b}")
-}
-
 impl FeaturesPageAction {}
 
 #[derive(Default)]
 struct MouseStateHandles {
     local_only_icon_tooltip_states: RefCell<HashMap<String, MouseStateHandle>>,
-    tab_behavior_local_only_icon: MouseStateHandle,
     activation_hotkey_keybinding_editor: MouseStateHandle,
     activation_hotkey_save: MouseStateHandle,
     activation_hotkey_cancel: MouseStateHandle,
@@ -1370,13 +1362,6 @@ impl TypedActionView for FeaturesPageView {
                         .toggle_and_save_value(ctx));
                 });
             }
-            ToggleShowChangelogAfterUpdate => {
-                ChangelogSettings::handle(ctx).update(ctx, |changelog_settings, ctx| {
-                    report_if_error!(changelog_settings
-                        .show_changelog_after_update
-                        .toggle_and_save_value(ctx));
-                })
-            }
             ToggleLinuxClipboardSelection => {
                 SelectionSettings::handle(ctx).update(ctx, |selection_settings, ctx| {
                     report_if_error!(selection_settings
@@ -1495,7 +1480,6 @@ impl FeaturesPageView {
         ctx.subscribe_to_model(&AliasExpansionSettings::handle(ctx), |_, _, _, ctx| {
             ctx.notify()
         });
-        ctx.subscribe_to_model(&ChangelogSettings::handle(ctx), |_, _, _, ctx| ctx.notify());
         ctx.subscribe_to_model(&CommandSearchSettings::handle(ctx), |_, _, _, ctx| {
             ctx.notify()
         });
@@ -2031,14 +2015,6 @@ impl FeaturesPageView {
             .is_supported_on_current_platform()
         {
             general_widgets.push(Box::new(LoginItemWidget::default()));
-        }
-
-        let changelog_settings = ChangelogSettings::as_ref(ctx);
-        if changelog_settings
-            .show_changelog_after_update
-            .is_supported_on_current_platform()
-        {
-            general_widgets.push(Box::new(ShowChangelogWidget::default()));
         }
 
         let scroll_settings = ScrollSettings::as_ref(ctx);
@@ -3838,12 +3814,7 @@ impl SettingsWidget for SessionRestorationWidget {
             .finish();
 
             let link = ui_builder
-                .link(
-                    "See docs.".to_owned(),
-                    None,
-                    None,
-                    self.docs_link.clone(),
-                )
+                .link("See docs.".to_owned(), None, None, self.docs_link.clone())
                 .soft_wrap(false)
                 .build()
                 .finish();
@@ -4126,53 +4097,6 @@ impl SettingsWidget for QuitWhenAllWindowsClosedWidget {
                 .build()
                 .on_click(move |ctx, _, _| {
                     ctx.dispatch_typed_action(FeaturesPageAction::ToggleQuitOnLastWindowClosed);
-                })
-                .finish(),
-            None,
-        )
-    }
-}
-
-#[derive(Default)]
-struct ShowChangelogWidget {
-    switch_state: SwitchStateHandle,
-}
-
-impl SettingsWidget for ShowChangelogWidget {
-    type View = FeaturesPageView;
-
-    fn search_terms(&self) -> &str {
-        "changelog updates"
-    }
-
-    fn render(
-        &self,
-        view: &Self::View,
-        appearance: &Appearance,
-        app: &AppContext,
-    ) -> Box<dyn Element> {
-        let changelog_settings = ChangelogSettings::as_ref(app);
-        let ui_builder = appearance.ui_builder();
-        render_body_item::<FeaturesPageAction>(
-            "Show changelog toast after updates".into(),
-            None,
-            LocalOnlyIconState::for_setting(
-                ShowChangelogAfterUpdate::storage_key(),
-                ShowChangelogAfterUpdate::sync_to_cloud(),
-                &mut view
-                    .button_mouse_states
-                    .local_only_icon_tooltip_states
-                    .borrow_mut(),
-                app,
-            ),
-            ToggleState::Enabled,
-            appearance,
-            ui_builder
-                .switch(self.switch_state.clone())
-                .check(*changelog_settings.show_changelog_after_update)
-                .build()
-                .on_click(move |ctx, _, _| {
-                    ctx.dispatch_typed_action(FeaturesPageAction::ToggleShowChangelogAfterUpdate);
                 })
                 .finish(),
             None,
@@ -5868,7 +5792,7 @@ impl SettingsWidget for TabKeyBehaviorWidget {
         appearance: &Appearance,
         app: &AppContext,
     ) -> Box<dyn Element> {
-        let mut tab_key_span = Flex::row()
+        let tab_key_span = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
             .with_child(
                 appearance

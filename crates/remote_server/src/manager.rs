@@ -198,15 +198,10 @@ impl RemoteServerErrorKind {
 ///   `server` string): the tags must match exactly. Mismatched releases
 ///   cause the manager to tear the session down and delete the stale
 ///   binary so the next reconnect reinstalls.
-/// - Client has no version (`None`): always compatible. This covers two
-///   dev-loop scenarios:
-///   1. `cargo run` + `script/deploy_remote_server` — neither side
-///      reports a release tag (server string is empty).
-///   2. `cargo run` against a remote that has a release-tagged binary
-///      already installed — the client has no tag but the server does.
-///      Treating this as compatible avoids tearing down and deleting a
-///      perfectly good server binary just because the local dev client
-///      doesn't carry a release tag.
+/// - Client has no version (`None`): always compatible. This supports local
+///   development against manually managed remote binaries without deleting a
+///   perfectly good server binary just because the local dev client doesn't
+///   carry a release tag.
 /// - Client has a version but server reports empty: incompatible. A
 ///   release-tagged client should not accept an untagged server — it
 ///   likely means the binary was deployed via the dev script rather
@@ -1043,7 +1038,7 @@ impl RemoteServerManager {
                             // which is critical for ResponseChannelClosed
                             // errors where the non-blocking try_status()
                             // previously returned None due to a timing race.
-                            let exit_status = match maybe_child {
+                            let _exit_status = match maybe_child {
                                 Some(child) => Self::await_exit_status(child, session_id).await,
                                 None => None,
                             };

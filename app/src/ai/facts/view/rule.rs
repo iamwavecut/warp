@@ -327,9 +327,8 @@ impl RuleView {
         event: &UpdateManagerEvent,
         ctx: &mut ViewContext<Self>,
     ) {
-        if let UpdateManagerEvent::ObjectOperationComplete { .. } = event {
-            self.fetch_ai_rules(ctx);
-        }
+        let UpdateManagerEvent::ObjectOperationComplete { .. } = event;
+        self.fetch_ai_rules(ctx);
     }
 
     fn handle_cloud_model_event(&mut self, event: &CloudModelEvent, ctx: &mut ViewContext<Self>) {

@@ -15,7 +15,7 @@ use warp::{
         },
         step::new_step_with_default_assertions,
         subshell::{
-            enter_remote_server_ssh_command, enter_ssh_password, setup_gcloud_sdk,
+            enter_remote_server_ssh_command, enter_ssh_password, setup_remote_ssh_test_env,
             wait_for_remote_server_password_prompt,
         },
         terminal::{
@@ -58,7 +58,7 @@ fn remote_server_builder() -> Builder {
 fn with_ssh_connect_steps(builder: Builder, shell: &'static str) -> Builder {
     builder
         .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
-        .with_step(setup_gcloud_sdk())
+        .with_step(setup_remote_ssh_test_env())
         .with_step(enter_remote_server_ssh_command(shell))
         .with_step(wait_for_remote_server_password_prompt(0, shell))
         .with_step(enter_ssh_password().set_post_step_pause(Duration::from_millis(250)))

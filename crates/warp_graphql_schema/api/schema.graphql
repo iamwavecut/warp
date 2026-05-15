@@ -117,20 +117,6 @@ type AccountDelinquencyError implements UserFacingErrorInterface {
   message: String!
 }
 
-"""Acquisition channel question response input"""
-input AcquisitionChannelQuestionResponseInput {
-  answer: AcquisitionChannelSurveyResponse!
-  details: String
-}
-
-"""Acquisition channel options for onboarding survey responses"""
-enum AcquisitionChannelSurveyResponse {
-  FRIEND
-  INTERNET
-  IN_THE_WILD
-  TEAMMATE
-}
-
 """
 More recent actions are returned with their exact timestamps. Older actions
 are bundled together to save space at the cost of being less time specific.
@@ -170,11 +156,6 @@ union AddObjectGuestsResult = AddObjectGuestsOutput | UserFacingError
 enum AddonCreditAutoReloadStatus {
   FAILED
   SUCCEEDED
-}
-
-type AddonCreditsOption {
-  credits: Int!
-  priceUsdCents: Int!
 }
 
 type AddonCreditsSettings {
@@ -389,31 +370,6 @@ type AmbientTaskUpdated {
   taskUpdatedTs: Time!
 }
 
-enum AnonymousUserExpirationType {
-  EXPIRATION_14_DAYS
-  NO_EXPIRATION
-}
-
-type AnonymousUserInfo {
-  anonymousUserType: AnonymousUserType!
-  expiresAt: Time
-  isExpired: Boolean!
-  linkedAt: Time
-  personalObjectLimits: AnonymousUserPersonalObjectLimits
-}
-
-type AnonymousUserPersonalObjectLimits {
-  envVarLimit: Int!
-  notebookLimit: Int!
-  workflowLimit: Int!
-}
-
-enum AnonymousUserType {
-  NATIVE_CLIENT_ANONYMOUS_USER
-  NATIVE_CLIENT_ANONYMOUS_USER_FEATURE_GATED
-  WEB_CLIENT_ANONYMOUS_USER
-}
-
 type AnyoneWithLinkSharingPolicy {
   toggleable: Boolean!
 }
@@ -568,57 +524,6 @@ input ClientContext {
   version: String
 }
 
-type CloudConversationStoragePolicy {
-  defaultSetting: AdminEnablementSetting!
-  isUnlimited: Boolean!
-  limit: Int!
-  toggleable: Boolean!
-}
-
-type CloudConversationStorageSettings {
-  setting: AdminEnablementSetting!
-}
-
-input CloudConversationStorageSettingsInput {
-  setting: AdminEnablementSetting
-}
-
-type CloudEnvironment {
-  config: CloudEnvironmentConfig!
-  creator: PublicUserProfile
-  lastEditor: PublicUserProfile
-
-  """The most recently created task for this environment, if any."""
-  lastTaskCreated: AgentTask
-  lastTaskRunTimestamp: Time
-  lastUpdated: Time!
-  scope: Space!
-
-  """
-  True when the most recent task for this environment failed during setup
-  (i.e., it was created but never started running).
-  """
-  setupFailed: Boolean!
-  uid: ID!
-}
-
-type CloudEnvironmentConfig {
-  description: String
-  dockerImage: String!
-  githubRepos: [GitHubRepo!]!
-  name: String!
-  providers: ProvidersConfig
-  setupCommands: [String!]
-}
-
-enum CloudEnvironmentSortBy {
-  """Sort by most recently updated first"""
-  LAST_UPDATED
-
-  """Sort alphabetically by environment name"""
-  NAME
-}
-
 union CloudObject = AIConversation | Folder | GenericStringObject | Notebook | Workflow
 
 """
@@ -684,18 +589,6 @@ enum ComputerUseAutonomyValue {
   NEVER
   RESPECT_USER_SETTING
 }
-
-input ConfirmFileArtifactUploadInput {
-  artifactUid: ID!
-  checksum: String!
-}
-
-type ConfirmFileArtifactUploadOutput implements Response {
-  artifact: FileArtifact!
-  responseContext: ResponseContext!
-}
-
-union ConfirmFileArtifactUploadResult = ConfirmFileArtifactUploadOutput | UserFacingError
 
 """
 A Warp Drive entity that can contain other objects. Today, all objects are either
@@ -763,39 +656,6 @@ type CreateAgentTaskOutput implements Response {
 
 union CreateAgentTaskResult = CreateAgentTaskOutput | UserFacingError
 
-input CreateAnonymousUserInput {
-  anonymousUserType: AnonymousUserType!
-  expirationType: AnonymousUserExpirationType!
-}
-
-type CreateAnonymousUserOutput implements Response {
-  anonymousUserType: AnonymousUserType!
-  expiresAt: Time
-  firebaseUid: String!
-  idToken: String!
-  isInviteValid: Boolean!
-  responseContext: ResponseContext!
-}
-
-union CreateAnonymousUserResult = CreateAnonymousUserOutput | UserFacingError
-
-input CreateFileArtifactUploadTargetInput {
-  conversationId: ID
-  description: String
-  filepath: String!
-  mimeType: String
-  runId: ID
-  sizeBytes: Int
-}
-
-type CreateFileArtifactUploadTargetOutput implements Response {
-  artifact: FileArtifact!
-  responseContext: ResponseContext!
-  uploadTarget: CreateUploadTarget!
-}
-
-union CreateFileArtifactUploadTargetResult = CreateFileArtifactUploadTargetOutput | UserFacingError
-
 input CreateFolderInput {
   initialFolderId: ID
   name: String!
@@ -823,21 +683,6 @@ type CreateGenericStringObjectOutput implements Response {
 
 union CreateGenericStringObjectResult = CreateGenericStringObjectOutput | UserFacingError
 
-input CreateManagedSecretInput {
-  description: String
-  encryptedValue: String!
-  name: String!
-  owner: Owner!
-  type: ManagedSecretType!
-}
-
-type CreateManagedSecretOutput implements Response {
-  managedSecret: ManagedSecret!
-  responseContext: ResponseContext!
-}
-
-union CreateManagedSecretResult = CreateManagedSecretOutput | UserFacingError
-
 input CreateNotebookInput {
   aiDocumentId: String
   conversationId: String
@@ -856,23 +701,6 @@ type CreateNotebookOutput implements Response {
 
 union CreateNotebookResult = CreateNotebookOutput | UserFacingError
 
-input CreateSimpleIntegrationInput {
-  config: SimpleIntegrationConfig!
-  enabled: Boolean!
-  integrationType: String!
-  isUpdate: Boolean! = false
-}
-
-type CreateSimpleIntegrationOutput implements Response {
-  authUrl: String
-  message: String!
-  responseContext: ResponseContext!
-  success: Boolean!
-  txId: ID
-}
-
-union CreateSimpleIntegrationResult = CreateSimpleIntegrationOutput | UserFacingError
-
 input CreateTeamInput {
   discoverable: Boolean! = false
   entrypoint: CloudObjectEventEntrypoint!
@@ -886,16 +714,7 @@ type CreateTeamOutput implements Response {
 
 union CreateTeamResult = CreateTeamOutput | UserFacingError
 
-type ContentCRC32CFieldValue {
-  _: Boolean
-}
-
-type ContentDataFieldValue {
-  _: Boolean
-}
-
 type CreateUploadTarget {
-  fields: [UploadField!]!
   headers: [CreateUploadTargetHeader!]!
   method: String!
   url: String!
@@ -964,17 +783,6 @@ type DeleteInviteLinkDomainRestrictionOutput implements Response {
 }
 
 union DeleteInviteLinkDomainRestrictionResult = DeleteInviteLinkDomainRestrictionOutput | UserFacingError
-
-input DeleteManagedSecretInput {
-  name: String!
-  owner: Owner!
-}
-
-type DeleteManagedSecretOutput implements Response {
-  responseContext: ResponseContext!
-}
-
-union DeleteManagedSecretResult = DeleteManagedSecretOutput | UserFacingError
 
 input DeleteObjectInput {
   uid: ID!
@@ -1407,14 +1215,6 @@ type GenerateMetadataForCommandSuccess {
   title: String!
 }
 
-type GenerateUniqueUpgradePromoCodeOutput implements Response {
-  promoCode: String
-  responseContext: ResponseContext!
-  showInterstitial: Boolean!
-}
-
-union GenerateUniqueUpgradePromoCodeResult = GenerateUniqueUpgradePromoCodeOutput | UserFacingError
-
 type GeneratedCommand {
   command: String!
   description: String!
@@ -1440,14 +1240,9 @@ type GenericStringObject {
 }
 
 enum GenericStringObjectFormat {
-  JsonAIExecutionProfile
   JsonAIFact
-  JsonCloudEnvironment
   JsonEnvVarCollection
-  JsonMCPServer
   JsonPreference
-  JsonScheduledAmbientAgent
-  JsonTemplatableMCPServer
   JsonWorkflowEnum
 }
 
@@ -1480,35 +1275,6 @@ type GenericStringObjectUpdateRejected {
   revisionTs: Time!
 }
 
-type GetCloudEnvironmentsOutput implements Response {
-  cloudEnvironments: [CloudEnvironment!]!
-  responseContext: ResponseContext!
-}
-
-union GetCloudEnvironmentsResult = GetCloudEnvironmentsOutput | UserFacingError
-
-input GetIntegrationsUsingEnvironmentInput {
-  environmentId: String!
-}
-
-type GetIntegrationsUsingEnvironmentOutput implements Response {
-  providerNames: [String!]!
-  responseContext: ResponseContext!
-}
-
-union GetIntegrationsUsingEnvironmentResult = GetIntegrationsUsingEnvironmentOutput | UserFacingError
-
-input GetOAuthConnectTxStatusInput {
-  txId: ID!
-}
-
-type GetOAuthConnectTxStatusOutput implements Response {
-  responseContext: ResponseContext!
-  status: OAuthConnectTxStatus!
-}
-
-union GetOAuthConnectTxStatusResult = GetOAuthConnectTxStatusOutput | UserFacingError
-
 type GetRelevantFragmentsError {
   error: String!
 }
@@ -1527,80 +1293,11 @@ type GetRelevantFragmentsOutput implements Response {
 
 union GetRelevantFragmentsResult = GetRelevantFragmentsError | GetRelevantFragmentsOutput | UserFacingError
 
-type GitHubRepo {
-  owner: String!
-  repo: String!
-}
-
-enum GithubAccountType {
-  ORGANIZATION
-  UNKNOWN
-  USER
-}
-
-"""User needs to authenticate with GitHub"""
-type GithubAuthRequiredOutput implements Response {
-  appInstallLink: String!
-  authUrl: String!
-  responseContext: ResponseContext!
-  txId: ID!
-}
-
-"""User is connected to GitHub and we have their info"""
-type GithubConnectedOutput implements Response {
-  appInstallLink: String!
-  installedRepos: [RepoResult!]!
-  responseContext: ResponseContext!
-  username: String
-}
-
-type GithubInstallation {
-  accountLogin: String!
-  accountType: GithubAccountType
-  associatedTeamUids: [String!]!
-  id: ID!
-  repositorySelection: String
-}
-
-"""
-GithubReposLanguageStat represents detected language usage for a set of repos.
-"""
-type GithubReposLanguageStat {
-  bytes: Int!
-  language: String!
-  percentage: Float!
-}
-
-"""
-Error type for when a user provides GitHub repositories that do not exist or are not accessible.
-
-This is intended to be reusable across APIs that accept GitHub repo inputs.
-"""
-type GithubRepositoryNotFoundError implements UserFacingErrorInterface {
-  message: String!
-  repositories: [GitHubRepo!]!
-}
-
 union GuestSubject = PendingUserGuest | TeamGuest | UserGuest
 
 enum HostEnablementSetting {
   ENFORCE
   RESPECT_USER_SETTING
-}
-
-"""ImageTag represents a Docker image tag with repository information."""
-type ImageTag {
-  """Full image name with tag (e.g., "warpdotdev/dev-ubuntu:latest")"""
-  image: String!
-
-  """Languages label from the image (e.g., ["go", "golang"])"""
-  languages: [String!]!
-
-  """Repository name (e.g., "dev-ubuntu")"""
-  repository: String!
-
-  """Tag name (e.g., "latest", "24.04")"""
-  tag: String!
 }
 
 type InstanceShape {
@@ -1623,13 +1320,6 @@ type InvalidInputError implements UserFacingErrorInterface {
   message: String!
 }
 
-"""
-Error type for when the client provides an invalid managed secret value.
-"""
-type InvalidSecretError implements UserFacingErrorInterface {
-  message: String!
-}
-
 """Returned when the provided user code is no longer valid."""
 type InvalidUserCodeError implements UserFacingErrorInterface {
   message: String!
@@ -1639,37 +1329,6 @@ type InviteLinkDomainRestriction {
   domain: String!
   uid: ID!
 }
-
-"""Input for the issueTaskIdentityToken mutation."""
-input IssueTaskIdentityTokenInput {
-  """The intended audience for the token (e.g. a cloud provider URL)."""
-  audience: String!
-
-  """
-  The requested token duration in seconds. The server may cap this to a maximum value.
-  """
-  requestedDurationSeconds: Int!
-
-  """
-  Controls how the OIDC subject claim is formatted. Each element names a claim
-  to include.
-  """
-  subjectTemplate: [String!]
-}
-
-type IssueTaskIdentityTokenOutput implements Response {
-  """When the token expires."""
-  expiresAt: Time!
-
-  """The OIDC issuer that signed the token."""
-  issuer: String!
-  responseContext: ResponseContext!
-
-  """The signed OIDC JWT."""
-  token: String!
-}
-
-union IssueTaskIdentityTokenResult = IssueTaskIdentityTokenOutput | UserFacingError
 
 input JoinTeamWithTeamDiscoveryInput {
   entrypoint: TeamDiscoveryEntrypoint!
@@ -1707,38 +1366,6 @@ type LinkSharingSettings {
 input LinkSharingSettingsInput {
   anyoneWithLinkSharingEnabled: Boolean
   directLinkSharingEnabled: Boolean
-}
-
-input ListAIConversationsInput {
-  """
-  If specified, fetch only these conversation IDs.
-  If empty or null, fetches all conversations for the user.
-  """
-  conversationIds: [ID!]
-}
-
-type ListAIConversationsOutput implements Response {
-  conversations: [AIConversation!]!
-  responseContext: ResponseContext!
-}
-
-union ListAIConversationsResult = ListAIConversationsOutput | UserFacingError
-
-type ListWarpDevImagesOutput implements Response {
-  """List of available Warp dev base images from Docker Hub"""
-  images: [ImageTag!]!
-  responseContext: ResponseContext!
-}
-
-union ListWarpDevImagesResult = ListWarpDevImagesOutput | UserFacingError
-
-type ListedSimpleIntegrationConfig {
-  basePrompt: String!
-  computerUseEnabled: Boolean!
-  environmentUid: String!
-  mcpServersJson: String!
-  modelId: String!
-  workerHost: String
 }
 
 type LlmContextWindow {
@@ -1923,98 +1550,6 @@ type MCPTemplateVariable {
   key: String!
 }
 
-type ManagedSecret {
-  createdAt: Time!
-
-  """
-  An optional description of the secret (for example, instructions on how to rotate it).
-  """
-  description: String
-
-  """The name of this secret. Secret names are unique for a given owner."""
-  name: String!
-
-  """The user or team who owns this secret."""
-  owner: Space!
-
-  """The kind of secret value."""
-  type: ManagedSecretType!
-  updatedAt: Time!
-}
-
-"""A managed secret value representing an Anthropic API key."""
-type ManagedSecretAnthropicApiKeyValue {
-  apiKey: String!
-}
-
-"""A managed secret value representing an Anthropic Bedrock API key."""
-type ManagedSecretAnthropicBedrockApiKeyValue {
-  awsBearerTokenBedrock: String!
-  awsRegion: String!
-}
-
-"""A managed secret value representing Anthropic Bedrock access key credentials."""
-type ManagedSecretAnthropicBedrockAccessKeyValue {
-  awsAccessKeyId: String!
-  awsRegion: String!
-  awsSecretAccessKey: String!
-
-  """
-  Optional AWS session token. Only required when using temporary credentials
-  (e.g. STS-issued credentials). Persistent IAM access keys do not need one.
-  """
-  awsSessionToken: String
-}
-
-"""ManagedSecretConfig contains configuration for managed secrets."""
-type ManagedSecretConfig {
-  """
-  Public key for uploading managed secrets.
-  
-  This is the base64 representation of a keyset serialized with tink's binary format.
-  """
-  publicKey: String
-}
-
-"""A managed secret value representing an OpenAI API key."""
-type ManagedSecretOpenAiApiKeyValue {
-  apiKey: String!
-  """
-  Optional base URL for the OpenAI API. When set, the harness uses this
-  instead of the provider default (e.g. for regional endpoints).
-  """
-  baseUrl: String
-}
-
-"""A raw, unencrypted managed secret value."""
-type ManagedSecretRawValue {
-  value: String!
-}
-
-"""Type of Warp-managed secret values."""
-enum ManagedSecretType {
-  ANTHROPIC_API_KEY
-  ANTHROPIC_BEDROCK_ACCESS_KEY
-  ANTHROPIC_BEDROCK_API_KEY
-  DOTENVX
-  OPENAI_API_KEY
-  RAW_VALUE
-}
-
-union ManagedSecretValue = ManagedSecretAnthropicApiKeyValue | ManagedSecretAnthropicBedrockAccessKeyValue | ManagedSecretAnthropicBedrockApiKeyValue | ManagedSecretOpenAiApiKeyValue | ManagedSecretRawValue
-
-input ManagedSecretsInput {
-  """Pagination cursor, currently unused."""
-  cursor: String
-}
-
-type ManagedSecretsOutput implements Response {
-  managedSecrets: [ManagedSecret!]!
-  responseContext: ResponseContext!
-}
-
-union ManagedSecretsResult = ManagedSecretsOutput | UserFacingError
-
 enum MembershipRole {
   ADMIN
   OWNER
@@ -2025,20 +1560,6 @@ input MerkleTreeNode {
   children: [NodeHash!]!
   hash: NodeHash!
 }
-
-"""
-Error type for when a user tries to mint a custom token for a non-anonymous user.
-"""
-type MintCustomTokenForNonAnonymousUserError implements UserFacingErrorInterface {
-  message: String!
-}
-
-type MintCustomTokenOutput implements Response {
-  customToken: String!
-  responseContext: ResponseContext!
-}
-
-union MintCustomTokenResult = MintCustomTokenOutput | UserFacingError
 
 """
 Token usage by model within a conversation.
@@ -2083,15 +1604,6 @@ union NotebookUpdate = NotebookUpdateRejected | ObjectUpdateSuccess
 type NotebookUpdateRejected {
   conflictingNotebook: Notebook!
   revisionTs: Time!
-}
-
-"""Poll the status of an OAuth connect transaction."""
-enum OAuthConnectTxStatus {
-  COMPLETED
-  EXPIRED
-  FAILED
-  IN_PROGRESS
-  PENDING
 }
 
 input OSContext {
@@ -2183,22 +1695,6 @@ type ObjectUpdateSuccess {
   revisionTs: Time!
 }
 
-input OnboardingSurveyResponse {
-  answer: String!
-  questionIdentifier: String!
-}
-
-"""Onboarding survey status enum matching the database enum values"""
-enum OnboardingSurveyStatus {
-  COMPLETED
-  SHOWN
-  SKIPPED
-}
-
-type OveragesPricing {
-  pricePerRequestUsdCents: Int!
-}
-
 input Owner {
   type: OwnerType!
 
@@ -2238,16 +1734,6 @@ type PlanArtifact {
   documentUid: ID!
   notebookUid: ID
   title: String
-}
-
-type PlanPricing {
-  codebaseContextFileLimit: Int!
-  codebaseLimit: Int!
-  maxTeamSize: Int
-  monthlyPlanPricePerMonthUsdCents: Int!
-  plan: StripeSubscriptionPlan!
-  requestLimit: Int
-  yearlyPlanPricePerMonthUsdCents: Int!
 }
 
 """
@@ -2322,19 +1808,6 @@ type PopulateMerkleTreeCacheOutput implements Response {
 
 union PopulateMerkleTreeCacheResult = PopulateMerkleTreeCacheOutput | UserFacingError
 
-type PricingInfo {
-  addonCreditsOptions: [AddonCreditsOption!]!
-  overages: OveragesPricing!
-  plans: [PlanPricing!]!
-}
-
-type PricingInfoOutput implements Response {
-  pricingInfo: PricingInfo!
-  responseContext: ResponseContext!
-}
-
-union PricingInfoResult = PricingInfoOutput | UserFacingError
-
 """Type of principal making the authenticated request."""
 enum PrincipalType {
   SERVICE_ACCOUNT
@@ -2364,18 +1837,6 @@ type PullRequestArtifact {
 type PurchaseAddOnCreditsPolicy {
   enabled: Boolean!
 }
-
-input PurchaseAddonCreditsInput {
-  credits: Int!
-  teamUid: ID!
-}
-
-type PurchaseAddonCreditsOutput implements Response {
-  responseContext: ResponseContext!
-  success: Boolean!
-}
-
-union PurchaseAddonCreditsResult = PurchaseAddonCreditsOutput | UserFacingError
 
 """
 The request contains a UTC timestamp of when the action occurred. The JSON data
@@ -2448,21 +1909,9 @@ type RenameTeamOutput implements Response {
 
 union RenameTeamResult = RenameTeamOutput | UserFacingError
 
-input RepoInput {
-  owner: String!
-  repo: String!
-}
-
 input RepoMetadata {
   """Local path to the repository."""
   path: String
-}
-
-type RepoResult {
-  isPublic: Boolean!
-  owner: String!
-  repo: String!
-  status: UserRepoAuthStatus!
 }
 
 input RequestContext {
@@ -2547,52 +1996,23 @@ type ResponseContext {
   serverVersion: String
 }
 
-"""Role question response input"""
-input RoleQuestionResponseInput {
-  answer: RoleSurveyResponse!
-}
-
-"""Role options for onboarding survey responses"""
-enum RoleSurveyResponse {
-  BACKEND_ENGINEER
-  BUSINESS_ANALYST
-  DATA
-  DEVOPS_SRE
-  ENGINEERING_MANAGER
-  FRONTEND_ENGINEER
-  FULLSTACK_ENGINEER
-  MARKETER
-  MOBILE_ENGINEER
-  OTHER
-  PRODUCT_DESIGNER
-  PRODUCT_MANAGER
-  SALES_BUSINESS_DEV
-  STUDENT
-}
-
 type RootMutation {
   addInviteLinkDomainRestriction(input: AddInviteLinkDomainRestrictionInput!, requestContext: RequestContext!): AddInviteLinkDomainRestrictionResult!
   addObjectGuests(input: AddObjectGuestsInput!, requestContext: RequestContext!): AddObjectGuestsResult!
   bulkCreateObjects(input: BulkCreateObjectsInput!, requestContext: RequestContext!): BulkCreateObjectsResult!
-  confirmFileArtifactUpload(input: ConfirmFileArtifactUploadInput!, requestContext: RequestContext!): ConfirmFileArtifactUploadResult!
 
   """
   Creates a new agent task with the given parameters.
   Used by local CLI runs to create tasks before execution.
   """
   createAgentTask(input: CreateAgentTaskInput!, requestContext: RequestContext!): CreateAgentTaskResult!
-  createAnonymousUser(input: CreateAnonymousUserInput!, requestContext: RequestContext!): CreateAnonymousUserResult!
-  createFileArtifactUploadTarget(input: CreateFileArtifactUploadTargetInput!, requestContext: RequestContext!): CreateFileArtifactUploadTargetResult!
   createFolder(input: CreateFolderInput!, requestContext: RequestContext!): CreateFolderResult!
   createGenericStringObject(input: CreateGenericStringObjectInput!, requestContext: RequestContext!): CreateGenericStringObjectResult!
-  createManagedSecret(input: CreateManagedSecretInput!, requestContext: RequestContext!): CreateManagedSecretResult!
   createNotebook(input: CreateNotebookInput!, requestContext: RequestContext!): CreateNotebookResult!
-  createSimpleIntegration(input: CreateSimpleIntegrationInput!, requestContext: RequestContext!): CreateSimpleIntegrationResult!
   createTeam(input: CreateTeamInput!, requestContext: RequestContext!): CreateTeamResult!
   createWorkflow(input: CreateWorkflowInput!, requestContext: RequestContext!): CreateWorkflowResult!
   deleteConversation(input: DeleteConversationInput!, requestContext: RequestContext!): DeleteConversationResult!
   deleteInviteLinkDomainRestriction(input: DeleteInviteLinkDomainRestrictionInput!, requestContext: RequestContext!): DeleteInviteLinkDomainRestrictionResult!
-  deleteManagedSecret(input: DeleteManagedSecretInput!, requestContext: RequestContext!): DeleteManagedSecretResult!
   deleteObject(input: DeleteObjectInput!, requestContext: RequestContext!): DeleteObjectResult!
   deleteTeamInvite(input: DeleteTeamInviteInput!, requestContext: RequestContext!): DeleteTeamInviteResult!
   emptyTrash(input: EmptyTrashInput!, requestContext: RequestContext!): EmptyTrashResult!
@@ -2601,18 +2021,14 @@ type RootMutation {
   generateCommands(input: GenerateCommandsInput!, requestContext: RequestContext!): GenerateCommandsResult!
   generateDialogue(input: GenerateDialogueInput!, requestContext: RequestContext!): GenerateDialogueResult!
   generateMetadataForCommand(input: GenerateMetadataForCommandInput!, requestContext: RequestContext!): GenerateMetadataForCommandResult!
-  generateUniqueUpgradePromoCode(requestContext: RequestContext!): GenerateUniqueUpgradePromoCodeResult!
   giveUpNotebookEditAccess(input: UpdateNotebookEditAccessInput!, requestContext: RequestContext!): UpdateNotebookEditAccessResult!
   grabNotebookEditAccess(input: UpdateNotebookEditAccessInput!, requestContext: RequestContext!): UpdateNotebookEditAccessResult!
-  issueTaskIdentityToken(input: IssueTaskIdentityTokenInput!, requestContext: RequestContext!): IssueTaskIdentityTokenResult!
   joinTeamWithTeamDiscovery(input: JoinTeamWithTeamDiscoveryInput!, requestContext: RequestContext!): JoinTeamWithTeamDiscoveryResult!
 
   """The API for leaving an object as a direct guest or link-shared."""
   leaveObject(input: LeaveObjectInput!, requestContext: RequestContext!): LeaveObjectResult!
-  mintCustomToken(requestContext: RequestContext!): MintCustomTokenResult!
   moveObject(input: MoveObjectInput!, requestContext: RequestContext!): MoveObjectResult!
   populateMerkleTreeCache(input: PopulateMerkleTreeCacheInput!, requestContext: RequestContext!): PopulateMerkleTreeCacheResult!
-  purchaseAddonCredits(input: PurchaseAddonCreditsInput!, requestContext: RequestContext!): PurchaseAddonCreditsResult!
 
   """
   The generic API for recording an action (EXECUTED, OPENED, etc.) on some object.
@@ -2628,7 +2044,6 @@ type RootMutation {
   removeUserFromTeam(input: RemoveUserFromTeamInput!, requestContext: RequestContext!): RemoveUserFromTeamResult!
   renameTeam(input: RenameTeamInput!, requestContext: RequestContext!): RenameTeamResult!
   resetInviteLinks(input: ResetInviteLinksInput!, requestContext: RequestContext!): ResetInviteLinksResult!
-  sendOnboardingSurveyResponses(input: SendOnboardingSurveyResponsesInput!, requestContext: RequestContext!): SendOnboardingSurveyResponsesResult!
   sendTeamInviteEmail(input: SendTeamInviteEmailInput!, requestContext: RequestContext!): SendTeamInviteEmailResult!
   setIsInviteLinkEnabled(input: SetIsInviteLinkEnabledInput!, requestContext: RequestContext!): SetIsInviteLinkEnabledResult!
   setObjectLinkPermissions(input: SetObjectLinkPermissionsInput!, requestContext: RequestContext!): SetObjectLinkPermissionsResult!
@@ -2636,7 +2051,6 @@ type RootMutation {
   setTeamMemberRole(input: SetTeamMemberRoleInput!, requestContext: RequestContext!): SetTeamMemberRoleResult!
   setUserIsOnboarded(requestContext: RequestContext!): SetUserIsOnboardedResult!
   shareBlock(input: ShareBlockInput!, requestContext: RequestContext!): ShareBlockResult!
-  stripeBillingPortal(input: StripeBillingPortalInput!, requestContext: RequestContext!): StripeBillingPortalResult!
   transferGenericStringObjectOwner(input: TransferGenericStringObjectOwnerInput!, requestContext: RequestContext!): TransferGenericStringObjectOwnerResult!
   transferNotebookOwner(input: TransferNotebookOwnerInput!, requestContext: RequestContext!): TransferNotebookOwnerResult!
   transferTeamOwnership(input: TransferTeamOwnershipInput!, requestContext: RequestContext!): TransferTeamOwnershipResult! @deprecated(reason: "Use setTeamMemberRole instead")
@@ -2647,12 +2061,9 @@ type RootMutation {
 
   updateFolder(input: UpdateFolderInput!, requestContext: RequestContext!): UpdateFolderResult!
   updateGenericStringObject(input: UpdateGenericStringObjectInput!, requestContext: RequestContext!): UpdateGenericStringObjectResult!
-  updateManagedSecret(input: UpdateManagedSecretInput!, requestContext: RequestContext!): UpdateManagedSecretResult!
   updateMerkleTree(input: UpdateMerkleTreeInput!, requestContext: RequestContext!): UpdateMerkleTreeResult!
   updateNotebook(input: UpdateNotebookInput!, requestContext: RequestContext!): UpdateNotebookResult!
   updateObjectGuests(input: UpdateObjectGuestsInput!, requestContext: RequestContext!): UpdateObjectGuestsResult!
-  updateOnboardingSurveyStatus(input: UpdateOnboardingSurveyStatusInput!, requestContext: RequestContext!): UpdateOnboardingSurveyStatusResult!
-  updateUserSettings(input: UpdateUserSettingsInput!, requestContext: RequestContext!): UpdateUserSettingsResult!
   updateWorkflow(input: UpdateWorkflowInput!, requestContext: RequestContext!): UpdateWorkflowResult!
 
   """This is the public API for updating workspace settings."""
@@ -2669,49 +2080,16 @@ type RootQuery {
   """
   freeAvailableModels(input: FreeAvailableModelsInput!, requestContext: RequestContext!): FreeAvailableModelsResult!
 
-  """
-  Get cloud environments accessible to the principal.
-  Defaults to LAST_UPDATED sorting if not specified.
-  """
-  getCloudEnvironments(requestContext: RequestContext!, sortBy: CloudEnvironmentSortBy): GetCloudEnvironmentsResult!
-  getIntegrationsUsingEnvironment(input: GetIntegrationsUsingEnvironmentInput!, requestContext: RequestContext!): GetIntegrationsUsingEnvironmentResult!
-  getOAuthConnectTxStatus(input: GetOAuthConnectTxStatusInput!, requestContext: RequestContext!): GetOAuthConnectTxStatusResult!
   getRelevantFragments(input: GetRelevantFragmentsInput!, requestContext: RequestContext!): GetRelevantFragmentsResult!
-  listAIConversations(input: ListAIConversationsInput!, requestContext: RequestContext!): ListAIConversationsResult!
-
-  """
-  List available Warp development base images from Docker Hub.
-  Returns all images with the 'dev-' prefix from the warpdotdev organization.
-  """
-  listWarpDevImages: ListWarpDevImagesResult!
-  managedSecrets(input: ManagedSecretsInput!, requestContext: RequestContext!): ManagedSecretsResult!
-  pricingInfo(requestContext: RequestContext!): PricingInfoResult!
   rerankFragments(input: RerankFragmentsInput!, requestContext: RequestContext!): RerankFragmentsResult!
-
-  """Retrieve execution history for a scheduled agent."""
-  scheduledAgentHistory(input: ScheduledAgentHistoryInput!, requestContext: RequestContext!): ScheduledAgentHistoryResult!
-  simpleIntegrations(input: SimpleIntegrationsInput!, requestContext: RequestContext!): SimpleIntegrationsResult!
-  suggestCloudEnvironmentImage(input: SuggestCloudEnvironmentImageInput!, requestContext: RequestContext!): SuggestCloudEnvironmentImageResult!
 
   """
   Syncs the client merkle tree with the server merkle tree, returning the nodes that have changed.
   """
   syncMerkleTree(input: SyncMerkleTreeInput!, requestContext: RequestContext!): SyncMerkleTreeResult!
 
-  """
-  Fetch attachments for a task.
-  Requires the caller to have ViewAction permission on the task.
-  
-  Note: This query returns a Task object to allow future extension.
-  In the future, this may be merged with taskSecrets into a single task query.
-  """
-  task(input: TaskInput!, requestContext: RequestContext!): TaskResult!
-  taskGitCredentials(input: TaskGitCredentialsInput!, requestContext: RequestContext!): TaskGitCredentialsResult!
-  taskSecrets(input: TaskSecretsInput!, requestContext: RequestContext!): TaskSecretsResult!
   updatedCloudObjects(input: UpdatedCloudObjectsInput!, requestContext: RequestContext!): UpdatedCloudObjectsResult!
   user(requestContext: RequestContext!): UserResult!
-  userGithubInfo(requestContext: RequestContext!): UserGithubInfoResult!
-  userRepoAuthStatus(input: UserRepoAuthStatusInput!, requestContext: RequestContext!): UserRepoAuthStatusResult!
 }
 
 type RootSubscription {
@@ -2731,26 +2109,6 @@ type SandboxedAgentSettings {
 input SandboxedAgentSettingsInput {
   executeCommandsDenylist: [String!]
 }
-
-"""Scheduled agent execution history information."""
-type ScheduledAgentHistory {
-  """The last time the scheduled task ran. Null if it has never run."""
-  lastRan: Time
-
-  """The next time the scheduled task will run. Null if not scheduled."""
-  nextRun: Time
-}
-
-input ScheduledAgentHistoryInput {
-  scheduleId: ID!
-}
-
-type ScheduledAgentHistoryOutput implements Response {
-  history: ScheduledAgentHistory!
-  responseContext: ResponseContext!
-}
-
-union ScheduledAgentHistoryResult = ScheduledAgentHistoryOutput | UserFacingError
 
 type ScreenshotArtifact {
   artifactUid: ID!
@@ -2778,17 +2136,6 @@ input SecretRedactionSettingsInput {
   enabled: Boolean
   regexes: [SecretRedactionRegexInput!]
 }
-
-input SendOnboardingSurveyResponsesInput {
-  responses: [OnboardingSurveyResponse!]!
-}
-
-type SendOnboardingSurveyResponsesOutput implements Response {
-  responseContext: ResponseContext!
-  success: Boolean!
-}
-
-union SendOnboardingSurveyResponsesResult = SendOnboardingSurveyResponsesOutput | UserFacingError
 
 input SendTeamInviteEmailInput {
   email: String!
@@ -2927,46 +2274,6 @@ type SharedWorkflowsPolicy {
   limit: Int!
 }
 
-type SimpleIntegration {
-  connectionLink: String!
-  connectionStatus: SimpleIntegrationConnectionStatus!
-  createdAt: Time
-  description: String!
-  integrationConfig: ListedSimpleIntegrationConfig
-  providerSlug: String!
-  updatedAt: Time
-}
-
-input SimpleIntegrationConfig {
-  basePrompt: String
-  computerUseEnabled: Boolean
-  environmentUid: String
-  mcpServersJson: String
-  modelId: String
-  removeMcpServerNames: [String!]
-  workerHost: String
-}
-
-enum SimpleIntegrationConnectionStatus {
-  ACTIVE
-  CONNECTION_ERROR
-  INTEGRATION_NOT_CONFIGURED
-  NOT_CONNECTED
-  NOT_ENABLED
-}
-
-input SimpleIntegrationsInput {
-  providers: [String!]!
-}
-
-type SimpleIntegrationsOutput implements Response {
-  integrations: [SimpleIntegration!]!
-  message: String
-  responseContext: ResponseContext!
-}
-
-union SimpleIntegrationsResult = SimpleIntegrationsOutput | UserFacingError
-
 """A return type for a SINGLE action and when it occurred."""
 type SingleAction {
   actionType: ActionType!
@@ -2988,21 +2295,6 @@ enum SpaceType {
   User
 }
 
-type StaticUploadFieldValue {
-  value: String!
-}
-
-input StripeBillingPortalInput {
-  teamUid: ID!
-}
-
-type StripeBillingPortalOutput implements Response {
-  responseContext: ResponseContext!
-  url: String!
-}
-
-union StripeBillingPortalResult = StripeBillingPortalOutput | UserFacingError
-
 enum StripeSubscriptionPlan {
   BUILD
   BUILD_BUSINESS
@@ -3012,33 +2304,6 @@ enum StripeSubscriptionPlan {
   PRO
   TEAM
   TURBO
-}
-
-type SuggestCloudEnvironmentImageAuthRequiredOutput implements Response {
-  authUrl: String!
-  responseContext: ResponseContext!
-  txId: ID!
-}
-
-input SuggestCloudEnvironmentImageInput {
-  repos: [RepoInput!]!
-}
-
-type SuggestCloudEnvironmentImageOutput implements Response {
-  detectedLanguages: [GithubReposLanguageStat!]!
-  image: String!
-  needsCustomImage: Boolean!
-  reason: String!
-  responseContext: ResponseContext!
-}
-
-union SuggestCloudEnvironmentImageResult = SuggestCloudEnvironmentImageAuthRequiredOutput | SuggestCloudEnvironmentImageOutput | UserFacingError
-
-"""Structured survey responses input with type-safe fields per question"""
-input SurveyResponsesInput {
-  ACQUISITION_CHANNEL: AcquisitionChannelQuestionResponseInput
-  ROLE: RoleQuestionResponseInput
-  USAGE_PLAN: UsagePlanQuestionResponseInput
 }
 
 type SyncMerkleTreeError {
@@ -3065,108 +2330,6 @@ type TOSViolationError implements UserFacingErrorInterface {
 }
 
 """
-Task object containing attachments.
-In the future, this can be extended with more fields (secrets, etc.) and 
-merged with other task queries into a single unified query.
-"""
-type Task {
-  """List of attachments (images/files) associated with this task."""
-  attachments: [TaskAttachment!]!
-
-  """The ID of the task."""
-  taskId: ID!
-}
-
-"""A task attachment (file or image) with presigned download URL."""
-type TaskAttachment {
-  """Presigned URL for downloading the attachment (valid for 15 minutes)."""
-  downloadUrl: String!
-
-  """
-  Unique identifier for this file.
-  Can be used to distinguish files with duplicate names.
-  """
-  fileId: ID!
-
-  """Original filename of the attachment."""
-  filename: String!
-
-  """MIME type of the attachment."""
-  mimeType: String!
-}
-
-"""Input for task-related queries."""
-input TaskInput {
-  """The ID of the task."""
-  taskId: ID!
-}
-
-type TaskOutput implements Response {
-  responseContext: ResponseContext!
-  task: Task!
-}
-
-union TaskResult = TaskOutput | UserFacingError
-
-type TaskSecretEntry {
-  name: String!
-  value: ManagedSecretValue!
-}
-
-"""A set of git credentials for a single hosting provider."""
-type TaskGitCredential {
-  """
-  The email address associated with the token, if available.
-  Null for service-account (installation) tokens.
-  """
-  email: String
-
-  """The git hosting provider (e.g. \"github.com\")."""
-  host: String!
-
-  """The OAuth or installation access token."""
-  token: String!
-
-  """
-  The GitHub username associated with the token, if available.
-  Null for service-account (installation) tokens.
-  """
-  username: String
-}
-
-"""Input for the taskGitCredentials query."""
-input TaskGitCredentialsInput {
-  """The ID of the task."""
-  taskId: ID!
-
-  """A short-lived token authorizing credential retrieval for the workload."""
-  workloadToken: String!
-}
-
-type TaskGitCredentialsOutput implements Response {
-  credentials: [TaskGitCredential!]!
-  responseContext: ResponseContext!
-}
-
-union TaskGitCredentialsResult = TaskGitCredentialsOutput | UserFacingError
-
-"""Input for the taskSecrets query."""
-input TaskSecretsInput {
-  """The ID of the task."""
-  taskId: ID!
-
-  """A short-lived token authorizing secret retrieval for the workload."""
-  workloadToken: String!
-}
-
-type TaskSecretsOutput implements Response {
-  responseContext: ResponseContext!
-  secrets: [TaskSecretEntry!]!
-}
-
-union TaskSecretsResult = TaskSecretsOutput | UserFacingError
-
-"""
 The Team type is a sub-organizational unit within a workspace. Teams are used to
 group drive objects and users together.
 """
@@ -3176,7 +2339,6 @@ type Team {
   creatorId in v1 Team type is deprecated and should not be used. Use adminUid instead.
   """
   adminUid: String! @deprecated(reason: "Use members.role to determine admin status")
-  managedSecrets: ManagedSecretConfig
   members: [TeamMember!]!
   name: String!
   uid: ID!
@@ -3219,7 +2381,6 @@ type Tier {
   ambientAgentsPolicy: AmbientAgentsPolicy
   anyoneWithLinkSharingPolicy: AnyoneWithLinkSharingPolicy
   byoApiKeyPolicy: ByoApiKeyPolicy
-  cloudConversationStoragePolicy: CloudConversationStoragePolicy
   codebaseContextPolicy: CodebaseContextPolicy
   customLlmPolicy: CustomLlmPolicy
   description: String!
@@ -3424,20 +2585,6 @@ type UpdateGenericStringObjectOutput implements Response {
 
 union UpdateGenericStringObjectResult = UpdateGenericStringObjectOutput | UserFacingError
 
-input UpdateManagedSecretInput {
-  description: String
-  encryptedValue: String
-  name: String!
-  owner: Owner!
-}
-
-type UpdateManagedSecretOutput implements Response {
-  managedSecret: ManagedSecret!
-  responseContext: ResponseContext!
-}
-
-union UpdateManagedSecretResult = UpdateManagedSecretOutput | UserFacingError
-
 type UpdateMerkleTreeError {
   error: String!
 }
@@ -3509,34 +2656,6 @@ type UpdateObjectGuestsOutput implements Response {
 
 union UpdateObjectGuestsResult = UpdateObjectGuestsOutput | UserFacingError
 
-"""Input for updating onboarding survey status"""
-input UpdateOnboardingSurveyStatusInput {
-  responses: SurveyResponsesInput
-  status: OnboardingSurveyStatus!
-}
-
-"""
-Output for updating onboarding survey status - returns the updated status
-"""
-type UpdateOnboardingSurveyStatusOutput implements Response {
-  responseContext: ResponseContext!
-  status: OnboardingSurveyStatus!
-}
-
-"""Union result for updating onboarding survey status"""
-union UpdateOnboardingSurveyStatusResult = UpdateOnboardingSurveyStatusOutput | UserFacingError
-
-input UpdateUserSettingsInput {
-  agentAttributionEnabled: Boolean
-  cloudConversationStorageEnabled: Boolean
-}
-
-type UpdateUserSettingsOutput implements Response {
-  responseContext: ResponseContext!
-}
-
-union UpdateUserSettingsResult = UpdateUserSettingsOutput | UserFacingError
-
 input UpdateWorkflowInput {
   data: String!
 
@@ -3560,7 +2679,6 @@ input UpdateWorkspaceSettingsInput {
   setAiAutonomySettings: AiAutonomySettingsInput
   setAiPermissionsSettings: AiPermissionsSettingsInput
   setAmbientAgentSettings: AmbientAgentSettingsInput
-  setCloudConversationStorageSettings: CloudConversationStorageSettingsInput
   setCodebaseContextSettings: CodebaseContextSettingsInput
   setDomainCaptureSettings: DomainCaptureSettingsInput
   setEnterpriseBillingSettings: EnterpriseBillingSettingsInput
@@ -3627,13 +2745,6 @@ input UpdatedObjectInput {
   uid: ID!
 }
 
-type UploadField {
-  name: String!
-  value: UploadFieldValue!
-}
-
-union UploadFieldValue = ContentCRC32CFieldValue | ContentDataFieldValue | StaticUploadFieldValue
-
 type UsageEntry {
   costCents: Int!
   costType: AICreditsUsageAndCostType!
@@ -3645,27 +2756,11 @@ type UsageEntry {
   usageSource: AICreditsUsageSource!
 }
 
-"""Usage plan question response input"""
-input UsagePlanQuestionResponseInput {
-  answer: UsagePlanSurveyResponse!
-  details: String
-}
-
-"""Usage plan options for onboarding survey responses"""
-enum UsagePlanSurveyResponse {
-  AI_CODE_PRODUCTION
-  AI_PERSONAL_PROJECTS
-  EXPLORING_TOOL
-  OTHER
-  REPLACE_TERMINAL
-}
-
 """
 The User type is the primary way of interacting with our graph.
 Nearly all data is scoped to the currently logged-in user.
 """
 type User {
-  anonymousUserInfo: AnonymousUserInfo
   billingMetadata: BillingMetadata
   blocks: [Block!]!
   bonusGrants: [BonusGrant!]!
@@ -3689,13 +2784,10 @@ type User {
   """
   experiments: [Experiment!]
   globalSkills: [String!]!
-  githubInstallations: UserGithubInstallationsOutput!
   isOnWorkDomain: Boolean!
   isOnboarded: Boolean!
   availableHarnesses: AvailableHarnesses!
   llms: FeatureModelChoice!
-  managedSecrets: ManagedSecretConfig
-  onboardingSurveyStatus: OnboardingSurveyStatus
   profile: FirebaseProfile!
   requestLimitInfo: RequestLimitInfo!
 
@@ -3753,13 +2845,6 @@ interface UserFacingErrorInterface {
   message: String!
 }
 
-union UserGithubInfoResult = GithubAuthRequiredOutput | GithubConnectedOutput | UserFacingError
-
-type UserGithubInstallationsOutput implements Response {
-  installations: [GithubInstallation!]!
-  responseContext: ResponseContext!
-}
-
 type UserGuest {
   firebaseUid: ID!
 }
@@ -3771,25 +2856,6 @@ type UserOutput implements Response {
   user: User!
 }
 
-enum UserRepoAuthStatus {
-  NO_INSTALLATION_OR_ACCESS_FOR_REPO
-  SUCCESS
-  USER_NOT_CONNECTED_TO_GITHUB
-}
-
-input UserRepoAuthStatusInput {
-  repos: [RepoInput!]!
-}
-
-type UserRepoAuthStatusOutput implements Response {
-  authUrl: String
-  responseContext: ResponseContext!
-  statuses: [RepoResult!]!
-  txId: ID
-}
-
-union UserRepoAuthStatusResult = UserFacingError | UserRepoAuthStatusOutput
-
 union UserResult = UserFacingError | UserOutput
 
 """
@@ -3799,7 +2865,6 @@ UserSettings types and mutations are the v2 equivalent of the v1 user_settings.g
 """
 type UserSettings {
   isAgentAttributionEnabled: Boolean!
-  isCloudConversationStorageEnabled: Boolean!
 }
 
 type WarpAiPolicy {
@@ -3921,7 +2986,6 @@ type WorkspaceSettings {
   aiAutonomySettings: AiAutonomySettings!
   aiPermissionsSettings: AiPermissionsSettings!
   ambientAgentSettings: AmbientAgentSettings
-  cloudConversationStorageSettings: CloudConversationStorageSettings!
   codebaseContextSettings: CodebaseContextSettings!
   domainCaptureSettings: DomainCaptureSettings!
   enterpriseBillingSettings: EnterpriseBillingSettings

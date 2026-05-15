@@ -6,11 +6,9 @@
 //! https://www.notion.so/warpdev/Experiment-Framework-Guide-88954c36a0c3469ea57b427b58249d5f?pvs=4
 
 mod block_onboarding_layer;
-mod login_layer;
 mod rendering;
 pub use block_onboarding_layer::{BlockOnboarding, BLOCK_ONBOARDING_LAYER};
 pub use improved_palette_search_layer::{ImprovedPaletteSearch, IMPROVED_PALETTE_SEARCH_LAYER};
-pub use login_layer::{AuthFlowInstructions, LOGIN_LAYER};
 use warp_core::user_preferences::GetUserPreferences as _;
 
 use crate::auth::auth_state::AuthStateProvider;
@@ -43,10 +41,8 @@ const NO_LAYER_FOUND_ERR: &str = "No layer found for the experiment";
 
 lazy_static! {
     /// In-memory map that caches users' group assignments so we don't have to calculate
-    /// it from their anonymous id each time. Also keeps track of experiment overrides.
+    /// it from their local user id each time. Also keeps track of experiment overrides.
     /// Key is the name of the experiment, and the value is the variant name.
-    // TODO(daniel): Account for user logout. Currently the cached group assignments
-    // and anonymous id persist even on logout, which may not be the correct behavior.
     static ref GROUP_ASSIGNMENTS: DashMap<&'static str, &'static str> = DashMap::new();
 
     /// In-memory map that stores the user's local overrides. This map differs from
@@ -63,7 +59,6 @@ lazy_static! {
     /// EMPTY_LAYER is not included here, since we will never add experiments to it,
     /// and so users can never be assigned to experiments in EMPTY_LAYER.
     static ref LAYERS: Vec<&'static Layer> = vec![
-        &*LOGIN_LAYER,
         &*BLOCK_ONBOARDING_LAYER,
         &*rendering::LAYER,
         &*IMPROVED_PALETTE_SEARCH_LAYER,
@@ -180,26 +175,26 @@ impl Layer {
         None
     }
 
-    /// Determines the assigned bucket based on a hash of the anonymous id. The
+    /// Determines the assigned bucket based on a hash of the local user id. The
     /// returned bucket will be in the range 0-999 (inclusive) and is deterministic.
-    fn assigned_bucket(&self, anonymous_id: &str) -> u16 {
+    fn assigned_bucket(&self, local_user_id: &str) -> u16 {
         let (seed_1, seed_2) = self.hasher_seeds();
         let hash = {
             let mut hasher = siphasher::sip::SipHasher::new_with_keys(seed_1, seed_2);
-            hasher.write(anonymous_id.as_bytes());
+            hasher.write(local_user_id.as_bytes());
             hasher.finish()
         };
         (hash % 1000) as u16
     }
 
-    /// Returns the experiment group that the anonymous id is assigned to in this
+    /// Returns the experiment group that the local user id is assigned to in this
     /// layer, if it exists. Returns None otherwise.
-    fn get_assigned_group<T>(&self, anonymous_id: &str) -> Option<T>
+    fn get_assigned_group<T>(&self, local_user_id: &str) -> Option<T>
     where
         T: Experiment<T>,
         <T as FromStr>::Err: fmt::Debug,
     {
-        let bucket = self.assigned_bucket(anonymous_id);
+        let bucket = self.assigned_bucket(local_user_id);
         let group_id = self.get_group_for_bucket(bucket)?;
 
         // We ignore errors converting group id to T as users can be assigned to a group
@@ -307,10 +302,14 @@ pub trait Experiment<T: Experiment<T>>: FromStr {
             }
         }
 
-        // If there was no override, derive the assignment from the user's anonymous id.
+        // If there was no override, derive the assignment from the local user id.
         if assigned_group.is_none() {
-            let anonymous_id = AuthStateProvider::as_ref(ctx).get().anonymous_id();
-            assigned_group = Self::layer().get_assigned_group(&anonymous_id);
+            let local_user_id = AuthStateProvider::as_ref(ctx)
+                .get()
+                .user_id()
+                .map(|uid| uid.as_string())
+                .unwrap_or_else(|| "local_user".to_string());
+            assigned_group = Self::layer().get_assigned_group(&local_user_id);
         }
 
         // If the user is in a group for this experiment, cache the result of

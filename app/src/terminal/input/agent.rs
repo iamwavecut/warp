@@ -85,7 +85,7 @@ impl Input {
         let appearance = Appearance::as_ref(app);
         let menu_positioning = self.menu_positioning(app);
 
-        let model = self.model.lock();
+        let _model = self.model.lock();
 
         // We should likely rework this stack to not need to use `with_constrain_absolute_children`,
         // by reworking the positioning of the children to not depend on this.
@@ -119,7 +119,7 @@ impl Input {
             }
         }
 
-        let show_harness_row = FeatureFlag::CloudMode.is_enabled()
+        let show_harness_row = FeatureFlag::AgentView.is_enabled()
             && HarnessAvailabilityModel::as_ref(app).should_show_harness_selector()
             && self
                 .ambient_agent_view_model()
@@ -332,7 +332,7 @@ impl Input {
     fn render_cloud_mode_v2_composing_input(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
         let menu_positioning = self.menu_positioning(app);
-        let model = self.model.lock();
+        let _model = self.model.lock();
 
         let mut stack = Stack::new();
 
@@ -514,7 +514,7 @@ impl Input {
         Some(ChildView::new(view).finish())
     }
 
-    fn render_cloud_mode_v2_top_row(&self, app: &AppContext) -> Box<dyn Element> {
+    fn render_cloud_mode_v2_top_row(&self, _app: &AppContext) -> Box<dyn Element> {
         let mut row = Flex::row()
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -598,7 +598,7 @@ impl Input {
             return Empty::new().finish();
         };
         let ambient_agent_model = ambient_agent_model.as_ref(app);
-        let mut stack = Stack::new().with_constrain_absolute_children();
+        let stack = Stack::new().with_constrain_absolute_children();
 
         // Don't render status bar when agent has failed or is waiting for session
         let show_status_bar = ambient_agent_model.error_message().is_none()

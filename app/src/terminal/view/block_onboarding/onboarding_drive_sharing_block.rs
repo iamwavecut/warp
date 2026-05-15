@@ -17,9 +17,7 @@ use warpui::{
 use crate::{
     cloud_object::model::persistence::{CloudModel, CloudModelEvent},
     drive::CloudObjectTypeAndId,
-    interaction_sources::SharingDialogSource,
     ui_components::icons::Icon,
-    workspace::WorkspaceAction,
 };
 
 /// A rich onboarding block for newly-created local objects.
@@ -102,7 +100,7 @@ impl View for OnboardingDriveSharingBlock {
             Some(object) => format!("Open {}", object.display_name()),
             None => format!("Open this {}", self.object_id.object_type()),
         };
-        let object_id = self.object_id;
+        let _object_id = self.object_id;
         let button = appearance
             .ui_builder()
             .button(ButtonVariant::Accent, self.share_button.clone())

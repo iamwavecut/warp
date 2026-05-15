@@ -12,9 +12,7 @@ use crate::{
         TemplatableMCPServer, TemplatableMCPServerInstallation, TemplatableMCPServerManager,
     },
     appearance::Appearance,
-    cloud_object::Space,
     modal::{Modal, ModalViewState},
-    server::cloud_objects::update_manager::InitiatedBy,
     settings_view::{
         mcp_servers::{
             edit_page::{MCPServersEditPageView, MCPServersEditPageViewEvent},
@@ -236,18 +234,7 @@ impl MCPServersSettingsPageView {
         ctx: &mut ViewContext<Self>,
     ) -> Option<TemplatableMCPServerInstallation> {
         TemplatableMCPServerManager::handle(ctx).update(ctx, |templatable_manager, ctx| {
-            if templatable_manager
-                .get_cloud_server(templatable_mcp_server.uuid, ctx)
-                .is_none()
-            {
-                templatable_manager.create_templatable_mcp_server(
-                    templatable_mcp_server.clone(),
-                    Space::Personal,
-                    InitiatedBy::User,
-                    ctx,
-                );
-            }
-
+            templatable_manager.create_templatable_mcp_server(templatable_mcp_server.clone(), ctx);
             let installation = templatable_manager.install_from_template(
                 templatable_mcp_server.clone(),
                 variable_values.clone(),

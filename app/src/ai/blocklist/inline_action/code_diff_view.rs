@@ -49,7 +49,6 @@ use warpui::{
     ViewContext, ViewHandle,
 };
 
-use super::malformed_line_heuristics::has_malformed_terminal_correction_signal;
 use crate::code_review::CodeReviewPaneEntrypoint;
 use crate::view_components::action_button::{ActionButton, NakedTheme};
 use crate::{
@@ -59,17 +58,13 @@ use crate::{
             AIAgentActionId, AIIdentifiers, FileEdit, FileLocations, ServerOutputId,
         },
         blocklist::{
-            action_model::{
-                AIActionStatus, BlocklistAIActionEvent, BlocklistAIActionModel,
-                RequestFileEditsFormatKind,
-            },
+            action_model::{AIActionStatus, BlocklistAIActionEvent, BlocklistAIActionModel},
             history_model::BlocklistAIHistoryModel,
             inline_action::{
                 inline_action_header::INLINE_ACTION_HORIZONTAL_PADDING,
                 inline_action_icons::{cancelled_icon, green_check_icon, icon_size, reverted_icon},
             },
             model::{AIBlockModel, AIBlockModelHelper},
-            RequestedEditResolution,
         },
         mcp::{mcp_provider_from_file_path, MCPProvider},
         paths::host_native_absolute_path,
@@ -89,7 +84,6 @@ use crate::{
         inline_diff::{InlineDiffView, InlineDiffViewEvent},
         DiffResult,
     },
-    interaction_sources::{AgentModeCodeFileNavigationSource, ToggleCodeSuggestionsSettingSource},
     menu::{Event as MenuEvent, Menu, MenuItemFields, MenuVariant},
     pane_group::{
         focus_state::PaneFocusHandle,
@@ -495,7 +489,6 @@ pub struct CodeDiffView {
     focus_handle: Option<PaneFocusHandle>,
     /// Client and server identifiers for the AI output associated with the code diffs.
     identifiers: AIIdentifiers,
-    edit_format_kind: RequestFileEditsFormatKind,
     /// `False` until a user makes the first edit to one of the diffs in the view.
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
     user_edited_file_contents: bool,
@@ -667,7 +660,7 @@ impl CodeDiffView {
                 }
                 me.user_edited_file_contents = true;
 
-                let Some(output_id) = me.server_output_id() else {
+                let Some(_output_id) = me.server_output_id() else {
                     return;
                 };
 
@@ -682,7 +675,6 @@ impl CodeDiffView {
         model: &dyn AIBlockModel<View = crate::ai::blocklist::AIBlock>,
         title: Option<String>,
         identifiers: AIIdentifiers,
-        edit_format_kind: RequestFileEditsFormatKind,
         should_show_speedbump: bool,
         action_model: ModelHandle<BlocklistAIActionModel>,
         session_platform: Option<SessionPlatform>,
@@ -703,7 +695,6 @@ impl CodeDiffView {
             initial_state,
             title,
             identifiers,
-            edit_format_kind,
             should_show_speedbump,
             session_platform,
             ctx,
@@ -744,34 +735,6 @@ impl CodeDiffView {
         view
     }
 
-    /// Creates a passive `CodeDiffView` for out-of-band code diff suggestions.
-    ///
-    /// Unlike [`Self::new`], this does not require an `AIBlockModel` or
-    /// `BlocklistAIActionModel` — the view is standalone and not tied to the
-    /// action executor pipeline.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_passive(
-        action_id: &AIAgentActionId,
-        title: Option<String>,
-        identifiers: AIIdentifiers,
-        edit_format_kind: RequestFileEditsFormatKind,
-        should_show_speedbump: bool,
-        session_platform: Option<SessionPlatform>,
-        ctx: &mut ViewContext<Self>,
-    ) -> Self {
-        Self::build(
-            action_id,
-            true,
-            CodeDiffState::WaitingForUser,
-            title,
-            identifiers,
-            edit_format_kind,
-            should_show_speedbump,
-            session_platform,
-            ctx,
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn build(
         action_id: &AIAgentActionId,
@@ -779,7 +742,6 @@ impl CodeDiffView {
         initial_state: CodeDiffState,
         title: Option<String>,
         identifiers: AIIdentifiers,
-        edit_format_kind: RequestFileEditsFormatKind,
         should_show_speedbump: bool,
         session_platform: Option<SessionPlatform>,
         ctx: &mut ViewContext<Self>,
@@ -934,7 +896,6 @@ impl CodeDiffView {
             title,
             focus_handle: None,
             identifiers,
-            edit_format_kind,
             user_edited_file_contents: false,
             original_pane_id: None,
             scrollable_state: Default::default(),
@@ -2283,10 +2244,6 @@ impl CodeDiffView {
 
                 let mut updated_files = Vec::new();
                 let mut deleted_files = Vec::new();
-                let mut edited_file_count = 0;
-                let mut correction_count = 0;
-                let mut edited_correction_count = 0;
-                let mut unedited_correction_count = 0;
 
                 for diff in self.pending_diffs.iter() {
                     let Some(path) = diff.diff_view.as_ref(ctx).file_path() else {
@@ -2311,28 +2268,7 @@ impl CodeDiffView {
                         }
                         let was_edited = diff.diff_view.as_ref(ctx).was_edited();
                         let changed_lines = diff.diff_view.as_ref(ctx).changed_lines(ctx);
-                        let has_malformed_terminal_signal = diff
-                            .diff_view
-                            .as_ref(ctx)
-                            .diff()
-                            .is_some_and(|editor_diff| {
-                                has_malformed_terminal_correction_signal(
-                                    editor_diff,
-                                    &changed_lines,
-                                )
-                            });
 
-                        if was_edited {
-                            edited_file_count += 1;
-                        }
-                        if has_malformed_terminal_signal {
-                            correction_count += 1;
-                            if was_edited {
-                                edited_correction_count += 1;
-                            } else {
-                                unedited_correction_count += 1;
-                            }
-                        }
                         updated_files.push((
                             FileLocations {
                                 name: file_path_str,
@@ -2347,8 +2283,6 @@ impl CodeDiffView {
                         ));
                     }
                 }
-                if correction_count > 0 {}
-
                 // Extract accepted file contents from editor buffers so the
                 // executor doesn't need to re-read from disk or the network.
                 let file_contents: Vec<(String, String)> = self

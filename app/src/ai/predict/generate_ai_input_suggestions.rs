@@ -1,5 +1,4 @@
-//! This module contains all auxiliary code for hitting the GenerateAIInputSuggestions endpoint in
-//! warp-server that serves Agent Predict.
+//! This module contains request-building helpers for local Agent Predict suggestions.
 
 mod api;
 

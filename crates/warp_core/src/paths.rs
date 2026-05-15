@@ -305,7 +305,7 @@ pub fn app_group_container_path() -> Option<PathBuf> {
 ///
 /// ## Linux
 /// The resources directory is `$INSTALL_DIR/resources`, where `$INSTALL_DIR` depends on the
-/// specific package manager. For example, on Ubuntu this might be `/opt/warpdotdev/warp-terminal/resources`.
+/// specific package manager. For example, on Ubuntu this might be `/opt/warp-local-first/warp-terminal/resources`.
 ///
 /// ## Windows
 /// The resources directory is `$INSTALL_DIR/resources`, where `$INSTALL_DIR` is the directory

@@ -7,15 +7,13 @@ use crate::{
     util::bindings::trigger_to_keystroke,
 };
 
-use chrono::{DateTime, FixedOffset};
-
 mod main_page;
 pub mod utils;
 pub use main_page::{ResourceCenterMainEvent, ResourceCenterMainView};
 mod keybindings_page;
 pub use keybindings_page::KeybindingsView;
 mod section_views;
-pub use section_views::{ChangelogSectionView, ContentSectionView, FeatureSectionView};
+pub use section_views::{ContentSectionView, FeatureSectionView};
 pub mod sections;
 mod view;
 use serde::{Deserialize, Serialize};
@@ -93,7 +91,6 @@ pub enum TipAction {
     // This toggles Warp Drive rather than opening it. This enum can't directly be
     // renamed because we serialize it into the welcome tips.
     OpenWarpDrive,
-    Changelog,
     // Note that this item has been deprecated from the UI and is not in any section.
     // We are leaving it in this enum to ensure that we don't re-use `Workflows` as a
     // value. Since old clients will have this value in their user defaults, we want
@@ -113,9 +110,6 @@ impl TipAction {
             TipAction::SaveNewLaunchConfig => "workspace:open_launch_config_save_modal",
             TipAction::WarpAI => "workspace:toggle_ai_assistant",
             TipAction::OpenWarpDrive => "workspace:toggle_left_panel",
-            // Slash commands are also registered as editable bindings, so callers can look them up here
-            // the same way they do regular app actions.
-            TipAction::Changelog => "/changelog",
             TipAction::Workflows => "input:toggle_workflows",
         }
     }
@@ -181,7 +175,6 @@ pub struct ContentItem {
 pub enum Section {
     Feature(FeatureSectionData),
     Content(ContentSectionData),
-    Changelog(),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,15 +187,6 @@ pub struct FeatureSectionData {
 pub struct ContentSectionData {
     pub section_name: FeatureSection,
     pub items: Vec<ContentItem>,
-}
-
-#[derive(Clone)]
-pub struct ChangelogSectionData {
-    pub section_name: FeatureSection,
-    pub date: DateTime<FixedOffset>,
-    pub new_features_markdown: String,
-    pub improvements_markdown: String,
-    pub coming_soon_markdown: String,
 }
 
 #[derive(Default)]

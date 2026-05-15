@@ -1371,7 +1371,7 @@ impl LocalDiffStateModel {
                 metadata.pr_info = previous_pr_info;
                 self.metadata = Some(metadata);
             }
-            Err(e) => {
+            Err(_e) => {
                 self.metadata = None;
             }
         }
@@ -1415,7 +1415,7 @@ impl LocalDiffStateModel {
         diffs: DiffsWithBaseContent,
         ctx: &mut ModelContext<Self>,
     ) {
-        if let Err(e) = &diffs.changes {}
+        if let Err(_e) = &diffs.changes {}
 
         self.state = InternalDiffState::Loaded((&diffs).into());
         // Compute merge base and flush deferred invalidations before emitting.

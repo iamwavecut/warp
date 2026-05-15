@@ -1,6 +1,6 @@
 [package]
 name = "warp_completer"
-authors = ["Warp Team <dev@warp.dev>"]
+authors = ["Local-first Warp fork contributors"]
 version = "0.1.0"
 edition = "2021"
 description = "Warp completions engine"
@@ -15,7 +15,6 @@ bincode.workspace = true
 cfg-if.workspace = true
 clap.workspace = true
 derive-new = "0.5.8"
-dirs.workspace = true
 futures.workspace = true
 fuzzy_match.workspace = true
 getset.workspace = true
@@ -26,7 +25,6 @@ log.workspace = true
 memo-map.workspace = true
 regex.workspace = true
 serde.workspace = true
-shellexpand.workspace = true
 smol_str.workspace = true
 string-offset.workspace = true
 thiserror.workspace = true

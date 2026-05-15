@@ -181,9 +181,7 @@ impl WorkflowManager {
         event: &UpdateManagerEvent,
         ctx: &mut ModelContext<Self>,
     ) {
-        let UpdateManagerEvent::ObjectOperationComplete { result } = event else {
-            return;
-        };
+        let UpdateManagerEvent::ObjectOperationComplete { result } = event;
 
         if !matches!(&result.success_type, OperationSuccessType::Success) {
             return;

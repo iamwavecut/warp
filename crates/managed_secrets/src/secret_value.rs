@@ -1,7 +1,15 @@
 use std::fmt;
 
 use serde::Serialize;
-use warp_graphql::managed_secrets::ManagedSecretType;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ManagedSecretType {
+    RawValue,
+    AnthropicApiKey,
+    AnthropicBedrockAccessKey,
+    AnthropicBedrockApiKey,
+    OpenaiApiKey,
+}
 
 #[derive(Serialize)]
 #[serde(untagged)]
@@ -17,7 +25,7 @@ pub enum ManagedSecretValue {
         aws_secret_access_key: String,
         /// Optional AWS session token. Only required for temporary/STS credentials;
         /// persistent IAM access keys do not need one. When `None`, the field is
-        /// omitted from the serialized JSON payload sent to the server.
+        /// omitted from the serialized JSON payload.
         #[serde(skip_serializing_if = "Option::is_none")]
         aws_session_token: Option<String>,
         aws_region: String,

@@ -613,10 +613,6 @@ impl PersistedWorkspace {
         Self::maybe_enable_codebase_indexing(ctx);
     }
 
-    pub fn on_user_changed(&self, ctx: &mut ModelContext<Self>) {
-        Self::maybe_enable_codebase_indexing(ctx);
-    }
-
     /// Enables or disables codebase indexing according to the setting.
     fn maybe_enable_codebase_indexing(ctx: &mut ModelContext<Self>) {
         CodebaseIndexManager::handle(ctx).update(ctx, |manager, ctx| {
@@ -1077,7 +1073,7 @@ impl PersistedWorkspace {
 
         for server in servers {
             let workspace_root_display = workspace_root_display.clone();
-            let server_type_name = server.as_ref(ctx).server_name();
+            let _server_type_name = server.as_ref(ctx).server_name();
             ctx.subscribe_to_model(&server, move |_me, event, ctx| match event {
                 LspEvent::Started => {
 

@@ -570,7 +570,7 @@ impl TerminalView {
 
     fn stop_sharing_session_for_reason(
         &mut self,
-        source: SharedSessionActionSource,
+        _source: SharedSessionActionSource,
         reason: SessionEndedReason,
         ctx: &mut ViewContext<Self>,
     ) {
@@ -1243,8 +1243,8 @@ impl TerminalView {
 
     pub fn open_shared_session_on_desktop(
         &mut self,
-        source: SharedSessionActionSource,
-        ctx: &mut ViewContext<Self>,
+        _source: SharedSessionActionSource,
+        _ctx: &mut ViewContext<Self>,
     ) {
         #[cfg(target_family = "wasm")]
         {
@@ -1350,7 +1350,7 @@ impl TerminalView {
     // logic in TerminalView and Workspace (when starting a share).
     pub fn copy_shared_session_link(
         &mut self,
-        source: SharedSessionActionSource,
+        _source: SharedSessionActionSource,
         ctx: &mut ViewContext<Self>,
     ) {
         let manager = Manager::as_ref(ctx);
@@ -1742,7 +1742,7 @@ impl TerminalView {
 
     /// Resizes the sharer's terminal to match the viewer's reported size,
     /// going through the normal view/model/PTY resize pipeline.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn resize_from_viewer_report(
         &mut self,
         viewer_size: WindowSize,

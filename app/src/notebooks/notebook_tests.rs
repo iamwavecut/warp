@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use futures_util::future::BoxFuture;
-use itertools::Itertools;
 use warp_core::ui::appearance::Appearance;
 use warp_editor::editor::EditorView;
 use warpui::elements::ChildView;
@@ -40,7 +39,7 @@ use crate::{
     pane_group::PaneEvent,
     search::files::model::FileSearchModel,
     server::{
-        cloud_objects::update_manager::{InitialLoadResponse, UpdateManager},
+        cloud_objects::update_manager::UpdateManager,
         ids::{ClientId, SyncId::ServerId},
         server_api::ServerApiProvider,
         sync_queue::{QueueItem, SyncQueue, SyncQueueEvent},
@@ -58,7 +57,7 @@ use crate::{
     GlobalResourceHandles, GlobalResourceHandlesProvider, PrivacySettings,
 };
 
-use super::{NotebookEvent, NotebookView, EDIT_WINDOW_DURATION, SAVE_PERIOD};
+use super::{NotebookEvent, NotebookView, SAVE_PERIOD};
 
 fn initialize_app(app: &mut App) {
     initialize_settings_for_tests(app);
@@ -189,27 +188,11 @@ fn mock_server_notebook(title: impl Into<String>, data: impl Into<String>) -> Se
     }
 }
 
-/// Send changed objects to [`UpdateManager`] so that tests requiring "up-to-date" metadata can run.
+/// Apply server-shaped objects to [`CloudModel`] so tests requiring up-to-date metadata can run.
 async fn initial_load(app: &mut App, updated_notebooks: impl Into<Vec<ServerNotebook>>) {
-    let response = InitialLoadResponse {
-        updated_notebooks: updated_notebooks.into(),
-        deleted_notebooks: Default::default(),
-        updated_workflows: Default::default(),
-        deleted_workflows: Default::default(),
-        updated_folders: Default::default(),
-        deleted_folders: Default::default(),
-        user_profiles: Default::default(),
-        updated_generic_string_objects: Default::default(),
-        deleted_generic_string_objects: Default::default(),
-        action_histories: Default::default(),
-        mcp_gallery: Default::default(),
-    };
-
-    let load_complete = UpdateManager::handle(app).update(app, |update_manager, ctx| {
-        update_manager.mock_initial_load(response, ctx);
-        update_manager.initial_load_complete()
+    CloudModel::handle(app).update(app, |cloud_model, ctx| {
+        cloud_model.update_objects_from_initial_load(updated_notebooks.into(), false, true, ctx);
     });
-    load_complete.await
 }
 
 /// Wait for all edits to be saved.
@@ -388,9 +371,7 @@ fn test_focus_tracking() {
 
 #[test]
 #[ignore]
-
-/// Test to make sure we eagerly enter edit mode when user is already the current editor
-#[test]
+/// Test to make sure we eagerly enter edit mode when user is already the current editor.
 fn test_eager_baton_grab_same_current_editor() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

@@ -1,14 +1,15 @@
 //! SSH-specific implementation of [`RemoteTransport`].
 //!
-//! [`SshTransport`] uses an existing SSH ControlMaster socket to check/install
+//! [`SshTransport`] uses an existing SSH ControlMaster socket to check
 //! the remote server binary and to launch the `remote-server-proxy` process
 //! whose stdin/stdout become the protocol channel.
-use anyhow::Result;
 use std::fmt;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
+
+use anyhow::Result;
 use warpui::r#async::executor;
 
 use remote_server::auth::RemoteServerAuthContext;
@@ -19,9 +20,6 @@ use remote_server::setup::{
 };
 use remote_server::ssh::ssh_args;
 use remote_server::transport::{Connection, Error, InstallOutcome, RemoteTransport};
-
-#[path = "ssh_transport/installation.rs"]
-pub(crate) mod installation;
 
 /// SSH transport: connects via a ControlMaster socket.
 ///
@@ -203,8 +201,14 @@ impl RemoteTransport for SshTransport {
     }
 
     fn install_binary(&self) -> Pin<Box<dyn Future<Output = InstallOutcome> + Send>> {
-        let socket_path = self.socket_path.clone();
-        Box::pin(async move { installation::install_binary(&socket_path).await })
+        Box::pin(async move {
+            InstallOutcome {
+                source: None,
+                result: Err(Error::Other(anyhow::anyhow!(
+                    "remote server auto-install is disabled in this local-first build"
+                ))),
+            }
+        })
     }
 
     fn connect(

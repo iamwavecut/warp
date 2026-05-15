@@ -24,9 +24,7 @@ use warp_managed_secrets::ManagedSecretValue;
 use super::super::terminal::{CommandHandle, TerminalDriver};
 use super::super::{AgentDriver, AgentDriverError};
 use super::json_utils::read_json_file_or_default;
-use super::{
-    write_temp_file, HarnessRunner, JSONMCPServer, ResumePayload, SavePoint, ThirdPartyHarness,
-};
+use super::{write_temp_file, HarnessRunner, JSONMCPServer, SavePoint, ThirdPartyHarness};
 
 pub(crate) struct CodexHarness;
 
@@ -58,12 +56,24 @@ impl ThirdPartyHarness for CodexHarness {
         _task_id: Option<AmbientAgentTaskId>,
         _server_api: Arc<ServerApi>,
         terminal_driver: ModelHandle<TerminalDriver>,
-        _resume: Option<ResumePayload>,
-        _resolved_env_vars: &HashMap<OsString, OsString>,
-        _resolved_secrets: &HashMap<String, ManagedSecretValue>,
-        _resolved_mcp_servers: &HashMap<String, JSONMCPServer>,
-        _third_party_harness_model_id: Option<&str>,
+        resolved_env_vars: &HashMap<OsString, OsString>,
+        resolved_secrets: &HashMap<String, ManagedSecretValue>,
+        resolved_mcp_servers: &HashMap<String, JSONMCPServer>,
+        third_party_harness_model_id: Option<&str>,
     ) -> Result<Box<dyn HarnessRunner>, AgentDriverError> {
+        prepare_codex_environment_config(
+            working_dir,
+            system_prompt,
+            resolved_env_vars,
+            resolved_secrets,
+            resolved_mcp_servers,
+            third_party_harness_model_id,
+        )
+        .map_err(|error| AgentDriverError::HarnessConfigSetupFailed {
+            harness: self.cli_agent().command_prefix().to_owned(),
+            error,
+        })?;
+
         let owned_prompt = match resumption_prompt {
             Some(preamble) if !preamble.is_empty() => format!("{preamble}\n\n{prompt}"),
             _ => prompt.to_string(),

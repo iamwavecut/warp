@@ -84,28 +84,6 @@ fn start_agent_v2_tool_call_message(
     }
 }
 
-fn upload_artifact_tool_call_message(path: &str, description: &str) -> api::Message {
-    api::Message {
-        id: "message-id".to_string(),
-        task_id: "task-id".to_string(),
-        server_message_data: String::new(),
-        citations: vec![],
-        message: Some(api::message::Message::ToolCall(api::message::ToolCall {
-            tool_call_id: "tool-call-id".to_string(),
-            tool: Some(api::message::tool_call::Tool::UploadFileArtifact(
-                api::UploadFileArtifact {
-                    file: Some(api::FilePathReference {
-                        file_path: path.to_string(),
-                    }),
-                    description: description.to_string(),
-                },
-            )),
-        })),
-        request_id: "request-id".to_string(),
-        timestamp: None,
-    }
-}
-
 fn remote_start_agent_v2_execution_mode(
     environment_id: &str,
 ) -> api::start_agent_v2::ExecutionMode {
@@ -251,19 +229,6 @@ fn extract_start_agent_action(
     (name, prompt, execution_mode, lifecycle_subscription)
 }
 
-fn extract_upload_artifact_action(output: MaybeAIAgentOutputMessage) -> (String, Option<String>) {
-    let MaybeAIAgentOutputMessage::Message(output_message) = output else {
-        panic!("expected output message");
-    };
-    let AIAgentOutputMessageType::Action(action) = output_message.message else {
-        panic!("expected action output message");
-    };
-    let AIAgentActionType::UploadArtifact(request) = action.action else {
-        panic!("expected UploadArtifact action");
-    };
-    (request.file_path, request.description)
-}
-
 fn extract_file_artifact_created(
     output: MaybeAIAgentOutputMessage,
 ) -> (String, String, Option<String>, i64) {
@@ -338,31 +303,6 @@ fn converts_local_start_agent_v2_without_harness_type_to_defaults() {
         StartAgentExecutionMode::local_with_defaults()
     );
     assert_eq!(lifecycle_subscription, None);
-}
-
-#[test]
-fn converts_upload_artifact_tool_call_to_action() {
-    let task_id = TaskId::new("task-id".to_string());
-    let message = upload_artifact_tool_call_message(
-        "/tmp/build/output.log",
-        "Build output for the latest run",
-    );
-
-    let output = message
-        .to_client_output_message(ConversionParams {
-            task_id: &task_id,
-            current_todo_list: None,
-            active_code_review: None,
-        })
-        .expect("conversion should succeed");
-
-    let (file_path, description) = extract_upload_artifact_action(output);
-
-    assert_eq!(file_path, "/tmp/build/output.log");
-    assert_eq!(
-        description.as_deref(),
-        Some("Build output for the latest run")
-    );
 }
 
 #[test]

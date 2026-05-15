@@ -6,7 +6,7 @@ use crate::ai::agent::comment::ReviewComment;
 use crate::ai::agent::task::TaskId;
 use crate::ai::agent::{
     AIAgentInput, CreateDocumentsResult, EditDocumentsResult, ReadFilesResult, SubagentCall,
-    SubagentType, TodoOperation, UploadArtifactResult,
+    SubagentType, TodoOperation,
 };
 use crate::util::truncation::truncate_from_end;
 use ai::agent::file_locations::group_file_contexts_for_display;
@@ -34,9 +34,7 @@ use crate::AIAgentTodoList;
 #[allow(unused_imports)]
 use std::path::{Component, Path, PathBuf};
 
-use ai::agent::action::{
-    RequestComputerUseRequest, SuggestPromptRequest, UploadArtifactRequest, UseComputerRequest,
-};
+use ai::agent::action::{RequestComputerUseRequest, SuggestPromptRequest, UseComputerRequest};
 use ai::skills::SkillReference;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
@@ -142,8 +140,6 @@ use warpui::{
     },
     Action, AppContext, Element, ModelHandle, SingletonEntity, View, ViewHandle,
 };
-
-const BLOCKED_ACTION_MESSAGE_FOR_UPLOADING_ARTIFACT: &str = "Grant access to upload this artifact?";
 
 /// Data required to render the AI block output component.
 #[derive(Copy, Clone)]
@@ -759,14 +755,6 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                                 &request.skill,
                                 app,
                             ));
-                        }
-                        AIAgentOutputMessageType::Action(AIAgentAction {
-                            action: AIAgentActionType::UploadArtifact(request),
-                            id,
-                            ..
-                        }) => {
-                            should_render_footer = false;
-                            output_items.add_child(render_upload_artifact(props, id, request, app));
                         }
                         AIAgentOutputMessageType::Action(AIAgentAction {
                             action: AIAgentActionType::RequestComputerUse(request),
@@ -2644,92 +2632,6 @@ fn render_read_mcp_resource(
     renderable_action.render(app).finish()
 }
 
-fn format_upload_artifact_text(
-    request: &UploadArtifactRequest,
-    result: Option<&UploadArtifactResult>,
-) -> String {
-    let mut lines = vec![format!("Upload artifact: {}", request.file_path)];
-
-    if let Some(description) = request.description.as_deref() {
-        lines.push(format!("Description: {description}"));
-    }
-
-    match result {
-        Some(UploadArtifactResult::Success {
-            artifact_uid,
-            filepath,
-            ..
-        }) => {
-            lines.push(format!("Status: uploaded artifact {artifact_uid}"));
-            if let Some(filepath) = filepath.as_deref() {
-                lines.push(format!("Uploaded file: {filepath}"));
-            }
-        }
-        Some(UploadArtifactResult::Error(error)) => {
-            lines.push(format!("Status: upload failed: {error}"));
-        }
-        Some(UploadArtifactResult::Cancelled) => {}
-        None => {}
-    }
-
-    lines.join("\n")
-}
-
-fn render_upload_artifact(
-    props: Props,
-    action_id: &AIAgentActionId,
-    request: &UploadArtifactRequest,
-    app: &AppContext,
-) -> Box<dyn Element> {
-    let appearance = Appearance::as_ref(app);
-    let status = props.action_model.as_ref(app).get_action_status(action_id);
-    let result = props
-        .action_model
-        .as_ref(app)
-        .get_action_result(action_id)
-        .and_then(|result| match &result.result {
-            AIAgentActionResultType::UploadArtifact(upload_result) => Some(upload_result),
-            _ => None,
-        });
-
-    let text = format_upload_artifact_text(request, result);
-    let mut renderable_action = RenderableAction::new(&text, app);
-
-    if status.as_ref().is_some_and(|status| status.is_blocked()) {
-        let buttons = props
-            .action_buttons
-            .get(action_id)
-            .expect("Button states must exist for each requested action.");
-
-        renderable_action = renderable_action
-            .with_header(blocked_action_header(
-                action_id.clone(),
-                BLOCKED_ACTION_MESSAGE_FOR_UPLOADING_ARTIFACT,
-                buttons.run_button.clone(),
-                buttons.cancel_button.clone(),
-                props.action_model,
-                props.model,
-                app,
-            ))
-            .with_highlighted_border()
-            .with_background_color(appearance.theme().background().into_solid());
-    } else {
-        if (props.model.status(app).is_streaming()
-            && !props.model.is_first_action_in_output(action_id, app))
-            || status.as_ref().is_some_and(|s| s.is_queued())
-        {
-            renderable_action = renderable_action.with_font_color(blended_colors::text_disabled(
-                appearance.theme(),
-                appearance.theme().surface_2(),
-            ));
-        }
-        renderable_action = renderable_action
-            .with_icon(action_icon(action_id, props.action_model, props.model, app).finish());
-    }
-
-    renderable_action.render(app).finish()
-}
-
 fn render_use_computer(
     props: Props,
     action_id: &AIAgentActionId,
@@ -3808,7 +3710,3 @@ fn format_conversation_search_phase(phase: &ConversationSearchPhase) -> String {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "output_tests.rs"]
-mod tests;

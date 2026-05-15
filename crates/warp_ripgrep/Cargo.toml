@@ -1,6 +1,6 @@
 [package]
 name = "warp_ripgrep"
-authors = ["Warp Team <dev@warp.dev>"]
+authors = ["Local-first Warp fork contributors"]
 version = "0.1.0"
 edition = "2021"
 description = "Thin wrapper around ripgrep for usage by Warp CLI"
@@ -13,7 +13,6 @@ license.workspace = true
 anyhow.workspace = true
 grep = "0.4.1"
 ignore = "0.4.20"
-instant.workspace = true
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true

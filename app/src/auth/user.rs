@@ -1,20 +1,9 @@
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use warp_graphql::scalars::time::ServerTimestamp;
 
 use super::UserUid;
 
+#[cfg(any(test, feature = "integration_tests"))]
 pub use warp_server_client::auth::{TEST_USER_EMAIL, TEST_USER_UID};
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum AnonymousUserType {
-    /// An anonymous user created from the native client.
-    NativeClientAnonymousUser,
-    /// An anonymous user created from the native client with feature (rather than time-based) gating.
-    NativeClientAnonymousUserFeatureGated,
-    /// An anonymous user created from the web client.
-    WebClientAnonymousUser,
-}
 
 /// Type of principal making the authenticated request.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -34,28 +23,6 @@ impl From<warp_graphql::queries::get_user::PrincipalType> for PrincipalType {
     }
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-pub struct PersonalObjectLimits {
-    pub env_var_limit: usize,
-    pub notebook_limit: usize,
-    pub workflow_limit: usize,
-}
-
-impl TryFrom<warp_graphql::queries::get_user::AnonymousUserPersonalObjectLimits>
-    for PersonalObjectLimits
-{
-    type Error = anyhow::Error;
-    fn try_from(
-        value: warp_graphql::queries::get_user::AnonymousUserPersonalObjectLimits,
-    ) -> Result<Self, Self::Error> {
-        Ok(Self {
-            env_var_limit: value.env_var_limit as usize,
-            notebook_limit: value.notebook_limit as usize,
-            workflow_limit: value.workflow_limit as usize,
-        })
-    }
-}
-
 /// The in-memory representation of a logged-in User.
 /// This does not include authentication credentials, which are stored separately
 /// in the `Credentials` enum.
@@ -67,16 +34,10 @@ pub struct User {
     pub metadata: UserMetadata,
     /// Whether or not the user is onboarded.
     pub is_onboarded: bool,
-    /// Whether or not the user needs to link their account via SSO due to an organization setting.
-    pub needs_sso_link: bool,
-    /// What type of anonymous user this user is. May be `None` if they are not anonymous.
-    pub anonymous_user_type: Option<AnonymousUserType>,
     /// Whether or not this user is on what we consider a "work" domain, meaning the domain isn't
     /// from a general email provider (e.g. gmail.com, hotmail.com, proton.me, etc.).
-    /// Calculated on warp-server.
+    /// Local-only builds default this to `false`.
     pub is_on_work_domain: bool,
-    pub linked_at: Option<ServerTimestamp>,
-    pub personal_object_limits: Option<PersonalObjectLimits>,
     /// Type of principal (user or service account). Fetched fresh from the server
     /// on each login/refresh.
     pub principal_type: PrincipalType,
@@ -87,8 +48,7 @@ pub struct User {
 /// This struct holds extra information about the local user profile.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct UserMetadata {
-    /// The user's email. NOTE: unlike other fields which use `Option`s to denote null values,
-    /// an anonymous user will have an empty string as their email here.
+    /// The user's email. Empty for the default local profile.
     pub email: String,
     /// The user's display name. We should prefer showing this over their email, if available.
     pub display_name: Option<String>,
@@ -97,21 +57,6 @@ pub struct UserMetadata {
 }
 
 impl User {
-    /// The name for the user that we display. This is the user's display name, if set. If not set,
-    /// we then fallback to email (which is always set).
-    pub fn username_for_display(&self) -> &str {
-        let user_metadata = &self.metadata;
-        user_metadata
-            .display_name
-            .as_deref()
-            .unwrap_or(user_metadata.email.as_str())
-    }
-
-    /// The display name of the user. Does not fall back to email.
-    pub fn display_name(&self) -> Option<String> {
-        self.metadata.display_name.clone()
-    }
-
     pub fn local() -> Self {
         Self {
             local_id: UserUid::new("local_user"),
@@ -121,16 +66,13 @@ impl User {
                 photo_url: None,
             },
             is_onboarded: true,
-            needs_sso_link: false,
-            anonymous_user_type: None,
             is_on_work_domain: false,
-            linked_at: None,
-            personal_object_limits: None,
             principal_type: PrincipalType::User,
             global_skills: Vec::new(),
         }
     }
 
+    #[cfg(any(test, feature = "integration_tests"))]
     pub fn test() -> Self {
         Self {
             local_id: UserUid::new(TEST_USER_UID),
@@ -140,30 +82,10 @@ impl User {
                 photo_url: None,
             },
             is_onboarded: true,
-            needs_sso_link: false,
-            anonymous_user_type: None,
             is_on_work_domain: false,
-            linked_at: None,
-            personal_object_limits: None,
             principal_type: PrincipalType::User,
             global_skills: Vec::new(),
         }
-    }
-
-    pub fn is_user_anonymous(&self) -> bool {
-        self.anonymous_user_type().is_some() && self.linked_at().is_none()
-    }
-
-    pub fn anonymous_user_type(&self) -> Option<AnonymousUserType> {
-        self.anonymous_user_type
-    }
-
-    pub fn personal_object_limits(&self) -> Option<PersonalObjectLimits> {
-        self.personal_object_limits
-    }
-
-    pub fn linked_at(&self) -> Option<ServerTimestamp> {
-        self.linked_at
     }
 }
 

@@ -28,8 +28,6 @@ use crate::drive::DriveIndexVariant;
 use crate::features::FeatureFlag;
 use crate::notebooks::CloudNotebookModel;
 use crate::notebooks::NotebookId;
-use crate::server::cloud_objects::listener::ObjectUpdateMessage;
-use crate::server::cloud_objects::update_manager::InitialLoadResponse;
 use crate::server::ids::ServerId;
 use crate::server::ids::ServerIdAndType;
 use crate::server::server_api::object::ObjectClient;
@@ -48,10 +46,7 @@ use crate::workflows::CloudWorkflowModel;
 use crate::workspaces::workspace::WorkspaceUid;
 use crate::NetworkStatus;
 use crate::UpdateManager;
-use mockall::Sequence;
-use rand::Rng;
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::*;
 
@@ -118,19 +113,6 @@ fn initialize_app(
     app.add_singleton_model(|_| UserProfiles::new(Vec::new()));
     app.add_singleton_model(CloudViewModel::new);
     app.add_singleton_model(|_| ObjectActions::new(Vec::new()));
-
-    // The start of polling is normally triggered by authentication completion, but
-    // we need to do it manually for tests.
-    TeamTesterStatus::handle(app).update(app, |team_tester, ctx| {
-        team_tester.initiate_data_pollers(false, ctx);
-    });
-}
-
-fn mock_random_workflows(start_id: i64, owner: Owner) -> Vec<ServerWorkflow> {
-    let mut rng = rand::thread_rng();
-    // pick how many workflows to generate at random
-    let number_of_workflows = rng.gen_range(1..10);
-    mock_server_workflows(start_id, owner, number_of_workflows)
 }
 
 fn mock_server_metadata() -> ServerMetadata {
@@ -179,24 +161,6 @@ fn mock_server_workflows(
                 format!("w{}", start_id + idx),
                 format!("c{}", start_id + idx),
             )),
-        })
-        .collect()
-}
-
-fn mock_random_folders(start_id: i64, owner: Owner) -> Vec<ServerFolder> {
-    let mut rng = rand::thread_rng();
-    // pick how many folders to generate at random
-    let number_of_workflows = rng.gen_range(1..10);
-    mock_server_folders(start_id, owner, number_of_workflows)
-}
-
-fn mock_server_folders(start_id: i64, owner: Owner, number_of_folders: i64) -> Vec<ServerFolder> {
-    (0..number_of_folders)
-        .map(|idx| ServerFolder {
-            id: SyncId::ServerId((start_id + idx).into()),
-            model: CloudFolderModel::new(&format!("f{}", start_id + idx), false),
-            metadata: mock_server_metadata(),
-            permissions: mock_server_permissions(owner),
         })
         .collect()
 }
@@ -322,12 +286,16 @@ fn folder_from_cloud_model(model: &CloudModel, id: SyncId) -> &CloudFolder {
     model.get_folder_by_uid(&id.uid()).expect("is a folder")
 }
 
-/// Mock receiving an RTC update. These tests update objects by mocking RTC messages so that they
-/// don't need to mock the server API for updates. The unit tests for [`UpdateManager`] ensure that
-/// updates from both RTC and client actions emit the same events.
-fn receive_rtc_update(message: ObjectUpdateMessage, app: &mut App) {
-    UpdateManager::handle(app).update(app, |update_manager, ctx| {
-        update_manager.received_message_from_server(message, ctx)
+fn receive_notebook_update(notebook: ServerNotebook, app: &mut App) {
+    CloudModel::handle(app).update(app, |cloud_model, ctx| {
+        cloud_model.update_objects_from_initial_load(vec![notebook], false, true, ctx);
+    });
+}
+
+fn receive_metadata_update(metadata: ServerMetadata, app: &mut App) {
+    let uid = metadata.uid.uid();
+    CloudModel::handle(app).update(app, |cloud_model, ctx| {
+        cloud_model.maybe_update_object_metadata(&uid, metadata, false, ctx);
     });
 }
 
@@ -359,10 +327,10 @@ fn move_object(id: ServerId, folder_id: Option<FolderId>, app: &mut App) {
             last_editor_uid: object.metadata().last_editor_uid.clone(),
         };
 
-        ObjectUpdateMessage::ObjectMetadataChanged { metadata }
+        metadata
     });
 
-    receive_rtc_update(message, app);
+    receive_metadata_update(message, app);
 }
 
 #[test]
@@ -649,351 +617,6 @@ fn test_update_object_server_id_for_folder() {
 
 fn base_mock_cloud_object_server_api() -> MockObjectClient {
     MockObjectClient::new()
-}
-
-fn check_cloud_folders(app: &mut App, number_of_folders: usize) {
-    CloudModel::handle(app).read(app, |model, _| {
-        assert_eq!(
-            number_of_folders,
-            model.get_all_active_and_inactive_folders().count(),
-            "we expected {} folders, and received {}",
-            number_of_folders,
-            model.get_all_active_and_inactive_folders().count()
-        );
-    });
-}
-
-fn check_cloud_workflows(app: &mut App, number_of_workflows: usize) {
-    CloudModel::handle(app).read(app, |model, _| {
-        assert_eq!(
-            number_of_workflows,
-            model.get_all_active_and_inactive_workflows().count(),
-            "we expected {} workflows, and received {}",
-            number_of_workflows,
-            model.get_all_active_and_inactive_workflows().count()
-        );
-    });
-}
-
-fn check_cloud_notebooks(app: &mut App, number_of_notebooks: usize) {
-    CloudModel::handle(app).read(app, |model, _| {
-        assert_eq!(
-            number_of_notebooks,
-            model.get_all_active_and_inactive_notebooks().count(),
-            "we expected {} notebooks, and received {}",
-            number_of_notebooks,
-            model.get_all_active_and_inactive_notebooks().count()
-        );
-    });
-}
-
-#[test]
-/// This test validates the behavior when the CloudModel has been initiated with empty values (ie.
-/// empty sqlite / local cache). We check that after initialization, we fetch the values and
-/// successfully update CloudModel.
-// TODO followup with a test equivalent for when the user is not team tester but still has teams?
-fn test_load_cloud_objects_on_initial_load_with_empty_cache() {
-    let _flag = FeatureFlag::KnowledgeSidebar.override_enabled(true);
-
-    let personal_workflows = mock_random_workflows(100, Owner::mock_current_user());
-    let personal_workflows_len = personal_workflows.len();
-    let team_workflows = mock_random_workflows(
-        200,
-        Owner::Team {
-            team_uid: ServerId::from(1),
-        },
-    );
-    let team_workflows_len = team_workflows.len();
-    let personal_folders = mock_random_folders(300, Owner::mock_current_user());
-    let personal_folders_len = personal_folders.len();
-    let team_folders = mock_random_folders(
-        400,
-        Owner::Team {
-            team_uid: ServerId::from(1),
-        },
-    );
-    let team_folders_len = team_folders.len();
-    let notebooks = mock_server_notebooks();
-    let notebooks_len = notebooks.len();
-    let all_workflows = [personal_workflows, team_workflows].concat();
-    let all_folders = [personal_folders, team_folders].concat();
-
-    App::test((), |mut app| async move {
-        // Setup the app and APIs
-        let mut cloud_object_server_api_mock = base_mock_cloud_object_server_api();
-        cloud_object_server_api_mock
-            .expect_fetch_changed_objects()
-            .times(1)
-            // since we don't have anything cached, at startup we just send empty list here
-            .withf(|objects_to_update, _| {
-                objects_to_update.notebooks.is_empty()
-                    && objects_to_update.workflows.is_empty()
-                    && objects_to_update.folders.is_empty()
-                    && objects_to_update.generic_string_objects.is_empty()
-            })
-            .return_once(move |_, _| {
-                Ok(InitialLoadResponse {
-                    updated_notebooks: notebooks,
-                    updated_workflows: all_workflows,
-                    updated_folders: all_folders,
-                    deleted_notebooks: vec![],
-                    deleted_workflows: vec![],
-                    deleted_folders: vec![],
-                    user_profiles: vec![],
-                    updated_generic_string_objects: Default::default(),
-                    deleted_generic_string_objects: Default::default(),
-                    action_histories: Default::default(),
-                    mcp_gallery: Default::default(),
-                })
-            });
-
-        // No workflows or notebooks (or other objects) loaded from sqlite passed to CloudModel
-        initialize_app(&mut app, Vec::new(), Arc::new(cloud_object_server_api_mock));
-
-        // Spend time waiting for the initial load to finish etc.
-        warpui::r#async::Timer::after(Duration::from_secs(1)).await;
-
-        // TODO: @ianhodge - update tests once cloud model APIs are added
-        // Now CloudModel should include all objects that were fetched via initial load
-        check_cloud_workflows(&mut app, personal_workflows_len + team_workflows_len);
-        check_cloud_folders(&mut app, personal_folders_len + team_folders_len);
-        check_cloud_notebooks(&mut app, notebooks_len);
-    })
-}
-
-#[test]
-fn test_loading_all_cloud_objects_after_switching_from_offline() {
-    let _flag = FeatureFlag::KnowledgeSidebar.override_enabled(true);
-
-    let personal_workflows = mock_random_workflows(100, Owner::mock_current_user());
-    let personal_workflows_len = personal_workflows.len();
-    let team_workflows = mock_random_workflows(
-        200,
-        Owner::Team {
-            team_uid: ServerId::from(1),
-        },
-    );
-    let team_workflows_len = team_workflows.len();
-    let personal_folders = mock_random_folders(300, Owner::mock_current_user());
-    let personal_folders_len = personal_folders.len();
-    let team_folders = mock_random_folders(
-        400,
-        Owner::Team {
-            team_uid: ServerId::from(1),
-        },
-    );
-    let team_folders_len = team_folders.len();
-    let notebooks = mock_server_notebooks();
-    let notebooks_len = notebooks.len();
-
-    App::test((), |mut app| async move {
-        // Sequences used for ordering requests (so first call will return something different than
-        // next etc.)
-        let mut cloud_objects_sequence = Sequence::new();
-
-        // Setup the app and APIs
-        let mut cloud_object_server_api_mock = base_mock_cloud_object_server_api();
-
-        // Update manager also calls for update based on the current in memory state
-        // We only expect it once with the given set of arguments (empty vector) and it'll return
-        // personal workflows
-        cloud_object_server_api_mock
-            .expect_fetch_changed_objects()
-            .times(1)
-            // since we don't have anything cached, at startup we just send empty list here
-            .withf(|objects_to_update, _| {
-                objects_to_update.notebooks.is_empty()
-                    && objects_to_update.workflows.is_empty()
-                    && objects_to_update.folders.is_empty()
-                    && objects_to_update.generic_string_objects.is_empty()
-            })
-            .in_sequence(&mut cloud_objects_sequence)
-            .return_once(move |_, _| {
-                Ok(InitialLoadResponse {
-                    updated_notebooks: vec![],
-                    updated_workflows: personal_workflows,
-                    updated_folders: personal_folders,
-                    deleted_notebooks: vec![],
-                    deleted_workflows: vec![],
-                    deleted_folders: vec![],
-                    user_profiles: vec![],
-                    updated_generic_string_objects: Default::default(),
-                    deleted_generic_string_objects: Default::default(),
-                    action_histories: Default::default(),
-                    mcp_gallery: Default::default(),
-                })
-            });
-
-        // Second call will return objects from the team (as a list of updated / new to user objects)
-        // It'll also be called only once, and with personal_workflows in the input
-        // We expect this call to happen _after_ the network status change (offline -> online).
-        cloud_object_server_api_mock
-            .expect_fetch_changed_objects()
-            .times(1)
-            // verify that the list of objects passed equals the number of personal workflows we
-            // already have
-            .withf(move |objects_to_update, _| {
-                objects_to_update.workflows.len() == personal_workflows_len
-                    && objects_to_update.folders.len() == personal_folders_len
-            })
-            .in_sequence(&mut cloud_objects_sequence)
-            .returning(move |_, _| {
-                Ok(InitialLoadResponse {
-                    updated_notebooks: notebooks.clone(),
-                    updated_workflows: team_workflows.clone(),
-                    updated_folders: team_folders.clone(),
-                    deleted_notebooks: vec![],
-                    deleted_workflows: vec![],
-                    deleted_folders: vec![],
-                    user_profiles: vec![],
-                    updated_generic_string_objects: Default::default(),
-                    deleted_generic_string_objects: Default::default(),
-                    action_histories: Default::default(),
-                    mcp_gallery: Default::default(),
-                })
-            });
-
-        // No workflows or notebooks (or other objects) loaded from sqlite passed to CloudModel
-        initialize_app(&mut app, Vec::new(), Arc::new(cloud_object_server_api_mock));
-        check_cloud_workflows(&mut app, 0);
-        check_cloud_notebooks(&mut app, 0);
-        check_cloud_folders(&mut app, 0);
-
-        // Spend time waiting for the initial load to finish etc.
-        warpui::r#async::Timer::after(Duration::from_secs(1)).await;
-
-        // Now CloudModel should include all objects that were fetched via initial load (in this
-        // case: personal only)
-        check_cloud_workflows(&mut app, personal_workflows_len);
-        check_cloud_folders(&mut app, personal_folders_len);
-        check_cloud_notebooks(&mut app, 0);
-
-        // Lets go offline
-        NetworkStatus::handle(&app).update(&mut app, |network_status, ctx| {
-            network_status.reachability_changed(false, ctx);
-        });
-
-        // Lets go back online
-        NetworkStatus::handle(&app).update(&mut app, |network_status, ctx| {
-            network_status.reachability_changed(true, ctx);
-        });
-
-        // Spend time waiting for the load to finish etc.
-        warpui::r#async::Timer::after(Duration::from_secs(1)).await;
-
-        // Now CloudModel should include all objects that were fetched via initial load
-        check_cloud_workflows(&mut app, personal_workflows_len + team_workflows_len);
-        check_cloud_folders(&mut app, personal_folders_len + team_folders_len);
-        check_cloud_notebooks(&mut app, notebooks_len);
-    })
-}
-
-#[test]
-fn test_force_refresh_only_happens_once() {
-    let _flag = FeatureFlag::KnowledgeSidebar.override_enabled(true);
-
-    App::test((), |mut app| async move {
-        let mut cloud_objects_sequence = Sequence::new();
-        let mut cloud_object_server_api_mock = base_mock_cloud_object_server_api();
-
-        // We expect force_refresh to be true on this request.
-        cloud_object_server_api_mock
-            .expect_fetch_changed_objects()
-            .times(1)
-            .withf(|objects_to_update, force_refresh| {
-                objects_to_update.notebooks.is_empty()
-                    && objects_to_update.workflows.is_empty()
-                    && objects_to_update.folders.is_empty()
-                    && objects_to_update.generic_string_objects.is_empty()
-                    && *force_refresh
-            })
-            .in_sequence(&mut cloud_objects_sequence)
-            .return_once(move |_, _| {
-                Ok(InitialLoadResponse {
-                    updated_notebooks: vec![],
-                    updated_workflows: vec![],
-                    updated_folders: vec![],
-                    deleted_notebooks: vec![],
-                    deleted_workflows: vec![],
-                    deleted_folders: vec![],
-                    user_profiles: vec![],
-                    updated_generic_string_objects: Default::default(),
-                    deleted_generic_string_objects: Default::default(),
-                    action_histories: Default::default(),
-                    mcp_gallery: Default::default(),
-                })
-            });
-
-        // Initialize app with pending refresh = true!
-        initialize_app(&mut app, Vec::new(), Arc::new(cloud_object_server_api_mock));
-
-        // Spend time waiting for the initial load to finish etc.
-        warpui::r#async::Timer::after(Duration::from_secs(1)).await;
-
-        // Check that pending refresh is now false on CloudModel
-        CloudModel::handle(&app).read(&app, |model, _ctx| {
-            assert!(!model.cloud_objects_force_refresh_pending())
-        });
-    })
-}
-
-#[test]
-fn test_force_refresh_correctly_resets_timestamp() {
-    let _flag = FeatureFlag::KnowledgeSidebar.override_enabled(true);
-
-    App::test((), |mut app| async move {
-        let mut cloud_objects_sequence = Sequence::new();
-        let mut cloud_object_server_api_mock = base_mock_cloud_object_server_api();
-
-        // We expect force_refresh to be true on this request.
-        cloud_object_server_api_mock
-            .expect_fetch_changed_objects()
-            .times(1)
-            .withf(|objects_to_update, force_refresh| {
-                objects_to_update.notebooks.is_empty()
-                    && objects_to_update.workflows.is_empty()
-                    && objects_to_update.folders.is_empty()
-                    && objects_to_update.generic_string_objects.is_empty()
-                    && *force_refresh
-            })
-            .in_sequence(&mut cloud_objects_sequence)
-            .return_once(move |_, _| {
-                Ok(InitialLoadResponse {
-                    updated_notebooks: vec![],
-                    updated_workflows: vec![],
-                    updated_folders: vec![],
-                    deleted_notebooks: vec![],
-                    deleted_workflows: vec![],
-                    deleted_folders: vec![],
-                    user_profiles: vec![],
-                    updated_generic_string_objects: Default::default(),
-                    deleted_generic_string_objects: Default::default(),
-                    action_histories: Default::default(),
-                    mcp_gallery: Default::default(),
-                })
-            });
-
-        // Initialize app with pending refresh = true!
-        initialize_app(&mut app, Vec::new(), Arc::new(cloud_object_server_api_mock));
-
-        // Spend time waiting for the initial load to finish etc.
-        warpui::r#async::Timer::after(Duration::from_secs(1)).await;
-
-        // Check that pending refresh is within the acceptable hour range.
-        CloudModel::handle(&app).read(&app, |model, _ctx| {
-            let time_option = model.time_of_next_force_refresh;
-            assert!(time_option.is_some());
-            let time = time_option.unwrap();
-            assert!(
-                time <= (Utc::now()
-                    + chrono::Duration::minutes(MAX_MINUTES_UNTIL_NEXT_FORCE_REFRESH))
-            );
-            assert!(
-                time >= (Utc::now()
-                    + chrono::Duration::minutes(MIN_MINUTES_UNTIL_NEXT_FORCE_REFRESH))
-            );
-        });
-    })
 }
 
 #[test]
@@ -1331,30 +954,27 @@ fn test_update_folder_timestamp_from_child_update() {
 
         // After updating the notebook, all 3 timestamps should change.
         let new_ts = initial_ts + chrono::Duration::seconds(5);
-        receive_rtc_update(
-            ObjectUpdateMessage::ObjectContentChanged {
-                server_object: Box::new(ServerCloudObject::Notebook(ServerNotebook {
-                    id: SyncId::ServerId(notebook_id),
-                    model: CloudNotebookModel {
-                        title: "Test Notebook".to_string(),
-                        data: "test2".into(),
-                        ai_document_id: None,
-                        conversation_id: None,
-                    },
-                    metadata: ServerMetadata {
-                        uid: notebook_id,
-                        revision: new_ts.into(),
-                        metadata_last_updated_ts: new_ts.into(),
-                        trashed_ts: None,
-                        folder_id: Some(folder_id.into()),
-                        is_welcome_object: false,
-                        creator_uid: None,
-                        last_editor_uid: None,
-                        current_editor_uid: None,
-                    },
-                    permissions: mock_server_permissions(Owner::mock_current_user()),
-                })),
-                last_editor: None,
+        receive_notebook_update(
+            ServerNotebook {
+                id: SyncId::ServerId(notebook_id),
+                model: CloudNotebookModel {
+                    title: "Test Notebook".to_string(),
+                    data: "test2".into(),
+                    ai_document_id: None,
+                    conversation_id: None,
+                },
+                metadata: ServerMetadata {
+                    uid: notebook_id,
+                    revision: new_ts.into(),
+                    metadata_last_updated_ts: new_ts.into(),
+                    trashed_ts: None,
+                    folder_id: Some(folder_id.into()),
+                    is_welcome_object: false,
+                    creator_uid: None,
+                    last_editor_uid: None,
+                    current_editor_uid: None,
+                },
+                permissions: mock_server_permissions(Owner::mock_current_user()),
             },
             &mut app,
         );
@@ -1462,30 +1082,27 @@ fn test_update_folder_timestamp_from_new_child() {
         assert_sorting_timestamp(parent_folder_id, t1, &app);
 
         // Create a notebook inside the folder.
-        receive_rtc_update(
-            ObjectUpdateMessage::ObjectContentChanged {
-                server_object: Box::new(ServerCloudObject::Notebook(ServerNotebook {
-                    id: SyncId::ServerId(notebook_id),
-                    model: CloudNotebookModel {
-                        title: "Test Notebook".to_string(),
-                        data: "test".to_string(),
-                        ai_document_id: None,
-                        conversation_id: None,
-                    },
-                    metadata: ServerMetadata {
-                        uid: notebook_id,
-                        revision: t2.into(),
-                        metadata_last_updated_ts: t2.into(),
-                        trashed_ts: None,
-                        folder_id: Some(folder_id.into()),
-                        is_welcome_object: false,
-                        creator_uid: None,
-                        last_editor_uid: None,
-                        current_editor_uid: None,
-                    },
-                    permissions: mock_server_permissions(Owner::mock_current_user()),
-                })),
-                last_editor: None,
+        receive_notebook_update(
+            ServerNotebook {
+                id: SyncId::ServerId(notebook_id),
+                model: CloudNotebookModel {
+                    title: "Test Notebook".to_string(),
+                    data: "test".to_string(),
+                    ai_document_id: None,
+                    conversation_id: None,
+                },
+                metadata: ServerMetadata {
+                    uid: notebook_id,
+                    revision: t2.into(),
+                    metadata_last_updated_ts: t2.into(),
+                    trashed_ts: None,
+                    folder_id: Some(folder_id.into()),
+                    is_welcome_object: false,
+                    creator_uid: None,
+                    last_editor_uid: None,
+                    current_editor_uid: None,
+                },
+                permissions: mock_server_permissions(Owner::mock_current_user()),
             },
             &mut app,
         );
@@ -1535,19 +1152,17 @@ fn test_update_folder_timestamp_from_child_trash() {
         assert_sorting_timestamp(folder_id, t2, &app);
 
         // Trash the notebook so that it no longer counts towards the folder's sort timestamp.
-        receive_rtc_update(
-            ObjectUpdateMessage::ObjectMetadataChanged {
-                metadata: ServerMetadata {
-                    uid: notebook_id,
-                    revision: t2.into(),
-                    metadata_last_updated_ts: t3.into(),
-                    trashed_ts: Some(t3.into()),
-                    folder_id: Some(folder_id.into()),
-                    is_welcome_object: false,
-                    creator_uid: None,
-                    last_editor_uid: None,
-                    current_editor_uid: None,
-                },
+        receive_metadata_update(
+            ServerMetadata {
+                uid: notebook_id,
+                revision: t2.into(),
+                metadata_last_updated_ts: t3.into(),
+                trashed_ts: Some(t3.into()),
+                folder_id: Some(folder_id.into()),
+                is_welcome_object: false,
+                creator_uid: None,
+                last_editor_uid: None,
+                current_editor_uid: None,
             },
             &mut app,
         );
@@ -1555,19 +1170,17 @@ fn test_update_folder_timestamp_from_child_trash() {
         assert_sorting_timestamp(folder_id, t1, &app);
 
         // Untrash the notebook, updating the folder timestamp.
-        receive_rtc_update(
-            ObjectUpdateMessage::ObjectMetadataChanged {
-                metadata: ServerMetadata {
-                    uid: notebook_id,
-                    revision: t2.into(),
-                    metadata_last_updated_ts: t4.into(),
-                    trashed_ts: None,
-                    folder_id: Some(folder_id.into()),
-                    is_welcome_object: false,
-                    creator_uid: None,
-                    last_editor_uid: None,
-                    current_editor_uid: None,
-                },
+        receive_metadata_update(
+            ServerMetadata {
+                uid: notebook_id,
+                revision: t2.into(),
+                metadata_last_updated_ts: t4.into(),
+                trashed_ts: None,
+                folder_id: Some(folder_id.into()),
+                is_welcome_object: false,
+                creator_uid: None,
+                last_editor_uid: None,
+                current_editor_uid: None,
             },
             &mut app,
         );

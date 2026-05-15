@@ -25,7 +25,6 @@ use crate::ai::{
     blocklist::action_model::execute::suggest_new_conversation::SuggestNewConversationExecutor,
 };
 use chrono::Local;
-pub(crate) use execute::apply_edits;
 pub(crate) use execute::coerce_integer_args;
 #[cfg(test)]
 pub(crate) use execute::run_agents::{
@@ -34,12 +33,11 @@ pub(crate) use execute::run_agents::{
 pub use execute::run_agents::{
     RunAgentsExecutor, RunAgentsExecutorEvent, RunAgentsSpawningSnapshot,
 };
-pub(crate) use execute::FileReadResult;
 pub use execute::{
     read_local_file_context, NewConversationDecision, PromptSuggestionExecutor,
-    ReadFileContextResult, RequestFileEditsExecutor, RequestFileEditsFormatKind,
-    ShellCommandExecutor, ShellCommandExecutorEvent, StartAgentExecutor, StartAgentExecutorEvent,
-    StartAgentRequest, StartAgentRequestId,
+    ReadFileContextResult, RequestFileEditsExecutor, ShellCommandExecutor,
+    ShellCommandExecutorEvent, StartAgentExecutor, StartAgentExecutorEvent, StartAgentRequest,
+    StartAgentRequestId,
 };
 
 use futures::future::{join_all, BoxFuture};

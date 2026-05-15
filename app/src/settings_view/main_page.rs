@@ -6,11 +6,9 @@ use super::{
     SettingsAction, SettingsSection, ToggleSettingActionPair,
 };
 use crate::auth::{auth_state::AuthState, AuthStateProvider};
-use crate::autoupdate::{self, AutoupdateStage, AutoupdateState};
 use crate::{appearance::Appearance, workspace::WorkspaceAction};
-use pathfinder_color::ColorU;
 use std::sync::Arc;
-use warp_core::{channel::ChannelState, context_flag::ContextFlag};
+use warp_core::channel::ChannelState;
 use warpui::keymap::ContextPredicate;
 use warpui::{
     assets::asset_cache::AssetSource,
@@ -29,9 +27,7 @@ use warpui::{
     elements::{CacheOption, Image},
     ui_components::components::{UiComponent, UiComponentStyles},
 };
-use warpui::{
-    Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
-};
+use warpui::{Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle};
 
 const PHOTO_SIZE: f32 = 40.;
 const REGULAR_TEXT_FONT_SIZE: f32 = 12.;
@@ -71,16 +67,7 @@ pub fn handle_experiment_change(app: &mut AppContext) {
 }
 
 #[derive(Debug, Clone)]
-pub enum MainPageAction {
-    Relaunch,
-    DownloadUpdate,
-    CheckForUpdate,
-}
-
-#[derive(Clone, Copy)]
-pub enum MainSettingsPageEvent {
-    CheckForUpdate,
-}
+pub enum MainPageAction {}
 
 pub struct MainSettingsPageView {
     page: PageType<Self>,
@@ -88,26 +75,11 @@ pub struct MainSettingsPageView {
 }
 
 impl Entity for MainSettingsPageView {
-    type Event = MainSettingsPageEvent;
+    type Event = ();
 }
 
 impl TypedActionView for MainSettingsPageView {
     type Action = MainPageAction;
-
-    fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
-        match action {
-            MainPageAction::Relaunch => {
-                autoupdate::initiate_relaunch_for_update(ctx);
-            }
-            MainPageAction::DownloadUpdate => {
-                autoupdate::manually_download_new_version(ctx);
-            }
-            MainPageAction::CheckForUpdate => {
-                ctx.emit(MainSettingsPageEvent::CheckForUpdate);
-                ctx.notify();
-            }
-        }
-    }
 }
 
 impl View for MainSettingsPageView {
@@ -124,12 +96,6 @@ impl MainSettingsPageView {
     pub fn new(ctx: &mut ViewContext<MainSettingsPageView>) -> Self {
         let auth_state = AuthStateProvider::as_ref(ctx).get().clone();
 
-        let autoupdate_state_handle = AutoupdateState::handle(ctx);
-        ctx.observe(
-            &autoupdate_state_handle,
-            Self::handle_autoupdate_state_change,
-        );
-
         let mut widgets: Vec<Box<dyn SettingsWidget<View = Self>>> =
             vec![Box::new(AccountWidget::default())];
 
@@ -140,14 +106,6 @@ impl MainSettingsPageView {
         let page = PageType::new_uncategorized(widgets, Some("User"));
 
         MainSettingsPageView { page, auth_state }
-    }
-
-    fn handle_autoupdate_state_change(
-        &mut self,
-        _: ModelHandle<AutoupdateState>,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        ctx.notify();
     }
 }
 
@@ -275,7 +233,6 @@ impl SettingsWidget for AccountWidget {
 #[derive(Default)]
 struct VersionInfoWidget {
     copy_version_button_mouse_state: MouseStateHandle,
-    version_info_cta_link_mouse_state: MouseStateHandle,
 }
 
 impl VersionInfoWidget {
@@ -283,105 +240,15 @@ impl VersionInfoWidget {
         &self,
         version: &'static str,
         appearance: &Appearance,
-        app: &AppContext,
+        _app: &AppContext,
     ) -> Box<dyn Element> {
         let faded_text_color = appearance
             .theme()
             .active_ui_text_color()
             .with_opacity(60)
             .into();
-        struct StatusContent {
-            text: &'static str,
-            color: ColorU,
-        }
-        struct CallToActionContent {
-            text: &'static str,
-            action: MainPageAction,
-        }
 
-        let (status_content, call_to_action_content) =
-            if ContextFlag::PromptForVersionUpdates.is_enabled() {
-                let ansi_red: ColorU = appearance.theme().terminal_colors().bright.red.into();
-                match autoupdate::get_update_state(app) {
-                    AutoupdateStage::NoUpdateAvailable => (
-                        Some(StatusContent {
-                            text: "Up to date",
-                            color: faded_text_color,
-                        }),
-                        Some(CallToActionContent {
-                            text: "Check for updates",
-                            action: MainPageAction::CheckForUpdate,
-                        }),
-                    ),
-                    AutoupdateStage::CheckingForUpdate => (
-                        Some(StatusContent {
-                            text: "checking for update...",
-                            color: faded_text_color,
-                        }),
-                        None,
-                    ),
-                    AutoupdateStage::DownloadingUpdate => (
-                        Some(StatusContent {
-                            text: "downloading update...",
-                            color: faded_text_color,
-                        }),
-                        None,
-                    ),
-                    AutoupdateStage::UpdateReady { .. } => (
-                        Some(StatusContent {
-                            text: "Update available",
-                            color: ansi_red,
-                        }),
-                        Some(CallToActionContent {
-                            text: "Relaunch Warp",
-                            action: MainPageAction::Relaunch,
-                        }),
-                    ),
-                    AutoupdateStage::Updating { .. } => (
-                        Some(StatusContent {
-                            text: "Updating...",
-                            color: faded_text_color,
-                        }),
-                        None,
-                    ),
-                    AutoupdateStage::UpdatedPendingRestart { .. } => (
-                        Some(StatusContent {
-                            text: "Installed update",
-                            color: faded_text_color,
-                        }),
-                        Some(CallToActionContent {
-                            text: "Relaunch Warp",
-                            action: MainPageAction::Relaunch,
-                        }),
-                    ),
-                    AutoupdateStage::UnableToUpdateToNewVersion { .. } => (
-                        Some(StatusContent {
-                            text: "A new version of Warp is available but can't be installed",
-                            color: ansi_red,
-                        }),
-                        Some(CallToActionContent {
-                            text: "Update Warp manually",
-                            // note: the handler for this action is a no-op
-                            action: MainPageAction::DownloadUpdate,
-                        }),
-                    ),
-                    AutoupdateStage::UnableToLaunchNewVersion { .. } => (
-                        Some(StatusContent {
-                            text: "A new version of Warp is installed but can't be launched.",
-                            color: ansi_red,
-                        }),
-                        Some(CallToActionContent {
-                            text: "Update Warp manually",
-                            // note: the handler for this action is a no-op
-                            action: MainPageAction::DownloadUpdate,
-                        }),
-                    ),
-                }
-            } else {
-                (None, None)
-            };
-
-        let mut first_row = Flex::row()
+        let first_row = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
             .with_child(
                 Shrinkable::new(
@@ -400,25 +267,8 @@ impl VersionInfoWidget {
                 )
                 .finish(),
             );
-        if let Some(call_to_action_content) = call_to_action_content {
-            first_row.add_child(
-                appearance
-                    .ui_builder()
-                    .link(
-                        call_to_action_content.text.into(),
-                        None,
-                        Some(Box::new(move |ctx| {
-                            ctx.dispatch_typed_action(call_to_action_content.action.clone());
-                        })),
-                        self.version_info_cta_link_mouse_state.clone(),
-                    )
-                    .soft_wrap(false)
-                    .build()
-                    .finish(),
-            );
-        }
 
-        let mut second_row = Flex::row()
+        let second_row = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
             .with_child(
                 Shrinkable::new(
@@ -459,17 +309,6 @@ impl VersionInfoWidget {
                 )
                 .finish(),
             );
-        if let Some(status_content) = status_content {
-            second_row.add_child(
-                Text::new_inline(
-                    status_content.text.to_string(),
-                    appearance.ui_font_family(),
-                    REGULAR_TEXT_FONT_SIZE,
-                )
-                .with_color(status_content.color)
-                .finish(),
-            );
-        }
 
         let mut version_info = Flex::column();
         version_info.add_child(first_row.finish());

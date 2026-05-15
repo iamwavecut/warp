@@ -214,13 +214,8 @@ fn test_has_any_ai_remaining_true_with_user_bonus_credits() {
 #[test]
 fn test_has_any_ai_remaining_true_with_workspace_overages() {
     App::test((), |mut app| async move {
-        // Create a workspace with overages enabled and remaining.
+        // Create a workspace with remaining overage metadata.
         let (_uid, mut workspace) = create_test_workspace();
-        workspace.settings.usage_based_pricing_settings.enabled = true;
-        workspace
-            .settings
-            .usage_based_pricing_settings
-            .max_monthly_spend_cents = Some(1_000);
         workspace.billing_metadata.ai_overages = Some(AiOverages {
             current_monthly_request_cost_cents: 100,
             current_monthly_requests_used: 100,

@@ -8,8 +8,6 @@ use crate::ai::agent_sdk::driver::harness::{harness_kind, HarnessKind};
 use crate::ai::agent_sdk::driver::{AgentDriverOptions, AgentRunPrompt, Task};
 use crate::ai::agent_sdk::mcp_config::build_mcp_servers_from_specs;
 use crate::ai::llms::LLMId;
-use crate::cloud_object::model::persistence::CloudModel;
-use crate::workflows::workflow::Workflow;
 use anyhow::Context;
 use warp_cli::{
     agent::{AgentCommand, OutputFormat},
@@ -19,7 +17,7 @@ use warp_core::features::FeatureFlag;
 #[cfg(not(target_family = "wasm"))]
 use warp_logging::log_file_path;
 use warpui::ModelSpawner;
-use warpui::{platform::TerminationMode, AppContext, SingletonEntity};
+use warpui::{platform::TerminationMode, AppContext};
 
 use crate::{ai::ambient_agents::task::HarnessConfig, server::server_api::ai::AgentConfigSnapshot};
 use driver::AgentDriverError;
@@ -28,10 +26,9 @@ use crate::ai::skills::{
     clone_repo_for_skill, resolve_skill_spec, ResolveSkillError, ResolvedSkill,
 };
 
-pub(crate) use driver::harness::{task_env_vars, validate_cli_installed, ClaudeHarness};
+pub(crate) use driver::harness::{task_env_vars, validate_cli_installed};
 pub use driver::AgentDriver;
 use warp_cli::agent::{Harness, Prompt, RunAgentArgs};
-use warp_cli::OZ_HARNESS_ENV;
 
 mod admin;
 mod agent_config;
@@ -43,7 +40,6 @@ mod mcp_config;
 mod model;
 pub mod output;
 mod profiles;
-pub(crate) mod retry;
 mod text_layout;
 
 /// Run a Warp CLI command.
@@ -112,17 +108,6 @@ fn run_agent(
 ) -> anyhow::Result<()> {
     match command {
         AgentCommand::Run(args) => {
-            if args.task_id.is_some() {
-                return Err(anyhow::anyhow!("unexpected argument '--task-id' found"));
-            }
-            if args.share.is_shared() {
-                return Err(anyhow::anyhow!("unexpected argument '--share' found"));
-            }
-            if args.conversation.is_some() && !FeatureFlag::CloudConversations.is_enabled() {
-                return Err(anyhow::anyhow!(
-                    "unexpected argument '--conversation' found"
-                ));
-            }
             if args.skill.is_some() && !FeatureFlag::OzPlatformSkills.is_enabled() {
                 return Err(anyhow::anyhow!("unexpected argument '--skill' found"));
             }
@@ -156,10 +141,6 @@ fn run_agent(
 
             Ok(())
         }
-        AgentCommand::RunCloud(args) => {
-            let _ = args;
-            return Err(anyhow::anyhow!("invalid value 'run-cloud'"));
-        }
         AgentCommand::Profile(sub) => profiles::run(ctx, global_options, sub),
         AgentCommand::List(args) => agent_config::list_agents(ctx, args),
     }
@@ -173,10 +154,6 @@ fn build_merged_config_and_task(
     prompt: &Option<Prompt>,
     ctx: &mut AppContext,
 ) -> anyhow::Result<(AgentConfigSnapshot, Task)> {
-    if args.task_id.is_some() {
-        return Err(anyhow::anyhow!("unexpected argument '--task-id' found"));
-    }
-
     let loaded_file = match args.config_file.file.as_deref() {
         Some(path) => Some(config_file::load_config_file(path)?),
         None => None,
@@ -257,19 +234,9 @@ fn build_merged_config_and_task(
 }
 
 /// Resolve a `Prompt` to a plain string.
-fn resolve_prompt(prompt: &Prompt, ctx: &AppContext) -> Result<String, AgentDriverError> {
+fn resolve_prompt(prompt: &Prompt, _ctx: &AppContext) -> Result<String, AgentDriverError> {
     match prompt {
         Prompt::PlainText(prompt_str) => Ok(prompt_str.to_string()),
-        Prompt::SavedPrompt(workflow_id) => {
-            let Some(workflow) = CloudModel::as_ref(ctx).get_workflow_by_uid(workflow_id) else {
-                return Err(AgentDriverError::AIWorkflowNotFound(workflow_id.to_owned()));
-            };
-
-            let Workflow::AgentMode { query, .. } = &workflow.model().data else {
-                return Err(AgentDriverError::AIWorkflowNotFound(workflow_id.to_owned()));
-            };
-            Ok(query.to_owned())
-        }
     }
 }
 
@@ -406,7 +373,6 @@ impl AgentDriverRunner {
                     parent_run_id: None,
                     idle_on_complete: args.idle_on_complete.map(|d| d.into()),
                     secrets: Default::default(),
-                    resume: None,
                     environment: None,
                     selected_harness: args.harness,
                     third_party_harness_model_id: None,
@@ -464,14 +430,6 @@ fn launch_command(
     dispatch_command(ctx, command, global_options)
 }
 
-/// Check if we're running within Warp (for example, if this is an invocation of the Warp CLI
-/// within a Warp terminal session).
-pub fn is_running_in_warp() -> bool {
-    std::env::var("TERM_PROGRAM")
-        .map(|v| v == "WarpTerminal")
-        .unwrap_or(false)
-}
-
 /// Report a fatal error and terminate the app.
 fn report_fatal_error(err: anyhow::Error, ctx: &mut AppContext) {
     let mut message = err.to_string();
@@ -492,18 +450,4 @@ fn report_fatal_error(err: anyhow::Error, ctx: &mut AppContext) {
 
     let error = anyhow::anyhow!(message);
     ctx.terminate_app(TerminationMode::ForceTerminate, Some(Err(error)));
-}
-
-fn resolve_orchestration_harness_label() -> &'static str {
-    let Ok(raw) = std::env::var(OZ_HARNESS_ENV) else {
-        return "unknown";
-    };
-    match Harness::parse_orchestration_harness(&raw) {
-        Some(Harness::Oz) => "oz",
-        Some(Harness::Claude) => "claude",
-        Some(Harness::OpenCode) => "opencode",
-        Some(Harness::Gemini) => "gemini",
-        Some(Harness::Codex) => "codex",
-        Some(Harness::Unknown) | None => "unknown",
-    }
 }

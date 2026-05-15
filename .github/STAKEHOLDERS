@@ -5,8 +5,7 @@
 #
 # Used by local triage workflows to assign SMEs.
 
-# Default fallback: FA leads are tagged when no more specific path matches
-/ @warpdotdev/oss-maintainers
+# No default external stakeholders are configured for the local-first fork.
 
 ###########################################################################
 # Team: App
@@ -77,7 +76,6 @@
 /app/src/ai/mcp/ @peicodes @vkodithala
 /app/src/ai/skills/ @peicodes @vkodithala
 /crates/mcp/ @peicodes @vkodithala
-/resources/bundled/skills/feedback/ @captainsafia
 
 # File-based MCP (overrides MCP and skills above)
 /app/src/ai/mcp/file_based_manager.rs @vkodithala

@@ -172,9 +172,9 @@ impl GetRelevantFilesController {
             CodebaseIndexManagerEvent::RetrievalRequestCompleted {
                 retrieval_id,
                 fragments,
-                out_of_sync_delay,
+                out_of_sync_delay: _,
             } => {
-                let Some((action_id, search_start)) =
+                let Some((action_id, _search_start)) =
                     self.pending_request_details_for_retrieval_id(retrieval_id)
                 else {
                     return;

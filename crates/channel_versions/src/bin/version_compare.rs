@@ -15,7 +15,7 @@ struct Args {
 }
 
 /// Compares two versions and exits with a non-zero exit code if the version to rollout is older than the current version.
-/// Used within the `channel-versions` repo to ensure that we always specify the `is_rollback` field when rolling back.
+/// Used by local release-metadata tooling to ensure that rollbacks are marked explicitly.
 fn main() -> Result<()> {
     let args = Args::parse();
 

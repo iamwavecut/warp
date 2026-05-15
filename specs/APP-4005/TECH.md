@@ -121,7 +121,7 @@ Manual validation:
 5. In a split-pane tab, focus a non-primary pane and verify direct-set renames the containing tab only.
 6. In a Warp Agent tab, run `/rename-tab Agent Work` and verify only the tab label changes.
 7. Verify tab context-menu **Reset tab name** still clears names set by the slash command.
-Because this changes UI behavior, after implementation invoke the `verify-ui-change-in-cloud` skill in an eligible local non-sandboxed environment.
+Because this changes UI behavior, do a local manual UI check after implementation.
 ## Follow-ups
 - Decide whether CLI-agent rich input should support Warp-handled workspace commands like `/rename-tab`.
 - Consider adding a command-palette entry or keybinding for direct active-tab rename if users want a non-slash-command keyboard path.

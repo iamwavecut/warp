@@ -8,4 +8,4 @@ if [[ -f $XDG_CONFIG_HOME/warp-terminal@@CHANNEL_SUFFIX@@-flags.conf ]]; then
 fi
 
 # Launch
-exec /opt/warpdotdev/warp-terminal@@CHANNEL_SUFFIX@@/@@BINARY_NAME@@ $WARP_USER_FLAGS "$@"
+exec /opt/warp-local-first/warp-terminal@@CHANNEL_SUFFIX@@/@@BINARY_NAME@@ $WARP_USER_FLAGS "$@"

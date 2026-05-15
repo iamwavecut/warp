@@ -264,8 +264,7 @@ NSUInteger activeScreenId() {
     }
 
     if (!forceTermination) {
-        // Make sure the rust app doesn't have any reasons to interrupt quit, e.g. needs to relaunch
-        // for autoupdate, but launching the new process failed.
+        // Make sure the rust app doesn't have any reasons to interrupt quit.
         okToTerminate = warp_app_should_terminate_app(application);
     }
 

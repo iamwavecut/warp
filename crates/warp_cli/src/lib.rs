@@ -5,13 +5,12 @@ use std::{env, fmt, path::Path};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use url::Url;
 
-use warp_core::{channel::ChannelState, features::FeatureFlag};
 use crate::agent::OutputFormat;
+use warp_core::channel::ChannelState;
 
 #[cfg(windows)]
 mod process_handle;
 
-pub mod scope;
 pub mod skill;
 
 pub mod agent;
@@ -20,7 +19,6 @@ pub mod config_file;
 pub mod json_filter;
 pub mod mcp;
 pub mod model;
-pub mod share;
 pub const OZ_RUN_ID_ENV: &str = "OZ_RUN_ID";
 pub const OZ_PARENT_RUN_ID_ENV: &str = "OZ_PARENT_RUN_ID";
 pub const OZ_CLI_ENV: &str = "OZ_CLI";
@@ -102,10 +100,6 @@ pub struct Args {
 /// along with their own flags, or convert their flags into an `AppArgs` value.
 #[derive(Debug, Default, clap::Args, Clone)]
 pub struct AppArgs {
-    /// True if this instance of Warp was launched at the end of the auto-update process.
-    #[arg(long = "finish-update", hide = true)]
-    pub finish_update: bool,
-
     /// Crash recovery mechanism to use if we detect the parent process terminated.
     #[cfg(enable_crash_recovery)]
     #[arg(long = "crash-recovery-mechanism", value_enum, requires = "ParentOpts")]
@@ -151,25 +145,6 @@ impl Args {
     /// IMPORTANT: use this instead of [`CommandFactory::command`], since we customize the command at runtime.
     pub fn clap_command() -> clap::Command {
         let mut command = <Args as CommandFactory>::command();
-
-        // Hide the --conversation flag from help text
-        if !FeatureFlag::CloudConversations.is_enabled() {
-            command = command.mut_subcommand("agent", |agent_cmd| {
-                agent_cmd
-                    .mut_subcommand("run", |run_cmd| {
-                        run_cmd.mut_arg("conversation", |arg| arg.hide(true))
-                    })
-                    .mut_subcommand("run-cloud", |cloud_cmd| {
-                        cloud_cmd.mut_arg("conversation", |arg| arg.hide(true))
-                    })
-            });
-        }
-
-        if !FeatureFlag::AmbientAgentsCommandLine.is_enabled() {
-            command = command.mut_subcommand("agent", |agent_cmd| {
-                agent_cmd.mut_subcommand("run-cloud", |c| c.hide(true))
-            });
-        }
 
         // Wire up `--version` / `-V` using the same version metadata used elsewhere in the
         // app, so the CLI reports the build's release tag.
@@ -295,7 +270,6 @@ pub enum CliCommand {
     Logout,
     /// Print information about the logged-in user.
     Whoami,
-
 }
 
 /// A subcommand of the main Warp application. This includes all [`WorkerCommand`]s as well as app-specific debugging tools.
@@ -401,18 +375,6 @@ pub fn ripgrep_search_subcommand() -> String {
         .expect("ripgrep-search subcommand not found")
         .get_name()
         .to_string()
-}
-
-/// Returns the flag to use when finishing the auto-update process.
-pub fn finish_update_flag() -> String {
-    let command = <Args as CommandFactory>::command();
-    let flag = command
-        .get_arguments()
-        .find(|arg| arg.get_long() == Some("finish-update"))
-        .expect("finish-update flag not found")
-        .get_long()
-        .unwrap();
-    format!("--{flag}")
 }
 
 /// Returns the flag to use for the dump-debug-info subcommand.

@@ -168,7 +168,6 @@ pub enum Icon {
     CoinsStacked,
     Phone,
     Navigation,
-    AutoUpdate,
     Bell,
     GitBranch,
     CheckSkinny,
@@ -309,6 +308,7 @@ pub enum Icon {
     HeartHand,
     MessageChatSquare,
     Pin,
+    PinFilled,
     Dataflow04,
     // Language-specific icons for the code block dropdown
     MermaidLang,
@@ -487,7 +487,6 @@ impl From<Icon> for &'static str {
             Icon::CoinsStacked => "bundled/svg/coins-stacked-02.svg",
             Icon::Phone => "bundled/svg/phone.svg",
             Icon::Navigation => "bundled/svg/navigation.svg",
-            Icon::AutoUpdate => "bundled/svg/autoupdate.svg",
             Icon::Bell => "bundled/svg/bell.svg",
             Icon::GitBranch => "bundled/svg/git-branch-02.svg",
             Icon::CheckSkinny => "bundled/svg/check-skinny.svg",

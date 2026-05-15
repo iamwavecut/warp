@@ -117,8 +117,8 @@ impl ChannelVersion {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct VersionInfo {
     pub version: String,
-    /// The version to download for new users from the download page. This is not used on the client
-    /// other than in the `apply_overrides` binary used from the `channel-versions` repo.
+    /// The version to download for new users from release metadata. This is not used on the
+    /// client other than in local release-metadata tooling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version_for_new_users: Option<String>,
     /// The time by which the client needs to be updated, after which

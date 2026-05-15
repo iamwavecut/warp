@@ -4,10 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Eval Review</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
   <style>
     :root {
       --bg: #faf9f5;
@@ -655,7 +651,7 @@
 
     // ---- Init ----
     async function init() {
-      // Load saved feedback from server — but only if this isn't a fresh
+      // Load saved feedback from the local review server — but only if this isn't a fresh
       // iteration (indicated by previous_feedback being present). When
       // previous feedback exists, the feedback.json on disk is stale from
       // the prior iteration and should not pre-fill the textareas.
@@ -828,6 +824,10 @@
 
     // ---- XLSX rendering via SheetJS ----
     function renderXlsx(container, b64Data) {
+      if (typeof XLSX === "undefined") {
+        container.textContent = "Spreadsheet preview unavailable in the offline local build.";
+        return;
+      }
       try {
         const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
         const wb = XLSX.read(raw, { type: "array" });
@@ -990,7 +990,7 @@
       arrow.classList.toggle("open");
     }
 
-    // ---- Feedback (saved to server -> feedback.json) ----
+    // ---- Feedback (saved by the local review server to feedback.json) ----
     function saveCurrentFeedback() {
       const run = EMBEDDED_DATA.runs[currentIndex];
       const text = document.getElementById("feedback").value;

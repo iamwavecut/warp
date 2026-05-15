@@ -16,11 +16,9 @@ tempfile = "3.8.0"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 async-process = { workspace = true }
-futures-lite.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 anyhow.workspace = true
-lazy_static.workspace = true
 thiserror.workspace = true
 win32job = "2.0.2"
 windows.workspace = true

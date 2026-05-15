@@ -1,11 +1,4 @@
-//! This module contains Rust types for the PredictAMQueries endpoint in warp-server that
-//! serves Agent Mode.
-//!
-//! These types are manually transposed from the API schema defined in go
-//! (warp-server/model/types/predict_am_queries/(request.go|response.go|common.go)).
-//!
-//! Documentation on the types here is directly borrowed from the documentation on the go schema;
-//! see the go schema for the source-of-truth.
+//! Rust types for local Agent Mode query completion.
 mod request;
 mod response;
 

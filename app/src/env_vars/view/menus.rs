@@ -4,10 +4,7 @@ use warpui::{keymap::Trigger, SingletonEntity, ViewContext, ViewHandle};
 
 use crate::{
     cloud_object::{CloudObject, GenericStringObjectFormat, Space},
-    drive::{
-        drive_helpers::has_feature_gated_anonymous_user_reached_env_var_limit,
-        export::ExportManager, CloudObjectTypeAndId,
-    },
+    drive::{export::ExportManager, CloudObjectTypeAndId},
     env_vars::active_env_var_collection_data::TrashStatus,
     external_secrets::SecretManager,
     menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields},
@@ -421,10 +418,6 @@ impl EnvVarCollectionView {
 
     pub(super) fn untrash_env_var_collection(&self, ctx: &mut ViewContext<Self>) {
         if let Some(env_var_collection_id) = self.active_env_var_collection_data.as_ref(ctx).id() {
-            if has_feature_gated_anonymous_user_reached_env_var_limit(ctx) {
-                return;
-            }
-
             UpdateManager::handle(ctx).update(ctx, move |update_manager, ctx| {
                 update_manager.untrash_object(
                     CloudObjectTypeAndId::GenericStringObject {

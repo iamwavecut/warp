@@ -8,20 +8,20 @@ use warpui::{Entity, ModelHandle, View, ViewHandle};
 
 use crate::ai::blocklist::agent_view::AgentViewController;
 use crate::search::data_source::{Query, QueryFilter};
-use crate::search::mixer::{AddAsyncSourceOptions, SearchMixer};
+use crate::search::mixer::SearchMixer;
 use crate::search::slash_command_menu::SlashCommandId;
-use crate::server::ids::SyncId;
 use crate::terminal::input::buffer_model::InputBufferModel;
 use crate::terminal::input::inline_menu::{InlineMenuEvent, InlineMenuPositioner, InlineMenuView};
 use crate::terminal::input::slash_command_model::SlashCommandEntryState;
 use crate::terminal::input::slash_command_model::SlashCommandModel;
 use crate::terminal::input::slash_commands::UpdatedActiveCommands;
 use crate::terminal::input::slash_commands::{
-    AcceptSlashCommandOrSavedPrompt, SlashCommandDataSource, ZeroStateDataSource,
+    AcceptSlashCommandOrLocalPrompt, SlashCommandDataSource, ZeroStateDataSource,
 };
 use crate::terminal::input::suggestions_mode_model::{
     InputSuggestionsModeEvent, InputSuggestionsModeModel,
 };
+use crate::workflows::workflow::Workflow;
 
 lazy_static! {
     static ref SLASH_COMMAND_FILTERS: HashSet<QueryFilter> =
@@ -48,8 +48,8 @@ impl CloseReason {
 #[derive(Debug, Clone)]
 pub enum SlashCommandsEvent {
     Close(CloseReason),
-    SelectedSavedPrompt {
-        id: SyncId,
+    SelectedLocalPrompt {
+        workflow: Workflow,
     },
     /// `cmd_or_ctrl_enter` is true if accepted via Cmd/Ctrl+Enter (vs Enter/click).
     SelectedStaticCommand {
@@ -72,9 +72,9 @@ pub enum SlashCommandsEvent {
 /// - Maps `InlineMenuEvent<SelectItem>` to `SlashCommandsEvent`
 /// - Subscribes to `SlashCommandModel` for query updates
 pub struct InlineSlashCommandView {
-    menu_view: ViewHandle<InlineMenuView<AcceptSlashCommandOrSavedPrompt>>,
+    menu_view: ViewHandle<InlineMenuView<AcceptSlashCommandOrLocalPrompt>>,
     suggestions_mode_model: ModelHandle<InputSuggestionsModeModel>,
-    mixer: ModelHandle<SearchMixer<AcceptSlashCommandOrSavedPrompt>>,
+    mixer: ModelHandle<SearchMixer<AcceptSlashCommandOrLocalPrompt>>,
     input_buffer_model: ModelHandle<InputBufferModel>,
 }
 
@@ -102,26 +102,12 @@ impl InlineSlashCommandView {
         );
         let zero_state_source =
             ctx.add_model(|_| ZeroStateDataSource::new(&slash_commands_source, false));
-        let saved_prompts_source = super::saved_prompts_data_source();
 
         let mixer = ctx.add_model(|ctx| {
-            let mut mixer = SearchMixer::<AcceptSlashCommandOrSavedPrompt>::new();
-            // All sources share the StaticSlashCommands filter because the mixer only runs
-            // async sources when the query's filters intersect with the source's filters.
+            let mut mixer = SearchMixer::<AcceptSlashCommandOrLocalPrompt>::new();
             mixer.add_sync_source(
                 slash_commands_source.clone(),
                 [QueryFilter::StaticSlashCommands],
-            );
-            mixer.add_async_source(
-                saved_prompts_source,
-                [QueryFilter::StaticSlashCommands],
-                AddAsyncSourceOptions {
-                    // Any debounce makes the loading state flicker longer.
-                    debounce_interval: None,
-                    run_in_zero_state: false,
-                    run_when_unfiltered: false,
-                },
-                ctx,
             );
             mixer.add_sync_source(
                 zero_state_source.clone(),
@@ -162,8 +148,8 @@ impl InlineSlashCommandView {
         ctx.subscribe_to_model(slash_command_model, |me, model, _, ctx| {
             // If the inline menu isn't open, don't keep re-running search as the user types.
             //
-            // This prevents expensive searching (e.g. saved prompts) when the menu has been
-            // closed (such as after selecting a command and typing an argument).
+            // This prevents searching while the menu is closed, such as after selecting a command
+            // and typing an argument.
             if !me.suggestions_mode_model.as_ref(ctx).is_slash_commands() {
                 return;
             }
@@ -223,21 +209,23 @@ impl InlineSlashCommandView {
 
     fn handle_selection(
         &mut self,
-        item: &AcceptSlashCommandOrSavedPrompt,
+        item: &AcceptSlashCommandOrLocalPrompt,
         cmd_or_ctrl_enter: bool,
         ctx: &mut ViewContext<Self>,
     ) {
         match item {
-            AcceptSlashCommandOrSavedPrompt::SlashCommand { id } => {
+            AcceptSlashCommandOrLocalPrompt::SlashCommand { id } => {
                 ctx.emit(SlashCommandsEvent::SelectedStaticCommand {
                     id: *id,
                     cmd_or_ctrl_enter,
                 });
             }
-            AcceptSlashCommandOrSavedPrompt::SavedPrompt { id } => {
-                ctx.emit(SlashCommandsEvent::SelectedSavedPrompt { id: *id });
+            AcceptSlashCommandOrLocalPrompt::LocalPrompt { workflow } => {
+                ctx.emit(SlashCommandsEvent::SelectedLocalPrompt {
+                    workflow: workflow.clone(),
+                });
             }
-            AcceptSlashCommandOrSavedPrompt::Skill { name, reference } => {
+            AcceptSlashCommandOrLocalPrompt::Skill { name, reference } => {
                 ctx.emit(SlashCommandsEvent::SelectedSkill {
                     reference: reference.clone(),
                     name: name.clone(),

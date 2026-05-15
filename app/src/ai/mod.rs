@@ -33,17 +33,14 @@ pub(crate) mod predict;
 pub mod request_usage_model;
 pub(crate) mod restored_conversations;
 pub(crate) mod skills;
-pub(crate) mod voice;
 pub use agent_tips::*;
 pub use request_usage_model::*;
 use warpui::AppContext;
 #[cfg(not(target_family = "wasm"))]
 pub mod agent_sdk;
-pub mod cloud_agent_config;
 pub mod cloud_agent_settings;
 pub mod execution_profiles;
 pub mod facts;
-pub(crate) mod generate_block_title;
 pub(crate) mod generate_code_review_content;
 pub(crate) mod loading;
 pub mod mcp;

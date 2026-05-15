@@ -2,12 +2,9 @@ use warpui::AppContext;
 use warpui::ModelContext;
 
 use super::TemplatableMCPServerManager;
-use crate::ai::mcp::templatable::{CloudTemplatableMCPServer, TemplatableMCPServer};
+use crate::ai::mcp::templatable::TemplatableMCPServer;
 use crate::ai::mcp::templatable_installation::{TemplatableMCPServerInstallation, VariableValue};
 use crate::ai::mcp::MCPServerUpdate;
-use crate::cloud_object::Space;
-use crate::server::cloud_objects::update_manager::InitiatedBy;
-use crate::server::ids::ServerId;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
@@ -16,34 +13,12 @@ impl TemplatableMCPServerManager {
     pub fn new(
         _locally_installed_servers: HashMap<Uuid, TemplatableMCPServerInstallation>,
         _running_server_uuids: Vec<Uuid>,
-        _running_legacy_servers: &[Uuid],
         _ctx: &mut ModelContext<Self>,
     ) -> Self {
         Default::default()
     }
 
-    /// Gets a CloudTemplatableMCPServer by its UUID.
-    /// Returns the CloudTemplatableMCPServer model if found, otherwise None.
-    ///
-    /// This is a no-op in WASM, as MCP servers are not supported in WASM.
-    pub fn get_cloud_templatable_mcp_server(
-        &self,
-        _uuid: Uuid,
-    ) -> Option<&CloudTemplatableMCPServer> {
-        log::warn!("Getting a CloudTemplatableMCPServer by UUID is not supported in WASM");
-        None
-    }
-
-    /// Gets a creator for a TemplatableMCPServer by its UUID.
-    /// Returns the creator if found, otherwise None.
-    ///
-    /// This is a no-op in WASM, as MCP servers are not supported in WASM.
-    pub fn get_creator(&self, _uuid: Uuid, _app: &AppContext) -> Option<String> {
-        log::warn!("Getting a creator for a TemplatableMCPServer by UUID is not supported in WASM");
-        None
-    }
-
-    /// Updates a TemplatableMCPServer in Warp Drive.
+    /// Updates a local TemplatableMCPServer.
     ///
     /// This is a no-op in WASM, as MCP servers are not supported in WASM.
     pub fn update_templatable_mcp_server(
@@ -54,7 +29,7 @@ impl TemplatableMCPServerManager {
         log::warn!("Templatable MCP server update not supported in WASM");
     }
 
-    /// Gets all TemplatableMCPServers currently in Warp Drive.
+    /// Gets all local TemplatableMCPServers.
     ///
     /// This is a no-op in WASM, as MCP servers are not supported in WASM.
     pub fn get_all_templatable_mcp_servers(&self) -> Vec<&TemplatableMCPServer> {
@@ -71,20 +46,18 @@ impl TemplatableMCPServerManager {
         None
     }
 
-    /// Creates a new TemplatableMCPServer in Warp Drive.
+    /// Creates a new local TemplatableMCPServer.
     ///
     /// This is a no-op in WASM, as MCP servers are not supported in WASM.
     pub fn create_templatable_mcp_server(
         &mut self,
         _server: TemplatableMCPServer,
-        _space: Space,
-        _initiated_by: InitiatedBy,
         _ctx: &mut ModelContext<Self>,
     ) {
         log::warn!("Creating a TemplatableMCPServer is not supported in WASM");
     }
 
-    /// Deletes a TemplatableMCPServer from Warp Drive.
+    /// Deletes a local TemplatableMCPServer.
     ///
     /// This is a no-op in WASM, as MCP servers are not supported in WASM.
     pub fn delete_templatable_mcp_server(&mut self, _uuid: Uuid, _ctx: &mut ModelContext<Self>) {
@@ -164,26 +137,6 @@ impl TemplatableMCPServerManager {
         log::warn!("Deleting credentials for MCP servers is not supported in WASM")
     }
 
-    pub fn is_server_installation_shared(
-        &self,
-        _installation_uuid: Uuid,
-        _app: &AppContext,
-    ) -> bool {
-        false
-    }
-
-    pub fn is_server_template_shared(&self, _template_uuid: Uuid, _app: &AppContext) -> bool {
-        false
-    }
-
-    pub fn get_cloud_server(
-        &self,
-        _template_uuid: Uuid,
-        _ctx: &mut ModelContext<Self>,
-    ) -> Option<&CloudTemplatableMCPServer> {
-        None
-    }
-
     pub fn is_update_available_for_installation(
         &self,
         _installation_uuid: Uuid,
@@ -217,50 +170,6 @@ impl TemplatableMCPServerManager {
         false
     }
 
-    pub fn is_author(&self, _template_uuid: Uuid, _ctx: &AppContext) -> bool {
-        log::warn!(
-            "Checking if a user is the author of a templatable MCP server is not supported in WASM"
-        );
-        false
-    }
-
-    pub fn share_templatable_mcp_server(
-        &mut self,
-        _template_uuid: Uuid,
-        _ctx: &mut ModelContext<Self>,
-    ) {
-        log::warn!("Sharing a templatable MCP server is not supported in WASM");
-    }
-
-    pub fn share_templatable_mcp_server_installation(
-        &mut self,
-        _installation_uuid: Uuid,
-        _ctx: &mut ModelContext<Self>,
-    ) {
-        log::warn!("Sharing a templatable MCP server installation is not supported in WASM");
-    }
-
-    pub fn unshare_templatable_mcp_server(
-        &mut self,
-        _template_uuid: Uuid,
-        _ctx: &mut ModelContext<Self>,
-    ) {
-        log::warn!("Unsharing a templatable MCP server is not supported in WASM");
-    }
-
-    pub fn unshare_templatable_mcp_server_installation(
-        &mut self,
-        _installation_uuid: Uuid,
-        _ctx: &mut ModelContext<Self>,
-    ) {
-        log::warn!("Unsharing a templatable MCP server installation is not supported in WASM");
-    }
-
-    pub fn get_first_team_space_id(_app: &AppContext) -> Option<ServerId> {
-        log::warn!("Getting the first team space ID is not supported in WASM");
-        None
-    }
-
     pub fn get_installation_by_template_uuid(
         &self,
         _template_uuid: Uuid,
@@ -268,7 +177,7 @@ impl TemplatableMCPServerManager {
         None
     }
 
-    pub fn get_all_cloud_synced_mcp_servers(_ctx: &AppContext) -> HashMap<Uuid, String> {
+    pub fn get_all_local_template_mcp_servers(_ctx: &AppContext) -> HashMap<Uuid, String> {
         Default::default()
     }
 

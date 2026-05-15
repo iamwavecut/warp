@@ -82,9 +82,7 @@ impl ActiveEnvVarCollectionData {
     ) {
         let cloud_model = CloudModel::as_ref(ctx);
 
-        let UpdateManagerEvent::ObjectOperationComplete { result } = event else {
-            return;
-        };
+        let UpdateManagerEvent::ObjectOperationComplete { result } = event;
 
         match (&result.operation, &result.success_type) {
             (ObjectOperation::Create { .. }, OperationSuccessType::Success) => {

@@ -1,7 +1,7 @@
 [package]
 name = "warp_core"
 edition = "2021"
-authors = ["Warp Team <dev@warp.dev>"]
+authors = ["Local-first Warp fork contributors"]
 publish.workspace = true
 license.workspace = true
 
@@ -15,10 +15,8 @@ test-util = ["dep:mockito", "warp_features/test-util"]
 anyhow.workspace = true
 cfg-if.workspace = true
 command-corrections.workspace = true
-dashmap.workspace = true
 dirs.workspace = true
 directories.workspace = true
-shellexpand.workspace = true
 enum-iterator.workspace = true
 warp_features.workspace = true
 itertools.workspace = true
@@ -50,10 +48,8 @@ line-ending.workspace = true
 warpui.workspace = true
 warpui_extras = { workspace = true, features = ["default"] }
 mockito = { workspace = true, optional = true }
-asset_macro.workspace = true
 string-offset.workspace = true
 inventory = "0.3.20"
-chrono.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio.workspace = true

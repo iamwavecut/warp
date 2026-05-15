@@ -14,11 +14,9 @@ use crate::workspace::WorkspaceAction;
 use std::path::Path;
 #[cfg(not(target_family = "wasm"))]
 use warp_cli::agent::Harness;
-#[cfg(not(target_family = "wasm"))]
-use warp_core::features::FeatureFlag;
 use warp_core::paths::home_relative_path;
 
-#[cfg(not(target_family = "wasm"))]
+#[cfg(all(test, not(target_family = "wasm")))]
 use crate::ai::ambient_agents::AmbientAgentTask;
 use warp_core::ui::icons::Icon;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill};
@@ -116,6 +114,7 @@ impl TombstoneDisplayData {
         }
     }
 
+    #[cfg(test)]
     fn enrich_from_task(&mut self, task: AmbientAgentTask) {
         // Use task title if we don't have a conversation title.
         if self.title.is_none() {

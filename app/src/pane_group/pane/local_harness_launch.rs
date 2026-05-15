@@ -14,7 +14,6 @@ use crate::ai::{
     },
     ambient_agents::AmbientAgentTaskId,
 };
-use crate::terminal::cli_agent_sessions::plugin_manager::plugin_manager_for;
 use crate::terminal::shell::ShellType;
 use shell_words::quote as shell_quote;
 use uuid::Uuid;
@@ -111,12 +110,6 @@ pub(super) async fn prepare_local_harness_child_launch(
             // hidden child pane.
             prepare_claude_environment_config(&working_dir, &HashMap::new())
                 .map_err(|error| error.to_string())?;
-            if let Some(manager) = plugin_manager_for(third_party_harness.cli_agent()) {
-                if let Err(error) = manager.install().await {
-                    log::warn!("Claude plugin installation failed for child harness: {error}");
-                }
-            }
-
             build_local_claude_child_command(&prompt)
         }
         Harness::Codex => {

@@ -41,17 +41,12 @@ use crate::ai::predict::prompt_suggestions::{
     is_accept_prompt_suggestion_bound_to_ctrl_enter,
 };
 use crate::ai::skills::SkillManager;
-use crate::ai::skills::SkillOpenOrigin;
 use crate::context_chips::spacing;
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::prompt::editor_modal::OpenSource as PromptEditorOpenSource;
 use crate::search::slash_command_menu::static_commands::commands::{self, COMMAND_REGISTRY};
-use crate::workspaces::user_workspaces::UserWorkspacesEvent;
 
-use crate::interaction_sources::{
-    AnonymousUserSignupEntrypoint, CommandXRayTrigger, PaletteSource, SlashCommandAcceptedDetails,
-    SlashMenuSource,
-};
+use crate::interaction_sources::{CommandXRayTrigger, PaletteSource};
 use crate::suggestions::ignored_suggestions_model::{
     IgnoredSuggestionsModel, IgnoredSuggestionsModelEvent, SuggestionType,
 };
@@ -132,8 +127,8 @@ use crate::{
     appearance::{Appearance, AppearanceEvent},
     channel::{Channel, ChannelState},
     cloud_object::{
-        model::{actions::ObjectActionType, persistence::CloudModel, view::CloudViewModel},
-        CloudObject, Space,
+        model::{actions::ObjectActionType, persistence::CloudModel},
+        CloudObject,
     },
     cmd_or_ctrl_shift,
     code_review::diff_state::DiffMode,
@@ -160,7 +155,6 @@ use crate::{
         Event as InputSuggestionsEvent, HistoryInputSuggestion, InputSuggestions,
         TabCompletionsPreselectOption,
     },
-    interaction_sources::AgentModeEntrypoint,
     network::NetworkStatus,
     pane_group::PaneGroupAction,
     prefix::longest_common_prefix,
@@ -213,8 +207,6 @@ use crate::{
         ForkedConversationDestination, InitContent, RestoreConversationLayout, ToastStack,
         WorkspaceAction,
     },
-    workspaces::user_workspaces::UserWorkspaces,
-    ServerApiProvider,
 };
 
 use ai::skills::SkillReference;
@@ -922,9 +914,6 @@ pub enum Event {
     EditorFocused,
     UnhandledCmdEnter,
     CtrlEnter,
-    SignupAnonymousUser {
-        entrypoint: AnonymousUserSignupEntrypoint,
-    },
     OpenSettings(SettingsSection),
     #[cfg(feature = "local_fs")]
     OpenCodeInWarp {
@@ -1069,9 +1058,6 @@ pub enum InputAction {
 
     /// Fired when the "Enable Figma MCP" contextual button is clicked.
     FigmaEnableButtonClicked,
-
-    /// Activates `&` cloud handoff compose mode from the message bar hint.
-    ActivateCloudHandoff,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -2090,7 +2076,6 @@ impl Input {
                         AmbientAgentViewModelEvent::EnteredSetupState
                             | AmbientAgentViewModelEvent::EnteredComposingState
                             | AmbientAgentViewModelEvent::DispatchedAgent
-                            | AmbientAgentViewModelEvent::SessionReady { .. }
                             | AmbientAgentViewModelEvent::Failed { .. }
                             | AmbientAgentViewModelEvent::Cancelled
                             | AmbientAgentViewModelEvent::NeedsGithubAuth
@@ -3605,7 +3590,7 @@ impl Input {
             self.close_slash_commands_menu(ctx);
         } else {
             self.system_insert("/", ctx);
-            let is_in_agent_view = FeatureFlag::AgentView.is_enabled()
+            let _is_in_agent_view = FeatureFlag::AgentView.is_enabled()
                 && self.agent_view_controller.as_ref(ctx).is_fullscreen();
         }
     }
@@ -3619,7 +3604,7 @@ impl Input {
             InlineConversationMenuEvent::NavigateToConversation {
                 conversation_navigation_data,
             } => {
-                let is_in_agent_view = FeatureFlag::AgentView.is_enabled()
+                let _is_in_agent_view = FeatureFlag::AgentView.is_enabled()
                     && self.agent_view_controller.as_ref(ctx).is_fullscreen();
 
                 let conversation_id = conversation_navigation_data.id;
@@ -3855,12 +3840,7 @@ impl Input {
         event: &InlinePromptsMenuEvent,
         ctx: &mut ViewContext<Self>,
     ) {
-        let InlinePromptsMenuEvent::SelectedPrompt { id } = event;
-
-        let Some(workflow) = CloudModel::as_ref(ctx).get_workflow(id).cloned() else {
-            log::warn!("Tried to open saved prompt for id {id:?} but it does not exist");
-            return;
-        };
+        let InlinePromptsMenuEvent::SelectedPrompt { workflow } = event;
 
         if self.suggestions_mode_model.as_ref(ctx).is_prompts_menu() {
             self.suggestions_mode_model.update(ctx, |model, ctx| {
@@ -3872,8 +3852,8 @@ impl Input {
         self.focus_input_box(ctx);
 
         self.show_workflows_info_box_on_workflow_selection(
-            WorkflowType::Cloud(Box::new(workflow)),
-            WorkflowSource::WarpAI,
+            WorkflowType::Local(workflow.clone()),
+            WorkflowSource::Local,
             WorkflowSelectionSource::SlashMenu,
             None,
             ctx,
@@ -4042,7 +4022,7 @@ impl Input {
         self.suggestions_mode_model.update(ctx, |model, ctx| {
             model.set_mode(InputSuggestionsMode::ConversationMenu, ctx);
         });
-        let is_in_agent_view = FeatureFlag::AgentView.is_enabled()
+        let _is_in_agent_view = FeatureFlag::AgentView.is_enabled()
             && self.agent_view_controller.as_ref(ctx).is_fullscreen();
 
         ctx.notify();
@@ -4101,7 +4081,7 @@ impl Input {
                     destination,
                 });
 
-                let is_in_agent_view = FeatureFlag::AgentView.is_enabled()
+                let _is_in_agent_view = FeatureFlag::AgentView.is_enabled()
                     && self.agent_view_controller.as_ref(ctx).is_active();
 
                 self.suggestions_mode_model.update(ctx, |model, ctx| {
@@ -4382,7 +4362,7 @@ impl Input {
                     exchange_id: *exchange_id,
                 });
 
-                let is_in_agent_view = FeatureFlag::AgentView.is_enabled()
+                let _is_in_agent_view = FeatureFlag::AgentView.is_enabled()
                     && self.agent_view_controller.as_ref(ctx).is_active();
 
                 self.suggestions_mode_model.update(ctx, |model, ctx| {
@@ -4786,7 +4766,7 @@ impl Input {
     pub fn insert_zero_state_prompt_suggestion(
         &mut self,
         suggestion_type: ZeroStatePromptSuggestionType,
-        triggered_from: ZeroStatePromptSuggestionTriggeredFrom,
+        _triggered_from: ZeroStatePromptSuggestionTriggeredFrom,
         ctx: &mut ViewContext<Self>,
     ) {
         if !AIRequestUsageModel::as_ref(ctx).has_any_ai_remaining(ctx) {
@@ -5236,11 +5216,6 @@ impl Input {
         ctx: &mut ViewContext<Self>,
     ) {
         match prompt_alert {
-            PromptAlertEvent::SignupAnonymousUser => {
-                ctx.emit(Event::SignupAnonymousUser {
-                    entrypoint: AnonymousUserSignupEntrypoint::SignUpAIPrompt,
-                });
-            }
             PromptAlertEvent::OpenPrivacyPage => {
                 ctx.emit(Event::OpenSettings(SettingsSection::Privacy));
             }
@@ -5992,11 +5967,11 @@ impl Input {
             // until the user executes a command.
             if !command.is_empty() {
                 if let Some(ZeroStateSuggestionInfo {
-                    request,
+                    request: _,
                     response,
                     is_from_ai,
-                    history_based_autosuggestion_state,
-                    request_duration_ms,
+                    history_based_autosuggestion_state: _,
+                    request_duration_ms: _,
                 }) = zerostate_next_command_suggestion_info
                 {
                     self.last_intelligent_autosuggestion_result =
@@ -6104,16 +6079,6 @@ impl Input {
                 editor.set_text_colors(TextColors::from_appearance(appearance), ctx);
             });
         }
-    }
-
-    pub fn reset_after_cloud_followup_submission(&mut self, ctx: &mut ViewContext<Self>) {
-        self.editor.update(ctx, |editor, ctx| {
-            editor.set_interaction_state(InteractionState::Editable, ctx);
-            editor.clear_buffer_and_reset_undo_stack(ctx);
-
-            let appearance: &Appearance = Appearance::as_ref(ctx);
-            editor.set_text_colors(TextColors::from_appearance(appearance), ctx);
-        });
     }
 
     /// Cancel any active agent conversation in a shared session
@@ -6863,7 +6828,7 @@ impl Input {
         match event {
             InputSuggestionsEvent::ConfirmSuggestion {
                 suggestion,
-                match_type,
+                match_type: _,
             } => {
                 if !self.confirm_suggestion(suggestion, ctx) {
                     return;
@@ -6873,7 +6838,7 @@ impl Input {
             }
             InputSuggestionsEvent::ConfirmAndExecuteSuggestion {
                 suggestion,
-                match_type,
+                match_type: _,
             } => {
                 if !self.confirm_and_execute_suggestion(suggestion, ctx) {
                     return;
@@ -9070,8 +9035,8 @@ impl Input {
                 }
             }
             EditorEvent::AutosuggestionAccepted {
-                insertion_length,
-                buffer_char_length,
+                insertion_length: _,
+                buffer_char_length: _,
                 autosuggestion_type,
             } => {
                 ctx.emit(Event::AutosuggestionAccepted);
@@ -11747,7 +11712,6 @@ impl Input {
 
             self.model.lock().set_is_input_dirty(false);
         }
-
     }
 
     fn input_cmd_enter(&mut self, ctx: &mut ViewContext<Self>) {
@@ -13406,9 +13370,6 @@ impl Input {
         ctx: &mut ViewContext<Self>,
     ) {
         match event {
-            PromptSuggestionsEvent::SignupAnonymousUser => ctx.emit(Event::SignupAnonymousUser {
-                entrypoint: AnonymousUserSignupEntrypoint::SignUpAIPrompt,
-            }),
             PromptSuggestionsEvent::OpenPrivacyPage => {
                 ctx.emit(Event::OpenSettings(SettingsSection::Privacy))
             }
@@ -13492,7 +13453,7 @@ impl TypedActionView for Input {
                 }
             }
             InputAction::ToggleInputAutoDetection => {
-                if let Ok(new_value) =
+                if let Ok(_new_value) =
                     AISettings::handle(ctx).update(ctx, |ai_settings, model_ctx| {
                         ai_settings
                             .ai_autodetection_enabled_internal
@@ -13628,9 +13589,6 @@ impl TypedActionView for Input {
             }
             InputAction::ClearAttachedContext => {
                 self.clear_attached_context(ctx);
-            }
-            InputAction::ActivateCloudHandoff => {
-                self.activate_cloud_handoff_compose(ctx);
             }
         }
     }
@@ -13846,7 +13804,7 @@ impl View for Input {
                     ambient_agent_model.as_ref(app).should_show_status_footer()
                 });
 
-        if FeatureFlag::CloudMode.is_enabled() && should_show_status_footer {
+        if FeatureFlag::AgentView.is_enabled() && should_show_status_footer {
             self.render_ambient_agent_status_footer(app)
         } else if FeatureFlag::AgentView.is_enabled()
             && self.agent_view_controller.as_ref(app).is_active()

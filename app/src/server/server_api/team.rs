@@ -1,5 +1,5 @@
 use super::ServerApi;
-use crate::workspaces::user_workspaces::WorkspacesMetadataWithPricing;
+use crate::workspaces::user_workspaces::WorkspacesMetadataResponse;
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -10,20 +10,17 @@ use mockall::{automock, predicate::*};
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 pub trait TeamClient: 'static + Send + Sync {
-    async fn workspaces_metadata(&self) -> Result<WorkspacesMetadataWithPricing>;
+    async fn workspaces_metadata(&self) -> Result<WorkspacesMetadataResponse>;
 }
 
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 impl TeamClient for ServerApi {
-    async fn workspaces_metadata(&self) -> Result<WorkspacesMetadataWithPricing> {
-        Ok(WorkspacesMetadataWithPricing {
-            metadata: crate::workspaces::user_workspaces::WorkspacesMetadataResponse {
-                workspaces: vec![],
-                joinable_teams: vec![],
-                experiments: None,
-            },
-            pricing_info: None,
+    async fn workspaces_metadata(&self) -> Result<WorkspacesMetadataResponse> {
+        Ok(WorkspacesMetadataResponse {
+            workspaces: vec![],
+            joinable_teams: vec![],
+            experiments: None,
         })
     }
 }

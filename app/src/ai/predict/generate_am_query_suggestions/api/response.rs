@@ -1,10 +1,4 @@
-//! Rust version of `GenerateAMQuerySuggestionsResponse` and its fields.
-//!
-//! These types correspond to the warp-go types defined in
-//! warp-server/model/types/generate_am_query_suggestions/response.go.
-//!
-//! Documentation on the types here is directly borrowed from the documentation on the go schema;
-//! see the go schema for the source-of-truth.
+//! Response types for local Agent Mode query suggestions.
 use serde::{Deserialize, Serialize};
 
 use crate::ai::agent::FileLocations;

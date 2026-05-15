@@ -18,7 +18,7 @@ use warpui::{Entity, ModelContext, SingletonEntity, platform::MicrophoneAccessSt
 const DEFAULT_CHUNK_SIZE: u32 = 512;
 // We only support mono for now.
 const NUM_CHANNELS: u16 = 1;
-// Voice input is typically sampled at 16000Hz (and required by Wispr)
+// Voice input is sampled at 16000Hz for compact speech capture.
 const TARGET_SAMPLE_RATE: f32 = 16000.0;
 const STREAM_TIMEOUT: Duration = Duration::from_secs(60 * 6);
 

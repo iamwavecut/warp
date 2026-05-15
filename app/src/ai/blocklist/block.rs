@@ -17,7 +17,6 @@ pub use pending_user_query_block::{PendingUserQueryBlock, PendingUserQueryBlockE
 
 #[cfg(feature = "agent_mode_debug")]
 use self::code_diff_view::FileDiff;
-use crate::ai::agent::redaction::redact_secrets;
 use crate::ai::agent::CancellationReason;
 use crate::ai::agent::PassiveSuggestionTrigger;
 use crate::ai::agent::SuggestPromptRequest;
@@ -220,7 +219,7 @@ use crate::{
 use super::controller::ClientIdentifiers;
 use super::ResponseStreamId;
 use super::{
-    action_model::{AIActionStatus, BlocklistAIActionEvent, RequestFileEditsFormatKind},
+    action_model::{AIActionStatus, BlocklistAIActionEvent},
     code_block::CodeSnippetButtonHandles,
     inline_action::code_diff_view::{
         CodeDiffState, CodeDiffView, CodeDiffViewAction, CodeDiffViewEvent,
@@ -309,15 +308,6 @@ pub enum TextLocation {
 pub enum AIBlockResponseRating {
     Positive,
     Negative,
-}
-
-impl AIBlockResponseRating {
-    pub fn name(&self) -> &'static str {
-        match self {
-            AIBlockResponseRating::Positive => "positive",
-            AIBlockResponseRating::Negative => "negative",
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -1210,8 +1200,6 @@ impl AIBlock {
             ctx.subscribe_to_model(ambient_agent_view_model, |_, _, event, ctx| match event {
                 AmbientAgentViewModelEvent::DispatchedAgent
                 | AmbientAgentViewModelEvent::FollowupDispatched
-                | AmbientAgentViewModelEvent::SessionReady { .. }
-                | AmbientAgentViewModelEvent::FollowupSessionReady { .. }
                 | AmbientAgentViewModelEvent::Failed { .. }
                 | AmbientAgentViewModelEvent::NeedsGithubAuth
                 | AmbientAgentViewModelEvent::Cancelled
@@ -1690,18 +1678,18 @@ impl AIBlock {
             self.time_to_last_token = Some(latency);
         }
 
-        let was_autodetected_ai_query = self.model.was_autodetected_ai_query(ctx);
-        let client_exchange_id = self.client_ids.client_exchange_id.to_string();
-        let conversation_id = self.client_ids.conversation_id;
-        let time_to_first_token_ms = self
+        let _was_autodetected_ai_query = self.model.was_autodetected_ai_query(ctx);
+        let _client_exchange_id = self.client_ids.client_exchange_id.to_string();
+        let _conversation_id = self.client_ids.conversation_id;
+        let _time_to_first_token_ms = self
             .time_to_first_token
             .get()
             .map(|duration| duration.num_milliseconds() as u128);
-        let time_to_last_token_ms = self
+        let _time_to_last_token_ms = self
             .time_to_last_token
             .map(|duration| duration.num_milliseconds() as u128);
         let status = self.model.status(ctx);
-        let is_udi_enabled = InputSettings::as_ref(ctx).is_universal_developer_input_enabled(ctx);
+        let _is_udi_enabled = InputSettings::as_ref(ctx).is_universal_developer_input_enabled(ctx);
 
         match status {
             AIBlockOutputStatus::Pending => {
@@ -1714,7 +1702,7 @@ impl AIBlock {
             }
             AIBlockOutputStatus::Complete { output } => {
                 let output = output.get();
-                let server_output_id = self.model.server_output_id(ctx);
+                let _server_output_id = self.model.server_output_id(ctx);
                 self.handle_updated_output(&output, ctx);
                 self.handle_complete_output(&output, ctx);
             }
@@ -1726,10 +1714,10 @@ impl AIBlock {
                 self.spawn_link_detection(ctx);
                 self.finish(FinishReason::Cancelled, ctx);
 
-                let server_output_id = self.model.server_output_id(ctx);
+                let _server_output_id = self.model.server_output_id(ctx);
             }
             AIBlockOutputStatus::Failed { error, .. } => {
-                let server_output_id = self.model.server_output_id(ctx);
+                let _server_output_id = self.model.server_output_id(ctx);
 
                 self.maybe_create_aws_bedrock_credentials_error_view(&error, ctx);
                 // There are no actions to be taken in this block, it is finished.
@@ -2764,25 +2752,6 @@ impl AIBlock {
             server_conversation_id: None,
             model_id: self.model.model_id(ctx),
         };
-        let contains_str_replace = file_edits.iter().any(|file_edit| {
-            matches!(
-                file_edit,
-                FileEdit::Edit(ai::diff_validation::ParsedDiff::StrReplaceEdit { .. })
-            )
-        });
-        let contains_v4a = file_edits.iter().any(|file_edit| {
-            matches!(
-                file_edit,
-                FileEdit::Edit(ai::diff_validation::ParsedDiff::V4AEdit { .. })
-            )
-        });
-        let edit_format_kind = match (contains_str_replace, contains_v4a) {
-            (true, false) => RequestFileEditsFormatKind::StrReplace,
-            (false, true) => RequestFileEditsFormatKind::V4A,
-            (true, true) => RequestFileEditsFormatKind::Mixed,
-            (false, false) => RequestFileEditsFormatKind::Unknown,
-        };
-
         // Only show the speedbump once, update the setting afterwards.
         let should_show_code_suggestion_speedbump =
             self.model.request_type(ctx).is_passive_code_diff()
@@ -2805,7 +2774,6 @@ impl AIBlock {
                 self.model.as_ref(),
                 title.clone(),
                 identifiers,
-                edit_format_kind,
                 should_show_code_suggestion_speedbump,
                 self.action_model.clone(),
                 self.shell_launch_data.clone().map(|data| data.into()),
@@ -3725,13 +3693,13 @@ impl AIBlock {
 
     pub fn dismiss_pending_suggested_prompt(
         &mut self,
-        interaction_source: InteractionSource,
+        _interaction_source: InteractionSource,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
         let Some(suggested_prompt) = self.pending_unit_test_suggestion(ctx) else {
             return false;
         };
-        let identifiers = suggested_prompt.as_ref(ctx).identifiers().clone();
+        let _identifiers = suggested_prompt.as_ref(ctx).identifiers().clone();
 
         // Complete the suggest prompt executor with Cancelled so the async action
         // finishes cleanly (the action auto-executes and is no longer in pending_actions).
@@ -3755,7 +3723,7 @@ impl AIBlock {
     fn accept_unit_test_suggestion(
         &mut self,
         view: ViewHandle<SuggestedUnitTestsView>,
-        interaction_source: InteractionSource,
+        _interaction_source: InteractionSource,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
         let Some(query) = view.as_ref(ctx).query() else {
@@ -4346,11 +4314,11 @@ impl AIBlock {
             dunce::canonicalize(repo_path).unwrap_or_else(|_| repo_path.to_path_buf());
         let repo_path = canonical_repo_path.as_path();
 
-        let raw_count = comments.len();
+        let _raw_count = comments.len();
         let pending = convert_insert_review_comments(comments);
-        let converted_count = pending.len();
+        let _converted_count = pending.len();
         let flattened = attach_pending_imported_comments(pending, repo_path);
-        let thread_count = flattened.len();
+        let _thread_count = flattened.len();
 
         if !self.model.is_restored() {}
 
@@ -5629,13 +5597,6 @@ impl Entity for AIBlock {
     type Event = AIBlockEvent;
 }
 
-/// User's final response to an AI-suggested code edit.
-#[derive(Clone, Copy, Debug, Serialize)]
-pub enum RequestedEditResolution {
-    Accept,
-    Reject,
-}
-
 #[derive(Debug, Clone)]
 pub enum AIBlockAction {
     /// Only applies to text selections made at the `AIBlock` level. Child views of the `AIBlock`
@@ -6174,7 +6135,9 @@ impl TypedActionView for AIBlock {
                 }
 
                 if let CodeSource::Skill {
-                    reference, origin, ..
+                    reference: _,
+                    origin: _,
+                    ..
                 } = source
                 {}
 

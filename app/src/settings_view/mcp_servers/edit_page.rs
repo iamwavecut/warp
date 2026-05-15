@@ -28,16 +28,13 @@ use crate::{
         blocklist::secret_redaction::find_secrets_in_text,
         mcp::{
             parsing::{prettify_json, resolve_json, ParsedTemplatableMCPServerResult},
-            templatable::CloudTemplatableMCPServer,
             MCPServer, TemplatableMCPServer, TemplatableMCPServerInstallation,
             TemplatableMCPServerManager, TransportType,
         },
     },
     banner::{Banner, BannerTextContent},
-    cloud_object::{CloudObject, Space},
     code::editor::view::{CodeEditorRenderOptions, CodeEditorView},
     persistence::ModelEvent,
-    server::cloud_objects::update_manager::InitiatedBy,
     settings_view::mcp_servers::{
         destructive_mcp_confirmation_dialog::{
             DestructiveMCPConfirmationDialog, DestructiveMCPConfirmationDialogEvent,
@@ -47,7 +44,7 @@ use crate::{
     },
     ui_components::{buttons::icon_button, icons::Icon},
     view_components::{
-        action_button::{ActionButton, DangerNakedTheme, DangerSecondaryTheme, PrimaryTheme},
+        action_button::{ActionButton, DangerSecondaryTheme, PrimaryTheme},
         DismissibleToast,
     },
     workspace::ToastStack,
@@ -78,13 +75,12 @@ pub enum MCPServersEditPageViewAction {
     Reinstall,
     Save,
     Delete,
-    Unshare,
     LogOut,
 }
 
 #[allow(clippy::large_enum_variant)]
 pub enum ServerModel {
-    CloudTemplatableMCPServer(CloudTemplatableMCPServer),
+    TemplatableMCPServer(TemplatableMCPServer),
     LocalTemplatableMCPInstallation(TemplatableMCPServerInstallation),
     None,
 }
@@ -92,8 +88,8 @@ pub enum ServerModel {
 impl ServerModel {
     pub fn name(&self) -> Option<String> {
         match self {
-            ServerModel::CloudTemplatableMCPServer(cloud_templatable_server) => {
-                Some(cloud_templatable_server.display_name())
+            ServerModel::TemplatableMCPServer(templatable_server) => {
+                Some(templatable_server.name.clone())
             }
             ServerModel::LocalTemplatableMCPInstallation(templatable_mcp_server_installation) => {
                 Some(
@@ -114,7 +110,6 @@ pub struct MCPServersEditPageView {
     save_button: ViewHandle<ActionButton>,
     reinstall_button: ViewHandle<ActionButton>,
     delete_button: ViewHandle<ActionButton>,
-    unshare_button: ViewHandle<ActionButton>,
     back_button: MouseStateHandle,
     json_editor: ViewHandle<CodeEditorView>,
     destructive_mcp_confirmation_dialog: ViewHandle<DestructiveMCPConfirmationDialog>,
@@ -147,14 +142,6 @@ impl MCPServersEditPageView {
                 .with_icon(Icon::Trash)
                 .on_click(|ctx| {
                     ctx.dispatch_typed_action(MCPServersEditPageViewAction::Delete);
-                })
-        });
-
-        let unshare_button = ctx.add_typed_action_view(|_| {
-            ActionButton::new("Remove from team", DangerNakedTheme)
-                .with_icon(Icon::MinusCircle)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(MCPServersEditPageViewAction::Unshare);
                 })
         });
 
@@ -204,7 +191,6 @@ impl MCPServersEditPageView {
             save_button,
             reinstall_button,
             delete_button,
-            unshare_button,
             back_button: Default::default(),
             json_editor,
             destructive_mcp_confirmation_dialog,
@@ -224,14 +210,12 @@ impl MCPServersEditPageView {
         self.server_card_item_id = item_id;
         match item_id {
             Some(ServerCardItemId::TemplatableMCP(template_uuid)) => {
-                let cloud_templatable_mcp_server = TemplatableMCPServerManager::as_ref(ctx)
-                    .get_cloud_templatable_mcp_server(template_uuid);
+                let templatable_mcp_server = TemplatableMCPServerManager::as_ref(ctx)
+                    .get_templatable_mcp_server(template_uuid);
 
-                if let Some(cloud_templatable_mcp_server) = cloud_templatable_mcp_server {
-                    self.server_model = ServerModel::CloudTemplatableMCPServer(
-                        cloud_templatable_mcp_server.clone(),
-                    );
-                    let templatable_mcp_server = &cloud_templatable_mcp_server.model().string_model;
+                if let Some(templatable_mcp_server) = templatable_mcp_server {
+                    self.server_model =
+                        ServerModel::TemplatableMCPServer(templatable_mcp_server.clone());
                     let json = templatable_mcp_server.to_user_json();
 
                     self.json_editor.update(ctx, |view, ctx| {
@@ -384,20 +368,6 @@ impl MCPServersEditPageView {
         .finish()
     }
 
-    fn is_shared(item_id: ServerCardItemId, app: &AppContext) -> bool {
-        match item_id {
-            ServerCardItemId::TemplatableMCP(template_uuid) => {
-                TemplatableMCPServerManager::as_ref(app)
-                    .is_server_template_shared(template_uuid, app)
-            }
-            ServerCardItemId::TemplatableMCPInstallation(installation_uuid) => {
-                TemplatableMCPServerManager::as_ref(app)
-                    .is_server_installation_shared(installation_uuid, app)
-            }
-            ServerCardItemId::GalleryMCP(_) | ServerCardItemId::FileBasedMCP(_) => false,
-        }
-    }
-
     fn is_editable(item_id: Option<ServerCardItemId>, app: &AppContext) -> bool {
         match item_id {
             Some(ServerCardItemId::TemplatableMCPInstallation(installation_uuid)) => {
@@ -405,23 +375,14 @@ impl MCPServersEditPageView {
                     TemplatableMCPServerManager::as_ref(app).get_template_uuid(installation_uuid);
 
                 if let Some(template_uuid) = template_uuid {
-                    let is_authorized_editor = TemplatableMCPServerManager::as_ref(app)
-                        .is_authorized_editor(template_uuid, app);
-                    let is_shared = TemplatableMCPServerManager::as_ref(app)
-                        .is_server_template_shared(template_uuid, app);
-
-                    is_authorized_editor || !is_shared
+                    TemplatableMCPServerManager::as_ref(app)
+                        .is_authorized_editor(template_uuid, app)
                 } else {
                     false
                 }
             }
             Some(ServerCardItemId::TemplatableMCP(template_uuid)) => {
-                let is_shared = TemplatableMCPServerManager::as_ref(app)
-                    .is_server_template_shared(template_uuid, app);
-                let is_authorized_editor = TemplatableMCPServerManager::as_ref(app)
-                    .is_authorized_editor(template_uuid, app);
-
-                is_authorized_editor || !is_shared
+                TemplatableMCPServerManager::as_ref(app).is_authorized_editor(template_uuid, app)
             }
             Some(ServerCardItemId::GalleryMCP(_)) | Some(ServerCardItemId::FileBasedMCP(_)) => {
                 false
@@ -448,24 +409,6 @@ impl MCPServersEditPageView {
 
     fn is_deletable(item_id: ServerCardItemId, app: &AppContext) -> bool {
         Self::is_editable(Some(item_id), app)
-    }
-
-    fn is_unshareable(item_id: ServerCardItemId, app: &AppContext) -> bool {
-        let is_shared = Self::is_shared(item_id, app);
-        let template_uuid = match item_id {
-            ServerCardItemId::TemplatableMCP(template_uuid) => Some(template_uuid),
-            ServerCardItemId::TemplatableMCPInstallation(installation_uuid) => {
-                TemplatableMCPServerManager::as_ref(app).get_template_uuid(installation_uuid)
-            }
-            _ => None,
-        };
-        let is_author = template_uuid
-            .map(|template_uuid| {
-                TemplatableMCPServerManager::as_ref(app).is_author(template_uuid, app)
-            })
-            .unwrap_or(false);
-
-        is_author && is_shared
     }
 
     fn render_editor(&self, app: &AppContext) -> Box<dyn Element> {
@@ -513,9 +456,6 @@ impl MCPServersEditPageView {
         if let Some(server_card_item_id) = self.server_card_item_id {
             if Self::is_deletable(server_card_item_id, app) {
                 footer.add_child(ChildView::new(&self.delete_button).finish());
-            }
-            if Self::is_unshareable(server_card_item_id, app) {
-                footer.add_child(ChildView::new(&self.unshare_button).finish());
             }
         }
 
@@ -640,41 +580,8 @@ impl MCPServersEditPageView {
             DestructiveMCPConfirmationDialogEvent::Confirm(variant) => {
                 if let Some(server_card_item_id) = self.server_card_item_id {
                     match variant {
-                        DestructiveMCPConfirmationDialogVariant::DeleteLocal
-                        | DestructiveMCPConfirmationDialogVariant::DeleteShared => {
+                        DestructiveMCPConfirmationDialogVariant::DeleteLocal => {
                             ctx.emit(MCPServersEditPageViewEvent::Delete(server_card_item_id));
-                        }
-                        DestructiveMCPConfirmationDialogVariant::Unshare => {
-                            match server_card_item_id {
-                                ServerCardItemId::TemplatableMCP(template_uuid) => {
-                                    TemplatableMCPServerManager::handle(ctx).update(
-                                        ctx,
-                                        |templatable_manager, ctx| {
-                                            templatable_manager
-                                                .unshare_templatable_mcp_server(template_uuid, ctx);
-                                        },
-                                    );
-                                    ctx.emit(MCPServersEditPageViewEvent::Back);
-                                }
-                                ServerCardItemId::TemplatableMCPInstallation(installation_uuid) => {
-                                    TemplatableMCPServerManager::handle(ctx).update(
-                                        ctx,
-                                        |templatable_manager, ctx| {
-                                            templatable_manager
-                                                .unshare_templatable_mcp_server_installation(
-                                                    installation_uuid,
-                                                    ctx,
-                                                );
-                                        },
-                                    );
-                                    ctx.emit(MCPServersEditPageViewEvent::Back);
-                                }
-                                _ => {
-                                    log::warn!(
-                                        "This server is not an installation and cannot be unshared"
-                                    );
-                                }
-                            }
                         }
                     }
                     self.destructive_mcp_confirmation_dialog
@@ -811,27 +718,13 @@ impl TypedActionView for MCPServersEditPageView {
                 ctx.emit(MCPServersEditPageViewEvent::Back);
             }
             MCPServersEditPageViewAction::Delete => {
-                let Some(server_card_item_id) = self.server_card_item_id else {
+                if self.server_card_item_id.is_none() {
                     return;
-                };
-                let is_shared = Self::is_shared(server_card_item_id, ctx);
-
-                let variant = if is_shared {
-                    DestructiveMCPConfirmationDialogVariant::DeleteShared
-                } else {
-                    DestructiveMCPConfirmationDialogVariant::DeleteLocal
-                };
+                }
 
                 self.destructive_mcp_confirmation_dialog
                     .update(ctx, |dialog, ctx| {
-                        dialog.show(variant, ctx);
-                    });
-                ctx.notify();
-            }
-            MCPServersEditPageViewAction::Unshare => {
-                self.destructive_mcp_confirmation_dialog
-                    .update(ctx, |dialog, ctx| {
-                        dialog.show(DestructiveMCPConfirmationDialogVariant::Unshare, ctx);
+                        dialog.show(DestructiveMCPConfirmationDialogVariant::DeleteLocal, ctx);
                     });
                 ctx.notify();
             }
@@ -905,8 +798,6 @@ impl TypedActionView for MCPServersEditPageView {
                             |templatable_manager, ctx| {
                                 templatable_manager.create_templatable_mcp_server(
                                     parsed_server.templatable_mcp_server.clone(),
-                                    Space::Personal,
-                                    InitiatedBy::User,
                                     ctx,
                                 );
                                 if let Some(installation) =

@@ -223,16 +223,6 @@ impl CloudViewModel {
                 let access_level = Self::object_access_level(object, app);
                 if access_level < SharingAccessLevel::Edit {
                     ContentEditability::ReadOnly
-                } else if AuthStateProvider::as_ref(app)
-                    .get()
-                    .is_anonymous_or_logged_out()
-                {
-                    // The object is editable, but the user is not logged in.
-                    if object.space(app) == Space::Personal {
-                        ContentEditability::Editable
-                    } else {
-                        ContentEditability::RequiresLogin
-                    }
                 } else {
                     ContentEditability::Editable
                 }
@@ -373,9 +363,7 @@ impl CloudViewModel {
         event: &UpdateManagerEvent,
         ctx: &mut ModelContext<Self>,
     ) {
-        let UpdateManagerEvent::ObjectOperationComplete { result } = event else {
-            return;
-        };
+        let UpdateManagerEvent::ObjectOperationComplete { result } = event;
 
         if result.success_type != OperationSuccessType::Success {
             return;

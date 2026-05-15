@@ -10,7 +10,7 @@ use warp::{
         subshell::{
             accept_tmux_install, assert_subshell_banner_is_showing,
             assert_subshell_is_bootstrapped, enter_ssh_command, enter_ssh_password,
-            run_exit_command, setup_gcloud_sdk, trigger_subshell_bootstrap,
+            run_exit_command, setup_remote_ssh_test_env, trigger_subshell_bootstrap,
             wait_for_password_prompt,
         },
         terminal::{
@@ -172,7 +172,7 @@ macro_rules! generate_can_bootstrap_legacy_ssh_test_for_shell {
                     starter.shell_type() != ShellType::PowerShell
                 })
                 .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
-                .with_step(setup_gcloud_sdk())
+                .with_step(setup_remote_ssh_test_env())
                 .with_step(enter_ssh_command($shell))
                 .with_step(wait_for_password_prompt(0 /*tab_idx*/, $shell))
                 .with_step(
@@ -183,7 +183,7 @@ macro_rules! generate_can_bootstrap_legacy_ssh_test_for_shell {
                     new_step_with_default_assertions(
                         "Assert active block is part of a remote session",
                     )
-                    .add_assertion(assert_active_block_is_remote($shell, "ubuntu-14-04")),
+                    .add_assertion(assert_active_block_is_remote($shell, "localhost")),
                 )
                 .with_step(verify_login_shell($shell))
         }
@@ -217,7 +217,7 @@ macro_rules! generate_can_bootstrap_tmux_ssh_test_for_shell {
                         new_step_with_default_assertions(
                             "Assert active block is part of a remote session",
                         )
-                        .add_assertion(assert_active_block_is_remote($shell, "ubuntu-14-04")),
+                        .add_assertion(assert_active_block_is_remote($shell, "localhost")),
                     )
                     .with_step(verify_login_shell($shell))
             }
@@ -232,7 +232,7 @@ macro_rules! generate_can_bootstrap_tmux_ssh_test_for_shell {
                     starter.shell_type() != ShellType::PowerShell
                 })
                 .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
-                .with_step(setup_gcloud_sdk());
+                .with_step(setup_remote_ssh_test_env());
             // Install Tmux
             let builder = warpify(builder).with_step(
                 accept_tmux_install().set_post_step_pause(std::time::Duration::from_secs(3)),
@@ -263,7 +263,7 @@ macro_rules! generate_long_running_block_ssh_test_for_shell {
                     starter.shell_type() != ShellType::PowerShell
                 })
                 .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
-                .with_step(setup_gcloud_sdk())
+                .with_step(setup_remote_ssh_test_env())
                 .with_step(enter_ssh_command($shell))
                 .with_step(wait_for_password_prompt(0 /*tab_idx*/, $shell))
                 .with_step(enter_ssh_password())
@@ -295,14 +295,13 @@ generate_can_bootstrap_tmux_ssh_test_for_shell!(test_tmux_ssh_into_bash, "bash",
 generate_can_bootstrap_tmux_ssh_test_for_shell!(test_tmux_ssh_into_zsh, "zsh", false);
 generate_can_bootstrap_tmux_ssh_test_for_shell!(test_install_tmux_ssh_into_bash, "bash", true);
 generate_can_bootstrap_tmux_ssh_test_for_shell!(test_install_tmux_ssh_into_zsh, "zsh", true);
-generate_long_running_block_ssh_test_for_shell!(test_ssh_into_fish, "fish", prompt_regex: r"\nfish@ubuntu-14-04 ~>$");
+generate_long_running_block_ssh_test_for_shell!(test_ssh_into_fish, "fish", prompt_regex: r"\nfish@localhost ~>$");
 generate_long_running_block_ssh_test_for_shell!(test_ssh_into_sh, "sh", prompt_regex: r"\n\$ $");
 generate_long_running_block_ssh_test_for_shell!(test_ssh_into_ash, "ash", prompt_regex: r"\n\$ $");
 
 /// Tests a regression with the startup shell setting and SSH proxies.
 /// See WAR-6337 for details - if `$SHELL` is not set to a valid executable file
-/// path, SSH fails to execute proxy commands (like the one this test uses for
-/// gcloud).
+/// path, SSH fails to execute proxy commands like the one this test uses.
 pub fn test_ssh_with_shell_override() -> Builder {
     new_builder()
         // TODO(CORE-2333) PowerShell has no SSH wrapper.
@@ -315,14 +314,14 @@ pub fn test_ssh_with_shell_override() -> Builder {
             serde_json::to_string(&StartupShell::Zsh).expect("Can serialize setting as JSON"),
         )]))
         .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
-        .with_step(setup_gcloud_sdk())
+        .with_step(setup_remote_ssh_test_env())
         .with_step(enter_ssh_command("bash"))
         .with_step(wait_for_password_prompt(0, "bash"))
         .with_step(enter_ssh_password())
         .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
         .with_step(
             new_step_with_default_assertions("Assert active block is part of a remote session")
-                .add_assertion(assert_active_block_is_remote("bash", "ubuntu-14-04")),
+                .add_assertion(assert_active_block_is_remote("bash", "localhost")),
         )
         .with_step(verify_login_shell("bash"))
 }

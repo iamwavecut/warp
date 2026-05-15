@@ -13,9 +13,7 @@ use vec1::{vec1, Vec1};
 use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity as _, ViewHandle};
 
 use apply_diff_model::ApplyDiffModel;
-pub(crate) use diff_application::apply_edits;
 use diff_application::DiffApplicationError;
-pub(crate) use diff_application::FileReadResult;
 
 use crate::{
     ai::{
@@ -28,7 +26,7 @@ use crate::{
             inline_action::code_diff_view::{
                 CodeDiffView, CodeDiffViewEvent, DiffSessionType, FileDiff,
             },
-            BlocklistAIPermissions, RequestedEditResolution,
+            BlocklistAIPermissions,
         },
         paths::host_native_absolute_path,
     },
@@ -46,14 +44,6 @@ pub struct RequestFileEditsExecutor {
     /// Set of action IDs where diff application failed.
     diff_application_failures: HashMap<AIAgentActionId, Vec1<DiffApplicationError>>,
     terminal_view_id: EntityId,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RequestFileEditsFormatKind {
-    StrReplace,
-    V4A,
-    Mixed,
-    Unknown,
 }
 
 impl RequestFileEditsExecutor {
@@ -165,7 +155,7 @@ impl RequestFileEditsExecutor {
             ));
         }
 
-        let identifiers = self
+        let _identifiers = self
             .generate_ai_identifiers(&input.conversation_id, id, ctx)
             .unwrap_or_else(|| AIIdentifiers {
                 client_conversation_id: Some(input.conversation_id),
@@ -210,7 +200,7 @@ impl RequestFileEditsExecutor {
                     return;
                 }
 
-                let passive_diff = BlocklistAIHistoryModel::as_ref(ctx)
+                let _passive_diff = BlocklistAIHistoryModel::as_ref(ctx)
                     .is_entirely_passive_conversation(&input.conversation_id);
 
                 // Build a map of file path → content from the editor buffers.

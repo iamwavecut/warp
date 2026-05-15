@@ -31,7 +31,6 @@ mod subshell;
 mod sync_inputs;
 mod typeahead;
 mod video_recording;
-mod websockets;
 mod workflows;
 mod workspace;
 
@@ -65,7 +64,6 @@ pub use subshell::*;
 pub use sync_inputs::*;
 pub use typeahead::*;
 pub use video_recording::*;
-pub use websockets::*;
 pub use workflows::*;
 pub use workspace::*;
 
@@ -86,7 +84,10 @@ use warpui::{
     AssetProvider, Event, SingletonEntity, UpdateView, ViewHandle,
 };
 
-use warp::{terminal::find::TerminalFindModel, util::bindings::CustomAction, AgentModeEntrypoint};
+use warp::{
+    interaction_sources::AgentModeEntrypoint, terminal::find::TerminalFindModel,
+    util::bindings::CustomAction,
+};
 
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use version_compare::Cmp;
@@ -183,6 +184,9 @@ use warp::{
     },
 };
 use warp::{
+    integration_testing::view_getters::single_terminal_view, terminal::view::TerminalAction,
+};
+use warp::{
     integration_testing::warp_drive::{
         assert_is_left_panel_open, assert_warp_drive_is_closed, assert_warp_drive_is_open,
     },
@@ -197,10 +201,6 @@ use warp::{
         },
     },
     settings::MonospaceFontSize,
-};
-use warp::{
-    integration_testing::{assertions::join_a_workspace, view_getters::single_terminal_view},
-    terminal::view::TerminalAction,
 };
 use warp::{
     integration_testing::{
@@ -1722,16 +1722,7 @@ pub fn test_open_and_close_context_menu_with_keybinding() -> Builder {
         .with_step(
             new_step_with_default_assertions("Press keybinding again to close context menu")
                 .with_keystrokes(&["ctrl-m"])
-                .add_assertion(|app, window_id| {
-                    let views = app.views_of_type(window_id).unwrap();
-                    let workspace: &ViewHandle<Workspace> = views.first().unwrap();
-                    let is_overflow_menu_showing =
-                        workspace.read(app, |workspace, _| workspace.is_overflow_menu_showing());
-                    async_assert!(
-                        !is_overflow_menu_showing,
-                        "Expected overflow menu not to be showing",
-                    )
-                }),
+                .add_assertion(assert_context_menu_is_open(false)),
         )
 }
 

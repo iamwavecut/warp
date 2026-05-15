@@ -1287,7 +1287,7 @@ impl BackingView for AIDocumentView {
 
     fn pane_header_overflow_menu_items(
         &self,
-        ctx: &AppContext,
+        _ctx: &AppContext,
     ) -> Vec<MenuItem<Self::PaneHeaderOverflowMenuAction>> {
         let mut menu_items = vec![];
 

@@ -1,9 +1,9 @@
 pkgname=oz@@CHANNEL_SUFFIX@@
 pkgver=@@VERSION@@
 pkgrel=@@RELEASE@@
-pkgdesc="The orchestration platform for cloud agents"
+pkgdesc="Local-first coding agent CLI"
 arch=('@@ARCH@@')
-url="https://warp.dev"
+url="https://github.com/iamwavecut/warp"
 license=('custom')
 depends=(
 	'curl'
@@ -41,5 +41,5 @@ package() {
 
 	# Create a symlink to the binary in /usr/bin.
 	install -d "$pkgdir"/usr/bin
-	ln -s "/opt/warpdotdev/oz@@CHANNEL_SUFFIX@@/@@BINARY_NAME@@" "$pkgdir/usr/bin/@@BINARY_NAME@@"
+	ln -s "/opt/warp-local-first/oz@@CHANNEL_SUFFIX@@/@@BINARY_NAME@@" "$pkgdir/usr/bin/@@BINARY_NAME@@"
 }

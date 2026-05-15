@@ -13,22 +13,17 @@ use pathfinder_geometry::vector::{vec2f, Vector2F};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use warpui::elements::{
-    ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty, Expanded, Flex,
-    Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Point, Radius,
-    Text,
+    ChildView, Container, CornerRadius, CrossAxisAlignment, Empty, Flex, MainAxisSize,
+    ParentElement, Point, Radius, Text,
 };
 use warpui::event::DispatchedEvent;
-use warpui::platform::Cursor;
-use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponentStyles};
 use warpui::{
     AfterLayoutContext, AppContext, Element, EventContext, LayoutContext, PaintContext,
     SingletonEntity, SizeConstraint, View, ViewContext, ViewHandle,
 };
 
-use settings::Setting;
 use warp_cli::agent::Harness;
-use warp_core::channel::{Channel, ChannelState};
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::Fill;
 
@@ -45,9 +40,6 @@ use crate::view_components::dropdown::{Dropdown, DropdownAction, DropdownStyle};
 use crate::LLMPreferences;
 
 // ── Shared constants ────────────────────────────────────────────────
-
-pub const ORCHESTRATION_WARP_WORKER_HOST: &str = "warp";
-pub const ORCHESTRATION_ENV_NONE_LABEL: &str = "(no environment)";
 
 pub const ORCHESTRATION_PICKER_HEIGHT: f32 = 36.;
 pub const ORCHESTRATION_PICKER_BORDER_WIDTH: f32 = 1.;
@@ -799,7 +791,7 @@ pub fn render_picker_row<A: OrchestrationControlAction>(
 /// Renders pickers vertically at full width when `vertical` is true,
 /// or in the original horizontal layout when false.
 pub fn render_picker_row_with_layout<A: OrchestrationControlAction>(
-    state: &OrchestrationEditState,
+    _state: &OrchestrationEditState,
     handles: &OrchestrationPickerHandles<A>,
     appearance: &Appearance,
     vertical: bool,

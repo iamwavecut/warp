@@ -5,11 +5,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use warp_cli::agent::Harness;
 use warp_core::report_error;
-use warp_core::ui::theme::WarpTheme;
-use warpui::color::ColorU;
 
 use crate::ai::artifacts::{deserialize_artifacts, Artifact};
-use crate::ui_components::icons::Icon;
 use crate::view_components::DismissibleToast;
 use crate::workspace::ToastStack;
 use warpui::{SingletonEntity, View, ViewContext};
@@ -41,8 +38,7 @@ pub struct AgentConfigSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     /// Self-hosted worker ID that should execute this task.
-    /// If None or Some("warp"), the task will be dispatched to Warp-hosted (Namespace) workers.
-    /// Otherwise, the task will only be assigned to a connected self-hosted worker with matching ID.
+    /// Retained for parsing older configs; hosted worker dispatch is disabled in this fork.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker_host: Option<String>,
     /// Skill spec to use as the base prompt for the agent.
@@ -138,50 +134,30 @@ impl AgentConfigSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AgentSource {
-    AgentWebhook,
     Cli,
-    ScheduledAgent,
     Interactive,
-    WebApp,
-    GitHubAction,
-    CloudMode,
 }
 
 impl AgentSource {
     pub fn as_str(&self) -> &str {
         match self {
-            AgentSource::AgentWebhook => "API",
             AgentSource::Cli => "CLI",
-            AgentSource::ScheduledAgent => "SCHEDULED_AGENT",
-            // The public API's run source for local interactive tasks is named
-            // `LOCAL`.
             AgentSource::Interactive => "LOCAL",
-            AgentSource::WebApp => "WEB_APP",
-            AgentSource::GitHubAction => "GITHUB_ACTION",
-            AgentSource::CloudMode => "CLOUD_MODE",
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            AgentSource::AgentWebhook => "API",
             AgentSource::Cli => "CLI",
-            AgentSource::ScheduledAgent => "Scheduled",
-            AgentSource::Interactive | AgentSource::CloudMode => "Warp App",
-            AgentSource::WebApp => "Oz Web",
-            AgentSource::GitHubAction => "GitHub Action",
+            AgentSource::Interactive => "Warp App",
         }
     }
 
-    /// Returns true if this source represents a user-initiated conversation
-    /// (as opposed to automated/programmatic sources like CLI or scheduled runs).
+    /// Returns true if this source represents a user-initiated conversation.
     pub fn is_user_initiated(&self) -> bool {
         match self {
-            AgentSource::Interactive | AgentSource::WebApp | AgentSource::CloudMode => true,
-            AgentSource::Cli
-            | AgentSource::ScheduledAgent
-            | AgentSource::AgentWebhook
-            | AgentSource::GitHubAction => false,
+            AgentSource::Interactive => true,
+            AgentSource::Cli => false,
         }
     }
 }
@@ -195,13 +171,8 @@ where
     let s: Option<String> = serde::Deserialize::deserialize(deserializer)?;
     Ok(match s {
         Some(s) => match s.as_str() {
-            "AGENT_WEBHOOK" | "API" => Some(AgentSource::AgentWebhook),
-            "LOCAL" => Some(AgentSource::Interactive),
+            "LOCAL" | "CLOUD_MODE" => Some(AgentSource::Interactive),
             "CLI" => Some(AgentSource::Cli),
-            "SCHEDULED_AGENT" => Some(AgentSource::ScheduledAgent),
-            "WEB_APP" => Some(AgentSource::WebApp),
-            "GITHUB_ACTION" => Some(AgentSource::GitHubAction),
-            "CLOUD_MODE" => Some(AgentSource::CloudMode),
             _ => {
                 report_error!(anyhow!("Unknown AmbientAgentSource: {}", s));
                 None
@@ -304,24 +275,8 @@ impl AmbientAgentTask {
         }
     }
 
-    pub fn active_execution_conversation_id(&self) -> Option<&str> {
-        if self.has_active_execution() {
-            self.conversation_id()
-        } else {
-            None
-        }
-    }
-
     pub fn has_active_execution(&self) -> bool {
         self.state == AmbientAgentTaskState::InProgress && self.active_run_execution().is_active()
-    }
-
-    pub fn is_terminal_run_state(&self) -> bool {
-        self.state.is_terminal()
-    }
-
-    pub fn can_submit_cloud_followup(&self) -> bool {
-        self.is_terminal_run_state() && !self.has_active_execution()
     }
 
     /// Total credits used (inference + compute + platform).
@@ -343,11 +298,6 @@ impl AmbientAgentTask {
     /// Creator's display name, if available.
     pub fn creator_display_name(&self) -> Option<String> {
         self.creator.as_ref().and_then(|c| c.display_name.clone())
-    }
-
-    /// Principal the run executed as, formatted for user-facing surfaces.
-    pub fn executor_display_name(&self) -> Option<String> {
-        self.executor.as_ref().and_then(|e| e.display_name.clone())
     }
 
     /// Returns true if the underlying session for the ambient agent is no longer running.
@@ -374,24 +324,6 @@ pub enum AmbientAgentTaskState {
 }
 
 impl AmbientAgentTaskState {
-    /// Returns the query param value for the server API.
-    pub fn as_query_param(&self) -> Option<&str> {
-        match self {
-            AmbientAgentTaskState::Queued => Some("QUEUED"),
-            AmbientAgentTaskState::Pending => Some("PENDING"),
-            AmbientAgentTaskState::Claimed => Some("CLAIMED"),
-            AmbientAgentTaskState::InProgress => Some("INPROGRESS"),
-            AmbientAgentTaskState::Succeeded => Some("SUCCEEDED"),
-            AmbientAgentTaskState::Failed => Some("FAILED"),
-            AmbientAgentTaskState::Error => Some("ERROR"),
-            AmbientAgentTaskState::Blocked => Some("BLOCKED"),
-            AmbientAgentTaskState::Cancelled => Some("CANCELLED"),
-            // Unknown states are only for resilient deserialization and should not be
-            // sent back as filter values.
-            AmbientAgentTaskState::Unknown => None,
-        }
-    }
-
     pub fn is_working(&self) -> bool {
         match self {
             AmbientAgentTaskState::Queued
@@ -407,10 +339,6 @@ impl AmbientAgentTaskState {
         }
     }
 
-    pub fn is_cancellable(&self) -> bool {
-        self.is_working()
-    }
-
     pub fn is_failure_like(&self) -> bool {
         match self {
             AmbientAgentTaskState::Failed
@@ -423,39 +351,6 @@ impl AmbientAgentTaskState {
             | AmbientAgentTaskState::InProgress
             | AmbientAgentTaskState::Succeeded
             | AmbientAgentTaskState::Cancelled => false,
-        }
-    }
-
-    pub fn is_terminal(&self) -> bool {
-        match self {
-            AmbientAgentTaskState::Succeeded
-            | AmbientAgentTaskState::Failed
-            | AmbientAgentTaskState::Error
-            | AmbientAgentTaskState::Blocked
-            | AmbientAgentTaskState::Cancelled
-            | AmbientAgentTaskState::Unknown => true,
-            AmbientAgentTaskState::Queued
-            | AmbientAgentTaskState::Pending
-            | AmbientAgentTaskState::Claimed
-            | AmbientAgentTaskState::InProgress => false,
-        }
-    }
-
-    pub fn status_icon_and_color(&self, theme: &WarpTheme) -> (Icon, ColorU) {
-        match self {
-            AmbientAgentTaskState::Queued
-            | AmbientAgentTaskState::Pending
-            | AmbientAgentTaskState::Claimed
-            | AmbientAgentTaskState::InProgress => (Icon::ClockLoader, theme.ansi_fg_magenta()),
-            AmbientAgentTaskState::Succeeded => (Icon::Check, theme.ansi_fg_green()),
-            AmbientAgentTaskState::Failed
-            | AmbientAgentTaskState::Error
-            | AmbientAgentTaskState::Unknown => (Icon::Triangle, theme.ansi_fg_red()),
-            AmbientAgentTaskState::Blocked => (Icon::StopFilled, theme.ansi_fg_yellow()),
-            AmbientAgentTaskState::Cancelled => (
-                Icon::Cancelled,
-                theme.disabled_text_color(theme.background()).into_solid(),
-            ),
         }
     }
 }
@@ -501,12 +396,14 @@ pub enum TaskStatusErrorCode {
     Unknown,
 }
 
+#[cfg(test)]
 impl TaskStatusErrorCode {
     pub fn is_environment_setup_failure(&self) -> bool {
         matches!(self, TaskStatusErrorCode::EnvironmentSetupFailed)
     }
 }
 
+#[cfg(test)]
 impl TaskStatusMessage {
     pub fn is_environment_setup_failure(&self) -> bool {
         self.error_code

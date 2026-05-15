@@ -18,7 +18,6 @@ pub(super) mod shell_command;
 pub(super) mod start_agent;
 pub(super) mod suggest_new_conversation;
 pub(super) mod suggest_prompt;
-pub(super) mod upload_artifact;
 pub(super) mod use_computer;
 
 use ai::agent::action_result::{InsertReviewCommentsResult, RequestCommandOutputResult};
@@ -37,9 +36,7 @@ pub(super) use read_files::ReadFilesExecutor;
 use read_mcp_resource::ReadMCPResourceExecutor;
 use read_skill::ReadSkillExecutor;
 use request_computer_use::RequestComputerUseExecutor;
-pub(crate) use request_file_edits::apply_edits;
-pub(crate) use request_file_edits::FileReadResult;
-pub use request_file_edits::{RequestFileEditsExecutor, RequestFileEditsFormatKind};
+pub use request_file_edits::RequestFileEditsExecutor;
 use run_agents::RunAgentsExecutor;
 pub use send_message::SendMessageToAgentExecutor;
 use serde::{Deserialize, Serialize};
@@ -50,7 +47,6 @@ pub use start_agent::{
 pub use suggest_new_conversation::NewConversationDecision;
 use suggest_new_conversation::SuggestNewConversationExecutor;
 pub use suggest_prompt::PromptSuggestionExecutor;
-use upload_artifact::UploadArtifactExecutor;
 use use_computer::UseComputerExecutor;
 use warp_core::{execution_mode::AppExecutionMode, features::FeatureFlag};
 
@@ -242,7 +238,6 @@ impl AsyncExecutingAction {
 pub struct BlocklistAIActionExecutor {
     shell_command_executor: ModelHandle<ShellCommandExecutor>,
     read_files_executor: ModelHandle<ReadFilesExecutor>,
-    upload_artifact_executor: ModelHandle<UploadArtifactExecutor>,
     search_codebase_executor: ModelHandle<SearchCodebaseExecutor>,
     request_file_edits_executor: ModelHandle<RequestFileEditsExecutor>,
     grep_executor: ModelHandle<GrepExecutor>,
@@ -282,8 +277,6 @@ impl BlocklistAIActionExecutor {
     ) -> Self {
         let read_files_executor =
             ctx.add_model(|_| ReadFilesExecutor::new(active_session.clone(), terminal_view_id));
-        let upload_artifact_executor = ctx
-            .add_model(|_| UploadArtifactExecutor::new(active_session.clone(), terminal_view_id));
         let search_codebase_executor = ctx.add_model(|ctx| {
             SearchCodebaseExecutor::new(
                 active_session.clone(),
@@ -333,7 +326,6 @@ impl BlocklistAIActionExecutor {
         Self {
             shell_command_executor,
             read_files_executor,
-            upload_artifact_executor,
             search_codebase_executor,
             request_file_edits_executor,
             grep_executor,
@@ -461,9 +453,6 @@ impl BlocklistAIActionExecutor {
                 .update(ctx, |executor, ctx| executor.preprocess_action(input, ctx)),
             AIAgentActionType::ReadFiles(..) => self
                 .read_files_executor
-                .update(ctx, |executor, ctx| executor.preprocess_action(input, ctx)),
-            AIAgentActionType::UploadArtifact(..) => self
-                .upload_artifact_executor
                 .update(ctx, |executor, ctx| executor.preprocess_action(input, ctx)),
             AIAgentActionType::SearchCodebase(..) => self
                 .search_codebase_executor
@@ -643,9 +632,6 @@ impl BlocklistAIActionExecutor {
                 .read_files_executor
                 .update(ctx, |executor, ctx| executor.execute(input, ctx))
                 .into(),
-            AIAgentActionType::UploadArtifact(..) => self
-                .upload_artifact_executor
-                .update(ctx, |executor, ctx| executor.execute(input, ctx)),
             AIAgentActionType::SearchCodebase(..) => self
                 .search_codebase_executor
                 .update(ctx, |executor, ctx| executor.execute(input, ctx))
@@ -943,9 +929,6 @@ impl BlocklistAIActionExecutor {
                 .update(ctx, |executor, ctx| executor.should_autoexecute(input, ctx)),
             AIAgentActionType::ReadFiles(_) => self
                 .read_files_executor
-                .update(ctx, |executor, ctx| executor.should_autoexecute(input, ctx)),
-            AIAgentActionType::UploadArtifact(_) => self
-                .upload_artifact_executor
                 .update(ctx, |executor, ctx| executor.should_autoexecute(input, ctx)),
             AIAgentActionType::SearchCodebase(_) => self
                 .search_codebase_executor

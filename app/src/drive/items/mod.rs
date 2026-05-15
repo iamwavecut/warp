@@ -18,7 +18,6 @@ pub mod ai_fact_collection;
 pub mod env_var_collection;
 pub mod folder;
 pub mod item;
-pub mod mcp_server;
 pub mod mcp_server_collection;
 pub mod notebook;
 pub mod space;

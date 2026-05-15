@@ -6,9 +6,7 @@ body:
     attributes:
       label: "Pre-submit Checks"
       options:
-        - label: "I have [searched Warp SSH issues](https://github.com/warpdotdev/Warp/issues?q=is%3Aissue+is%3Aopen+label%3ASSH) and there are no duplicates"
-          required: true
-        - label: "I have [searched Warp known issues page](https://docs.warp.dev/help/known-issues) and my issue is not there"
+        - label: "I have searched existing local-first fork SSH issues and there are no duplicates"
           required: true
         - label: "I have included local logs when they are relevant and redacted personal details."
           required: false   
@@ -56,7 +54,7 @@ body:
     id: "rcfiles"
     attributes:
       label: "Have you tried commenting out my system & user rc files?"
-      description: "If the issue is with your system and user rc files, please isolate the issue by [debugging your rc files](https://docs.warp.dev/help/known-issues#configuring-and-debugging-your-rc-files)."
+      description: "If the issue is with your system and user rc files, please isolate the issue locally by temporarily disabling those rc files."
       options:
       - label: "Yes"
   - type: textarea

@@ -4,26 +4,25 @@ use warp_core::ui::icons::Icon;
 use warpui::elements::{ConstrainedBox, Container, Highlight, Text};
 use warpui::fonts::{Properties, Weight};
 use warpui::text_layout::ClipConfig;
-use warpui::{AppContext, Element, Entity, ModelContext, ModelHandle, SingletonEntity as _};
+use warpui::{AppContext, Element, Entity, ModelContext, SingletonEntity as _};
 
 use crate::appearance::Appearance;
-use crate::cloud_object::model::persistence::CloudModel;
-use crate::search::command_palette::warp_drive;
-use crate::search::data_source::{DataSourceSearchError, Query, QueryResult};
+use crate::search::data_source::{Query, QueryResult};
 use crate::search::mixer::DataSourceRunErrorWrapper;
 use crate::search::result_renderer::ItemHighlightState;
+use crate::search::FuzzyMatchWorkflowResult;
 use crate::search::{SearchItem, SyncDataSource};
-use crate::server::ids::SyncId;
 use crate::terminal::input::inline_menu::styles as inline_styles;
 use crate::terminal::input::inline_menu::{
     default_navigation_message_items, InlineMenuAction, InlineMenuMessageArgs, InlineMenuType,
 };
 use crate::terminal::input::message_bar::Message;
-use crate::workflows::CloudWorkflow;
+use crate::user_config::WarpConfig;
+use crate::workflows::workflow::Workflow;
 
 #[derive(Clone, Debug)]
 pub struct AcceptPrompt {
-    pub id: SyncId,
+    pub workflow: Workflow,
 }
 
 impl InlineMenuAction for AcceptPrompt {
@@ -34,20 +33,11 @@ impl InlineMenuAction for AcceptPrompt {
     }
 }
 
-pub struct PromptsMenuDataSource {
-    warp_drive_data_source: ModelHandle<warp_drive::DataSource>,
-}
+pub struct PromptsMenuDataSource;
 
 impl PromptsMenuDataSource {
-    pub fn new(ctx: &mut ModelContext<Self>) -> Self {
-        // Ideally this would be a full-text searching but full text searching is slow, and
-        // currently its implementation is not well-setup for async use.
-        //
-        // TODO(zachbai): Revert to full-text search and make this an `AsyncDataSource`.
-        let warp_drive_data_source = ctx.add_model(warp_drive::DataSource::new_fuzzy);
-        Self {
-            warp_drive_data_source,
-        }
+    pub fn new(_ctx: &mut ModelContext<Self>) -> Self {
+        Self
     }
 }
 
@@ -60,12 +50,12 @@ impl SyncDataSource for PromptsMenuDataSource {
         app: &AppContext,
     ) -> Result<Vec<QueryResult<Self::Action>>, DataSourceRunErrorWrapper> {
         let query_text = query.text.trim();
+        let local_workflows = WarpConfig::as_ref(app).local_user_workflows();
 
         if query_text.is_empty() {
-            let cloud_workflows = CloudModel::as_ref(app).get_all_active_workflows();
-
-            return Ok(cloud_workflows
-                .filter(|workflow| !workflow.model().data.is_command_workflow())
+            return Ok(local_workflows
+                .iter()
+                .filter(|workflow| !workflow.is_command_workflow())
                 .map(|workflow| QueryResult::from(PromptSearchItem::from_workflow(workflow)))
                 .collect());
         }
@@ -74,49 +64,33 @@ impl SyncDataSource for PromptsMenuDataSource {
         // search to avoid missing valid results while still filtering the list.
         if query_text.chars().count() == 1 {
             let query_char = query_text.chars().next().unwrap();
-            let cloud_workflows = CloudModel::as_ref(app).get_all_active_workflows();
 
-            return Ok(cloud_workflows
+            return Ok(local_workflows
+                .iter()
                 .filter(|workflow| {
-                    !workflow.model().data.is_command_workflow()
-                        && workflow
-                            .model()
-                            .data
-                            .name_starts_with_char_ignore_case(query_char)
+                    !workflow.is_command_workflow()
+                        && workflow.name_starts_with_char_ignore_case(query_char)
                 })
                 .map(|workflow| QueryResult::from(PromptSearchItem::from_workflow(workflow)))
                 .collect());
         }
 
-        self.warp_drive_data_source
-            .as_ref(app)
-            .search_workflows(query, true, false, app)
-            .map(|results| {
-                results
-                    .into_iter()
-                    .filter_map(|result| {
-                        let score = result.score();
-                        // Avoid spamming results with extremely weak matches.
-                        (score > OrderedFloat(25.0)).then(|| {
-                            let workflow = result.cloud_workflow;
-                            if workflow.model().data.is_command_workflow() {
-                                return None;
-                            }
-
-                            Some(QueryResult::from(
-                                PromptSearchItem::from_workflow(&workflow)
-                                    .with_name_match_result(result.match_result.name_match_result)
-                                    .with_score(score),
-                            ))
-                        })?
-                    })
-                    .collect()
+        Ok(local_workflows
+            .iter()
+            .filter(|workflow| !workflow.is_command_workflow())
+            .filter_map(|workflow| {
+                let match_result = FuzzyMatchWorkflowResult::try_match(query_text, workflow, "")?;
+                let score = match_result.score();
+                if score <= OrderedFloat(25.0) {
+                    return None;
+                }
+                Some(QueryResult::from(
+                    PromptSearchItem::from_workflow(workflow)
+                        .with_name_match_result(match_result.name_match_result)
+                        .with_score(score),
+                ))
             })
-            .map_err(|e| {
-                Box::new(DataSourceSearchError {
-                    message: e.to_string(),
-                }) as DataSourceRunErrorWrapper
-            })
+            .collect())
     }
 }
 
@@ -126,17 +100,17 @@ impl Entity for PromptsMenuDataSource {
 
 #[derive(Clone)]
 struct PromptSearchItem {
-    id: SyncId,
+    workflow: Workflow,
     name: String,
     name_match_result: Option<FuzzyMatchResult>,
     score: OrderedFloat<f64>,
 }
 
 impl PromptSearchItem {
-    fn from_workflow(workflow: &CloudWorkflow) -> Self {
+    fn from_workflow(workflow: &Workflow) -> Self {
         Self {
-            id: workflow.id,
-            name: workflow.model().data.name().to_owned(),
+            workflow: workflow.clone(),
+            name: workflow.name().to_owned(),
             name_match_result: None,
             score: OrderedFloat(f64::MIN),
         }
@@ -218,7 +192,9 @@ impl SearchItem for PromptSearchItem {
     }
 
     fn accept_result(&self) -> Self::Action {
-        AcceptPrompt { id: self.id }
+        AcceptPrompt {
+            workflow: self.workflow.clone(),
+        }
     }
 
     fn execute_result(&self) -> Self::Action {

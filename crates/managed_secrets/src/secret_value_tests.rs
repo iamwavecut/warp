@@ -1,6 +1,6 @@
 use crate::secret_value::ManagedSecretValue;
 
-/// Test to ensure that `raw_value` secrets are serialized in the format that the server expects.
+/// Test to ensure that `raw_value` secrets keep their local JSON shape.
 #[test]
 fn test_serialize_raw_value() {
     let secret = ManagedSecretValue::RawValue {
@@ -23,7 +23,7 @@ fn test_debug_representation_no_secrets() {
     );
 }
 
-/// Test to ensure that `anthropic_api_key` secrets are serialized in the format that the server expects.
+/// Test to ensure that `anthropic_api_key` secrets keep their local JSON shape.
 #[test]
 fn test_serialize_anthropic_api_key() {
     let secret = ManagedSecretValue::AnthropicApiKey {
@@ -46,7 +46,7 @@ fn test_debug_representation_no_secrets_anthropic_api_key() {
     );
 }
 
-/// Test to ensure that `anthropic_bedrock_api_key` secrets are serialized in the format that the server expects.
+/// Test to ensure that `anthropic_bedrock_api_key` secrets keep their local JSON shape.
 #[test]
 fn test_serialize_anthropic_bedrock_api_key() {
     let secret = ManagedSecretValue::AnthropicBedrockApiKey {
@@ -60,7 +60,7 @@ fn test_serialize_anthropic_bedrock_api_key() {
     );
 }
 
-/// Test to ensure that `anthropic_bedrock_access_key` secrets are serialized in the format that the server expects.
+/// Test to ensure that `anthropic_bedrock_access_key` secrets keep their local JSON shape.
 #[test]
 fn test_serialize_anthropic_bedrock_access_key() {
     let secret = ManagedSecretValue::AnthropicBedrockAccessKey {
@@ -78,7 +78,7 @@ fn test_serialize_anthropic_bedrock_access_key() {
 
 /// Test to ensure that an `anthropic_bedrock_access_key` secret with no session
 /// token (i.e. persistent IAM credentials) omits the `aws_session_token` field
-/// from the JSON payload sent to the server.
+/// from the JSON payload.
 #[test]
 fn test_serialize_anthropic_bedrock_access_key_without_session_token() {
     let secret = ManagedSecretValue::AnthropicBedrockAccessKey {

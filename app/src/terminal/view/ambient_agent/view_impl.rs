@@ -164,19 +164,6 @@ impl TerminalView {
                 }
                 ctx.notify();
             }
-            AmbientAgentViewModelEvent::SessionReady { .. }
-            | AmbientAgentViewModelEvent::FollowupSessionReady { .. } => {
-                if matches!(
-                    event,
-                    AmbientAgentViewModelEvent::FollowupSessionReady { .. }
-                ) {
-                    self.pending_cloud_followup_task_id = None;
-                }
-                self.maybe_auto_open_conversation_details_panel(ctx);
-                // Re-render to hide the loading screen now that the session is ready.
-                ctx.emit(TerminalViewEvent::TerminalViewStateChanged);
-                ctx.notify();
-            }
             AmbientAgentViewModelEvent::EnvironmentSelected => {}
             AmbientAgentViewModelEvent::ProgressUpdated => {
                 // Refresh the tip (respects 60s cooldown internally)

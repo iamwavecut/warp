@@ -23,12 +23,9 @@ use crate::ai::blocklist::agent_view::{
     AgentViewEntryOrigin, DismissalStrategy, EphemeralMessage, ENTER_OR_EXIT_CONFIRMATION_WINDOW,
 };
 use crate::ai::blocklist::{BlocklistAIHistoryModel, SlashCommandRequest};
-use crate::cloud_object::model::persistence::CloudModel;
-use crate::interaction_sources::SlashCommandAcceptedDetails;
 use crate::search::slash_command_menu::static_commands::commands::{self, COMMAND_REGISTRY};
 use crate::search::slash_command_menu::static_commands::Availability;
 use crate::search::slash_command_menu::{SlashCommandId, StaticCommand};
-use crate::server::ids::SyncId;
 use crate::settings::AISettings;
 use crate::tab::SelectedTabColor;
 use crate::terminal::input::decorations::InputBackgroundJobOptions;
@@ -45,16 +42,16 @@ use crate::terminal::model::session::Session;
 use crate::terminal::view::TerminalAction;
 use crate::ui_components::color_dot;
 use crate::view_components::DismissibleToast;
-use crate::workflows::{WorkflowSelectionSource, WorkflowSource, WorkflowType};
+use crate::workflows::{workflow::Workflow, WorkflowSelectionSource, WorkflowSource, WorkflowType};
 use crate::workspace::{ForkedConversationDestination, ToastStack, WorkspaceAction};
 
 #[derive(Debug, Clone)]
-pub enum AcceptSlashCommandOrSavedPrompt {
+pub enum AcceptSlashCommandOrLocalPrompt {
     SlashCommand {
         id: SlashCommandId,
     },
-    SavedPrompt {
-        id: SyncId,
+    LocalPrompt {
+        workflow: Workflow,
     },
     /// A skill selected from browse or search. Contains name (for display/insertion) and path/bundled_skill_id (for execution).
     Skill {
@@ -62,7 +59,7 @@ pub enum AcceptSlashCommandOrSavedPrompt {
         name: String,
     },
 }
-impl InlineMenuAction for AcceptSlashCommandOrSavedPrompt {
+impl InlineMenuAction for AcceptSlashCommandOrLocalPrompt {
     const MENU_TYPE: InlineMenuType = InlineMenuType::SlashCommands;
 }
 
@@ -272,17 +269,10 @@ impl Input {
                 });
                 ctx.notify();
             }
-            SlashCommandsEvent::SelectedSavedPrompt { id } => {
-                let Some(workflow) = CloudModel::as_ref(ctx).get_workflow(id).cloned() else {
-                    log::warn!("Tried to execute workflow for id {id:?} but it does not exist");
-                    return;
-                };
-                let is_in_agent_view = FeatureFlag::AgentView.is_enabled()
-                    && self.agent_view_controller.as_ref(ctx).is_fullscreen();
-
+            SlashCommandsEvent::SelectedLocalPrompt { workflow } => {
                 self.show_workflows_info_box_on_workflow_selection(
-                    WorkflowType::Cloud(Box::new(workflow)),
-                    WorkflowSource::WarpAI,
+                    WorkflowType::Local(workflow.clone()),
+                    WorkflowSource::Local,
                     WorkflowSelectionSource::SlashMenu,
                     None,
                     ctx,
@@ -628,9 +618,6 @@ impl Input {
             _ if command.name == commands::INIT.name => {
                 ctx.dispatch_typed_action(&TerminalAction::InitProject);
             }
-            _ if command.name == commands::CHANGELOG.name => {
-                return false;
-            }
             _ if command.name == commands::OPEN_CODE_REVIEW.name => {
                 ctx.dispatch_typed_action(&TerminalAction::ToggleCodeReviewPane {
                     entrypoint: CodeReviewPaneEntrypoint::SlashCommand,
@@ -868,7 +855,7 @@ impl Input {
             });
         }
 
-        let is_in_agent_view = FeatureFlag::AgentView.is_enabled()
+        let _is_in_agent_view = FeatureFlag::AgentView.is_enabled()
             && self.agent_view_controller.as_ref(ctx).is_active();
 
         true

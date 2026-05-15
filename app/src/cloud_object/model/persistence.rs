@@ -1,4 +1,3 @@
-use crate::ai::execution_profiles::CloudAIExecutionProfile;
 use crate::auth::AuthStateProvider;
 use crate::cloud_object::{
     CloudModelType, CloudObjectLocation, CloudObjectPermissions, GenericCloudObject,
@@ -517,21 +516,6 @@ impl CloudModel {
             }
             ServerCloudObject::AIFact(aifact) => {
                 self.upsert_from_server_object(aifact, ctx);
-            }
-            ServerCloudObject::MCPServer(mcp_server) => {
-                self.upsert_from_server_object(mcp_server, ctx);
-            }
-            ServerCloudObject::AIExecutionProfile(ai_execution_profile) => {
-                self.upsert_from_server_object(ai_execution_profile, ctx);
-            }
-            ServerCloudObject::TemplatableMCPServer(templatable_mcp_server) => {
-                self.upsert_from_server_object(templatable_mcp_server, ctx);
-            }
-            ServerCloudObject::ScheduledAmbientAgent(scheduled_ambient_agent) => {
-                self.upsert_from_server_object(scheduled_ambient_agent, ctx);
-            }
-            ServerCloudObject::CloudAgentConfig(cloud_agent_config) => {
-                self.upsert_from_server_object(cloud_agent_config, ctx);
             }
         }
     }
@@ -1166,15 +1150,6 @@ impl CloudModel {
     pub fn get_workflow_enum(&self, enum_id: &SyncId) -> Option<&CloudWorkflowEnum> {
         self.objects_by_id
             .get(&enum_id.uid())
-            .and_then(|object| object.into())
-    }
-
-    pub fn get_ai_execution_profile(
-        &self,
-        profile_id: &SyncId,
-    ) -> Option<&CloudAIExecutionProfile> {
-        self.objects_by_id
-            .get(&profile_id.uid())
             .and_then(|object| object.into())
     }
 

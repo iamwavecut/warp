@@ -1,6 +1,5 @@
 use anyhow::anyhow;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 #[cfg(test)]
 use mockall::automock;
 use serde::Deserialize;
@@ -8,9 +7,7 @@ use std::collections::{HashMap, HashSet};
 use warp_core::report_error;
 
 use super::ServerApi;
-use crate::ai::agent::conversation::{
-    AIAgentHarness, ServerAIConversationMetadata,
-};
+use crate::ai::agent::conversation::{AIAgentHarness, ServerAIConversationMetadata};
 use crate::ai::artifacts::Artifact;
 use crate::ai::generate_code_review_content::api::{
     GenerateCodeReviewContentRequest, GenerateCodeReviewContentResponse, OutputType,
@@ -19,7 +16,6 @@ use crate::ai::request_usage_model::RequestLimitInfo;
 use crate::ai::{agent::api::ServerConversationToken, harness_availability::HarnessAvailability};
 use crate::persistence::model::ConversationUsageMetadata;
 use crate::{
-    ai::RequestUsageInfo,
     ai_assistant::{
         execution_context::WarpAiExecutionContext, requests::GenerateDialogueResult,
         utils::TranscriptPart, AIGeneratedCommand, GenerateCommandsFromNaturalLanguageError,
@@ -36,7 +32,6 @@ pub use crate::ai::agent::UserQueryMode;
 // Re-export ambient agent types for backwards compatibility
 pub use crate::ai::ambient_agents::{
     task::AttachmentInput, AgentConfigSnapshot, AgentSource, AmbientAgentTask,
-    AmbientAgentTaskState, TaskStatusMessage,
 };
 
 const LOCAL_COMMAND_GENERATION_SYSTEM_PROMPT: &str = "You convert natural language into safe, reusable shell commands. Return only JSON with a commands array. Each item must contain command, description, and parameters. parameters is an array of {id, description}.";
@@ -231,6 +226,7 @@ where
     serializer.serialize_str(value)
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AgentRunEvent {
     pub event_type: String,
@@ -294,8 +290,6 @@ pub trait AIClient: 'static + Send + Sync {
         &self,
         command: String,
     ) -> Result<GeneratedCommandMetadata, GeneratedCommandMetadataError>;
-
-    async fn get_request_limit_info(&self) -> Result<RequestUsageInfo, anyhow::Error>;
 
     async fn get_available_harnesses(&self) -> Result<Vec<HarnessAvailability>, anyhow::Error>;
 
@@ -377,13 +371,6 @@ impl AIClient for ServerApi {
         .await
         .map(Into::into)
         .map_err(|_| GeneratedCommandMetadataError::BadCommand)
-    }
-
-    async fn get_request_limit_info(&self) -> Result<RequestUsageInfo, anyhow::Error> {
-        Ok(RequestUsageInfo {
-            request_limit_info: RequestLimitInfo::new_local_unlimited(),
-            bonus_grants: vec![],
-        })
     }
 
     async fn get_available_harnesses(&self) -> Result<Vec<HarnessAvailability>, anyhow::Error> {

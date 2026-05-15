@@ -27,7 +27,6 @@ typed-path.workspace = true
 anyhow.workspace = true
 base16ct = "0.2.0"
 streaming-iterator.workspace = true
-instant.workspace = true
 itertools.workspace = true
 rayon.workspace = true
 ignore = "0.4.23"

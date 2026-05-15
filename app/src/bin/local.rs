@@ -10,7 +10,7 @@ use warp_core::{
 fn main() -> Result<()> {
     let config = channel_config::load_config!("local");
 
-    let mut state = ChannelState::new(Channel::Local, config)
+    let state = ChannelState::new(Channel::Local, config)
         .with_additional_features(features::DEBUG_FLAGS)
         .with_additional_features(features::DOGFOOD_FLAGS)
         .with_additional_features(features::PREVIEW_FLAGS);
@@ -52,7 +52,7 @@ embed_plist::embed_info_plist_bytes!(r#"
     <key>CFBundleURLTypes</key>
     <array><dict><key>CFBundleURLName</key><string>Custom App</string><key>CFBundleURLSchemes</key><array><string>warplocal</string></array></dict></array>
     <key>NSHumanReadableCopyright</key>
-    <string>© 2026, Denver Technologies, Inc</string>
+    <string>© 2026, Local-first Warp fork contributors</string>
     </dict>
     </plist>
 "#.as_bytes());

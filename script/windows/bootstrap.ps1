@@ -23,11 +23,9 @@ function Show-Usage {
     Write-Output '      Skip installing common agent skills.'
     Write-Output '  WARP_COMMON_SKILLS_INSTALL_TARGET=project|global'
     Write-Output '      Choose the install target when -CommonSkillsTarget is omitted.'
-    Write-Output '      Target prompting and duplicate checks are delegated to warpdotdev/common-skills/scripts/install_common_skills.'
+    Write-Output '      Target prompting and duplicate checks are delegated to the local install_common_skills script.'
     Write-Output '  WARP_COMMON_SKILLS_SCRIPTS_DIR=/path/to/common-skills/scripts'
-    Write-Output '      Override where common-skills management scripts are loaded from.'
-    Write-Output '  WARP_COMMON_SKILLS_REF=<git-ref>'
-    Write-Output '      Override the remote warpdotdev/common-skills ref used when fetching scripts.'
+    Write-Output '      Required when installing common skills. No remote script fallback is used.'
 }
 
 function ConvertTo-CommonSkillsTarget {
@@ -97,17 +95,7 @@ function Resolve-CommonSkillsScript {
         throw "Could not find $ScriptName in WARP_COMMON_SKILLS_SCRIPTS_DIR=$env:WARP_COMMON_SKILLS_SCRIPTS_DIR."
     }
 
-    $commonSkillsRef = if ($env:WARP_COMMON_SKILLS_REF) { $env:WARP_COMMON_SKILLS_REF } else { 'main' }
-    $rawBaseUrl = if ($env:WARP_COMMON_SKILLS_RAW_BASE_URL) {
-        $env:WARP_COMMON_SKILLS_RAW_BASE_URL.TrimEnd('/')
-    } else {
-        "https://raw.githubusercontent.com/warpdotdev/common-skills/$commonSkillsRef/scripts"
-    }
-    $rawUrl = "$rawBaseUrl/$ScriptName"
-    $scriptPath = Join-Path $env:TEMP "warp-$ScriptName"
-
-    Invoke-WebRequest -Uri $rawUrl -OutFile $scriptPath
-    return $scriptPath
+    throw 'WARP_COMMON_SKILLS_SCRIPTS_DIR must point to a local common-skills scripts directory.'
 }
 
 function Install-CommonSkill {
@@ -156,24 +144,6 @@ winget install -e --id Kitware.CMake
 
 # We use InnoSetup to build our release bundle installer.
 winget install -e --id JRSoftware.InnoSetup
-
-# If we don't see gcloud command, try adding the install location to the PATH.
-if (-not (Get-Command -Name gcloud -Type Application -ErrorAction SilentlyContinue)) {
-    $env:PATH += ";$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdk\bin"
-}
-
-# If we still don't see it, install it.
-if (-not (Get-Command -Name gcloud -Type Application -ErrorAction SilentlyContinue)) {
-    (New-Object Net.WebClient).DownloadFile('https://dl.google.com/dl/cloudsdk/channels/rapid/GoogleCloudSDKInstaller.exe', "$env:Temp\GoogleCloudSDKInstaller.exe")
-    Start-Process "$env:Temp\GoogleCloudSDKInstaller.exe" -Wait
-}
-
-[string]$identityToken = gcloud auth print-identity-token
-if ($identityToken.Trim().Length -eq 0) {
-    Write-Output 'gcloud CLI authentication missing.  Press enter to continue...'
-    Read-Host
-    gcloud auth login
-}
 
 if ($InstallCommonSkills) {
     Install-CommonSkill

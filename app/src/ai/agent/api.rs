@@ -1,6 +1,5 @@
 pub(crate) mod convert_conversation;
 mod convert_from;
-mod convert_to;
 pub(crate) mod direct_openai;
 mod r#impl;
 
@@ -18,27 +17,22 @@ use serde::Serialize;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
-use warp_core::execution_mode::AppExecutionMode;
 use warp_core::features::FeatureFlag;
 
 use crate::ai::agent::conversation::AIConversationId;
-use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::{
     ai::{blocklist::SessionContext, llms::LLMId},
     server::server_api::AIApiError,
 };
 
-use super::{AIAgentInput, MCPContext, MCPServer, RequestMetadata, Suggestions};
+use super::{AIAgentInput, MCPContext, MCPServer, RequestMetadata};
 use crate::ai::blocklist::{BlocklistAIPermissions, RequestInput};
-use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::mcp::templatable_manager::TemplatableMCPServerInfo;
 use crate::ai::mcp::TemplatableMCPServerManager;
 #[cfg(not(target_family = "wasm"))]
 use crate::remote_server::codebase_index_model::RemoteCodebaseIndexModel;
 use crate::settings::AISettings;
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
-use crate::workspaces::user_workspaces::UserWorkspaces;
-use warp_core::user_preferences::GetUserPreferences;
 use warpui::{AppContext, EntityId, SingletonEntity as _};
 
 /// Unique, server-generated conversation-scoped token to be roundtripped to the API when sending
@@ -58,7 +52,6 @@ impl ServerConversationToken {
     pub fn debug_link(&self) -> String {
         format!("local://debug/maa/{}", self.as_str())
     }
-
 }
 
 impl From<ServerConversationToken> for String {
@@ -89,33 +82,16 @@ pub struct RequestParams {
     pub input: Vec<AIAgentInput>,
     pub(crate) request_task_id: Option<String>,
     pub conversation_token: Option<ServerConversationToken>,
-    pub forked_from_conversation_token: Option<ServerConversationToken>,
-    pub ambient_agent_task_id: Option<AmbientAgentTaskId>,
     pub tasks: Vec<warp_multi_agent_api::Task>,
-    pub existing_suggestions: Option<Suggestions>,
-    pub metadata: Option<RequestMetadata>,
     pub session_context: SessionContext,
     pub model: LLMId,
-    #[allow(unused)]
-    pub coding_model: LLMId,
-    pub cli_agent_model: LLMId,
-    pub computer_use_model: LLMId,
-    pub is_memory_enabled: bool,
-    pub context_window_limit: Option<u32>,
     pub mcp_context: Option<MCPContext>,
-    pub planning_enabled: bool,
     should_redact_secrets: bool,
 
-    /// User-provided API keys for AI providers (BYO API Key).
-    pub api_keys: Option<warp_multi_agent_api::request::settings::ApiKeys>,
     pub(crate) custom_provider_route: Option<direct_openai::CustomProviderRoute>,
-    pub autonomy_level: warp_multi_agent_api::AutonomyLevel,
-    pub isolation_level: warp_multi_agent_api::IsolationLevel,
-    pub web_search_enabled: bool,
     pub computer_use_enabled: bool,
     pub ask_user_question_enabled: bool,
     pub remote_codebase_search_available: bool,
-    pub research_agent_enabled: bool,
     pub orchestration_enabled: bool,
     pub supported_tools_override: Option<Vec<warp_multi_agent_api::ToolType>>,
     /// The conversation ID of the parent agent that spawned this child agent, if any.
@@ -140,9 +116,6 @@ pub struct ConversationData {
     pub id: AIConversationId,
     pub tasks: Vec<warp_multi_agent_api::Task>,
     pub server_conversation_token: Option<ServerConversationToken>,
-    pub forked_from_conversation_token: Option<ServerConversationToken>,
-    pub ambient_agent_task_id: Option<AmbientAgentTaskId>,
-    pub existing_suggestions: Option<Suggestions>,
 }
 
 impl RequestParams {
@@ -151,11 +124,10 @@ impl RequestParams {
         session_context: SessionContext,
         request_input: &RequestInput,
         conversation: ConversationData,
-        metadata: Option<RequestMetadata>,
+        _metadata: Option<RequestMetadata>,
         app: &AppContext,
     ) -> Self {
         let ai_settings = AISettings::as_ref(app);
-        let is_memory_enabled = ai_settings.is_memory_enabled(app);
 
         // Build MCP context - either grouped by server or flat lists based on feature flag
         let mcp_context = if FeatureFlag::MCPGroupedServerContext.is_enabled() {
@@ -225,11 +197,6 @@ impl RequestParams {
 
         let should_redact_secrets = get_secret_obfuscation_mode(app).should_redact_secret();
 
-        let user_workspaces = UserWorkspaces::as_ref(app);
-        let api_keys = ApiKeyManager::as_ref(app).api_keys_for_request(
-            user_workspaces.is_byo_api_key_enabled(),
-            user_workspaces.is_aws_bedrock_credentials_enabled(app),
-        );
         let custom_provider_route = direct_openai::resolve_custom_provider_route(
             request_input.model_id.as_str(),
             &ai_settings.custom_providers,
@@ -240,35 +207,12 @@ impl RequestParams {
             .keys()
             .next()
             .map(ToString::to_string);
-        let app_execution_mode = AppExecutionMode::as_ref(app);
-        let autonomy_level = if app_execution_mode.is_autonomous() {
-            warp_multi_agent_api::AutonomyLevel::Unsupervised
-        } else {
-            warp_multi_agent_api::AutonomyLevel::Supervised
-        };
-
-        let isolation_level = if app_execution_mode.is_sandboxed() {
-            warp_multi_agent_api::IsolationLevel::Sandbox
-        } else {
-            warp_multi_agent_api::IsolationLevel::None
-        };
-
-        let web_search_enabled =
-            BlocklistAIPermissions::as_ref(app).get_web_search_enabled(app, terminal_view_id);
-        let research_agent_enabled = app
-            .private_user_preferences()
-            .read_value("ResearchAgentEnabled")
-            .ok()
-            .flatten()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_default();
-        let is_ambient_agent = conversation.ambient_agent_task_id.is_some();
         let computer_use_enabled = FeatureFlag::AgentModeComputerUse.is_enabled()
             && BlocklistAIPermissions::as_ref(app)
                 .get_computer_use_setting(app, terminal_view_id)
                 .is_enabled()
             && computer_use::is_supported_on_current_platform()
-            && (FeatureFlag::LocalComputerUse.is_enabled() || is_ambient_agent);
+            && FeatureFlag::LocalComputerUse.is_enabled();
         let ask_user_question_enabled = BlocklistAIPermissions::as_ref(app)
             .get_ask_user_question_setting(app, terminal_view_id)
             != crate::ai::execution_profiles::AskUserQuestionPermission::Never;
@@ -282,54 +226,19 @@ impl RequestParams {
 
         let orchestration_enabled = false;
 
-        // Reconcile the persisted override against the active base model's
-        // current `LLMContextWindow` instead of trusting whatever was stored
-        // last. If the active model isn't configurable or has been removed
-        // server-side, drop the override; otherwise clamp it to the model's
-        // current `[min, max]` range. This closes the window between an
-        // in-flight model metadata refresh and the next request.
-        let context_window_limit = {
-            let profile_data = AIExecutionProfilesModel::as_ref(app)
-                .active_profile(terminal_view_id, app)
-                .data()
-                .clone();
-            profile_data
-                .configurable_context_window(app)
-                .and_then(|cw| {
-                    profile_data
-                        .context_window_limit
-                        .map(|v| v.clamp(cw.min, cw.max))
-                })
-        };
-
         Self {
             input: request_input.all_inputs().cloned().collect(),
             request_task_id,
             conversation_token: conversation.server_conversation_token,
-            forked_from_conversation_token: conversation.forked_from_conversation_token,
-            ambient_agent_task_id: conversation.ambient_agent_task_id,
             tasks: conversation.tasks,
-            existing_suggestions: conversation.existing_suggestions,
-            context_window_limit,
-            metadata,
             session_context,
             model: request_input.model_id.clone(),
-            coding_model: request_input.coding_model_id.clone(),
-            cli_agent_model: request_input.cli_agent_model_id.clone(),
-            computer_use_model: request_input.computer_use_model_id.clone(),
-            is_memory_enabled,
             mcp_context,
-            planning_enabled: true,
             should_redact_secrets,
-            api_keys,
             custom_provider_route,
-            autonomy_level,
-            isolation_level,
-            web_search_enabled,
             computer_use_enabled,
             ask_user_question_enabled,
             remote_codebase_search_available,
-            research_agent_enabled,
             orchestration_enabled,
             supported_tools_override: request_input.supported_tools_override.clone(),
             parent_agent_id: None,

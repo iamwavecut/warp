@@ -6,7 +6,6 @@ use crate::workspace::view::OnboardingTutorial;
 use asset_macro::bundled_or_fetched_asset;
 use markdown_parser::{FormattedTextFragment, FormattedTextLine};
 use warpui::assets::asset_cache::AssetSource;
-use warpui::SingletonEntity;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OzLaunchSlide {

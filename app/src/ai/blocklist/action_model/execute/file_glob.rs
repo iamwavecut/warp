@@ -37,7 +37,7 @@ pub struct FileGlobExecutor {
 }
 
 fn log_file_glob_error(conversation_id: AIConversationId, ctx: &mut AppContext) {
-    let server_output_id = get_server_output_id(conversation_id, ctx);
+    let _server_output_id = get_server_output_id(conversation_id, ctx);
 }
 
 impl FileGlobExecutor {

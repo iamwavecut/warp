@@ -1,5 +1,5 @@
 [package]
-authors = ["Warp Team <dev@warp.dev>"]
+authors = ["Local-first Warp fork contributors"]
 default-run = "warp-oss"
 description = "The local-first terminal for individuals and local agents"
 edition = "2021"
@@ -71,8 +71,6 @@ base64.workspace = true
 bimap = "0.6.2"
 bincode.workspace = true
 bitflags.workspace = true
-bitflags-serde-legacy.workspace = true
-blocking.workspace = true
 bounded-vec-deque = "0.1"
 bytecount = "0.6.9"
 bytes.workspace = true
@@ -85,9 +83,6 @@ command = { workspace = true }
 command-corrections.workspace = true
 command-signatures-v2 = { workspace = true, optional = true }
 computer_use.workspace = true
-crc.workspace = true
-content_inspector = "0.2.4"
-concat-idents.workspace = true
 csv = "1.3.1"
 cynic.workspace = true
 dashmap.workspace = true
@@ -110,15 +105,12 @@ futures-lite.workspace = true
 futures-util.workspace = true
 futures.workspace = true
 fuzzy_match.workspace = true
-getset.workspace = true
 handlebars.workspace = true
 hex.workspace = true
 http.workspace = true
 http_client.workspace = true
 image.workspace = true
 infer = "0.19.0"
-jaq-json.workspace = true
-jaq-all.workspace = true
 jemalloc_pprof = { version = "0.8.1", optional = true, features = [
     "symbolize",
 ] }
@@ -135,20 +127,15 @@ lazy_static.workspace = true
 libc.workspace = true
 line-ending.workspace = true
 log.workspace = true
-log-panics = { version = "2.1.0", features = ["with-backtrace"] }
 lsp.workspace = true
 warp_logging.workspace = true
-lz4_flex = "0.11"
 markdown_parser.workspace = true
-memchr.workspace = true
 memo-map.workspace = true
 mermaid_to_svg.workspace = true
 num-traits.workspace = true
-num_cpus = "1.13.0"
 oauth2.workspace = true
 once_cell.workspace = true
 ordered-float.workspace = true
-os_info = { version = "3.7.0", default-features = false }
 palette = { version = "0.6.0", default-features = false, features = ["std"] }
 parking_lot = { version = "0.12.1", features = ["serde"] }
 paste = "1.0"
@@ -183,13 +170,11 @@ settings_value = { workspace = true, features = ["derive"] }
 sha2.workspace = true
 shellexpand.workspace = true
 shell-words = "1.1.0"
-shlex = "1.3.0"
 siphasher = "0.3.11"
 similar.workspace = true
 simple_logger.workspace = true
 smallvec.workspace = true
 smol_str.workspace = true
-static_assertions.workspace = true
 string-offset.workspace = true
 sum_tree.workspace = true
 tabwriter = "1.4"
@@ -211,7 +196,6 @@ url = { workspace = true, features = ["serde"] }
 urlocator.workspace = true
 uuid.workspace = true
 warp_cli.workspace = true
-validator = "0.19.0"
 variant_count = "1.1.0"
 vec1.workspace = true
 version-compare.workspace = true
@@ -233,13 +217,10 @@ languages.workspace = true
 warp_terminal.workspace = true
 websocket.workspace = true
 wgpu = { workspace = true, optional = true }
-natural_language_detection.workspace = true
 onboarding.workspace = true
 aho-corasick = "1.1.3"
 strum.workspace = true
 strum_macros.workspace = true
-reqwest-eventsource = { workspace = true }
-lasso.workspace = true
 counter = "0.6.0"
 typed-path.workspace = true
 urlencoding = "2.1.3"
@@ -259,10 +240,8 @@ cocoa.workspace = true
 core-foundation.workspace = true
 mach2 = "0.5"
 objc.workspace = true
-objc2-foundation = { workspace = true, features = ["NSBundle"] }
 permissions = "0.4.1"
 pprof = { workspace = true, optional = true, features = ["frame-pointer"] }
-security-framework-sys = "2.0.0"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 winit = { workspace = true }
@@ -273,10 +252,8 @@ app-installation-detection.workspace = true
 async-io.workspace = true
 axum.workspace = true
 comfy-table = "7.1.4"
-inquire = "0.9.1"
 diesel = { workspace = true, features = ["sqlite", "chrono"] }
 diesel_migrations = { version = "2.2.0", features = ["sqlite"] }
-env_logger.workspace = true
 git2 = { version = "0.20.4", default-features = false, features = [
     "vendored-libgit2",
 ] }
@@ -285,12 +262,10 @@ hyper.workspace = true
 libsqlite3-sys = { version = "0.33.0", features = ["bundled"] }
 mio = { version = "1.1.1", features = ["os-poll", "os-ext"] }
 tokio.workspace = true
-tokio-util.workspace = true
 
 # AWS SDK (loading credentials for BYO LLM)
 aws-config = { version = "1.8.16", features = ["credentials-login"] }
 aws-credential-types = "1"
-aws-types = "1"
 
 mcp.workspace = true
 rmcp = { workspace = true, features = [
@@ -311,13 +286,6 @@ warp_files.workspace = true
 tantivy = "0.26.0"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
-console_error_panic_hook = { version = "0.1.6" }
-# We only have an indirect dependency on this crate; we depend on reqwest-eventsource@0.6.0 which depends on
-# futures-timer@3.0.2. For whatever unfortunate reason, this crate doesn't automatically enable its feature
-# required for wasm-compatibility when targeting wasm. So we need to explicitly specify this dependency when
-# targeting wasm and leverage the fact that cargo enables the superset of enabled features for a given crate.
-futures-timer = { version = "3.0.2", features = ["wasm-bindgen"] }
-js-sys = "0.3.63"
 # Make sure we embed the data into the wasm binary even when running in debug
 # mode, as it cannot be read directly from the filesystem.
 rust-embed = { workspace = true, features = ["debug-embed"] }
@@ -325,13 +293,9 @@ syntect = { version = "5.0", default-features = false, features = [
     "default-fancy",
 ] }
 wasm-bindgen.workspace = true
-# We need to make sure that "js" is enabled as a feature when using wasm.
-getrandom = { version = "0.2", features = ["js"] }
 gloo.workspace = true
-serde-wasm-bindgen = "0.6.5"
 # For wasm, we don't use the feature "embed-signatures".
 warp-command-signatures = { workspace = true }
-web-sys.workspace = true
 warp_web_event_bus.workspace = true
 
 [target.'cfg(unix)'.dependencies]
@@ -382,7 +346,6 @@ winreg.workspace = true
 
 [dev-dependencies]
 ai = { workspace = true, features = ["test-util"] }
-async-process.workspace = true
 jsonschema = { workspace = true, default-features = false }
 async-executor = "1.5.1"
 command = { workspace = true, features = ["test-util"] }
@@ -410,7 +373,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", 
 anyhow = "1.0"
 cc = "1.0"
 cfg_aliases.workspace = true
-prost-build.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 walkdir = "2.3.2"
@@ -431,11 +393,8 @@ agent_mode_debug = []
 agent_mode_primary_xml = []
 agent_mode_pre_plan_xml = []
 agent_onboarding = []
-agent_shared_sessions = []
 ask_user_question = []
-changelog = []
 clear_autosuggestion_on_escape = []
-cloud_object_initial_load = ["enforce_revisions_to_cloud_objects"]
 codebase_index_speedbump = []
 command_predictor = []
 context_line_review_comments = []
@@ -444,7 +403,6 @@ completions_v2 = [
     "warp_completer/v2",
     "dep:command-signatures-v2",
 ]
-creating_shared_sessions = []
 cross_repo_context = []
 codebase_index_persistence = ["full_source_code_embedding"]
 default = [
@@ -523,7 +481,6 @@ default = [
     "mcp_grouped_server_context",
     "fork_from_command",
     "context_window_usage_v2",
-    "ambient_agents_command_line",
     "v4a_file_diffs",
     "classic_completions",
     "force_classic_completions",
@@ -545,7 +502,6 @@ default = [
     "richtext_multiselect",
     "inline_profile_selector",
     "web_fetch_ui",
-    "oz_changelog_updates",
     "skill_arguments",
     "incremental_auto_reload",
     "active_conversation_requires_interaction",
@@ -582,8 +538,6 @@ default = [
     "settings_file",
     "directory_tab_colors",
     "configurable_context_window",
-    "oz_handoff",
-    "handoff_local_cloud",
     "pending_user_query_indicator",
 ]
 # Enable this feature to automatically perform heap profiling.  NOTE: This will
@@ -598,7 +552,6 @@ agent_management_view = []
 agent_management_details_view = []
 interactive_conversation_management_view = []
 default_waterfall_mode = []
-enforce_revisions_to_cloud_objects = []
 suggested_agent_mode_workflows = []
 ssh_tmux_wrapper = []
 ssh_enable_host_denylist_in_settings = []
@@ -612,7 +565,7 @@ grep_tool = []
 # feature set is for a minimal build of Warp, and we add on GUI-specific features here.
 # For the most part, including GUI code in headless builds is fine; the main use case is
 # for things that pull in external dependencies.
-gui = ["voice_input"]
+gui = []
 nld_classifier_v1 = ["input_classifier/nld_classifier_v1"]
 nld_classifier_v2 = ["input_classifier/nld_classifier_v2"]
 nld_heuristic_v1 = ["input_classifier/nld_heuristic_v1"]
@@ -631,8 +584,6 @@ agent_mode_evals = [
     "rust-embed/debug-embed",
     "warp_logging/agent_mode_evals",
 ]
-ambient_agents_command_line = []
-ambient_agents_image_upload = []
 allow_ignoring_input_suggestions = []
 inline_slash_commands = ["agent_view"]
 
@@ -678,8 +629,6 @@ mcp_server = []
 mcp_oauth = []
 mcp_debugging_ids = []
 notebook_parameter = []
-oz_changelog_updates = []
-personal_cloud_objects = []
 # Remote-backed tty that connects to a PTY-like interface via a server.
 remote_tty = []
 # Fix for cursor reflow bug during window resize, from Alacritty resizing logic.
@@ -697,7 +646,6 @@ plugin_host = ["dep:rquickjs", "dep:warp_js", "warp_cli/plugin_host"]
 pprof_cpu_profiling = ["dep:pprof"]
 predict_am_queries = []
 quake_mode = []
-record_app_active_events = []
 recording_mode = []
 remote_codebase_indexing = ["full_source_code_embedding"]
 
@@ -713,8 +661,6 @@ runtime_feature_flags = []
 selectable_prompt = []
 settings_file = []
 sequential_storage = []
-session_sharing = []
-session_sharing_acls = []
 # Deprecated no-op compatibility alias for older local fork build commands.
 # Local workflow behavior is unconditional in source; no code should branch on this feature.
 local_only = []
@@ -734,7 +680,6 @@ integration_tests = [
     "warp_core/integration_tests",
 ]
 traces = []
-viewing_shared_sessions = []
 workflow_aliases = []
 rect_selection = []
 alacritty_settings_import = []
@@ -742,7 +687,6 @@ shared_with_me = []
 ai_rules = []
 am_workflows = []
 shell_selector = []
-shared_session_long_running_commands = []
 blocklist_markdown_table_rendering = []
 blocklist_markdown_images = []
 minimalist_ui = []
@@ -755,7 +699,6 @@ cycle_next_command_suggestion = []
 multi_workspace = []
 ime_marked_text = []
 partial_next_command_suggestions = []
-drive_objects_as_context = []
 iterm_images = []
 validate_autosuggestions = []
 autoupdate_ui_revamp = []
@@ -792,7 +735,6 @@ pr_comments_v2 = []
 pr_comments_skill = []
 conversation_artifacts = []
 conversations_as_context = []
-sync_ambient_plans = []
 projects = []
 vim_code_editor = []
 allow_opening_file_links_using_editor_env = []
@@ -808,8 +750,6 @@ summarization_cancellation_confirmation = []
 code_review_find = []
 auto_open_code_review_pane = []
 inline_code_review = []
-cloud_environments = []
-create_environment_slash_command = []
 summarize_conversation_command = []
 mcp_grouped_server_context = []
 web_search_ui = []
@@ -825,7 +765,6 @@ agent_view_block_context = ["agent_view"]
 v4a_file_diffs = []
 agent_tips = []
 agent_toolbar_editor = ["agent_view"]
-cloud_conversations = []
 agent_view_prompt_chip = ["agent_view"]
 ambient_agents_rtc = []
 team_api_keys = []

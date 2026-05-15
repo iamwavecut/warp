@@ -31,10 +31,6 @@ fn default_harnesses() -> Vec<HarnessAvailability> {
     }]
 }
 
-pub enum HarnessAvailabilityEvent {
-    Changed,
-}
-
 pub struct HarnessAvailabilityModel {
     harnesses: Vec<HarnessAvailability>,
 }
@@ -83,14 +79,10 @@ impl HarnessAvailabilityModel {
             .map(|h| h.available_models.as_slice())
             .filter(|models| !models.is_empty())
     }
-
-    pub fn refresh(&self, ctx: &mut ModelContext<Self>) {
-        let _ = ctx;
-    }
 }
 
 impl Entity for HarnessAvailabilityModel {
-    type Event = HarnessAvailabilityEvent;
+    type Event = ();
 }
 
 impl SingletonEntity for HarnessAvailabilityModel {}

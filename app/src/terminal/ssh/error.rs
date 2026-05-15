@@ -1,7 +1,6 @@
 use crate::appearance::Appearance;
 use crate::terminal::model::ansi::WarpificationUnavailableReason;
 use crate::terminal::warpify;
-use crate::terminal::warpify::render::apply_spacing_styles;
 use crate::terminal::warpify::settings::WarpifySettings;
 use crate::ui_components::icons::Icon as UiIcon;
 use warp_core::ui::theme::WarpTheme;

@@ -1416,7 +1416,6 @@ impl BlocklistAIHistoryModel {
         if let Err(e) = conversation.mark_request_completed(stream_id, terminal_view_id, ctx) {
             log::warn!("Failed to mark exchange as completed: {e}");
         }
-
     }
 
     pub fn set_exchange_time_to_first_token(

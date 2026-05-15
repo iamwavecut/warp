@@ -49,7 +49,6 @@ use crate::{
     },
     cmd_or_ctrl_shift,
     drive::{
-        drive_helpers::has_feature_gated_anonymous_user_reached_notebook_limit,
         export::ExportManager, items::WarpDriveItemId, sharing::ShareableObject,
         CloudObjectTypeAndId, OpenWarpDriveObjectSettings,
     },
@@ -129,11 +128,6 @@ const FEATURE_NOT_AVAILABLE_MESSAGE: &str = "This notebook could not be saved to
 /// lets us trade off how quickly edits appear on other clients with the load on the server for RTC
 /// object updates.
 const SAVE_PERIOD: Duration = Duration::from_secs(2);
-
-#[cfg(not(test))]
-const EDIT_WINDOW_DURATION: Duration = Duration::from_secs(60);
-#[cfg(test)]
-const EDIT_WINDOW_DURATION: Duration = Duration::from_millis(5);
 
 lazy_static! {
     // This is used to replace any backslash followed by a punctuation character with just the punctuation character.
@@ -1114,10 +1108,6 @@ impl NotebookView {
 
     fn untrash_notebook(&self, ctx: &mut ViewContext<Self>) {
         if let Some(notebook_id) = self.notebook_id(ctx) {
-            if has_feature_gated_anonymous_user_reached_notebook_limit(ctx) {
-                return;
-            }
-
             UpdateManager::handle(ctx).update(ctx, move |update_manager, ctx| {
                 update_manager.untrash_object(
                     CloudObjectTypeAndId::from_id_and_type(notebook_id, ObjectType::Notebook),
@@ -1375,8 +1365,6 @@ impl NotebookView {
     /// If the notebook still does not exist in memory after initial load, displaces an error message in
     /// the given window.
     ///
-    /// Used for code paths such as link opening, where we are often trying to open notebooks before
-    /// the initial response from the server has completed.
     pub fn wait_for_initial_load_then_load(
         &mut self,
         notebook_id: SyncId,
@@ -1384,36 +1372,32 @@ impl NotebookView {
         window_id: WindowId,
         ctx: &mut ViewContext<Self>,
     ) {
-        let initial_load_complete = UpdateManager::as_ref(ctx).initial_load_complete();
-        // TODO @ianhodge CLD-2002: it could be nice to have a loading screen here while we wait for the load
         let settings = settings.clone();
-        ctx.spawn(initial_load_complete, move |me, _, ctx| {
-            let notebook = CloudModel::as_ref(ctx).get_notebook(&notebook_id).cloned();
-            let fetch_needed = notebook.is_none()
-                || settings
-                    .focused_folder_id
-                    .map(SyncId::ServerId)
-                    .map(|folder_id| CloudModel::as_ref(ctx).get_folder(&folder_id).is_none())
-                    .unwrap_or(false);
-            if fetch_needed {
-                if let Some(server_id) = notebook_id.into_server() {
-                    me.fetch_and_load_notebook(server_id, &settings, window_id, ctx);
-                } else {
-                    log::warn!("Tried to load notebook without server id {notebook_id:?}");
-                }
-            } else if let Some(notebook) = notebook {
-                me.load(notebook, &settings, ctx);
+        let notebook = CloudModel::as_ref(ctx).get_notebook(&notebook_id).cloned();
+        let fetch_needed = notebook.is_none()
+            || settings
+                .focused_folder_id
+                .map(SyncId::ServerId)
+                .map(|folder_id| CloudModel::as_ref(ctx).get_folder(&folder_id).is_none())
+                .unwrap_or(false);
+        if fetch_needed {
+            if let Some(server_id) = notebook_id.into_server() {
+                self.fetch_and_load_notebook(server_id, &settings, window_id, ctx);
             } else {
-                ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                    toast_stack.add_ephemeral_toast_by_type(
-                        ToastType::CloudObjectNotFound,
-                        window_id,
-                        ctx,
-                    );
-                });
-                log::warn!("Tried to open unknown notebook {notebook_id:?}");
+                log::warn!("Tried to load notebook without server id {notebook_id:?}");
             }
-        });
+        } else if let Some(notebook) = notebook {
+            self.load(notebook, &settings, ctx);
+        } else {
+            ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+                toast_stack.add_ephemeral_toast_by_type(
+                    ToastType::CloudObjectNotFound,
+                    window_id,
+                    ctx,
+                );
+            });
+            log::warn!("Tried to open unknown notebook {notebook_id:?}");
+        }
     }
 
     fn fetch_and_load_notebook(
@@ -1488,9 +1472,7 @@ impl NotebookView {
             editor.set_space(notebook.space(ctx), ctx);
         });
 
-        // Once we've received metadata from the server, check if we can eagerly edit the notebook.
-        let has_metadata = UpdateManager::as_ref(ctx).initial_load_complete();
-        let baton_future = ctx.spawn(has_metadata, |me, _, ctx| {
+        let baton_future = ctx.spawn(async {}, |me, _, ctx| {
             let active_notebook_data = me.active_notebook_data.as_ref(ctx);
 
             if FeatureFlag::SharedWithMe.is_enabled() && !active_notebook_data.editability(ctx).can_edit() {

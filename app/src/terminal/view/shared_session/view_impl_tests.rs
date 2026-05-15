@@ -1,4 +1,5 @@
 use pathfinder_geometry::vector::vec2f;
+use session_sharing_protocol::common::{ParticipantId, ParticipantList, SessionId};
 use session_sharing_protocol::sharer::SessionSourceType;
 use std::collections::HashMap;
 use warp_multi_agent_api::{self as api, client_action as api_client_action};
@@ -9,7 +10,7 @@ use crate::ai::agent_conversations_model::{AgentConversationsModel, AgentRunDisp
 use crate::ai::ambient_agents::task::TaskPrincipalInfo;
 use crate::ai::ambient_agents::{AgentSource, AmbientAgentTask, AmbientAgentTaskState};
 use crate::ai::blocklist::history_model::BlocklistAIHistoryModel;
-use crate::auth::user::TEST_USER_UID;
+use crate::auth::{user::TEST_USER_UID, UserUid};
 use warpui::platform::WindowStyle;
 use warpui::{App, ViewHandle};
 
@@ -17,7 +18,6 @@ use crate::context_chips::prompt_type::PromptType;
 use crate::editor::InteractionState;
 
 use crate::terminal::model::blocks::{ToTotalIndex as _, INLINE_BANNER_HEIGHT};
-use crate::terminal::view::shared_session::test_utils::terminal_view_for_viewer;
 use crate::terminal::TerminalView;
 use crate::test_util::add_window_with_terminal;
 use crate::test_util::terminal::initialize_app_for_terminal_view;
@@ -25,10 +25,30 @@ use crate::{assert_lines_approx_eq, FeatureFlag};
 
 use super::*;
 
+fn terminal_view_for_viewer(app: &mut App) -> ViewHandle<TerminalView> {
+    initialize_app_for_terminal_view(app);
+    let terminal = add_window_with_terminal(app, None);
+
+    terminal.update(app, |view, ctx| {
+        view.on_session_share_joined(
+            ParticipantId::new(),
+            UserUid::new(TEST_USER_UID),
+            ReplicaId::random(),
+            Box::new(ParticipantList::default()),
+            SessionId::new(),
+            SessionSourceType::default(),
+            ctx,
+        );
+    });
+
+    terminal
+}
+
 #[test]
 fn test_prompt_context_menu_items_shared_session_viewer_no_edit_prompt() {
     App::test((), |mut app| async move {
-        let terminal = terminal_view_for_viewer(&mut app);
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
 
         terminal.update(&mut app, |view, ctx| {
             let mut model = view.model.lock();
@@ -442,7 +462,7 @@ fn create_cloud_mode_task_for_user(creator_uid: &str) -> AmbientAgentTask {
         started_at: Some(now),
         updated_at: now,
         status_message: None,
-        source: Some(AgentSource::CloudMode),
+        source: Some(AgentSource::Interactive),
         session_id: None,
         session_link: None,
         creator: Some(TaskPrincipalInfo {
@@ -977,12 +997,6 @@ fn test_non_owned_tombstone_is_removed_for_followup_and_reinserted_after_complet
                 initial_block_height_items + 1
             );
 
-            view.handle_ambient_agent_event(
-                &crate::terminal::view::ambient_agent::AmbientAgentViewModelEvent::FollowupSessionReady {
-                    session_id: SessionId::new(),
-                },
-                ctx,
-            );
             view.on_ambient_agent_execution_ended(ctx);
             assert!(view.conversation_ended_tombstone_view_id.is_some());
             assert_eq!(

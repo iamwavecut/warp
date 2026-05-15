@@ -106,7 +106,6 @@ impl ToolExt for api::message::tool_call::Tool {
             Tool::RunShellCommand(_) => "run_shell_command",
             Tool::SearchCodebase(_) => "search_codebase",
             Tool::ReadFiles(_) => "read_files",
-            Tool::UploadFileArtifact(_) => "upload_artifact",
             Tool::ApplyFileDiffs(_) => "apply_file_diffs",
             Tool::Grep(_) => "grep",
             #[allow(deprecated)]

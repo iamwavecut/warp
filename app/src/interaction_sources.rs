@@ -53,7 +53,6 @@ pub enum PaletteSource {
     CtrlTab { shift_pressed_initially: bool },
     WarpDrive,
     QuitModal,
-    LogOutModal,
     IntegrationTest,
     ConversationManager,
     ContextChip,
@@ -204,17 +203,6 @@ pub enum AICommandSearchEntrypoint {
 pub enum SecretInteraction {
     RevealSecret,
     HideSecret,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum AnonymousUserSignupEntrypoint {
-    HitDriveObjectLimit,
-    LoginGatedFeature,
-    SignUpButton,
-    RenotificationBlock,
-    SignUpAIPrompt,
-    NextCommandSuggestionsUpgradeBanner,
-    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]

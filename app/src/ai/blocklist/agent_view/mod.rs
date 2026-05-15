@@ -75,8 +75,7 @@ pub static ENTER_AMBIENT_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE: LazyLock<Keystro
     });
 
 /// Returns `true` when the current pane is in a cloud or remote context where
-/// local-to-cloud handoff is not applicable. Use this to gate the `&` hint,
-/// handoff chip, `/handoff` command activation, and `&` prefix activation.
+/// local-only agent controls are not applicable.
 pub fn is_in_cloud_context(
     agent_view_state: &AgentViewState,
     terminal_model: &TerminalModel,

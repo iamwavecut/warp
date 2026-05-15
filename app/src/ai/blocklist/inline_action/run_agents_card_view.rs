@@ -42,7 +42,7 @@ use crate::ai::blocklist::inline_action::orchestration_controls::{
 use crate::ai::blocklist::inline_action::requested_action::{
     render_requested_action_row_for_text, CTRL_C_KEYSTROKE, ENTER_KEYSTROKE,
 };
-use crate::ai::harness_availability::{HarnessAvailabilityEvent, HarnessAvailabilityModel};
+use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::llms::{LLMPreferences, LLMPreferencesEvent};
 use crate::appearance::Appearance;
 use crate::menu::{Event as MenuEvent, Menu, MenuItemFields, MenuVariant};
@@ -376,11 +376,9 @@ impl RunAgentsCardView {
         // harness list or harness model catalogs change.
         ctx.subscribe_to_model(
             &HarnessAvailabilityModel::handle(ctx),
-            |me, _, event, ctx| {
-                if let HarnessAvailabilityEvent::Changed = event {
-                    oc::repopulate_all_pickers(&mut me.state.orch, &me.handles.pickers, ctx);
-                    ctx.notify();
-                }
+            |me, _, _event, ctx| {
+                oc::repopulate_all_pickers(&mut me.state.orch, &me.handles.pickers, ctx);
+                ctx.notify();
             },
         );
 

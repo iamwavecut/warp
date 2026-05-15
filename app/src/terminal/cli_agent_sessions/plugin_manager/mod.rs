@@ -1,10 +1,6 @@
-pub(crate) mod claude;
 pub(crate) mod codex;
-pub(crate) mod gemini;
-pub(crate) mod opencode;
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
@@ -12,13 +8,9 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 
 use crate::features::FeatureFlag;
-use crate::terminal::model::session::LocalCommandExecutor;
 use crate::terminal::shell::ShellType;
 use crate::terminal::CLIAgent;
-use claude::ClaudeCodePluginManager;
 use codex::CodexPluginManager;
-use gemini::GeminiPluginManager;
-use opencode::OpenCodePluginManager;
 
 /// Distinguishes whether the plugin instructions modal should show install or update steps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,7 +41,7 @@ pub(crate) struct PluginInstructions {
     pub post_install_notes: &'static [&'static str],
 }
 
-/// Error returned when plugin installation fails.
+/// Error returned when notification setup fails.
 /// Carries both a short user-facing message (for the toast) and a detailed
 /// command log (for the log file the user can inspect).
 pub(crate) struct PluginInstallError {
@@ -89,53 +81,7 @@ pub(crate) fn compare_versions(a: &str, b: &str) -> Ordering {
     parse(a).cmp(&parse(b))
 }
 
-/// Runs a CLI subcommand through [`LocalCommandExecutor`], appending the
-/// command and its output to `log`.
-pub(crate) async fn run_cli_command_logged(
-    cli_name: &str,
-    args: &[&str],
-    executor: &LocalCommandExecutor,
-    env_vars: Option<HashMap<String, String>>,
-    log: &mut String,
-) -> Result<(), PluginInstallError> {
-    let display_cmd = format!("{cli_name} {}", args.join(" "));
-    log.push_str(&format!("$ {display_cmd}\n"));
-    let result = executor
-        .execute_local_command_in_login_shell(&display_cmd, None, env_vars)
-        .await;
-    match result {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-            for stream in [&stdout, &stderr] {
-                if stream.is_empty() {
-                    continue;
-                }
-                log.push_str(stream);
-                if !stream.ends_with('\n') {
-                    log.push('\n');
-                }
-            }
-            if output.success() {
-                log.push('\n');
-                return Ok(());
-            }
-            Err(PluginInstallError {
-                message: format!("'{display_cmd}' failed"),
-                log: log.to_owned(),
-            })
-        }
-        Err(err) => {
-            log.push_str(&format!("error: {err}\n"));
-            Err(PluginInstallError {
-                message: format!("failed to run '{display_cmd}'"),
-                log: log.clone(),
-            })
-        }
-    }
-}
-
-/// Manages the Warp notification plugin for a specific CLI agent.
+/// Manages local notification setup for a specific CLI agent.
 ///
 /// Each supported CLI agent has its own implementation that knows how to
 /// check installation state and perform install/update operations.
@@ -178,14 +124,14 @@ pub(crate) trait CliAgentPluginManager: Send + Sync {
         })
     }
 
-    /// Toast message shown after a successful auto-install.
+    /// Toast message shown after successful setup.
     fn install_success_message(&self) -> &'static str {
-        "Warp plugin installed. Please restart the session to activate."
+        "Notifications enabled. Please restart the session to activate."
     }
 
-    /// Toast message shown after a successful auto-update.
+    /// Toast message shown after a successful update.
     fn update_success_message(&self) -> &'static str {
-        "Warp plugin updated. Please restart the session to activate."
+        "Notifications updated. Please restart the session to activate."
     }
 
     /// Manual installation instructions for the modal UI.
@@ -214,41 +160,21 @@ pub(crate) fn plugin_manager_for(agent: CLIAgent) -> Option<Box<dyn CliAgentPlug
 /// (needed for nvm-installed tools that are only on PATH in interactive shells).
 pub(crate) fn plugin_manager_for_with_shell(
     agent: CLIAgent,
-    shell_path: Option<PathBuf>,
-    shell_type: Option<ShellType>,
-    path_env_var: Option<String>,
+    _shell_path: Option<PathBuf>,
+    _shell_type: Option<ShellType>,
+    _path_env_var: Option<String>,
 ) -> Option<Box<dyn CliAgentPluginManager>> {
     match agent {
-        CLIAgent::Claude => Some(Box::new(ClaudeCodePluginManager::new(
-            shell_path,
-            shell_type,
-            path_env_var,
-        ))),
-        CLIAgent::OpenCode
-            if FeatureFlag::OpenCodeNotifications.is_enabled()
-                && FeatureFlag::HOANotifications.is_enabled() =>
-        {
-            Some(Box::new(OpenCodePluginManager))
-        }
         CLIAgent::Codex
             if FeatureFlag::CodexNotifications.is_enabled()
                 && FeatureFlag::HOANotifications.is_enabled() =>
         {
             Some(Box::new(CodexPluginManager))
         }
-        CLIAgent::Gemini
-            if FeatureFlag::GeminiNotifications.is_enabled()
-                && FeatureFlag::HOANotifications.is_enabled() =>
-        {
-            Some(Box::new(GeminiPluginManager::new(
-                shell_path,
-                shell_type,
-                path_env_var,
-            )))
-        }
-        CLIAgent::OpenCode
-        | CLIAgent::Codex
+        CLIAgent::Claude
+        | CLIAgent::OpenCode
         | CLIAgent::Gemini
+        | CLIAgent::Codex
         | CLIAgent::Amp
         | CLIAgent::Droid
         | CLIAgent::Copilot

@@ -1,5 +1,5 @@
 use super::{
-    team::{DiscoverableTeam, MembershipRole, Team},
+    team::{DiscoverableTeam, Team},
     workspace::{
         AdminEnablementSetting, EnterpriseSecretRegex, HostEnablementSetting, Workspace,
         WorkspaceUid,
@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     ai::llms::LLMModelHost,
-    auth::{AuthStateProvider, UserUid},
+    auth::AuthStateProvider,
     cloud_object::{model::persistence::CloudModel, ObjectType, Owner, Space},
     server::{
         experiments::ServerExperiment,
@@ -34,7 +34,10 @@ use crate::server::server_api::{team::MockTeamClient, workspace::MockWorkspaceCl
 use crate::workspaces::workspace::{BillingMetadata, WorkspaceMember, WorkspaceSettings};
 
 #[cfg(test)]
-use super::workspace::WorkspaceMemberUsageInfo;
+use crate::{
+    auth::UserUid,
+    workspaces::{team::MembershipRole, workspace::WorkspaceMemberUsageInfo},
+};
 
 #[derive(Debug)]
 pub enum UserWorkspacesEvent {
@@ -51,7 +54,6 @@ pub struct UserWorkspaces {
     current_workspace_uid: Tracked<Option<WorkspaceUid>>,
     workspaces: Tracked<Vec<Workspace>>,
     joinable_teams: Vec<DiscoverableTeam>,
-    workspace_client: Arc<dyn WorkspaceClient>,
 }
 
 /// Represents the workspaces a user potentially has access to.
@@ -65,19 +67,11 @@ pub struct WorkspacesMetadataResponse {
     pub experiments: Option<Vec<ServerExperiment>>,
 }
 
-// A representation of all data we fetch at a single time via our 10 minute poll.
-// Prefer adding to this struct if you need relatively fresh data vs making
-// independent queries.
-pub struct WorkspacesMetadataWithPricing {
-    pub metadata: WorkspacesMetadataResponse,
-    pub pricing_info: Option<warp_graphql::billing::PricingInfo>,
-}
-
 impl UserWorkspaces {
     #[cfg(test)]
     pub fn mock(
         _team_client: Arc<dyn TeamClient>,
-        workspace_client: Arc<dyn WorkspaceClient>,
+        _workspace_client: Arc<dyn WorkspaceClient>,
         cached_workspaces: Vec<Workspace>,
         _ctx: &mut ModelContext<Self>,
     ) -> Self {
@@ -85,7 +79,6 @@ impl UserWorkspaces {
             current_workspace_uid: cached_workspaces.first().map(|w| w.uid).into(),
             workspaces: cached_workspaces.into(),
             joinable_teams: Default::default(),
-            workspace_client,
         }
     }
 
@@ -101,7 +94,7 @@ impl UserWorkspaces {
 
     pub fn new(
         _team_client: Arc<dyn TeamClient>,
-        workspace_client: Arc<dyn WorkspaceClient>,
+        _workspace_client: Arc<dyn WorkspaceClient>,
         cached_workspaces: Vec<Workspace>,
         current_workspace_uid: Option<WorkspaceUid>,
         ctx: &mut ModelContext<Self>,
@@ -126,7 +119,6 @@ impl UserWorkspaces {
             current_workspace_uid: current_workspace_uid.into(),
             workspaces: cached_workspaces.into(),
             joinable_teams: Default::default(),
-            workspace_client,
         }
     }
 
@@ -259,7 +251,7 @@ impl UserWorkspaces {
     }
 
     pub fn is_voice_enabled(&self) -> bool {
-        cfg!(feature = "voice_input")
+        false
     }
 
     pub fn is_byo_api_key_enabled(&self) -> bool {
@@ -359,14 +351,6 @@ impl UserWorkspaces {
     // Returns a Vec of the user's active spaces, based on their
     // team membership. Includes the "Personal Space" by default.
     pub fn all_user_spaces(&self, ctx: &AppContext) -> Vec<Space> {
-        if AuthStateProvider::as_ref(ctx)
-            .get()
-            .is_user_web_anonymous_user()
-            .unwrap_or_default()
-        {
-            return vec![Space::Shared];
-        }
-
         let mut spaces = Vec::new();
         spaces.extend(self.team_spaces().iter());
 
@@ -486,17 +470,6 @@ impl UserWorkspaces {
                 team.organization_settings
                     .secret_redaction_settings
                     .regexes
-                    .clone()
-            })
-            .unwrap_or_default()
-    }
-
-    pub fn get_cloud_conversation_storage_enablement_setting(&self) -> AdminEnablementSetting {
-        self.current_team()
-            .map(|team| {
-                team.organization_settings
-                    .cloud_conversation_storage_settings
-                    .setting
                     .clone()
             })
             .unwrap_or_default()

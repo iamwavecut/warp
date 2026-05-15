@@ -37,8 +37,6 @@ define_settings_group!(WarpDriveSettings, settings: [
 
 impl WarpDriveSettings {
     /// Returns whether hosted drive UI should be considered enabled.
-    /// Returns `false` when the user is anonymous or fully logged out,
-    /// regardless of the user setting.
     pub fn is_warp_drive_enabled(app: &warpui::AppContext) -> bool {
         let _ = app;
         false

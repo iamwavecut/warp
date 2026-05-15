@@ -173,15 +173,11 @@ async fn prepare_environment_impl(
 
     if !github_repos.is_empty() {
         // Wait for codebase indexing for all repositories after running setup commands.
-        // We skip this if running in Docker sandboxes since they don't have a cache volume.
-        // We also skip this in Namespace to reduce startup time.
+        // We skip this if running inside a local container because it may not have a cache volume.
         #[cfg(not(target_family = "wasm"))]
         let should_wait_for_indexing = !matches!(
             warp_isolation_platform::detect(),
-            Some(
-                warp_isolation_platform::IsolationPlatformType::DockerSandbox
-                    | warp_isolation_platform::IsolationPlatformType::Namespace
-            )
+            Some(warp_isolation_platform::IsolationPlatformType::Docker)
         );
         #[cfg(target_family = "wasm")]
         let should_wait_for_indexing = true;

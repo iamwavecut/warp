@@ -772,7 +772,7 @@ impl CodebaseIndexManager {
                         Ok(snapshot_index) => {
                             return snapshot_index;
                         }
-                        Err(err) => {}
+                        Err(_err) => {}
                     }
                 }
             }

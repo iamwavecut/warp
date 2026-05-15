@@ -4,7 +4,6 @@ use crate::auth::AuthStateProvider;
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::cloud_object::model::persistence::CloudModelEvent;
 use crate::cloud_object::model::view::CloudViewModel;
-use crate::cloud_object::Owner;
 use crate::cloud_object::CloudObject;
 use crate::editor::PropagateAndNoOpNavigationKeys;
 use crate::interaction_sources::SharingDialogSource;
@@ -13,10 +12,6 @@ use crate::server::cloud_objects::update_manager::{
     ObjectOperation, UpdateManager, UpdateManagerEvent,
 };
 use crate::server::ids::ServerId;
-use crate::terminal::shared_session::permissions_manager::{
-    SessionPermissionsEvent, SessionPermissionsManager,
-};
-use crate::terminal::shared_session::SharedSessionActionSource;
 use crate::terminal::TerminalView;
 use crate::ui_components::icons::Icon;
 use crate::view_components::DismissibleToast;
@@ -30,7 +25,6 @@ use email_address::EmailAddress;
 use inheritance::{InheritanceDetails, InheritanceState};
 use itertools::Itertools;
 use pathfinder_geometry::vector::vec2f;
-use session_sharing_protocol::common::{Guest, PendingGuest, SessionId, TeamAclData};
 use warp_core::ui::appearance::Appearance;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
@@ -225,13 +219,6 @@ impl SharingDialog {
             me.handle_cloud_model_event(event, ctx);
         });
 
-        ctx.subscribe_to_model(
-            &SessionPermissionsManager::handle(ctx),
-            |me, _, event, ctx| {
-                me.handle_session_permissions_event(event, ctx);
-            },
-        );
-
         let invite_form = EmailInviteForm {
             email_editor: ctx.add_typed_action_view(|ctx| {
                 let mut view = WordBlockEditorView::new(
@@ -276,9 +263,7 @@ impl SharingDialog {
         event: &UpdateManagerEvent,
         ctx: &mut ViewContext<Self>,
     ) {
-        let UpdateManagerEvent::ObjectOperationComplete { result } = event else {
-            return;
-        };
+        let UpdateManagerEvent::ObjectOperationComplete { result } = event;
 
         if let ObjectOperation::UpdatePermissions = result.operation {
             self.refresh_object_permission_states(ctx);
@@ -308,32 +293,6 @@ impl SharingDialog {
         }
     }
 
-    fn handle_session_permissions_event(
-        &mut self,
-        event: &SessionPermissionsEvent,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            SessionPermissionsEvent::GuestsUpdated {
-                session_id,
-                guests,
-                pending_guests,
-            } => {
-                self.update_session_guests(ctx, session_id, guests, pending_guests);
-            }
-            SessionPermissionsEvent::LinkPermissionsUpdated {
-                session_id,
-                access_level,
-            } => {
-                self.update_session_link_permissions(*session_id, *access_level, ctx);
-            }
-            SessionPermissionsEvent::TeamPermissionsUpdated {
-                session_id,
-                team_acl,
-            } => self.update_session_team_permissions(session_id, team_acl.clone(), ctx),
-        }
-    }
-
     /// Sets the target object whose ACLs are shown.
     pub fn set_target(&mut self, target: Option<ShareableObject>, ctx: &mut ViewContext<Self>) {
         self.target = target;
@@ -360,7 +319,7 @@ impl SharingDialog {
 
     /// The Warp Drive server ID for the target object. `None` if the target is not a Warp Drive
     /// object.
-    fn target_cloud_object_id(&self, app: &AppContext) -> Option<ServerId> {
+    fn target_cloud_object_id(&self, _app: &AppContext) -> Option<ServerId> {
         match self.target.as_ref() {
             Some(ShareableObject::WarpDriveObject(id)) => Some(*id),
             _ => None,
@@ -490,7 +449,7 @@ impl SharingDialog {
     ///
     /// This should be called by views that contain a sharing dialog whenever they open it (i.e.
     /// panes and the Warp Drive index).
-    pub fn report_open(&self, source: SharingDialogSource, ctx: &mut ViewContext<Self>) {}
+    pub fn report_open(&self, _source: SharingDialogSource, _ctx: &mut ViewContext<Self>) {}
 
     fn reset_editable_state(&mut self, ctx: &mut ViewContext<Self>) {
         self.reset_invite_form(ctx);
@@ -538,112 +497,6 @@ impl SharingDialog {
                     .map(Subject::User)
             }
         }
-    }
-
-    fn update_session_guests(
-        &mut self,
-        ctx: &mut ViewContext<Self>,
-        session_id: &SessionId,
-        guests: &[Guest],
-        pending_guests: &[PendingGuest],
-    ) {
-        // We should only update the guests if the dialog is targeting the
-        // correct session.
-        match self.target.as_ref() {
-            Some(ShareableObject::Session {
-                session_id: target_session_id,
-                ..
-            }) => {
-                if session_id != target_session_id {
-                    return;
-                }
-            }
-            _ => return,
-        }
-
-        let guests_iter = guests.iter().map(|guest| GuestState {
-            menu_button_handle: Default::default(),
-            tooltip_handle: Default::default(),
-            current_access_level: guest.direct_acl.into(),
-            subject: Subject::User(UserKind::SharedSessionParticipant(
-                guest.profile_data.clone(),
-            )),
-            inheritance: None,
-        });
-
-        let pending_guests_iter = pending_guests.iter().map(|guest| GuestState {
-            menu_button_handle: Default::default(),
-            tooltip_handle: Default::default(),
-            current_access_level: guest.direct_acl.into(),
-            subject: Subject::PendingUser {
-                email: Some(guest.email.clone()),
-            },
-            inheritance: None,
-        });
-
-        self.guest_states = guests_iter.chain(pending_guests_iter).collect();
-
-        self.guest_states
-            .sort_by_cached_key(|guest| guest.subject.name(ctx));
-
-        ctx.notify();
-    }
-
-    fn update_session_link_permissions(
-        &mut self,
-        session_id: SessionId,
-        access_level: Option<SharingAccessLevel>,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        // Ensure we're targeting the correct session.
-        let Some(ShareableObject::Session {
-            session_id: target_session_id,
-            ..
-        }) = self.target
-        else {
-            return;
-        };
-        if session_id != target_session_id {
-            return;
-        }
-
-        self.link_sharing_state = LinkSharingState {
-            access_level,
-            tooltip_handle: Default::default(),
-            inheritance: None,
-        };
-        ctx.notify()
-    }
-
-    fn update_session_team_permissions(
-        &mut self,
-        session_id: &SessionId,
-        team_acl: Option<TeamAclData>,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        // Ensure we're targeting the correct session.
-        match self.target.as_ref() {
-            Some(ShareableObject::Session {
-                session_id: target_session_id,
-                ..
-            }) => {
-                if session_id != target_session_id {
-                    return;
-                }
-            }
-            _ => return,
-        }
-
-        self.team_sharing_state = TeamSharingState {
-            access_level: team_acl.as_ref().map(|team_acl| team_acl.acl.into()),
-            team: team_acl.map(|team_acl| TeamKind::SharedSessionTeam {
-                team_uid: ServerId::from_string_lossy(team_acl.uid),
-                name: team_acl.name,
-            }),
-            tooltip_handle: Default::default(),
-            inheritance: None,
-        };
-        ctx.notify()
     }
 
     /// Refreshes all permissions that have cached UI state.

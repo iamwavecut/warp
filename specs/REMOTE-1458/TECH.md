@@ -191,8 +191,7 @@ Integration / manual validation:
 - Full flows from the product spec's Validation section. Concretely: spawn a Claude cloud run; observe tab + pane header + card all render the same Claude circle + cloud lobe + status through Composing → Waiting → Running → Success.
 - Start a local `claude` CLI session and confirm tab + pane header render the Claude circle with a bottom-right badge (no cloud lobe).
 - Trigger a blocking permission request on a Claude cloud run; observe the notification in the mailbox shows the Claude cloud avatar.
-- Re-run the REMOTE-1454 validation cases to confirm no regression in the cloud setup UX.
-Invoke `verify-ui-change-in-cloud` after the implementation lands to spot-check the visual result across surfaces.
+- Re-run the REMOTE-1454 validation cases to confirm no regression in the setup UX.
 ## Follow-ups
 - Consider collapsing `NotificationSourceAgent` + `is_ambient` + status into a single `AgentIconDescriptor` struct shared by all four surfaces once a third or fourth call site appears (Option 3 in the design discussion). Not worth it at two call sites.
 - If the helper function pattern proves brittle at the trait-boundary for test fakes, consider introducing an `AgentIconSource` trait and formalizing the descriptor in a follow-up PR.

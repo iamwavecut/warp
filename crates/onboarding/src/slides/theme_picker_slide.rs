@@ -35,8 +35,6 @@ pub enum ThemePickerSlideAction {
     NextClicked,
 }
 
-const TOS_URL: &str = "about:blank";
-
 #[derive(Debug, Clone)]
 struct ThemeOption {
     theme: WarpTheme,
@@ -49,7 +47,6 @@ pub struct ThemePickerSlide {
     selected_theme_index: usize,
     sync_with_os: bool,
     sync_with_os_mouse: MouseStateHandle,
-    tos_mouse_state: MouseStateHandle,
     back_button: button::Button,
     next_button: button::Button,
     scroll_state: ClippedScrollStateHandle,
@@ -97,7 +94,6 @@ impl ThemePickerSlide {
             selected_theme_index,
             sync_with_os: false,
             sync_with_os_mouse: MouseStateHandle::default(),
-            tos_mouse_state: MouseStateHandle::default(),
             back_button: button::Button::default(),
             next_button: button::Button::default(),
             scroll_state: ClippedScrollStateHandle::new(),

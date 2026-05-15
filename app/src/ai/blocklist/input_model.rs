@@ -24,7 +24,6 @@ use super::context_model::BlocklistAIContextModel;
 use crate::terminal::cli_agent_sessions::{
     CLIAgentInputState, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
-use crate::PrivacySettings;
 use warp_completer::completer::CompletionContext;
 
 use crate::{

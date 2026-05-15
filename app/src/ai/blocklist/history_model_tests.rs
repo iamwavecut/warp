@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Local};
 use itertools::Itertools;
 use warp_cli::agent::Harness;
 use warpui::{App, EntityId};
@@ -9,10 +9,9 @@ use warpui::{App, EntityId};
 use crate::{
     ai::{
         agent::{
-            api::ServerConversationToken,
-            conversation::AIConversationId,
-            AIAgentExchange, AIAgentExchangeId, AIAgentInput, AIAgentOutputStatus,
-            FinishedAIAgentOutput, Shared, UserQueryMode,
+            api::ServerConversationToken, conversation::AIConversationId, AIAgentExchange,
+            AIAgentExchangeId, AIAgentInput, AIAgentOutputStatus, FinishedAIAgentOutput, Shared,
+            UserQueryMode,
         },
         blocklist::{controller::RequestInput, ResponseStreamId},
         llms::LLMId,
@@ -24,8 +23,9 @@ use crate::{
     GlobalResourceHandles, GlobalResourceHandlesProvider,
 };
 
-use super::{AIQueryHistoryOutputStatus, BlocklistAIHistoryModel, PersistedAIInput,
-    PersistedAIInputType};
+use super::{
+    AIQueryHistoryOutputStatus, BlocklistAIHistoryModel, PersistedAIInput, PersistedAIInputType,
+};
 
 /// Helper function to create a PersistedAIInput for testing
 fn create_persisted_query(

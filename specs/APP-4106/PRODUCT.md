@@ -257,7 +257,7 @@ root.
    - Assert explicit-collapse state survives migration.
 3. **Global Search parity test**: assert that `GlobalSearchView` and
    `FileTreeView` compute the same surviving-root set given the same input.
-4. **Manual verification (Dogfood)** using `verify-ui-change-in-cloud`:
+4. **Manual verification**:
    - Open `~/code/foo.ts` in the code editor, then cd the terminal from
      `~/code` → `~/code/a` → `~/code/a/z`. Confirm the file tree shows one
      `~/code` root with the chain expanded, and `z` is selected and

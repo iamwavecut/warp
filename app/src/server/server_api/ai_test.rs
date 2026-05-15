@@ -344,7 +344,6 @@ fn test_artifact_plan_serialize_deserialize_roundtrip() {
     assert_eq!(original, deserialized);
 }
 
-
 #[test]
 fn test_deserialize_agent_run_events_with_optional_fields() {
     let json = r#"[

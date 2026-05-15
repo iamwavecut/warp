@@ -295,6 +295,7 @@ impl ActiveAgentViewsModel {
     }
 
     /// Get the last focused terminal view id (persisted across non-terminal focus changes).
+    #[cfg(test)]
     pub fn get_last_focused_terminal_id(&self) -> Option<EntityId> {
         self.last_focused_terminal_state
             .as_ref()

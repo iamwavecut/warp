@@ -12,10 +12,7 @@ use futures::channel::oneshot;
 use warp_completer::completer::CommandOutput;
 use warp_core::command::ExitCode;
 use warp_util::{path::ShellFamily, sync::Condition};
-use warpui::{
-    r#async::FutureExt, AppContext, Entity, ModelContext, ModelHandle, SingletonEntity as _,
-    ViewHandle,
-};
+use warpui::{r#async::FutureExt, AppContext, Entity, ModelContext, ModelHandle, ViewHandle};
 
 use crate::terminal::model::session::ExecuteCommandOptions;
 
@@ -24,11 +21,8 @@ use crate::{
     pane_group::NewTerminalOptions,
     root_view::{open_new_with_workspace_source, NewWorkspaceSource},
     terminal::{
-        model::block::BlockId,
-        shared_session::IsSharedSessionCreator,
-        shell::ShellType,
-        view::ConversationRestorationInNewPaneType,
-        TerminalView,
+        shared_session::IsSharedSessionCreator, shell::ShellType,
+        view::ConversationRestorationInNewPaneType, TerminalView,
     },
 };
 
@@ -64,8 +58,8 @@ pub(crate) struct TerminalDriver {
 
     /// State for the pending command we're expecting to start executing.
     /// The `String` is the expected command text, and the sender is used
-    /// to send the block ID to the waiting caller.
-    pending_command_start: Option<(String, oneshot::Sender<BlockId>)>,
+    /// to notify the waiting caller once the command has a block.
+    pending_command_start: Option<(String, oneshot::Sender<()>)>,
 }
 
 impl Entity for TerminalDriver {
@@ -121,6 +115,7 @@ impl TerminalDriver {
     /// Unlike [`Self::create`], this does not open a new window — it reuses an
     /// existing view (e.g. a docker sandbox pane). Session sharing is disabled
     /// and no task ID is associated.
+    #[cfg(test)]
     pub(crate) fn create_from_existing_view(
         terminal_view: ViewHandle<TerminalView>,
         ctx: &mut AppContext,
@@ -132,7 +127,7 @@ impl TerminalDriver {
     fn new(
         terminal_view: ViewHandle<TerminalView>,
         task_id: Option<AmbientAgentTaskId>,
-        working_dir: PathBuf,
+        _working_dir: PathBuf,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
         let session_bootstrapped = Condition::new();
@@ -206,7 +201,7 @@ impl TerminalDriver {
     ) -> Result<impl Future<Output = Result<CommandHandle, AgentDriverError>>, AgentDriverError>
     {
         let (exit_tx, exit_rx) = oneshot::channel::<ExitCode>();
-        let (start_tx, start_rx) = oneshot::channel::<BlockId>();
+        let (start_tx, start_rx) = oneshot::channel::<()>();
 
         // We should not be able to execute a command while we are still waiting on another one.
         // This is enforced by the caller by waiting on rx before continuing.
@@ -222,12 +217,11 @@ impl TerminalDriver {
         });
 
         Ok(async move {
-            let block_id = start_rx
+            start_rx
                 .await
                 .map_err(|_| AgentDriverError::InvalidRuntimeState)?;
             Ok(CommandHandle {
                 exit_status_rx: exit_rx,
-                block_id,
             })
         })
     }
@@ -339,24 +333,13 @@ impl TerminalDriver {
                 })
         }
     }
-
 }
 
 /// A handle to a running terminal command.
 ///
 /// Resolves to the command's [`ExitCode`] when the block completes.
-/// Also carries the [`BlockId`] so callers can retrieve the block snapshot
-/// after completion.
 pub(crate) struct CommandHandle {
     exit_status_rx: oneshot::Receiver<ExitCode>,
-    block_id: BlockId,
-}
-
-impl CommandHandle {
-    /// The block ID of the command that was executed.
-    pub fn block_id(&self) -> &BlockId {
-        &self.block_id
-    }
 }
 
 impl Future for CommandHandle {
@@ -388,10 +371,7 @@ impl TerminalDriver {
                     .pending_command_start
                     .take_if(|(cmd, _)| *cmd == event.command)
                 {
-                    let block_id = self.terminal_view.read(ctx, |terminal, _| {
-                        terminal.model.lock().block_list().active_block_id().clone()
-                    });
-                    let _ = sender.send(block_id);
+                    let _ = sender.send(());
                 }
             }
             crate::terminal::view::Event::BlockCompleted { block, .. } => {

@@ -1,4 +1,4 @@
-use crate::{object_permissions::OwnerType, request_context::RequestContext, scalars::Time, schema};
+use crate::{object_permissions::OwnerType, request_context::RequestContext, schema};
 
 /*
 query GetUser($requestContext: RequestContext!) {
@@ -7,15 +7,6 @@ query GetUser($requestContext: RequestContext!) {
       apiKeyOwnerType
       principalType
       user {
-        anonymousUserInfo {
-          anonymousUserType
-          linkedAt
-          personalObjectLimits {
-            envVarLimit
-            notebookLimit
-            workflowLimit
-          }
-        }
         globalSkills
         isOnWorkDomain
         isOnboarded
@@ -128,7 +119,6 @@ pub enum PrincipalType {
 
 #[derive(cynic::QueryFragment, Debug)]
 pub struct User {
-    pub anonymous_user_info: Option<AnonymousUserInfo>,
     pub global_skills: Vec<String>,
     pub is_onboarded: bool,
     pub is_on_work_domain: bool,
@@ -142,29 +132,6 @@ pub struct FirebaseProfile {
     pub needs_sso_link: bool,
     pub photo_url: Option<String>,
     pub uid: String,
-}
-
-#[derive(cynic::QueryFragment, Debug)]
-pub struct AnonymousUserInfo {
-    pub anonymous_user_type: AnonymousUserType,
-    pub linked_at: Option<Time>,
-    pub personal_object_limits: Option<AnonymousUserPersonalObjectLimits>,
-}
-
-#[derive(cynic::Enum, Clone, Debug)]
-pub enum AnonymousUserType {
-    NativeClientAnonymousUser,
-    NativeClientAnonymousUserFeatureGated,
-    WebClientAnonymousUser,
-    #[cynic(fallback)]
-    Other(String),
-}
-
-#[derive(cynic::QueryFragment, Debug, Clone)]
-pub struct AnonymousUserPersonalObjectLimits {
-    pub env_var_limit: i32,
-    pub notebook_limit: i32,
-    pub workflow_limit: i32,
 }
 
 #[derive(cynic::InlineFragments, Debug)]

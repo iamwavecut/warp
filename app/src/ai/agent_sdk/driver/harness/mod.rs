@@ -21,37 +21,15 @@ use warp_cli::{OZ_CLI_ENV, OZ_HARNESS_ENV, OZ_PARENT_RUN_ID_ENV, OZ_RUN_ID_ENV};
 use warp_managed_secrets::ManagedSecretValue;
 
 use super::terminal::{CommandHandle, TerminalDriver};
-use super::{
-    AgentDriver, AgentDriverError, LEGACY_OZ_PARENT_LISTENER_MANAGED_EXTERNALLY_ENV,
-    LEGACY_OZ_PARENT_STATE_ROOT_ENV, OZ_MESSAGE_LISTENER_MANAGED_EXTERNALLY_ENV,
-    OZ_MESSAGE_LISTENER_STATE_ROOT_ENV,
-};
+use super::{AgentDriver, AgentDriverError};
 
 pub(crate) mod claude_code;
-pub(crate) mod claude_transcript;
 mod codex;
 mod gemini;
 mod json_utils;
 pub(crate) use claude_code::ClaudeHarness;
-use claude_transcript::ClaudeResumeInfo;
 use codex::CodexHarness;
 use gemini::GeminiHarness;
-
-/// Local harness payload describing how to resume an existing conversation.
-#[derive(Debug)]
-pub(crate) enum ResumePayload {
-    /// Claude Code session state rehydrated from an existing local transcript envelope.
-    Claude(ClaudeResumeInfo),
-}
-
-impl TryFrom<ResumePayload> for ClaudeResumeInfo {
-    type Error = AgentDriverError;
-
-    fn try_from(payload: ResumePayload) -> Result<Self, Self::Error> {
-        let ResumePayload::Claude(info) = payload;
-        Ok(info)
-    }
-}
 
 /// Trait for third-party agent harnesses that execute prompts via their own CLIs.
 ///
@@ -69,15 +47,6 @@ pub(crate) trait ThirdPartyHarness: Send + Sync {
     /// default [`validate`] impl when the CLI is not on `PATH`.
     fn install_docs_url(&self) -> Option<&'static str> {
         None
-    }
-
-    fn prepare_environment_config(
-        &self,
-        _working_dir: &Path,
-        _system_prompt: Option<&str>,
-        _resolved_env_vars: &HashMap<OsString, OsString>,
-    ) -> Result<(), AgentDriverError> {
-        Ok(())
     }
 
     /// Validate that the harness is ready to run. Default impl checks that the
@@ -98,7 +67,6 @@ pub(crate) trait ThirdPartyHarness: Send + Sync {
     /// `resolved_secrets` provides the raw typed managed secrets so harnesses
     /// can read structured fields (e.g. `base_url`) without relying on env vars.
     ///
-    /// If `resume` is `Some`, the harness reuses local on-disk session state.
     #[allow(clippy::too_many_arguments)]
     fn build_runner(
         &self,
@@ -110,7 +78,6 @@ pub(crate) trait ThirdPartyHarness: Send + Sync {
         task_id: Option<AmbientAgentTaskId>,
         server_api: Arc<ServerApi>,
         terminal_driver: ModelHandle<TerminalDriver>,
-        resume: Option<ResumePayload>,
         resolved_env_vars: &HashMap<OsString, OsString>,
         resolved_secrets: &HashMap<String, ManagedSecretValue>,
         resolved_mcp_servers: &HashMap<String, JSONMCPServer>,
@@ -180,31 +147,12 @@ pub(crate) fn validate_cli_installed(
     Ok(())
 }
 
-fn insert_task_env_var_aliases(
-    env_vars: &mut HashMap<OsString, OsString>,
-    keys: &[&'static str],
-    value: &str,
-) {
-    for key in keys {
-        env_vars.insert(OsString::from(key), OsString::from(value));
-    }
-}
-
-fn message_listener_state_root() -> Option<String> {
-    [
-        OZ_MESSAGE_LISTENER_STATE_ROOT_ENV,
-        LEGACY_OZ_PARENT_STATE_ROOT_ENV,
-    ]
-    .into_iter()
-    .find_map(|key| std::env::var(key).ok().filter(|value| !value.is_empty()))
-}
-
 fn task_env_vars_for_harness_name(
     task_id: Option<&AmbientAgentTaskId>,
     parent_run_id: Option<&str>,
     selected_harness: Harness,
 ) -> HashMap<OsString, OsString> {
-    let mut env_vars = HashMap::with_capacity(7);
+    let mut env_vars = HashMap::with_capacity(4);
 
     if let Some(id) = task_id {
         env_vars.insert(
@@ -229,26 +177,6 @@ fn task_env_vars_for_harness_name(
         OsString::from(OZ_HARNESS_ENV),
         OsString::from(selected_harness.to_string()),
     );
-    if selected_harness == Harness::Claude && task_id.is_some() {
-        insert_task_env_var_aliases(
-            &mut env_vars,
-            &[
-                OZ_MESSAGE_LISTENER_MANAGED_EXTERNALLY_ENV,
-                LEGACY_OZ_PARENT_LISTENER_MANAGED_EXTERNALLY_ENV,
-            ],
-            "1",
-        );
-        if let Some(state_root) = message_listener_state_root() {
-            insert_task_env_var_aliases(
-                &mut env_vars,
-                &[
-                    OZ_MESSAGE_LISTENER_STATE_ROOT_ENV,
-                    LEGACY_OZ_PARENT_STATE_ROOT_ENV,
-                ],
-                &state_root,
-            );
-        }
-    }
     env_vars
 }
 
@@ -320,8 +248,7 @@ pub(crate) enum HarnessCleanupDisposition {
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 pub(crate) trait HarnessRunner: Send + Sync {
-    /// Create the external conversation on the server and start the harness
-    /// command in the terminal.
+    /// Start the harness command in the local terminal.
     ///
     /// Returns a [`CommandHandle`] that resolves to the exit code. The runner
     /// stores the conversation ID and block ID internally for use in
@@ -331,7 +258,7 @@ pub(crate) trait HarnessRunner: Send + Sync {
         foreground: &ModelSpawner<AgentDriver>,
     ) -> Result<CommandHandle, AgentDriverError>;
 
-    /// Save the current conversation state (transcript upload, etc.).
+    /// Save the current local conversation state.
     async fn save_conversation(
         &self,
         save_point: SavePoint,

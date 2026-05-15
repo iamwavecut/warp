@@ -82,8 +82,6 @@ use crate::{
 };
 
 use crate::code_review::find_model::CodeReviewFindModel;
-#[cfg(feature = "local_fs")]
-use crate::interaction_sources::CodePanelsFileOpenEntrypoint;
 use crate::terminal::cli_agent::{
     build_selection_line_range_prompt, build_selection_substring_prompt,
 };
@@ -2750,7 +2748,7 @@ impl CodeReviewView {
 
     fn delete_comment_by_id(&mut self, id: CommentId, ctx: &mut ViewContext<Self>) {
         if let Some(model) = self.active_comment_model.clone() {
-            let is_imported = model
+            let _is_imported = model
                 .read(ctx, |batch, _| {
                     batch
                         .get_review_comment_by_id(id)
@@ -3549,7 +3547,7 @@ impl CodeReviewView {
         if fallback_count > 0 {}
 
         if !newly_imported_ids.is_empty() {
-            let (active_count, outdated_count) = relocated_comments
+            let (_active_count, _outdated_count) = relocated_comments
                 .iter()
                 .filter(|c| newly_imported_ids.contains(&c.id))
                 .fold((0usize, 0usize), |(active, outdated), c| {
@@ -4279,9 +4277,9 @@ impl CodeReviewView {
     ) {
         match result {
             ReviewSubmissionResult::Success {
-                comment_count,
-                file_count,
-                destination,
+                comment_count: _,
+                file_count: _,
+                destination: _,
             } => {
                 log::info!("Successfully submitted review comments to terminal");
 

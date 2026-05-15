@@ -21,9 +21,6 @@ use crate::pane_group::pane::view::header::components::{
 use crate::pane_group::pane::view::header::{render_pane_header_draggable, PANE_HEADER_HEIGHT};
 use crate::pane_group::pane::PaneStack;
 use crate::pane_group::{pane::view, pane::view::PaneHeaderAction, BackingView, SplitPaneState};
-use crate::settings::app_installation_detection::{
-    UserAppInstallDetectionSettings, UserAppInstallStatus,
-};
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::terminal::shared_session::participant_avatar_view::render_participants_and_role_elements;
 use crate::terminal::shared_session::render_util::shared_session_indicator_color;
@@ -36,8 +33,6 @@ use crate::ui_components::buttons::icon_button_with_color;
 use crate::ui_components::icon_with_status::render_icon_with_status;
 use crate::ui_components::icons;
 use crate::workspace::tab_settings::TabSettings;
-use settings::Setting as _;
-use warp_core::context_flag::ContextFlag;
 use warpui::elements::{
     ConstrainedBox, CrossAxisAlignment, Empty, Flex, MainAxisAlignment, MainAxisSize,
     ParentElement, Shrinkable,
@@ -377,9 +372,8 @@ impl TerminalView {
 
         let mut icon_button_count: u32 = 0;
 
-        // Cloud-mode-only ambient agent cancel button is shown while we're waiting
-        // for the session to be ready.
-        let is_waiting_for_session = FeatureFlag::CloudMode.is_enabled()
+        // Local agent workspace cancel button is shown while we're waiting for the session to be ready.
+        let is_waiting_for_session = FeatureFlag::AgentView.is_enabled()
             && self
                 .ambient_agent_view_model
                 .as_ref()
@@ -639,7 +633,7 @@ impl BackingView for TerminalView {
 
         // Hosted shared-session entry points are disabled in this local-first fork.
         let shared_session_status = model.shared_session_status();
-        let is_ambient_agent = self.is_ambient_agent_session(ctx);
+        let _is_ambient_agent = self.is_ambient_agent_session(ctx);
         if shared_session_status.is_sharer_or_viewer() {
             if shared_session_status.is_sharer() {
                 items.push(
@@ -866,7 +860,7 @@ impl TerminalView {
     }
 
     pub fn is_ambient_agent_session(&self, ctx: &AppContext) -> bool {
-        FeatureFlag::CloudMode.is_enabled()
+        FeatureFlag::AgentView.is_enabled()
             && self
                 .ambient_agent_view_model
                 .as_ref()

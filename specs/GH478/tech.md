@@ -991,8 +991,7 @@ name to avoid typos.
   confirm only unthemed tabs follow the system.
 - Save layout as launch configuration; confirm tabs with manual pins
   emit `theme:`, tabs themed only by directory matching do not.
-- After implementation, invoke the `verify-ui-change-in-cloud` skill
-  per the repository rule for user-facing client changes.
+- After implementation, do a local manual UI check for the user-facing client changes.
 
 ### Tooling
 

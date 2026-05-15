@@ -1,9 +1,6 @@
-use std::{
-    collections::HashMap,
-    sync::{
-        mpsc::{sync_channel, Receiver},
-        Arc,
-    },
+use std::sync::{
+    mpsc::{sync_channel, Receiver},
+    Arc,
 };
 
 use settings::manager::SettingsManager;
@@ -25,7 +22,7 @@ use crate::{
         },
         sync_queue::SyncQueue,
     },
-    settings::{PrivacySettings, WarpDrivePrivacySettings},
+    settings::PrivacySettings,
     workspaces::{
         team_tester::TeamTesterStatus, update_manager::TeamUpdateManager,
         user_profiles::UserProfiles, user_workspaces::UserWorkspaces,
@@ -55,7 +52,6 @@ pub fn initialize_app(app: &mut App) {
     app.add_singleton_model(|_| ServerApiProvider::new_for_test());
     app.add_singleton_model(|_| AuthStateProvider::new_for_test());
     app.add_singleton_model(AuthManager::new_for_test);
-    WarpDrivePrivacySettings::register(app);
     app.update(PrivacySettings::register_singleton);
     app.add_singleton_model(CloudModel::mock);
     app.add_singleton_model(UserWorkspaces::default_mock);
@@ -89,13 +85,6 @@ pub fn create_update_manager_struct(
         rx
     });
 
-    // The start of polling is normally triggered by authentication completion, but
-    // we need to do it manually for tests. We do this AFTER UpdateManager is created
-    // so the polling uses the correct mock.
-    TeamTesterStatus::handle(app).update(app, |team_tester, ctx| {
-        team_tester.initiate_data_pollers(false, ctx);
-    });
-
     UpdateManagerStruct {
         update_manager,
         receiver,
@@ -103,15 +92,7 @@ pub fn create_update_manager_struct(
     }
 }
 
-/// Creates a baseline [`MockObjectClient`] with common mocks like:
-/// * The logged-in user
-/// * Background polling for updated objects
+/// Creates a baseline [`MockObjectClient`] with common mocks.
 pub fn mock_server_api() -> MockObjectClient {
-    let mut mock_object_client = MockObjectClient::new();
-    // Mock *failures* for background fetches. This prevents `UpdateManager` clearing out any
-    // objects that tests manually add to `CloudModel`.
-    mock_object_client
-        .expect_fetch_changed_objects()
-        .returning(|_, _| Err(anyhow::anyhow!("Ignoring background refresh in tests")));
-    mock_object_client
+    MockObjectClient::new()
 }

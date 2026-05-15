@@ -89,9 +89,6 @@ const MANAGEMENT_PANEL_WIDTH: f32 = 400.;
 // Vertical margin for filter row elements to align with dropdown buttons
 const FILTER_ROW_VERTICAL_MARGIN: f32 = 6.;
 
-// Environment IDs are a fixed-length ServerId (22 chars), so keep this dropdown compact.
-const ENV_DROPDOWN_WIDTH: f32 = 190.;
-
 const CARD_ROW_SPACING: f32 = 8.;
 const CARD_CONTENT_PADDING: f32 = 12.;
 const CARD_BORDER_RADIUS: f32 = 4.;
@@ -479,16 +476,7 @@ impl AgentManagementView {
 
     /// Build the list of source filter items.
     fn build_source_dropdown_items() -> Vec<MenuItem<DropdownAction<AgentManagementViewAction>>> {
-        // Build up the sources list
-        let mut sources = vec![
-            AgentSource::WebApp,
-            AgentSource::CloudMode,
-            AgentSource::AgentWebhook,
-            AgentSource::Cli,
-        ];
-        if FeatureFlag::InteractiveConversationManagementView.is_enabled() {
-            sources.push(AgentSource::Interactive)
-        }
+        let sources = vec![AgentSource::Interactive, AgentSource::Cli];
 
         let mut items = vec![MenuItem::Item(
             MenuItemFields::new("All").with_on_select_action(DropdownAction::SelectActionAndClose(
@@ -921,8 +909,8 @@ impl AgentManagementView {
             }
             AgentDetailsButtonEvent::CopyLink { link } => {
                 match item_id {
-                    ManagementCardItemId::Conversation(conversation_id) => {}
-                    ManagementCardItemId::AmbientRun(task_id) => {}
+                    ManagementCardItemId::Conversation(_conversation_id) => {}
+                    ManagementCardItemId::AmbientRun(_task_id) => {}
                 }
 
                 ctx.clipboard()
@@ -983,7 +971,6 @@ impl AgentManagementView {
     ) {
         match event {
             AgentConversationsModelEvent::ConversationsLoaded
-            | AgentConversationsModelEvent::NewTasksReceived
             | AgentConversationsModelEvent::TasksUpdated => {
                 self.update_creator_dropdown(ctx);
                 self.update_source_dropdown(ctx);
@@ -1973,8 +1960,8 @@ impl TypedActionView for AgentManagementView {
                 };
 
                 match item_id {
-                    ManagementCardItemId::Conversation(conversation_id) => {}
-                    ManagementCardItemId::AmbientRun(task_id) => {}
+                    ManagementCardItemId::Conversation(_conversation_id) => {}
+                    ManagementCardItemId::AmbientRun(_task_id) => {}
                 }
                 ctx.dispatch_typed_action(&action);
             }

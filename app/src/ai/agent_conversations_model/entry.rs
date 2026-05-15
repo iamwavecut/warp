@@ -402,9 +402,8 @@ pub(super) fn entry_for_task(
     let has_open_ambient_session = ActiveAgentViewsModel::as_ref(app)
         .get_terminal_view_id_for_ambient_task(task.task_id)
         .is_some();
-    let can_open = has_open_ambient_session
-        || has_active_session_id
-        || local_conversation_id.is_some();
+    let can_open =
+        has_open_ambient_session || has_active_session_id || local_conversation_id.is_some();
     let can_copy_link = task.has_active_execution()
         && task.active_run_execution().session_link.is_some()
         && has_active_session_id;

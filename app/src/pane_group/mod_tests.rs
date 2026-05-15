@@ -9,7 +9,6 @@ use crate::{
             conversation::{
                 AIAgentHarness, AIConversation, AIConversationId, ServerAIConversationMetadata,
             },
-            PassiveSuggestionTrigger,
         },
         agent_conversations_model::AgentConversationsModel,
         ambient_agents::github_auth_notifier::GitHubAuthNotifier,
@@ -36,7 +35,6 @@ use crate::{
         AIRequestUsageModel,
     },
     auth::{auth_manager::AuthManager, user::TEST_USER_UID, AuthStateProvider},
-    changelog_model::ChangelogModel,
     cloud_object::model::persistence::CloudModel,
     cloud_object::{Owner, Revision, ServerMetadata, ServerPermissions},
     context_chips::prompt::Prompt,
@@ -63,7 +61,7 @@ use crate::{
         keys::TerminalKeybindings,
         local_tty::{spawner::PtySpawner, TerminalManager},
         shared_session::{
-            SharedSessionActionSource, SharedSessionScrollbackType, SharedSessionStatus,
+            self, SharedSessionActionSource, SharedSessionScrollbackType, SharedSessionStatus,
         },
     },
     test_util::settings::initialize_settings_for_tests,
@@ -84,6 +82,7 @@ use persistence::model::ConversationUsageMetadata;
 #[cfg(feature = "local_fs")]
 use repo_metadata::RepoMetadataModel;
 use repo_metadata::{repositories::DetectedRepositories, watcher::DirectoryWatcher};
+use session_sharing_protocol::sharer::SessionSourceType;
 use std::collections::HashMap;
 use uuid::Uuid;
 use warp_core::features::FeatureFlag;
@@ -111,7 +110,6 @@ fn initialize_app(app: &mut App) {
     initialize_settings_for_tests(app);
 
     app.add_singleton_model(|_ctx| ServerApiProvider::new_for_test());
-    app.add_singleton_model(|ctx| ChangelogModel::new(ServerApiProvider::as_ref(ctx).get()));
     app.add_singleton_model(|_| AuthStateProvider::new_for_test());
     app.add_singleton_model(AuthManager::new_for_test);
     app.add_singleton_model(|_ctx| PtySpawner::new_for_test());
@@ -278,7 +276,7 @@ fn ambient_agent_task_for_current_user(task_id: AmbientAgentTaskId) -> AmbientAg
         started_at: Some(now),
         updated_at: now,
         status_message: None,
-        source: Some(AgentSource::CloudMode),
+        source: Some(AgentSource::Interactive),
         session_id: None,
         session_link: None,
         executor: None,

@@ -2,15 +2,12 @@ use warp_core::{context_flag::ContextFlag, features::FeatureFlag};
 use warpui::ViewContext;
 
 use super::{
-    ContentItem, ContentSectionData, FeatureItem, FeatureSection, FeatureSectionData,
-    ResourceCenterMainView, Section, Tip, TipAction, TipHint,
+    FeatureItem, FeatureSection, FeatureSectionData, ResourceCenterMainView, Section, Tip,
+    TipAction, TipHint,
 };
 
 pub fn sections(ctx: &mut ViewContext<ResourceCenterMainView>) -> Vec<Section> {
     let mut sections = vec![];
-    if false {
-        sections.push(Section::Changelog());
-    }
 
     if FeatureFlag::AvatarInTabBar.is_enabled() {
         return sections;

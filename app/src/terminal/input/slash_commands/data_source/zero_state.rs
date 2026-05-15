@@ -3,15 +3,15 @@ use warp_core::features::FeatureFlag;
 use warpui::{Entity, ModelHandle, SingletonEntity};
 
 use crate::ai::skills::SkillManager;
-use crate::cloud_object::model::persistence::CloudModel;
 use crate::search::data_source::{Query, QueryResult};
 use crate::search::mixer::DataSourceRunErrorWrapper;
 use crate::search::slash_command_menu::static_commands::commands;
 use crate::search::SyncDataSource;
 use crate::settings::AISettings;
 use crate::terminal::input::slash_commands::{
-    AcceptSlashCommandOrSavedPrompt, InlineItem, SlashCommandDataSource,
+    AcceptSlashCommandOrLocalPrompt, InlineItem, SlashCommandDataSource,
 };
+use crate::user_config::WarpConfig;
 
 pub struct ZeroStateDataSource {
     slash_command_data_source: ModelHandle<SlashCommandDataSource>,
@@ -35,7 +35,7 @@ impl Entity for ZeroStateDataSource {
 }
 
 impl SyncDataSource for ZeroStateDataSource {
-    type Action = AcceptSlashCommandOrSavedPrompt;
+    type Action = AcceptSlashCommandOrLocalPrompt;
 
     fn run_query(
         &self,
@@ -132,20 +132,15 @@ impl SyncDataSource for ZeroStateDataSource {
         }
 
         if self.is_cloud_mode_v2 && AISettings::as_ref(app).is_any_ai_enabled(app) {
-            let saved_prompts: Vec<_> = CloudModel::as_ref(app)
-                .get_all_active_workflows()
-                .filter(|cw| cw.model().data.is_agent_mode_workflow())
-                .sorted_by(|a, b| {
-                    b.model()
-                        .data
-                        .name()
-                        .to_lowercase()
-                        .cmp(&a.model().data.name().to_lowercase())
-                })
+            let local_prompts: Vec<_> = WarpConfig::as_ref(app)
+                .local_user_workflows()
+                .iter()
+                .filter(|workflow| workflow.is_agent_mode_workflow())
+                .sorted_by(|a, b| b.name().to_lowercase().cmp(&a.name().to_lowercase()))
                 .collect();
-            for saved_prompt in saved_prompts {
+            for prompt in local_prompts {
                 results.push(
-                    InlineItem::from_saved_prompt(saved_prompt, app)
+                    InlineItem::from_local_prompt(prompt, app)
                         .with_compact_layout(self.is_cloud_mode_v2)
                         .into(),
                 );

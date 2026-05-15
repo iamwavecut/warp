@@ -44,8 +44,6 @@ use crate::code::active_file::{ActiveFileEvent, ActiveFileModel};
 use crate::code::buffer_location::LocalOrRemotePath;
 use crate::coding_panel_enablement_state::CodingPanelEnablementState;
 use crate::editor::{EditorOptions, EditorView, TextOptions};
-#[cfg(feature = "local_fs")]
-use crate::interaction_sources::CodePanelsFileOpenEntrypoint;
 use crate::terminal::input::InputDropTargetData;
 use crate::terminal::view::{TerminalDropTargetData, TerminalView};
 use crate::ui_components::item_highlight::{ImageOrIcon, ItemHighlightState};
@@ -2458,7 +2456,7 @@ impl FileTreeView {
             return;
         };
 
-        let is_directory = matches!(item, FileTreeItem::DirectoryHeader { .. });
+        let _is_directory = matches!(item, FileTreeItem::DirectoryHeader { .. });
 
         ctx.emit(FileTreeEvent::AttachAsContext {
             path: relative_path,

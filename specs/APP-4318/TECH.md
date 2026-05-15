@@ -124,7 +124,7 @@ Integration or manual validation:
 - Repeat with a second follow-up to catch subscription leaks and stale session-ID handling.
 - Verify “Continue locally” still forks locally from the same tombstone.
 - Verify a normal shared-session viewer still becomes read-only and shows the ended banner when its session ends.
-Before opening or updating PRs in this stack, run the repo-required formatting and clippy checks for touched Rust code, plus targeted tests for ambient model, server API client, tombstone view, and viewer terminal manager. For the user-facing UI increments, run UI verification with the `verify-ui-change-in-cloud` skill after implementation.
+Before opening or updating PRs in this stack, run the repo-required formatting and clippy checks for touched Rust code, plus targeted tests for ambient model, server API client, tombstone view, and viewer terminal manager. For the user-facing UI increments, run local manual UI verification after implementation.
 ## Risks and mitigations
 ### Run/execution naming churn
 Risk: continuing to use `task_id` everywhere makes execution-scoped changes confusing and easy to misuse.

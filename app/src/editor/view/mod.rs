@@ -1397,7 +1397,7 @@ pub enum BaselinePositionComputationMethod {
     Default,
 }
 
-// Re-export voice transcription types for backwards compatibility
+#[cfg(feature = "voice_input")]
 pub use crate::voice::transcriber::{Transcriber, VoiceTranscriber};
 
 /// Similar to [`ImageContext`], but contains un-processed and un-resized image data.
@@ -3052,17 +3052,17 @@ impl EditorView {
             ctx.subscribe_to_view(
                 &ai_context_menu,
                 |me, _, event: &AIContextMenuEvent, ctx| {
-                    let is_udi_enabled =
+                    let _is_udi_enabled =
                         InputSettings::as_ref(ctx).is_universal_developer_input_enabled(ctx);
-                    let current_input_mode = if me.is_ai_input {
+                    let _current_input_mode = if me.is_ai_input {
                         InputType::AI
                     } else {
                         InputType::Shell
                     };
                     match event {
                         AIContextMenuEvent::Close {
-                            item_count,
-                            query_length,
+                            item_count: _,
+                            query_length: _,
                         } => {
                             ctx.emit(Event::SetAIContextMenuOpen(false));
                             ctx.focus_self();
@@ -3070,8 +3070,8 @@ impl EditorView {
                         }
                         AIContextMenuEvent::ResultAccepted {
                             action,
-                            item_count,
-                            query_length,
+                            item_count: _,
+                            query_length: _,
                         } => {
                             ctx.emit(Event::AcceptAIContextMenuItem(action.clone()));
                             ctx.focus_self();
@@ -5183,7 +5183,7 @@ impl EditorView {
             return;
         }
 
-        let is_udi_enabled = InputSettings::as_ref(ctx).is_universal_developer_input_enabled(ctx);
+        let _is_udi_enabled = InputSettings::as_ref(ctx).is_universal_developer_input_enabled(ctx);
 
         self.process_attached_images_future_handle = Some(ctx.spawn(
             async move {

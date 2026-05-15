@@ -7,9 +7,7 @@ pub use overrides::{get_overrides, set_overrides};
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Sequence)]
 pub enum FeatureFlag {
-    Changelog,
     DebugMode,
-    Autoupdate,
 
     WelcomeTips,
     ThinStrokes,
@@ -194,9 +192,6 @@ pub enum FeatureFlag {
     /// If enabled, the default theme is set to Adeberry for new users.
     DefaultAdeberryTheme,
 
-    /// New, less intrusive autoupdate UI.
-    AutoupdateUIRevamp,
-
     /// Enables Kitty image rendering
     KittyImages,
 
@@ -305,9 +300,6 @@ pub enum FeatureFlag {
 
     /// Enables code symbols in AI context menu
     AIContextMenuCode,
-
-    /// Enables Warp Drive objects (like workflows) as context in AI context menu
-    DriveObjectsAsContext,
 
     /// Expands code diff edits to replace the current pane instead of opening in a new tab.
     ExpandEditToPane,
@@ -421,9 +413,6 @@ pub enum FeatureFlag {
     /// Enables auto-opening code review pane on first agent change and its setting UI.
     AutoOpenCodeReviewPane,
 
-    /// Enables the ambient agents command-line interface.
-    AmbientAgentsCommandLine,
-
     /// Feature flags for the Build Plan Auto Reload experiment.
     BuildPlanAutoReloadBannerToggle,
     BuildPlanAutoReloadPostPurchaseModal,
@@ -523,9 +512,6 @@ pub enum FeatureFlag {
     /// Enables team API key creation in the API key management UI.
     TeamApiKeys,
 
-    /// Enables cloud conversation loading via the CLI --conversation flag.
-    CloudConversations,
-
     /// Enables the "New agent" prompt chip in terminal mode when AgentView is enabled.
     ///
     /// When disabled (the default), the terminal message bar is shown instead.
@@ -570,20 +556,11 @@ pub enum FeatureFlag {
     /// Enables conversation artifacts.
     ConversationArtifacts,
 
-    /// Enables auto-syncing ambient plans to Warp Drive.
-    SyncAmbientPlans,
-
     /// Enables platform skills support (--skill flag) for agent runs.
     ///
     /// Skills are loaded from `.agents/skills/`, `.warp/skills/`, `.claude/skills/`, and `.codex/skills/`
     /// directories to provide base prompts for agent runs.
     OzPlatformSkills,
-    /// Gates populating/reading oz updates from channel versions in the changelog model.
-    OzChangelogUpdates,
-
-    /// Enables image upload for ambient agents.
-    AmbientAgentsImageUpload,
-
     /// Enables image attachment support for cloud mode conversations.
     CloudModeImageContext,
 
@@ -817,7 +794,7 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::OzPlatformSkills,
     FeatureFlag::AgentViewBlockContext,
     FeatureFlag::OzLaunchModal,
-    FeatureFlag::OzChangelogUpdates,
+    FeatureFlag::PendingUserQueryIndicator,
     FeatureFlag::QueueSlashCommand,
     // These are enabled via 100% experiment on prod warp-server,
     // but we need to enable here for dogfood builds.
@@ -861,8 +838,6 @@ pub const PREVIEW_FLAGS: &[FeatureFlag] = &[
 /// NOTE: if you are promoting a feature from Preview to launch, you'll likely
 /// want to enable the feature by default in app/Cargo.toml, rather than add it to RELEASE_FLAGS.
 pub const RELEASE_FLAGS: &[FeatureFlag] = &[
-    FeatureFlag::Autoupdate,
-    FeatureFlag::Changelog,
     // Marked text is currently only supported on MacOS.
     #[cfg(target_os = "macos")]
     FeatureFlag::ImeMarkedText,

@@ -44,16 +44,13 @@ pub fn server_api_auth_context(
 }
 
 fn use_authenticated_user_identity(auth_state: &AuthState) -> bool {
-    auth_state.is_logged_in() && !auth_state.is_user_anonymous().unwrap_or(true)
+    let _ = auth_state;
+    false
 }
 
 fn remote_server_identity_key(auth_state: &AuthState) -> String {
-    if use_authenticated_user_identity(auth_state) {
-        auth_state
-            .user_id()
-            .map(|uid| uid.as_string())
-            .unwrap_or_else(|| auth_state.anonymous_id())
-    } else {
-        auth_state.anonymous_id()
-    }
+    auth_state
+        .user_id()
+        .map(|uid| uid.as_string())
+        .unwrap_or_else(|| "local_user".to_string())
 }

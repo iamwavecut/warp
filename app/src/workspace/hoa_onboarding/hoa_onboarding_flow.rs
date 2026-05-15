@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use markdown_parser::{
-    FormattedText, FormattedTextFragment, FormattedTextLine, FormattedTextStyles, Hyperlink,
+    FormattedText, FormattedTextFragment, FormattedTextLine, FormattedTextStyles,
 };
 use warpui::elements::{
     Align, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty, Flex,
