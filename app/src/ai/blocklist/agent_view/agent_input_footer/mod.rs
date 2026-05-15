@@ -1711,6 +1711,7 @@ impl AgentInputFooter {
         &self,
         item: &AgentToolbarItemKind,
         shared_status: &SharedSessionStatus,
+        is_cloud_context: bool,
         app: &AppContext,
     ) -> Option<Box<dyn Element>> {
         let is_cloud_mode = FeatureFlag::CloudModeImageContext.is_enabled()
@@ -1839,9 +1840,15 @@ impl View for AgentInputFooter {
 
         let terminal_model = self.terminal_model.lock();
         let shared_status = terminal_model.shared_session_status();
+        let is_cloud_context = super::is_in_cloud_context(
+            terminal_model.block_list().agent_view_state(),
+            &terminal_model,
+        );
 
         for item in &left_items {
-            if let Some(element) = self.render_toolbar_item(item, shared_status, app) {
+            if let Some(element) =
+                self.render_toolbar_item(item, shared_status, is_cloud_context, app)
+            {
                 left_buttons.add_child(element);
             }
         }
@@ -1862,7 +1869,9 @@ impl View for AgentInputFooter {
             );
         } else {
             for item in &right_items {
-                if let Some(element) = self.render_toolbar_item(item, shared_status, app) {
+                if let Some(element) =
+                    self.render_toolbar_item(item, shared_status, is_cloud_context, app)
+                {
                     right_buttons.add_child(element);
                 }
             }

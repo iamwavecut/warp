@@ -635,6 +635,10 @@ pub enum FeatureFlag {
     /// real time.
     OrchestrationV2,
 
+    /// Re-enables local Claude Code and Codex child harnesses in orchestration
+    /// flows while the default behavior temporarily keeps them disabled.
+    LocalClaudeCodexChildHarnesses,
+
     /// Gates client-side support for the `orchestrate` tool, which batches
     /// multiple child agents into a single tool call with an inline
     /// confirmation card. When enabled, the client advertises
@@ -648,6 +652,13 @@ pub enum FeatureFlag {
     /// orchestrator agent and all of its child agents, with click-to-switch
     /// behavior between siblings.
     OrchestrationPillBar,
+
+    /// Enables the orchestration pill bar in shared session viewers (web and
+    /// native). When enabled, viewing a shared session that used orchestration
+    /// shows a pill bar above the agent view header with the orchestrator and
+    /// each child agent. Clicking a child pill joins the child's shared session
+    /// and switches the view to its transcript.
+    OrchestrationViewerPillBar,
 
     /// Shows a pending user query indicator during summarization when a follow-up
     /// prompt is queued via `/fork-and-compact` or `/compact-and`.
@@ -809,7 +820,6 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::AgentViewBlockContext,
     FeatureFlag::OzLaunchModal,
     FeatureFlag::OzChangelogUpdates,
-    FeatureFlag::PendingUserQueryIndicator,
     FeatureFlag::QueueSlashCommand,
     // These are enabled via 100% experiment on prod warp-server,
     // but we need to enable here for dogfood builds.
@@ -823,6 +833,7 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::AgentHarness,
     FeatureFlag::RememberFastForwardState,
     FeatureFlag::HOANotifications,
+    FeatureFlag::OrchestrationViewerPillBar,
     FeatureFlag::GeminiNotifications,
     FeatureFlag::LocalDockerSandbox,
     FeatureFlag::CloudModeSetupV2,
@@ -840,6 +851,7 @@ pub const PREVIEW_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::Orchestration,
     FeatureFlag::OrchestrationV2,
     FeatureFlag::OrchestrationPillBar,
+    FeatureFlag::OrchestrationViewerPillBar,
     FeatureFlag::RunAgentsTool,
     FeatureFlag::BlocklistMarkdownTableRendering,
     FeatureFlag::MarkdownTables,
@@ -862,7 +874,7 @@ pub const RELEASE_FLAGS: &[FeatureFlag] = &[
 ];
 
 /// Flags that we want to allow to switch at runtime (assuming RuntimeFeatureFlags is set)
-pub const RUNTIME_FEATURE_FLAGS: &[FeatureFlag] = &[];
+pub const RUNTIME_FEATURE_FLAGS: &[FeatureFlag] = &[FeatureFlag::LocalClaudeCodexChildHarnesses];
 
 impl FeatureFlag {
     pub fn is_enabled(&self) -> bool {

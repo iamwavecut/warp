@@ -34,6 +34,8 @@ use crate::ai::blocklist::BlocklistAIContextModel;
 use crate::ai::blocklist::SuggestionDismissButtonTheme;
 #[cfg(not(target_family = "wasm"))]
 use repo_metadata::repositories::DetectedRepositories;
+#[cfg(not(target_family = "wasm"))]
+use warp_util::local_or_remote_path::LocalOrRemotePath;
 
 #[cfg(feature = "local_fs")]
 use crate::ai::skills::SkillOpenOrigin;
@@ -393,6 +395,9 @@ pub(super) struct AIBlockStateHandles {
     /// A given citation should only appear once per block.
     footer_citation_chip_handles: HashMap<AIAgentCitation, MouseStateHandle>,
     orchestration_navigation_card_handles: HashMap<AIAgentActionId, MouseStateHandle>,
+    /// Persistent mouse-state handles per received-message transcript row,
+    /// used by the clickable sender avatar.
+    pub(super) transcript_avatar_handles: HashMap<MessageId, MouseStateHandle>,
 
     references_section_collapsible_handle: MouseStateHandle,
 
@@ -2012,10 +2017,14 @@ impl AIBlock {
                     }
                     AIAgentOutputMessageType::MessagesReceivedFromAgents { messages } => {
                         for received_message in messages {
+                            let collapsible_id =
+                                received_message_collapsible_id(&received_message.message_id);
                             self.collapsible_block_states
-                                .entry(received_message_collapsible_id(
-                                    &received_message.message_id,
-                                ))
+                                .entry(collapsible_id.clone())
+                                .or_default();
+                            self.state_handles
+                                .transcript_avatar_handles
+                                .entry(collapsible_id)
                                 .or_default();
                         }
                     }
@@ -5379,10 +5388,11 @@ impl AIBlock {
         ctx: &mut ViewContext<Self>,
     ) {
         #[cfg(not(target_family = "wasm"))]
-        let repo_path = self
-            .current_working_directory
-            .as_ref()
-            .and_then(|cwd| DetectedRepositories::as_ref(ctx).get_root_for_path(Path::new(cwd)));
+        let repo_path = self.current_working_directory.as_ref().and_then(|cwd| {
+            DetectedRepositories::as_ref(ctx)
+                .get_root_for_path(&LocalOrRemotePath::Local(PathBuf::from(cwd.as_str())))
+                .and_then(|r| PathBuf::try_from(r).ok())
+        });
         #[cfg(target_family = "wasm")]
         let repo_path = self.current_working_directory.as_ref().map(PathBuf::from);
 

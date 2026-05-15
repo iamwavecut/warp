@@ -170,7 +170,10 @@ impl RichContent {
     }
 
     pub fn is_pending_user_query(&self) -> bool {
-        matches!(self.metadata, Some(RichContentMetadata::PendingUserQuery))
+        matches!(
+            self.metadata,
+            Some(RichContentMetadata::PendingUserQuery { .. })
+        )
     }
 
     pub fn is_init_step(&self) -> bool {
@@ -257,7 +260,9 @@ pub enum RichContentMetadata {
     AgentViewZeroState,
     TerminalViewZeroState,
     PluginInstructionsBlock,
-    PendingUserQuery,
+    PendingUserQuery {
+        pending_user_query_block_handle: ViewHandle<PendingUserQueryBlock>,
+    },
     HarnessSessionHeader,
 }
 

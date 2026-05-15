@@ -15,6 +15,7 @@ use ai::skills::SkillReference;
 
 use crate::ai::blocklist::inline_action::orchestration_controls::OrchestrationEditState;
 use futures::{future::BoxFuture, FutureExt};
+use warp_cli::agent::Harness;
 use warp_core::execution_mode::AppExecutionMode;
 use warpui::{Entity, ModelContext, ModelHandle};
 
@@ -26,6 +27,7 @@ use crate::ai::agent::{
     StartAgentExecutionMode,
 };
 use crate::ai::blocklist::BlocklistAIHistoryModel;
+use crate::ai::local_child_harnesses::local_child_harness_disabled_message;
 use warpui::SingletonEntity;
 
 /// Per-child spawn timeout. If a child agent doesn't report back within

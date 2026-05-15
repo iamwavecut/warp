@@ -183,7 +183,6 @@ pub struct RunAgentsCardView {
     /// the user's previous model selection for each harness.
     saved_model_per_harness: HashMap<String, String>,
 }
-
 /// Computes the `is_denied` flag at construction time.
 ///
 /// The card is denied when either the action already has a `Denied`
@@ -220,7 +219,6 @@ fn resolve_interactive_defaults(
         }
     }
 }
-
 impl RunAgentsCardView {
     pub fn new(
         action_id: AIAgentActionId,
@@ -495,9 +493,9 @@ impl RunAgentsCardView {
             }
         }
 
-        // No approved config — the confirmation card will be shown.
-        // Resolve from config (if any) then apply interactive defaults
-        // so the pickers display sensible values.
+        // No auto-launchable approved config — the confirmation card
+        // will be shown. Resolve from config (if any) then apply
+        // interactive defaults so the pickers display sensible values.
         if let Some((config, status)) = &self.active_config {
             if status.is_approved() {
                 self.state.orch.resolve_from_config(config);
@@ -557,7 +555,12 @@ impl RunAgentsCardView {
         if self.handles.pickers.harness_picker.is_none() {
             let handle = oc::new_standard_picker_dropdown(&colors, ctx);
             Self::set_upward_menu_position(&handle, ctx);
-            oc::populate_harness_picker(&handle, &state.orch.harness_type, ctx);
+            oc::populate_harness_picker(
+                &handle,
+                &state.orch.harness_type,
+                !state.orch.execution_mode.is_remote(),
+                ctx,
+            );
             Self::subscribe_picker_close(&handle, ctx);
             self.handles.pickers.harness_picker = Some(handle);
         }

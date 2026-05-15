@@ -144,6 +144,9 @@ impl UriHost {
                     log::warn!("couldn't turn launch link '{}' into path", url.path());
                 }
             }
+            UriHost::TabConfig => {
+                handle_tab_config_uri(primary_window_id, url, ctx);
+            }
             UriHost::SharedSession => {
                 let _ = (primary_window_id, url, ctx);
                 log::info!("Ignoring hosted shared-session URI in local-first build");
@@ -431,6 +434,80 @@ fn find_matching_config_name<'a>(
     configs
         .iter()
         .find(|&config| config.name.to_lowercase() == target_name_lower)
+}
+
+/// Handles `warp://tab_config/<name>` deeplinks.
+///
+/// Resolution rules:
+/// - `<name>` is matched case-insensitively against each tab config's file
+///   stem, so both `warp://tab_config/my_tab` and
+///   `warp://tab_config/my_tab.toml` work.
+/// - When `?new_window=true` (or no Warp window is open) the tab config opens
+///   in a brand-new window. Otherwise it opens as a new tab in the active
+///   window.
+fn handle_tab_config_uri(primary_window_id: Option<WindowId>, url: &Url, ctx: &mut AppContext) {
+    let Some(desired) = get_launch_config_path(url.path()) else {
+        log::warn!("couldn't turn tab config link '{}' into name", url.path());
+        return;
+    };
+
+    let (configs, _errors) = load_tab_configs(&tab_configs_dir());
+    let Some(config) = find_matching_tab_config(desired.as_str(), configs) else {
+        log::warn!("couldn't find a tab config matching '{}'", desired);
+        return;
+    };
+
+    let force_new_window = url
+        .query_pairs()
+        .any(|(k, v)| k == "new_window" && matches!(v.as_ref(), "1" | "true"));
+
+    let target_window_id = if force_new_window {
+        None
+    } else {
+        primary_window_id.filter(|id| WorkspaceRegistry::as_ref(ctx).get(*id, ctx).is_some())
+    };
+
+    let workspace = match target_window_id {
+        Some(window_id) => WorkspaceRegistry::as_ref(ctx).get(window_id, ctx),
+        None => {
+            let new_window_id = open_new_window_get_handles(None, ctx).0;
+            WorkspaceRegistry::as_ref(ctx).get(new_window_id, ctx)
+        }
+    };
+
+    let Some(workspace) = workspace else {
+        log::warn!(
+            "no workspace available to open tab config '{}'",
+            config.name
+        );
+        return;
+    };
+
+    workspace.update(ctx, |workspace, ctx| {
+        workspace.open_tab_config(config, ctx);
+    });
+}
+
+/// Case-insensitive match against each tab config's file stem. Tab config
+/// `name` fields are not unique across files, so we key off the filename.
+///
+/// Tries the target as-is first, then with the extension stripped, so both
+/// `my_tab` and `my_tab.toml` resolve to `my_tab.toml` and dotted stems like
+/// `foo.bar` (from `foo.bar.toml`) still work when written without `.toml`.
+fn find_matching_tab_config(target: &str, configs: Vec<TabConfig>) -> Option<TabConfig> {
+    let raw = target.to_lowercase();
+    let stripped = remove_extension(target).map(str::to_lowercase);
+    configs.into_iter().find(|c| {
+        c.source_path
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .and_then(|s| s.to_str())
+            .map(|s| {
+                let stem = s.to_lowercase();
+                stem == raw || Some(stem.as_str()) == stripped.as_deref()
+            })
+            .unwrap_or(false)
+    })
 }
 
 /// Extract the `path` query parameter, expanding a leading `~` to the
