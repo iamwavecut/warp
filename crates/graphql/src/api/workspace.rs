@@ -58,7 +58,6 @@ pub struct WorkspaceSettings {
     pub link_sharing_settings: LinkSharingSettings,
     pub secret_redaction_settings: SecretRedactionSettings,
     pub ai_autonomy_settings: AiAutonomySettings,
-    pub usage_based_pricing_settings: UsageBasedPricingSettings,
     pub addon_credits_settings: AddonCreditsSettings,
     pub codebase_context_settings: CodebaseContextSettings,
     pub sandboxed_agent_settings: Option<SandboxedAgentSettings>,
@@ -219,12 +218,6 @@ pub struct InviteLinkDomainRestriction {
 pub struct EmailInvite {
     pub email: String,
     pub expired: bool,
-}
-
-#[derive(cynic::QueryFragment, Debug, Clone)]
-pub struct UsageBasedPricingSettings {
-    pub enabled: bool,
-    pub max_monthly_spend_cents: Option<i32>,
 }
 
 #[derive(cynic::QueryFragment, Debug, Clone)]

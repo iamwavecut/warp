@@ -289,11 +289,6 @@ pub struct AIAutonomyPolicy {
 }
 
 #[derive(Clone, Debug, Copy, Serialize, Deserialize)]
-pub struct UsageBasedPricingPolicy {
-    pub toggleable: bool,
-}
-
-#[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub struct CodebaseContextPolicy {
     pub toggleable: bool,
     pub index_limit: Option<u32>,
@@ -356,7 +351,6 @@ pub struct Tier {
     pub shared_workflows_policy: Option<SharedWorkflowsPolicy>,
     pub session_sharing_policy: Option<SessionSharingPolicy>,
     pub ai_autonomy_policy: Option<AIAutonomyPolicy>,
-    pub usage_based_pricing_policy: Option<UsageBasedPricingPolicy>,
     pub codebase_context_policy: Option<CodebaseContextPolicy>,
     pub byo_api_key_policy: Option<ByoApiKeyPolicy>,
     pub purchase_add_on_credits_policy: Option<PurchaseAddOnCreditsPolicy>,
@@ -393,14 +387,6 @@ pub struct AiOverages {
 }
 
 impl BillingMetadata {
-    /// Returns whether the current tier has a usage-based pricing policy that can be toggled.
-    pub fn is_usage_based_pricing_toggleable(&self) -> bool {
-        self.tier
-            .usage_based_pricing_policy
-            .as_ref()
-            .is_some_and(|policy| policy.toggleable)
-    }
-
     /**
      * Returns whether customer can upgrade to the Build plan based on their current tier.
      */
@@ -670,12 +656,6 @@ pub struct SecretRedactionSettings {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct UsageBasedPricingSettings {
-    pub enabled: bool,
-    pub max_monthly_spend_cents: Option<u32>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AddonCreditsSettings {
     pub auto_reload_enabled: bool,
     pub max_monthly_spend_cents: Option<i32>,
@@ -702,7 +682,6 @@ pub struct WorkspaceSettings {
     pub ai_autonomy_settings: AiAutonomySettings,
     pub is_invite_link_enabled: bool,
     pub is_discoverable: bool,
-    pub usage_based_pricing_settings: UsageBasedPricingSettings,
     pub addon_credits_settings: AddonCreditsSettings,
     pub codebase_context_settings: CodebaseContextSettings,
     pub sandboxed_agent_settings: Option<SandboxedAgentSettings>,

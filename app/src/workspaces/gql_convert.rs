@@ -9,9 +9,8 @@ use super::{
         EmailInvite, EnterpriseSecretRegex, HostEnablementSetting, InstanceShape,
         InviteLinkDomainRestriction, LinkSharingSettings, LlmSettings, SandboxedAgentSettings,
         SecretRedactionSettings, SessionSharingPolicy, SharedNotebooksPolicy,
-        SharedWorkflowsPolicy, Tier, UsageBasedPricingPolicy, WarpAiPolicy, Workspace,
-        WorkspaceInviteCode, WorkspaceMember, WorkspaceMemberUsageInfo, WorkspaceSettings,
-        WorkspaceSizePolicy,
+        SharedWorkflowsPolicy, Tier, WarpAiPolicy, Workspace, WorkspaceInviteCode,
+        WorkspaceMember, WorkspaceMemberUsageInfo, WorkspaceSettings, WorkspaceSizePolicy,
     },
 };
 use crate::cloud_object::{
@@ -31,7 +30,7 @@ use crate::{
     workspaces::workspace::{
         AiOverages, BonusGrantsPurchased, ByoApiKeyPolicy, CodebaseContextPolicy,
         EnterpriseCreditsAutoReloadPolicy, EnterprisePayAsYouGoPolicy, MultiAdminPolicy,
-        PurchaseAddOnCreditsPolicy, UsageBasedPricingSettings,
+        PurchaseAddOnCreditsPolicy,
     },
 };
 use anyhow::anyhow;
@@ -51,8 +50,7 @@ use warp_graphql::{
         SessionSharingPolicy as GqlSessionSharingPolicy,
         SharedNotebooksPolicy as GqlSharedNotebooksPolicy,
         SharedWorkflowsPolicy as GqlSharedWorkflowsPolicy, TeamSizePolicy as GqlTeamSizePolicy,
-        Tier as GqlTier, UsageBasedPricingPolicy as GqlUsageBasedPricingPolicy,
-        WarpAiPolicy as GqlWarpAiPolicy,
+        Tier as GqlTier, WarpAiPolicy as GqlWarpAiPolicy,
     },
     object::CloudObjectWithDescendants,
     queries::{
@@ -294,14 +292,6 @@ impl From<&GqlAiPermissionsSettings> for AiPermissionsSettings {
     }
 }
 
-impl From<GqlUsageBasedPricingPolicy> for UsageBasedPricingPolicy {
-    fn from(gql_usage_based_pricing_policy: GqlUsageBasedPricingPolicy) -> UsageBasedPricingPolicy {
-        Self {
-            toggleable: gql_usage_based_pricing_policy.toggleable,
-        }
-    }
-}
-
 impl From<GqlAddonCreditsSettings> for AddonCreditsSettings {
     fn from(gql_settings: GqlAddonCreditsSettings) -> AddonCreditsSettings {
         Self {
@@ -398,7 +388,6 @@ impl From<GqlTier> for Tier {
             shared_workflows_policy: gql_tier.shared_workflows_policy.map(From::from),
             session_sharing_policy: gql_tier.session_sharing_policy.map(From::from),
             ai_autonomy_policy: gql_tier.ai_autonomy_policy.map(From::from),
-            usage_based_pricing_policy: gql_tier.usage_based_pricing_policy.map(From::from),
             codebase_context_policy: gql_tier.codebase_context_policy.map(From::from),
             byo_api_key_policy: gql_tier.byo_api_key_policy.map(From::from),
             purchase_add_on_credits_policy: gql_tier.purchase_add_on_credits_policy.map(From::from),
@@ -698,23 +687,6 @@ impl From<GqlWorkspaceSettings> for WorkspaceSettings {
                     .ai_autonomy_settings
                     .computer_use_setting
                     .and_then(convert_gql_computer_use_autonomy_value_to_computer_use_permission),
-            },
-            usage_based_pricing_settings: UsageBasedPricingSettings {
-                enabled: gql_workspace_settings.usage_based_pricing_settings.enabled,
-                max_monthly_spend_cents: gql_workspace_settings
-                    .usage_based_pricing_settings
-                    .max_monthly_spend_cents
-                    .and_then(|cents| {
-                        if cents < 0 {
-                            report_error!(anyhow!(
-                                "Usage-based pricing has a negative max monthly spend of {} cents",
-                                cents
-                            ));
-                            None
-                        } else {
-                            Some(cents as u32)
-                        }
-                    }),
             },
             addon_credits_settings: gql_workspace_settings.addon_credits_settings.into(),
             codebase_context_settings: CodebaseContextSettings {
