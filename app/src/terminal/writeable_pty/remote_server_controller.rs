@@ -21,6 +21,14 @@ use remote_server::transport::Error;
 
 use super::pty_controller::{EventLoopSender, PtyController};
 
+fn connection_label_for_session_info(session_info: &SessionInfo) -> String {
+    if session_info.user.is_empty() {
+        session_info.hostname.clone()
+    } else {
+        format!("{}@{}", session_info.user, session_info.hostname)
+    }
+}
+
 /// Per-SSH-init state machine. Encoding the state as an enum makes invalid
 /// transitions unrepresentable and ensures the `SessionInfo` stash cannot be
 /// accessed after it has been consumed.
@@ -254,12 +262,18 @@ impl<T: EventLoopSender> RemoteServerController<T> {
         match result {
             Ok(true) => {
                 let socket_path = transport.socket_path().clone();
+                let connection_label = connection_label_for_session_info(&session_info);
                 self.state = SshInitState::AwaitingConnect {
                     session_id,
                     session_info,
                     setup_start,
                 };
-                self.connect_session_for_current_identity(session_id, socket_path, ctx);
+                self.connect_session_for_current_identity(
+                    session_id,
+                    socket_path,
+                    connection_label,
+                    ctx,
+                );
             }
             Ok(false) if has_old_binary => {
                 self.did_install = true;
@@ -447,12 +461,18 @@ impl<T: EventLoopSender> RemoteServerController<T> {
         match result {
             Ok(()) => {
                 let socket_path = transport.socket_path().clone();
+                let connection_label = connection_label_for_session_info(&session_info);
                 self.state = SshInitState::AwaitingConnect {
                     session_id,
                     session_info,
                     setup_start,
                 };
-                self.connect_session_for_current_identity(session_id, socket_path, ctx);
+                self.connect_session_for_current_identity(
+                    session_id,
+                    socket_path,
+                    connection_label,
+                    ctx,
+                );
             }
             Err(err) => {
                 log::warn!(
@@ -476,12 +496,19 @@ impl<T: EventLoopSender> RemoteServerController<T> {
         &mut self,
         session_id: SessionId,
         socket_path: PathBuf,
+        connection_label: String,
         ctx: &mut ModelContext<Self>,
     ) {
         let auth_context = self.build_auth_context(ctx);
         let transport = SshTransport::new(socket_path, auth_context.clone());
         RemoteServerManager::handle(ctx).update(ctx, |mgr, ctx| {
-            mgr.connect_session(session_id, transport, auth_context, ctx);
+            mgr.connect_session(
+                session_id,
+                transport,
+                auth_context,
+                Some(connection_label),
+                ctx,
+            );
         });
     }
 }

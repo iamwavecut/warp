@@ -80,9 +80,7 @@ fn get_supported_tools(params: &RequestParams) -> Vec<api::ToolType> {
             // after a successful connection handshake, so its presence is a
             // sufficient proxy for client availability.
             supported_tools.extend(&[api::ToolType::ReadFiles, api::ToolType::ApplyFileDiffs]);
-            if FeatureFlag::RemoteCodebaseIndexing.is_enabled()
-                && params.remote_codebase_search_available
-            {
+            if FeatureFlag::RemoteCodebaseIndexing.is_enabled() {
                 supported_tools.push(api::ToolType::SearchCodebase);
             }
         }

@@ -29,8 +29,6 @@ use super::{AIAgentInput, MCPContext, MCPServer, RequestMetadata};
 use crate::ai::blocklist::{BlocklistAIPermissions, RequestInput};
 use crate::ai::mcp::templatable_manager::TemplatableMCPServerInfo;
 use crate::ai::mcp::TemplatableMCPServerManager;
-#[cfg(not(target_family = "wasm"))]
-use crate::remote_server::codebase_index_model::RemoteCodebaseIndexModel;
 use crate::settings::AISettings;
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
 use warpui::{AppContext, EntityId, SingletonEntity as _};
@@ -91,7 +89,6 @@ pub struct RequestParams {
     pub(crate) custom_provider_route: Option<direct_openai::CustomProviderRoute>,
     pub computer_use_enabled: bool,
     pub ask_user_question_enabled: bool,
-    pub remote_codebase_search_available: bool,
     pub orchestration_enabled: bool,
     pub supported_tools_override: Option<Vec<warp_multi_agent_api::ToolType>>,
     /// The conversation ID of the parent agent that spawned this child agent, if any.
@@ -216,13 +213,6 @@ impl RequestParams {
         let ask_user_question_enabled = BlocklistAIPermissions::as_ref(app)
             .get_ask_user_question_setting(app, terminal_view_id)
             != crate::ai::execution_profiles::AskUserQuestionPermission::Never;
-        #[cfg(not(target_family = "wasm"))]
-        let remote_codebase_search_available = FeatureFlag::RemoteCodebaseIndexing.is_enabled()
-            && RemoteCodebaseIndexModel::as_ref(app)
-                .active_repo_availability(&session_context, None)
-                .is_ready();
-        #[cfg(target_family = "wasm")]
-        let remote_codebase_search_available = false;
 
         let orchestration_enabled = false;
 
@@ -238,7 +228,6 @@ impl RequestParams {
             custom_provider_route,
             computer_use_enabled,
             ask_user_question_enabled,
-            remote_codebase_search_available,
             orchestration_enabled,
             supported_tools_override: request_input.supported_tools_override.clone(),
             parent_agent_id: None,

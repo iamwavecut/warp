@@ -34,7 +34,8 @@ execute_from_dir() {
     exec bash "${script_path}" "$@"
   fi
 
-  return 1
+  echo "error: could not execute ${RESOLVER_NAME} from WARP_COMMON_SKILLS_SCRIPTS_DIR=${WARP_COMMON_SKILLS_SCRIPTS_DIR}" >&2
+  exit 1
 }
 
 

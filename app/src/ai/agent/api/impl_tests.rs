@@ -22,7 +22,6 @@ fn request_params_with_ask_user_question_enabled(ask_user_question_enabled: bool
         custom_provider_route: None,
         computer_use_enabled: false,
         ask_user_question_enabled,
-        remote_codebase_search_available: false,
         orchestration_enabled: false,
         supported_tools_override: None,
         parent_agent_id: None,
@@ -30,13 +29,12 @@ fn request_params_with_ask_user_question_enabled(ask_user_question_enabled: bool
     }
 }
 
-fn request_params_for_remote(remote_codebase_search_available: bool) -> RequestParams {
+fn request_params_for_remote(host_id: Option<HostId>) -> RequestParams {
     let mut params = request_params_with_ask_user_question_enabled(false);
     params.session_context =
         SessionContext::new_with_session_type_for_test(Some(SessionType::WarpifiedRemote {
-            host_id: Some(HostId::new("host".to_string())),
+            host_id,
         }));
-    params.remote_codebase_search_available = remote_codebase_search_available;
     params
 }
 
@@ -63,7 +61,7 @@ fn supported_tools_includes_ask_user_question_when_enabled_and_feature_flag_is_e
 #[test]
 fn remote_supported_tools_include_search_codebase_when_index_is_available() {
     let _flag = FeatureFlag::RemoteCodebaseIndexing.override_enabled(true);
-    let params = request_params_for_remote(true);
+    let params = request_params_for_remote(Some(HostId::new("host".to_string())));
     let supported_tools = get_supported_tools(&params);
 
     assert!(supported_tools.contains(&api::ToolType::SearchCodebase));
@@ -71,16 +69,16 @@ fn remote_supported_tools_include_search_codebase_when_index_is_available() {
 #[test]
 fn remote_supported_tools_omit_search_codebase_when_feature_flag_is_disabled() {
     let _flag = FeatureFlag::RemoteCodebaseIndexing.override_enabled(false);
-    let params = request_params_for_remote(true);
+    let params = request_params_for_remote(Some(HostId::new("host".to_string())));
     let supported_tools = get_supported_tools(&params);
 
     assert!(!supported_tools.contains(&api::ToolType::SearchCodebase));
 }
 
 #[test]
-fn remote_supported_tools_omit_search_codebase_when_index_is_unavailable() {
+fn remote_supported_tools_omit_search_codebase_when_remote_is_not_connected() {
     let _flag = FeatureFlag::RemoteCodebaseIndexing.override_enabled(true);
-    let params = request_params_for_remote(false);
+    let params = request_params_for_remote(None);
     let supported_tools = get_supported_tools(&params);
 
     assert!(!supported_tools.contains(&api::ToolType::SearchCodebase));

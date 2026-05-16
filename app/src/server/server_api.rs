@@ -82,7 +82,12 @@ pub enum AIApiError {
 
 impl From<http_client::ResponseError> for AIApiError {
     fn from(err: http_client::ResponseError) -> Self {
-        Self::from_response_error(err.source, &err.headers)
+        let http_client::ResponseError {
+            source,
+            headers,
+            body: _,
+        } = err;
+        Self::from_response_error(source, &headers)
     }
 }
 

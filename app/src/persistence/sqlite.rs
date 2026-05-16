@@ -143,7 +143,7 @@ type DeleteCloudObjectFn =
 pub fn initialize(
     ctx: &mut AppContext,
     scope: PersistenceScope,
-) -> (Option<PersistedData>, Option<WriterHandles>) {
+) -> (Option<Box<PersistedData>>, Option<WriterHandles>) {
     unsafe {
         // Set up logging before any SQLite calls.
         init_logging();
@@ -152,8 +152,8 @@ pub fn initialize(
     match init_db(&scope) {
         Ok(mut conn) => {
             let user_uid = AuthStateProvider::as_ref(ctx).get().user_id();
-            let app_state = match read_sqlite_data(&mut conn, user_uid) {
-                Ok(app_state) => Some(app_state),
+            let persisted_data = match read_sqlite_data(&mut conn, user_uid) {
+                Ok(app_state) => Some(Box::new(app_state)),
                 Err(err) => {
                     report_error!(anyhow::Error::new(err).context("Failed to read app state"));
                     None
@@ -167,11 +167,25 @@ pub fn initialize(
                     None
                 }
             };
-            (app_state, writer_handles)
+            (persisted_data, writer_handles)
         }
         Err(err) => {
             report_db_error("initialization", err, &database_path);
             (None, None)
+        }
+    }
+}
+
+fn read_persisted_data(
+    conn: &mut SqliteConnection,
+    ctx: &mut AppContext,
+) -> Option<Box<PersistedData>> {
+    let user_uid = AuthStateProvider::as_ref(ctx).get().user_id();
+    match read_sqlite_data(conn, user_uid) {
+        Ok(app_state) => Some(Box::new(app_state)),
+        Err(err) => {
+            report_error!(anyhow::Error::new(err).context("Failed to read persisted data"));
+            None
         }
     }
 }
@@ -1594,7 +1608,9 @@ fn get_all_mcp_server_installations(
 
     let improper_rows = rows_len - result.len();
     if improper_rows > 0 {
-        log::warn!("Skipping {improper_rows} rows from mcp_server_installations table due to malformation.");
+        log::warn!(
+            "Skipping {improper_rows} rows from mcp_server_installations table due to malformation."
+        );
     }
 
     Ok(result)

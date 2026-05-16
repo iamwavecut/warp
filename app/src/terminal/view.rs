@@ -170,6 +170,7 @@ pub use init::{
     TOGGLE_HIDE_CLI_RESPONSES_KEYBINDING, TOGGLE_QUEUE_NEXT_PROMPT_KEYBINDING,
 };
 pub use inline_banner::{NotificationsDiscoveryBannerAction, NotificationsErrorBannerAction};
+#[cfg(not(target_family = "wasm"))]
 use repo_metadata::repositories::DetectedRepositories;
 use repo_metadata::repositories::RepoDetectionSource;
 use session_sharing_protocol::common::LongRunningCommandAgentInteractionState;
@@ -346,7 +347,7 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::hash::Hash;
 use std::ops::Range;
@@ -2426,6 +2427,9 @@ pub struct TerminalView {
     /// next `AfterBlockCompleted`, at which point `Event::PendingCommandCompleted`
     /// is emitted so subscribers know the command has finished.
     awaiting_pending_command_completion: bool,
+    /// Commands that should run as separate blocks after the active pending
+    /// command finishes successfully.
+    pending_command_queue: VecDeque<String>,
     /// When true, enter agent view after pending setup commands complete
     /// (i.e. after `PendingCommandCompleted` is emitted). Set by
     /// `pane_tree_from_template_recursive` when a tab config has both
@@ -3988,6 +3992,7 @@ impl TerminalView {
             bootstrap_start: None,
             is_login_shell_bootstrapped: false,
             awaiting_pending_command_completion: false,
+            pending_command_queue: Default::default(),
             enter_agent_view_after_pending_commands: false,
             slow_bootstrap_banner,
             is_slow_bootstrap_banner_open: false,
@@ -5027,6 +5032,13 @@ impl TerminalView {
             )
         {
             self.fetch_and_update_conversation_details_panel(ctx);
+        }
+        if matches!(
+            event,
+            BlocklistAIHistoryEvent::UpdatedConversationMetadata { .. }
+                | BlocklistAIHistoryEvent::ConversationServerTokenAssigned { .. }
+        ) {
+            self.maybe_insert_tombstone_for_non_running_shared_ambient_task(ctx);
         }
         match event {
             BlocklistAIHistoryEvent::AppendedExchange {
@@ -6509,21 +6521,26 @@ impl TerminalView {
         })
     }
 
+    /// Returns whether a specific session is local, treating shared-session
+    /// viewers and conversation transcript viewers as non-local even when
+    /// their session hasn't been joined yet.
+    pub fn session_is_local<C: ModelAsRef>(&self, session_id: SessionId, ctx: &C) -> bool {
+        let forced_non_local = {
+            let model = self.model.lock();
+            model.is_shared_session_viewer() || model.is_conversation_transcript_viewer()
+        };
+        !forced_non_local
+            && self
+                .sessions
+                .as_ref(ctx)
+                .get(session_id)
+                .is_some_and(|session| session.is_local())
+    }
+
     /// Returns whether or not the active session is a local session.  Returns
     /// None if there is no active session.
     pub fn active_session_is_local<C: ModelAsRef>(&self, ctx: &C) -> Option<bool> {
-        // Ensure shared session viewers and conversation transcript viewers are not
-        // considered local, even if the session hasn't been joined yet.
-        let model = self.model.lock();
-        if model.is_shared_session_viewer() || model.is_conversation_transcript_viewer() {
-            return Some(false);
-        }
-        drop(model);
-
-        self.active_block_session_id().and_then(|session_id| {
-            let current_session = self.sessions.as_ref(ctx).get(session_id)?;
-            Some(current_session.is_local())
-        })
+        Some(self.session_is_local(self.active_block_session_id()?, ctx))
     }
 
     /// Returns the active session's launch shell, if it is specified.
@@ -7796,6 +7813,27 @@ impl TerminalView {
         self.input.update(ctx, |input, ctx| {
             input.set_pending_command(exec, ctx);
         })
+    }
+
+    pub fn set_pending_command_queue(
+        &mut self,
+        commands: Vec<String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.pending_command_queue = commands.into_iter().collect();
+        self.set_next_pending_command_from_queue(ctx);
+    }
+
+    fn set_next_pending_command_from_queue(&mut self, ctx: &mut ViewContext<Self>) -> bool {
+        if self.input.as_ref(ctx).has_pending_command() {
+            return false;
+        }
+        let Some(command) = self.pending_command_queue.pop_front() else {
+            return false;
+        };
+
+        self.set_pending_command(&command, ctx);
+        true
     }
 
     fn alt_scroll_cmd_sequence(&self, lines_to_scroll: i32) -> Vec<u8> {
@@ -10273,23 +10311,45 @@ impl TerminalView {
                     ctx,
                 );
 
+                let pending_command_succeeded = match &block_type {
+                    BlockType::User(UserBlockCompleted {
+                        serialized_block, ..
+                    }) => Some(serialized_block.exit_code.was_successful()),
+                    BlockType::BootstrapHidden
+                    | BlockType::BootstrapVisible(_)
+                    | BlockType::Restored
+                    | BlockType::InBandCommand
+                    | BlockType::Background(_)
+                    | BlockType::Static => None,
+                };
+
                 // Emit PendingCommandCompleted when a pending command's block
                 // finishes (e.g. tab config setup commands like `git worktree add`).
                 if self.awaiting_pending_command_completion {
-                    self.awaiting_pending_command_completion = false;
-                    ctx.emit(Event::PendingCommandCompleted);
+                    if let Some(command_succeeded) = pending_command_succeeded {
+                        self.awaiting_pending_command_completion = false;
+                        if command_succeeded && self.set_next_pending_command_from_queue(ctx) {
+                            // The delayed pending-command scheduler below will
+                            // submit the next queued command as a separate block.
+                        } else {
+                            if !command_succeeded {
+                                self.pending_command_queue.clear();
+                            }
+                            ctx.emit(Event::PendingCommandCompleted);
 
-                    // If agent view entry was deferred until setup commands
-                    // finished, enter it now (unless suppressed by onboarding).
-                    if self.enter_agent_view_after_pending_commands {
-                        self.enter_agent_view_after_pending_commands = false;
-                        self.enter_agent_view_for_new_conversation(
-                            None,
-                            AgentViewEntryOrigin::Input {
-                                was_prompt_autodetected: false,
-                            },
-                            ctx,
-                        );
+                            // If agent view entry was deferred until setup commands
+                            // finished, enter it now (unless suppressed by onboarding).
+                            if self.enter_agent_view_after_pending_commands {
+                                self.enter_agent_view_after_pending_commands = false;
+                                self.enter_agent_view_for_new_conversation(
+                                    None,
+                                    AgentViewEntryOrigin::Input {
+                                        was_prompt_autodetected: false,
+                                    },
+                                    ctx,
+                                );
+                            }
+                        }
                     }
                 }
 
@@ -10555,14 +10615,22 @@ impl TerminalView {
                         .current_working_directory()
                     {
                         if block_metadata_received_event.is_done_bootstrapping {
-                            let is_local = self.active_session_is_local(ctx) == Some(true);
-                            let session_type = if is_local {
-                                Some(RepoDetectionSessionType::Local)
-                            } else {
-                                block_metadata.session_id().map(|session_id| {
-                                    RepoDetectionSessionType::Remote { session_id }
-                                })
-                            };
+                            // Derive locality directly from the incoming block's
+                            // session_id. We cannot use `active_session_is_local(ctx)`
+                            // here because `active_block_metadata` was just consumed
+                            // via `take()` above, so it would always return `None`
+                            // and misclassify every local session as Remote.
+                            //
+                            // `session_is_local` keeps the shared-session viewer /
+                            // conversation-transcript guard intact.
+                            let session_id = block_metadata.session_id();
+                            let session_type = session_id.map(|sid| {
+                                if self.session_is_local(sid, ctx) {
+                                    RepoDetectionSessionType::Local
+                                } else {
+                                    RepoDetectionSessionType::Remote { session_id: sid }
+                                }
+                            });
                             let Some(session_type) = session_type else {
                                 // Skip detection entirely when session type can't be determined.
                                 self.active_block_metadata = Some(block_metadata.clone());
@@ -10576,6 +10644,7 @@ impl TerminalView {
                                 });
                                 return;
                             };
+                            let is_local = matches!(session_type, RepoDetectionSessionType::Local);
 
                             // For local sessions, convert the shell-native CWD
                             // (e.g. "/c/Users/..." for Git Bash/MSYS2) to a
@@ -10618,6 +10687,7 @@ impl TerminalView {
 
                                 match &repo_path_opt {
                                     Some(LocalOrRemotePath::Remote(remote_path)) => {
+                                        #[cfg(not(target_family = "wasm"))]
                                         DetectedRepositories::handle(ctx).update(
                                             ctx,
                                             |repos, _| {
@@ -13476,7 +13546,9 @@ impl TerminalView {
         self.is_login_shell_bootstrapped
     }
     pub fn has_pending_command_or_awaiting_completion(&self, ctx: &AppContext) -> bool {
-        self.awaiting_pending_command_completion || self.input.as_ref(ctx).has_pending_command()
+        self.awaiting_pending_command_completion
+            || !self.pending_command_queue.is_empty()
+            || self.input.as_ref(ctx).has_pending_command()
     }
 
     /// Marks this terminal to enter agent view once pending setup commands
@@ -14549,6 +14621,27 @@ impl TerminalView {
                 | BlockListMenuSource::RichContentTextRightClick { .. }
                 | BlockListMenuSource::OutsideBlockRightClick { .. }
         ) {
+            // Surface "Clear Blocks" in the right-click menu so it's
+            // discoverable without the keyboard shortcut. We skip
+            // text-selection contexts (`Regular*TextRightClick` /
+            // `RichContentTextRightClick`) because those menus are scoped to
+            // actions on the selected text.
+            let include_clear = matches!(
+                menu_source,
+                BlockListMenuSource::RegularBlockRightClick { .. }
+                    | BlockListMenuSource::RichContentBlockRightClick { .. }
+                    | BlockListMenuSource::OutsideBlockRightClick { .. }
+            );
+            let clear_menu_item = include_clear
+                .then(|| self.clear_buffer_menu_item(&model, ctx))
+                .flatten();
+            if let Some(clear_menu_item) = clear_menu_item {
+                if !items.is_empty() {
+                    items.push(MenuItem::Separator);
+                }
+                items.push(clear_menu_item);
+            }
+
             let current_shell = model.shell_launch_state().available_shell();
             let pane_context_menu_items = self.pane_context_menu_items(current_shell, ctx);
             // Only add the separator if there's something before and after it.
@@ -14561,6 +14654,29 @@ impl TerminalView {
         }
 
         items
+    }
+
+    /// Builds the "Clear Blocks" entry for the terminal right-click context
+    /// menu. Returns `None` when there are no blocks to clear, mirroring the
+    /// `TerminalView_NonEmptyBlockList` predicate that gates the
+    /// `terminal:clear_blocks` keybinding.
+    fn clear_buffer_menu_item(
+        &self,
+        model: &TerminalModel,
+        ctx: &AppContext,
+    ) -> Option<MenuItem<TerminalAction>> {
+        if model.is_block_list_empty() {
+            return None;
+        }
+        Some(
+            MenuItemFields::new("Clear Blocks")
+                .with_on_select_action(TerminalAction::ClearBuffer)
+                .with_key_shortcut_label(keybinding_name_to_display_string(
+                    "terminal:clear_blocks",
+                    ctx,
+                ))
+                .into_item(),
+        )
     }
 
     fn copy_prompt_menu_items(

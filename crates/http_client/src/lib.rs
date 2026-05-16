@@ -422,7 +422,8 @@ impl<'a> RequestBuilder<'a> {
 #[derive(Debug)]
 pub struct ResponseError {
     pub source: reqwest::Error,
-    pub headers: HeaderMap,
+    pub headers: Box<HeaderMap>,
+    pub body: Option<String>,
 }
 
 impl std::fmt::Display for ResponseError {
@@ -469,7 +470,28 @@ impl Response {
         let headers = self.0.headers().clone();
         match self.0.error_for_status() {
             Ok(response) => Ok(Self(response)),
-            Err(source) => Err(ResponseError { source, headers }),
+            Err(source) => Err(ResponseError {
+                source,
+                headers: Box::new(headers),
+                body: None,
+            }),
+        }
+    }
+
+    /// Checks the response status and returns an error if it's not successful.
+    /// Unlike `error_for_status`, this also reads and preserves the response body on errors.
+    pub async fn error_for_status_with_body(self) -> Result<Self, ResponseError> {
+        let headers = self.0.headers().clone();
+        match self.0.error_for_status_ref() {
+            Ok(_) => Ok(self),
+            Err(source) => {
+                let body = self.text().await.ok();
+                Err(ResponseError {
+                    source,
+                    headers: Box::new(headers),
+                    body,
+                })
+            }
         }
     }
 
@@ -479,7 +501,11 @@ impl Response {
         let headers = self.0.headers().clone();
         match self.0.error_for_status_ref() {
             Ok(response) => Ok(response),
-            Err(source) => Err(ResponseError { source, headers }),
+            Err(source) => Err(ResponseError {
+                source,
+                headers: Box::new(headers),
+                body: None,
+            }),
         }
     }
 
