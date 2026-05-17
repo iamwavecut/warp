@@ -13214,6 +13214,7 @@ dependencies = [
  "embed_plist",
  "enclose",
  "enum-iterator",
+ "event-listener",
  "field_mask",
  "flate2",
  "float-cmp",

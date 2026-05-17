@@ -11,7 +11,7 @@ use tempfile::NamedTempFile;
 use warp_cli::agent::Harness;
 use warpui::{ModelHandle, ModelSpawner, SingletonEntity};
 
-use crate::ai::ambient_agents::AmbientAgentTaskId;
+use crate::ai::ambient_agents::{task::HarnessModelConfig, AmbientAgentTaskId};
 use crate::ai::mcp::JSONMCPServer;
 use crate::server::server_api::ServerApi;
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
@@ -81,7 +81,7 @@ pub(crate) trait ThirdPartyHarness: Send + Sync {
         resolved_env_vars: &HashMap<OsString, OsString>,
         resolved_secrets: &HashMap<String, ManagedSecretValue>,
         resolved_mcp_servers: &HashMap<String, JSONMCPServer>,
-        third_party_harness_model_id: Option<&str>,
+        third_party_harness_model_config: Option<&HarnessModelConfig>,
     ) -> Result<Box<dyn HarnessRunner>, AgentDriverError>;
 }
 
@@ -196,10 +196,13 @@ pub(crate) fn task_env_vars(
 /// Claude Code's `settings.json`.
 pub(crate) fn harness_model_env_vars(
     selected_harness: Harness,
-    third_party_harness_model_id: Option<&str>,
+    third_party_harness_model_config: Option<&HarnessModelConfig>,
 ) -> HashMap<OsString, OsString> {
     let mut env_vars = HashMap::new();
-    let Some(model_id) = third_party_harness_model_id.filter(|id| !id.is_empty()) else {
+    let Some(model_id) = third_party_harness_model_config
+        .map(|config| config.model_id.as_str())
+        .filter(|id| !id.is_empty())
+    else {
         return env_vars;
     };
 

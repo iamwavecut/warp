@@ -170,9 +170,8 @@ fn build_merged_config_and_task(
         None => (None, None),
     };
 
-    let harness_override = (args.harness != Harness::Oz).then_some(HarnessConfig {
-        harness_type: args.harness,
-    });
+    let harness_override =
+        (args.harness != Harness::Oz).then_some(HarnessConfig::from_harness_type(args.harness));
 
     let mut merged_config = AgentConfigSnapshot {
         // CLI name > skill name > file name
@@ -375,7 +374,7 @@ impl AgentDriverRunner {
                     secrets: Default::default(),
                     environment: None,
                     selected_harness: args.harness,
-                    third_party_harness_model_id: None,
+                    third_party_harness_model_config: None,
                 };
 
                 Ok((merged_config, task, driver_options))

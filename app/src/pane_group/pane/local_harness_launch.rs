@@ -12,7 +12,7 @@ use crate::ai::{
         },
         task_env_vars, validate_cli_installed,
     },
-    ambient_agents::AmbientAgentTaskId,
+    ambient_agents::{task::HarnessModelConfig, AmbientAgentTaskId},
 };
 use crate::terminal::shell::ShellType;
 use shell_words::quote as shell_quote;
@@ -72,6 +72,13 @@ pub(super) async fn prepare_local_harness_child_launch(
     shell_type: Option<ShellType>,
     startup_directory: Option<PathBuf>,
 ) -> Result<PreparedLocalHarnessLaunch, String> {
+    let harness_model_config =
+        model_id
+            .filter(|id| !id.is_empty())
+            .map(|model_id| HarnessModelConfig {
+                model_id,
+                reasoning_level: None,
+            });
     let Some(harness) = normalize_local_child_harness(&harness_type) else {
         let harness_name = harness_type.trim();
         return Err(if harness_name.is_empty() {
@@ -142,7 +149,10 @@ pub(super) async fn prepare_local_harness_child_launch(
     // Propagate the selected model to Claude Code via ANTHROPIC_MODEL.
     // Codex local children never receive a model override — the UI
     // ensures model_id is empty for local Codex.
-    env_vars.extend(harness_model_env_vars(harness, model_id.as_deref()));
+    env_vars.extend(harness_model_env_vars(
+        harness,
+        harness_model_config.as_ref(),
+    ));
 
     Ok(PreparedLocalHarnessLaunch {
         command,

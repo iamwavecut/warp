@@ -62,8 +62,8 @@ use crate::{
         },
         agent_environments::{AmbientAgentEnvironment, GithubRepo},
         ambient_agents::{
-            conversation_output_status_from_conversation, AmbientAgentTaskId,
-            AmbientConversationStatus,
+            conversation_output_status_from_conversation, task::HarnessModelConfig,
+            AmbientAgentTaskId, AmbientConversationStatus,
         },
         blocklist::{
             agent_view::AgentViewEntryOrigin,
@@ -187,8 +187,8 @@ pub struct AgentDriverOptions {
     pub environment: Option<AmbientAgentEnvironment>,
     /// Selected execution harness for this run.
     pub selected_harness: Harness,
-    /// Optional model override for third-party local harnesses.
-    pub third_party_harness_model_id: Option<String>,
+    /// Model config for the selected harness. Only used for non-Oz harnesses.
+    pub third_party_harness_model_config: Option<HarnessModelConfig>,
 }
 
 /// `AgentDriver` is a model for driving an ambient Warp agent to completion.
@@ -231,8 +231,8 @@ pub struct AgentDriver {
     run_conversation_id: Option<AIConversationId>,
     /// Parent agent run ID for child driver-hosted flows.
     parent_run_id: Option<String>,
-    /// Optional model override for third-party local harnesses.
-    third_party_harness_model_id: Option<String>,
+    /// Model config for the selected harness. Only used for non-Oz harnesses.
+    third_party_harness_model_config: Option<HarnessModelConfig>,
 }
 
 pub(crate) enum SDKConversationOutputStatus {
@@ -369,7 +369,7 @@ impl AgentDriver {
             secrets,
             environment,
             selected_harness,
-            third_party_harness_model_id,
+            third_party_harness_model_config,
         } = options;
 
         safe_info!(
@@ -397,7 +397,7 @@ impl AgentDriver {
         ));
         env_vars.extend(harness_model_env_vars(
             selected_harness,
-            third_party_harness_model_id.as_deref(),
+            third_party_harness_model_config.as_ref(),
         ));
 
         // Signal to third-party harnesses (e.g. Claude Code) that we're in a sandbox
@@ -435,7 +435,7 @@ impl AgentDriver {
             environment,
             run_conversation_id: None,
             parent_run_id: parent_run_id_for_self,
-            third_party_harness_model_id,
+            third_party_harness_model_config,
         })
     }
 
@@ -467,7 +467,7 @@ impl AgentDriver {
             environment: None,
             run_conversation_id: None,
             parent_run_id: None,
-            third_party_harness_model_id: None,
+            third_party_harness_model_config: None,
         }
     }
 
@@ -1590,11 +1590,11 @@ impl AgentDriver {
         let resumption_prompt: Option<String> = None;
         let server_context: Option<String> = None;
 
-        let (secrets, third_party_harness_model_id) = foreground
+        let (secrets, third_party_harness_model_config) = foreground
             .spawn(|me, _| {
                 (
                     Arc::clone(&me.secrets),
-                    me.third_party_harness_model_id.clone(),
+                    me.third_party_harness_model_config.clone(),
                 )
             })
             .await
@@ -1636,7 +1636,7 @@ impl AgentDriver {
                 &resolved_env_vars,
                 &secrets_for_harness,
                 &resolved_mcp_servers,
-                third_party_harness_model_id.as_deref(),
+                third_party_harness_model_config.as_ref(),
             )?
             .into();
 

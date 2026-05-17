@@ -12,7 +12,7 @@ use tempfile::NamedTempFile;
 use warp_cli::agent::Harness;
 use warpui::{ModelHandle, ModelSpawner};
 
-use crate::ai::ambient_agents::AmbientAgentTaskId;
+use crate::ai::ambient_agents::{task::HarnessModelConfig, AmbientAgentTaskId};
 use crate::server::server_api::ServerApi;
 use crate::terminal::CLIAgent;
 use warp_managed_secrets::ManagedSecretValue;
@@ -58,7 +58,7 @@ impl ThirdPartyHarness for GeminiHarness {
         _resolved_env_vars: &HashMap<OsString, OsString>,
         _resolved_secrets: &HashMap<String, ManagedSecretValue>,
         _resolved_mcp_servers: &HashMap<String, JSONMCPServer>,
-        _third_party_harness_model_id: Option<&str>,
+        _third_party_harness_model_config: Option<&HarnessModelConfig>,
     ) -> Result<Box<dyn HarnessRunner>, AgentDriverError> {
         prepare_gemini_environment_config(working_dir, system_prompt).map_err(|error| {
             AgentDriverError::HarnessConfigSetupFailed {

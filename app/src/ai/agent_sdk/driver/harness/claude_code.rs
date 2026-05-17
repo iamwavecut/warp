@@ -14,7 +14,7 @@ use uuid::Uuid;
 use warp_cli::agent::Harness;
 use warpui::{ModelHandle, ModelSpawner};
 
-use crate::ai::ambient_agents::AmbientAgentTaskId;
+use crate::ai::ambient_agents::{task::HarnessModelConfig, AmbientAgentTaskId};
 use crate::ai::mcp::JSONTransportType;
 use crate::server::server_api::ServerApi;
 use crate::terminal::CLIAgent;
@@ -57,7 +57,7 @@ impl ThirdPartyHarness for ClaudeHarness {
         resolved_env_vars: &HashMap<OsString, OsString>,
         _resolved_secrets: &HashMap<String, ManagedSecretValue>,
         resolved_mcp_servers: &HashMap<String, JSONMCPServer>,
-        _third_party_harness_model_id: Option<&str>,
+        _third_party_harness_model_config: Option<&HarnessModelConfig>,
     ) -> Result<Box<dyn HarnessRunner>, AgentDriverError> {
         // Prepare the environment config files.
         prepare_claude_environment_config(working_dir, resolved_env_vars).map_err(|error| {
@@ -265,8 +265,7 @@ pub(crate) fn prepare_claude_environment_config(
     working_dir: &Path,
     resolved_env_vars: &HashMap<OsString, OsString>,
 ) -> Result<()> {
-    let home_dir = claude_home_dir()?;
-    let claude_json_path = home_dir.join(CLAUDE_JSON_FILE_NAME);
+    let claude_json_path = claude_global_config_path()?;
     let claude_settings_path = claude_config_dir()?.join(CLAUDE_SETTINGS_FILE_NAME);
     let api_key_suffix = resolve_anthropic_api_key_suffix(resolved_env_vars);
     prepare_claude_config(&claude_json_path, working_dir, api_key_suffix.as_deref())?;
@@ -274,15 +273,28 @@ pub(crate) fn prepare_claude_environment_config(
     Ok(())
 }
 
-fn claude_home_dir() -> Result<PathBuf> {
-    #[cfg(test)]
-    if let Some(home_dir) = std::env::var_os("HOME") {
-        if !home_dir.as_os_str().is_empty() {
-            return Ok(PathBuf::from(home_dir));
+// This function is used specifically for determining where to land `.claude.json`.
+fn claude_global_config_path() -> Result<PathBuf> {
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+        if !dir.is_empty() {
+            return Ok(PathBuf::from(dir).join(CLAUDE_JSON_FILE_NAME));
         }
     }
 
-    dirs::home_dir().ok_or_else(|| anyhow::anyhow!("could not determine home directory"))
+    home_dir_for_claude_config()
+        .map(|home| home.join(CLAUDE_JSON_FILE_NAME))
+        .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))
+}
+
+fn home_dir_for_claude_config() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(home_dir) = std::env::var_os("HOME") {
+        if !home_dir.is_empty() {
+            return Some(PathBuf::from(home_dir));
+        }
+    }
+
+    dirs::home_dir()
 }
 
 fn claude_config_dir() -> Result<PathBuf> {
