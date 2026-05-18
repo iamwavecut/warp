@@ -612,11 +612,6 @@ impl OrchestrationEventStreamer {
             .map(|e| e.sequence)
             .max()
             .unwrap_or(previous_cursor);
-        self.streams
-            .entry(conversation_id)
-            .or_default()
-            .event_cursor = max_seq;
-
         // Advance the cursor before filtering so dropped killed-run events
         // are not replayed later.
         BlocklistAIHistoryModel::handle(ctx).update(ctx, |model, ctx| {

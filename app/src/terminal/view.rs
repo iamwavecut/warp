@@ -12621,9 +12621,9 @@ impl TerminalView {
             return;
         }
 
-        // The MeetTerminalInput step expects terminal mode. If the default
-        // session mode is Agent (e.g. from cloud-synced settings), the tab
-        // may already be in agent view — exit it first.
+        // The terminal-mode onboarding step expects terminal mode. If the default
+        // session mode is Agent, the tab may already be in agent view — exit it
+        // first.
         self.exit_agent_view(ctx);
 
         // Remove the terminal zero-state welcome block so it doesn't appear
@@ -23761,9 +23761,9 @@ impl TypedActionView for TerminalView {
                         self.add_agentic_suggestions_block(ctx);
                     }
                     OnboardingVersion::Agent(agent_version) => {
-                        // The MeetTerminalInput step expects terminal mode. If the
-                        // default session mode is Agent (e.g. cloud-synced settings),
-                        // the tab may already be in agent view — exit it first.
+                        // The terminal-mode onboarding step expects terminal mode. If
+                        // the default session mode is Agent, the tab may already be in
+                        // agent view — exit it first.
                         // This also removes any zero-state welcome blocks.
                         self.exit_agent_view(ctx);
                         self.start_agent_onboarding_tutorial(*agent_version, ctx);

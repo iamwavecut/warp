@@ -218,7 +218,7 @@ impl TerminalView {
         let is_fullscreen_agent_view = self.agent_view_controller.as_ref(app).is_fullscreen();
 
         if in_nav_stack || (is_fullscreen_agent_view && has_parent_terminal) {
-            if FeatureFlag::Orchestration.is_enabled() {
+            if FeatureFlag::OrchestrationV2.is_enabled() {
                 Flex::row()
                     .with_cross_axis_alignment(CrossAxisAlignment::Center)
                     .with_child(ChildView::new(&self.agent_view_back_button).finish())
@@ -436,7 +436,7 @@ impl TerminalView {
     }
 
     fn render_parent_conversation_header_card(&self, app: &AppContext) -> Option<Box<dyn Element>> {
-        if !(FeatureFlag::Orchestration.is_enabled()
+        if !(FeatureFlag::OrchestrationV2.is_enabled()
             && FeatureFlag::AgentView.is_enabled()
             && self.agent_view_controller.as_ref(app).is_fullscreen())
         {
@@ -514,7 +514,7 @@ impl TerminalView {
                 .finish();
         }
 
-        if !FeatureFlag::Orchestration.is_enabled() {
+        if !FeatureFlag::OrchestrationV2.is_enabled() {
             return header;
         }
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::auth::AuthStateProvider;
 use crate::test_util::settings::initialize_settings_for_tests;
 use warpui::{App, SingletonEntity};
 
@@ -77,6 +78,11 @@ fn ranked_custom_provider_model_suggestions_excludes_selected_models() {
     );
 
     assert_eq!(suggestions, vec!["qwen2.5-coder".to_string()]);
+}
+
+fn add_ai_enablement_dependencies_for_test(app: &mut App) {
+    app.add_singleton_model(|_| AuthStateProvider::new_for_test());
+    app.add_singleton_model(UserWorkspaces::default_mock);
 }
 
 // FocusedTerminalInfo Tests

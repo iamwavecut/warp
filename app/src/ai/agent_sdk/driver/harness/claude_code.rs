@@ -129,6 +129,7 @@ enum ClaudeRunnerState {
 
 struct ClaudeHarnessRunner {
     command: String,
+    cli_name: String,
     /// Held so the temp file is cleaned up when the runner is dropped.
     _temp_prompt_file: NamedTempFile,
     /// Held so the system prompt temp file is cleaned up when the runner is dropped.
@@ -179,6 +180,7 @@ impl ClaudeHarnessRunner {
                 system_prompt_path.as_deref(),
                 mcp_config_path.as_deref(),
             ),
+            cli_name: cli_command.to_string(),
             _temp_prompt_file: temp_file,
             _temp_system_prompt_file: temp_system_prompt_file,
             terminal_driver,
@@ -190,6 +192,10 @@ impl ClaudeHarnessRunner {
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 impl HarnessRunner for ClaudeHarnessRunner {
+    fn harness_name(&self) -> &str {
+        &self.cli_name
+    }
+
     async fn start(
         &self,
         foreground: &ModelSpawner<AgentDriver>,

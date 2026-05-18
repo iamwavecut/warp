@@ -2231,7 +2231,6 @@ pub fn init_feature_flags() {
         FeatureFlag::NamedAgents,
         FeatureFlag::GitCredentialRefresh,
         FeatureFlag::OrchestrationV2,
-        FeatureFlag::Orchestration,
         FeatureFlag::OrchestrationPillBar,
         FeatureFlag::OrchestrationViewerPillBar,
         FeatureFlag::OzLaunchModal,
@@ -2592,8 +2591,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::ConversationsAsContext,
         #[cfg(feature = "incremental_auto_reload")]
         FeatureFlag::IncrementalAutoReload,
-        #[cfg(feature = "orchestration")]
-        FeatureFlag::Orchestration,
         #[cfg(feature = "orchestration_v2")]
         FeatureFlag::OrchestrationV2,
         #[cfg(feature = "orchestration_pill_bar")]

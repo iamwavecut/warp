@@ -55,6 +55,7 @@ use crate::terminal::cli_agent_sessions::plugin_manager::{
 use crate::terminal::cli_agent_sessions::{
     CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
+use crate::terminal::model::BlockId;
 use crate::{
     ai::{
         agent::{
@@ -88,6 +89,7 @@ use crate::{
 pub(crate) mod environment;
 mod error_classification;
 pub(crate) mod harness;
+mod harness_output_monitor;
 pub(super) mod output;
 pub(crate) mod terminal;
 
@@ -96,6 +98,8 @@ use terminal::TerminalDriverEvent;
 
 const MCP_SERVER_STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const HARNESS_SAVE_INTERVAL: Duration = Duration::from_secs(30);
+/// Timeout for individual harness auth preflight commands.
+const PREFLIGHT_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const SETUP_FAILED_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// Maximum time to wait for an automatic error resume before propagating the error.
 /// If no follow-up status arrives within this window, the driver terminates with the
@@ -337,6 +341,20 @@ pub enum AgentDriverError {
         harness: String,
         #[source]
         error: anyhow::Error,
+    },
+    #[error("Harness '{harness}' auth preflight failed")]
+    HarnessAuthCheckFailed {
+        harness: String,
+        /// Stderr/stdout captured from the failing command, for logs.
+        detail: String,
+    },
+    #[error("Harness '{harness}' reported a runtime failure matching '{pattern}'")]
+    HarnessRuntimeFailureDetected {
+        harness: String,
+        /// The originating needle from `runtime_error_patterns` that hit.
+        pattern: String,
+        /// Matching row(s) from the harness block, trimmed and capped.
+        excerpt: String,
     },
 }
 
@@ -1508,6 +1526,7 @@ impl AgentDriver {
             }
             HarnessKind::ThirdParty(harness) => {
                 let harness_exit_rx = Self::setup_harness(harness.as_ref(), &foreground).await?;
+                let runtime_error_patterns = harness.runtime_error_patterns();
                 let runner = Self::prepare_harness(
                     &task.prompt,
                     &task.mcp_specs,
@@ -1515,8 +1534,10 @@ impl AgentDriver {
                     &foreground,
                 )
                 .await?;
+                Self::run_preflight_checks(harness.as_ref(), &foreground).await?;
 
-                Self::run_harness(runner, &foreground, harness_exit_rx).await
+                Self::run_harness(runner, runtime_error_patterns, &foreground, harness_exit_rx)
+                    .await
             }
             HarnessKind::Unsupported(harness) => Err(AgentDriverError::HarnessSetupFailed {
                 harness: harness.to_string(),
@@ -1524,6 +1545,95 @@ impl AgentDriver {
                     "The {harness} harness is only supported for local child agent launches."
                 ),
             }),
+        }
+    }
+
+    /// Run the authentication preflight check for a third-party harness.
+    ///
+    /// Uses `execute_command` so the check appears as a collapsible block in
+    /// the shared session UI, mirroring how environment setup commands
+    /// surface.
+    async fn run_preflight_checks(
+        harness: &dyn ThirdPartyHarness,
+        foreground: &ModelSpawner<Self>,
+    ) -> Result<(), AgentDriverError> {
+        let harness_name = harness.cli_agent().command_prefix().to_owned();
+
+        if let Some(cmd) = harness.auth_check_command() {
+            log::info!("Running auth check for {harness_name}: {cmd}");
+            Self::run_single_preflight(&cmd, &harness_name, foreground).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Run a single preflight check command and return an error if it fails.
+    async fn run_single_preflight(
+        command: &str,
+        harness_name: &str,
+        foreground: &ModelSpawner<Self>,
+    ) -> Result<(), AgentDriverError> {
+        let cmd = command.to_owned();
+        let start_future = foreground
+            .spawn(move |me, ctx| {
+                me.terminal_driver
+                    .update(ctx, |driver, ctx| driver.execute_command(&cmd, ctx))
+            })
+            .await??;
+
+        let command_handle = start_future.await?;
+        let block_id = command_handle.block_id().clone();
+
+        let exit_code = match command_handle.with_timeout(PREFLIGHT_CHECK_TIMEOUT).await {
+            Err(TimeoutError) => {
+                log::error!("Preflight auth check timed out for {harness_name}");
+                return Err(AgentDriverError::HarnessAuthCheckFailed {
+                    harness: harness_name.to_owned(),
+                    detail: "command timed out".to_owned(),
+                });
+            }
+            Ok(result) => result?,
+        };
+
+        if !exit_code.was_successful() {
+            let output_text = Self::fetch_preflight_block_output(&block_id, foreground).await;
+            let detail = if output_text.is_empty() {
+                format!("exit code {}", exit_code.value())
+            } else {
+                format!("exit code {}: {}", exit_code.value(), output_text)
+            };
+            safe_error!(
+                safe: (
+                    "Preflight auth check failed for {harness_name} (exit code {})",
+                    exit_code.value()
+                ),
+                full: ("Preflight auth check failed for {harness_name}. {detail}")
+            );
+            return Err(AgentDriverError::HarnessAuthCheckFailed {
+                harness: harness_name.to_owned(),
+                detail,
+            });
+        }
+
+        log::info!("Preflight auth check passed for {harness_name}");
+        Ok(())
+    }
+
+    async fn fetch_preflight_block_output(
+        block_id: &BlockId,
+        foreground: &ModelSpawner<Self>,
+    ) -> String {
+        let block_id = block_id.clone();
+        let plaintext = foreground
+            .spawn(move |me, ctx| {
+                me.terminal_driver
+                    .as_ref(ctx)
+                    .block_output_plaintext(&block_id, ctx)
+            })
+            .await;
+        match plaintext {
+            Ok(Some(text)) => text.trim().to_owned(),
+            Ok(None) | Err(_) => String::new(),
         }
     }
 
@@ -1652,14 +1762,39 @@ impl AgentDriver {
     ///
     /// The `harness_exit_rx` oneshot fires when the subscription determines it's
     /// time to exit (either immediately on completion or after the idle timeout).
+    ///
+    /// While the harness runs, a background scanner watches its block for
+    /// known runtime failure substrings (e.g. invalid API key, exhausted
+    /// credits). If one is detected we send `/exit` to the harness and
+    /// synthesize a [`AgentDriverError::HarnessRuntimeFailureDetected`]
+    /// failure that is surfaced through the same task-status error code used
+    /// by the auth preflight.
     async fn run_harness(
         runner: Arc<dyn harness::HarnessRunner>,
+        runtime_error_patterns: &'static [&'static str],
         foreground: &ModelSpawner<Self>,
         harness_exit_rx: oneshot::Receiver<()>,
     ) -> Result<(), AgentDriverError> {
+        let harness_name = runner.harness_name().to_owned();
+
         // Start the third-party harness.
-        let mut command_handle = runner.start(foreground).await?.fuse();
+        let command_handle = runner.start(foreground).await?;
+        let block_id = command_handle.block_id().clone();
+        let mut command_handle = command_handle.fuse();
         let mut harness_exit_rx = harness_exit_rx.fuse();
+
+        let scanner_fut = harness_output_monitor::watch_block_for_errors(
+            block_id,
+            runtime_error_patterns,
+            foreground,
+        )
+        .fuse();
+        futures::pin_mut!(scanner_fut);
+
+        // Detected runtime error, if any. Promoted to the final return
+        // value below after final-save + cleanup run.
+        let mut detected_runtime_failure: Option<harness_output_monitor::DetectedHarnessError> =
+            None;
 
         // Periodically save the conversation while the command is running and handle
         // exiting gracefully once the idle timeout elapses.
@@ -1680,6 +1815,48 @@ impl AgentDriver {
                         .await
                         .context("Failed to exit harness"));
                 }
+                detected = scanner_fut => {
+                    if let Some(error) = detected {
+                        log::warn!(
+                            "Runtime failure detected for {harness_name}: pattern={}, excerpt={}",
+                            error.pattern,
+                            error.excerpt,
+                        );
+                        let session_status = foreground
+                            .spawn(|me, ctx| {
+                                let view_id =
+                                    me.terminal_driver.as_ref(ctx).terminal_view().id();
+                                CLIAgentSessionsModel::handle(ctx)
+                                    .as_ref(ctx)
+                                    .session(view_id)
+                                    .map(|session| session.status.clone())
+                            })
+                            .await
+                            .ok()
+                            .flatten();
+                        if harness_output_monitor::should_suppress_runtime_failure(
+                            session_status.as_ref(),
+                        ) {
+                            log::info!(
+                                "Ignoring runtime failure for {harness_name}: \
+                                 session already marked Success (pattern={}, excerpt={})",
+                                error.pattern,
+                                error.excerpt,
+                            );
+                        } else {
+                            report_if_error!(runner
+                                .exit(foreground)
+                                .await
+                                .context(
+                                    "Failed to exit harness after runtime failure detection",
+                                ));
+                            detected_runtime_failure = Some(error);
+                        }
+                    }
+                    // When the schedule exhausts without a hit, the `Fuse`
+                    // wrapper makes this branch stay Pending forever, so
+                    // we don't busy-loop.
+                }
             }
         };
 
@@ -1697,6 +1874,7 @@ impl AgentDriver {
             }
         };
         let cleanup_disposition = if final_save_succeeded
+            && detected_runtime_failure.is_none()
             && matches!(command_result.as_ref(), Ok(exit_code) if exit_code.was_successful())
         {
             HarnessCleanupDisposition::PreserveResumptionStateIfSupported
@@ -1709,6 +1887,17 @@ impl AgentDriver {
             .context("Failed to clean up harness runtime state")
         {
             report_error!(err);
+        }
+
+        // A runtime failure detected mid-run takes precedence over the
+        // harness's own exit code: surface the actionable detail rather
+        // than a generic "exit code N".
+        if let Some(error) = detected_runtime_failure {
+            return Err(AgentDriverError::HarnessRuntimeFailureDetected {
+                harness: harness_name,
+                pattern: error.pattern,
+                excerpt: error.excerpt,
+            });
         }
 
         let exit_code = command_result?;

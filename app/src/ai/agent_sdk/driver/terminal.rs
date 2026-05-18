@@ -14,7 +14,11 @@ use warp_core::command::ExitCode;
 use warp_util::{path::ShellFamily, sync::Condition};
 use warpui::{r#async::FutureExt, AppContext, Entity, ModelContext, ModelHandle, ViewHandle};
 
-use crate::terminal::model::session::ExecuteCommandOptions;
+use crate::terminal::model::{
+    block::BlockId, find::RegexDFAs, grid::RespectDisplayedOutput, index::Point,
+    session::ExecuteCommandOptions, RespectObfuscatedSecrets,
+};
+use warp_terminal::model::grid::Dimensions;
 
 use crate::{
     ai::ambient_agents::AmbientAgentTaskId,
@@ -59,7 +63,7 @@ pub(crate) struct TerminalDriver {
     /// State for the pending command we're expecting to start executing.
     /// The `String` is the expected command text, and the sender is used
     /// to notify the waiting caller once the command has a block.
-    pending_command_start: Option<(String, oneshot::Sender<()>)>,
+    pending_command_start: Option<(String, oneshot::Sender<BlockId>)>,
 }
 
 impl Entity for TerminalDriver {
@@ -192,6 +196,54 @@ impl TerminalDriver {
         });
     }
 
+    /// Full visible plaintext of `block_id`'s output grid (no ANSI escape sequences).
+    pub fn block_output_plaintext(&self, block_id: &BlockId, ctx: &AppContext) -> Option<String> {
+        let terminal = self.terminal_view.as_ref(ctx);
+        let model = terminal.model.lock();
+        let block = model.block_list().block_with_id(block_id)?;
+        Some(block.output_grid().contents_to_string(
+            false, // include_escape_sequences
+            None,  // max_rows: full visible output
+        ))
+    }
+
+    pub fn find_first_match_in_block_output(
+        &self,
+        block_id: &BlockId,
+        dfas: &RegexDFAs,
+        ctx: &AppContext,
+    ) -> Option<BlockOutputMatch> {
+        let terminal = self.terminal_view.as_ref(ctx);
+        let model = terminal.model.lock();
+        let block = model.block_list().block_with_id(block_id)?;
+        let grid = block.output_grid();
+        let m = grid.find(dfas).next()?;
+        let handler = grid.grid_handler();
+        let matched_text = handler.bounds_to_string(
+            *m.start(),
+            *m.end(),
+            false, // include_esc_sequences
+            RespectObfuscatedSecrets::Yes,
+            false, // force_secrets_obfuscated
+            RespectDisplayedOutput::Yes,
+        );
+        let cols = handler.columns();
+        let row_start = Point::new(m.start().row, 0);
+        let row_end = Point::new(m.end().row, cols.saturating_sub(1));
+        let excerpt = handler.bounds_to_string(
+            row_start,
+            row_end,
+            false,
+            RespectObfuscatedSecrets::Yes,
+            false,
+            RespectDisplayedOutput::Yes,
+        );
+        Some(BlockOutputMatch {
+            matched_text: matched_text.trim().to_owned(),
+            excerpt: excerpt.trim().to_owned(),
+        })
+    }
+
     /// Execute a command in the terminal and return a future that resolves to a
     /// [`CommandHandle`] once the command starts executing.
     pub fn execute_command(
@@ -201,7 +253,7 @@ impl TerminalDriver {
     ) -> Result<impl Future<Output = Result<CommandHandle, AgentDriverError>>, AgentDriverError>
     {
         let (exit_tx, exit_rx) = oneshot::channel::<ExitCode>();
-        let (start_tx, start_rx) = oneshot::channel::<()>();
+        let (start_tx, start_rx) = oneshot::channel::<BlockId>();
 
         // We should not be able to execute a command while we are still waiting on another one.
         // This is enforced by the caller by waiting on rx before continuing.
@@ -217,11 +269,12 @@ impl TerminalDriver {
         });
 
         Ok(async move {
-            start_rx
+            let block_id = start_rx
                 .await
                 .map_err(|_| AgentDriverError::InvalidRuntimeState)?;
             Ok(CommandHandle {
                 exit_status_rx: exit_rx,
+                block_id,
             })
         })
     }
@@ -335,11 +388,32 @@ impl TerminalDriver {
     }
 }
 
+/// The first DFA match returned by
+/// [`TerminalDriver::find_first_match_in_block_output`].
+///
+/// `matched_text` is the exact substring from the grid (no ANSI escapes),
+/// used by the harness output monitor to map the hit back to the originating
+/// pattern. `excerpt` is the full row(s) containing the match, also as
+/// plaintext, suitable for surfacing in user-visible error messages.
+#[derive(Debug, Clone)]
+pub(crate) struct BlockOutputMatch {
+    pub matched_text: String,
+    pub excerpt: String,
+}
+
 /// A handle to a running terminal command.
 ///
 /// Resolves to the command's [`ExitCode`] when the block completes.
 pub(crate) struct CommandHandle {
     exit_status_rx: oneshot::Receiver<ExitCode>,
+    block_id: BlockId,
+}
+
+impl CommandHandle {
+    /// The block ID of the command that was executed.
+    pub fn block_id(&self) -> &BlockId {
+        &self.block_id
+    }
 }
 
 impl Future for CommandHandle {
@@ -371,7 +445,10 @@ impl TerminalDriver {
                     .pending_command_start
                     .take_if(|(cmd, _)| *cmd == event.command)
                 {
-                    let _ = sender.send(());
+                    let block_id = self.terminal_view.read(ctx, |terminal, _| {
+                        terminal.model.lock().block_list().active_block_id().clone()
+                    });
+                    let _ = sender.send(block_id);
                 }
             }
             crate::terminal::view::Event::BlockCompleted { block, .. } => {

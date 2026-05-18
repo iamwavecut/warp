@@ -55,6 +55,18 @@ pub(crate) trait ThirdPartyHarness: Send + Sync {
         validate_cli_installed(self.cli_agent().command_prefix(), self.install_docs_url())
     }
 
+    /// Optional read-only command that checks local CLI credentials before the
+    /// main harness command starts.
+    fn auth_check_command(&self) -> Option<String> {
+        None
+    }
+
+    /// Plaintext markers that indicate the running local harness cannot make
+    /// successful provider API requests.
+    fn runtime_error_patterns(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// Build a runner for executing this harness with the given prompt.
     ///
     /// Responsible for all harness-specific setup: writing config files (auth,
@@ -126,6 +138,23 @@ pub(crate) fn harness_kind(harness: Harness) -> Result<HarnessKind, AgentDriverE
         Harness::Gemini => Ok(HarnessKind::ThirdParty(Box::new(GeminiHarness))),
         Harness::Unknown => Err(AgentDriverError::InvalidRuntimeState),
     }
+}
+
+/// Returns the harness's auth-check preflight command, if any.
+///
+/// The viewer uses this to recognize preflight blocks via exact string
+/// equality (so they stay grouped under "Set up environment commands"
+/// rather than being mistaken for the main harness invocation, which
+/// shares the same CLI prefix).
+///
+/// Returns `None` for [`Harness::Oz`], for unsupported harnesses, and
+/// for any third-party harness whose `auth_check_command` returns `None`
+/// (e.g. Gemini today).
+pub(crate) fn auth_check_command_for(harness: Harness) -> Option<String> {
+    let HarnessKind::ThirdParty(third_party) = harness_kind(harness).ok()? else {
+        return None;
+    };
+    third_party.auth_check_command()
 }
 
 /// Check that `cli` is installed and on PATH, returning a `HarnessSetupFailed`
@@ -251,6 +280,9 @@ pub(crate) enum HarnessCleanupDisposition {
 #[cfg_attr(not(target_family = "wasm"), async_trait)]
 #[cfg_attr(target_family = "wasm", async_trait(?Send))]
 pub(crate) trait HarnessRunner: Send + Sync {
+    /// Name of the local CLI command this runner starts.
+    fn harness_name(&self) -> &str;
+
     /// Start the harness command in the local terminal.
     ///
     /// Returns a [`CommandHandle`] that resolves to the exit code. The runner
