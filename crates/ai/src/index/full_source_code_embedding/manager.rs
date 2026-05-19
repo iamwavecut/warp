@@ -90,7 +90,9 @@ pub enum CodebaseIndexManagerEvent {
         retrieval_id: RetrievalID,
         error_message: String,
     },
-    SyncStateUpdated,
+    SyncStateUpdated {
+        root_path: PathBuf,
+    },
     IndexMetadataUpdated {
         root_path: PathBuf,
         event: WorkspaceMetadataEvent,
@@ -98,7 +100,9 @@ pub enum CodebaseIndexManagerEvent {
     RemoveExpiredIndexMetadata {
         expired_metadata: Arc<Vec<PathBuf>>,
     },
-    NewIndexCreated,
+    NewIndexCreated {
+        root_path: PathBuf,
+    },
 }
 
 /// User-facing indexing errors.
@@ -174,6 +178,75 @@ impl CodebaseIndexStatus {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct CodebaseIndexStatusEventKey {
+    has_pending: bool,
+    has_synced_version: bool,
+    last_sync_status: Option<CodebaseIndexFinishedStatusEventKey>,
+    sync_progress: Option<SyncProgressEventKey>,
+    root_hash: Option<String>,
+}
+
+impl From<&CodebaseIndexStatus> for CodebaseIndexStatusEventKey {
+    fn from(status: &CodebaseIndexStatus) -> Self {
+        Self {
+            has_pending: status.has_pending,
+            has_synced_version: status.has_synced_version,
+            last_sync_status: status
+                .last_sync_successful
+                .as_ref()
+                .map(CodebaseIndexFinishedStatusEventKey::from),
+            sync_progress: status
+                .sync_progress
+                .as_ref()
+                .map(SyncProgressEventKey::from),
+            root_hash: status.root_hash.as_ref().map(ToString::to_string),
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum CodebaseIndexFinishedStatusEventKey {
+    Completed,
+    Failed(String),
+}
+
+impl From<&CodebaseIndexFinishedStatus> for CodebaseIndexFinishedStatusEventKey {
+    fn from(status: &CodebaseIndexFinishedStatus) -> Self {
+        match status {
+            CodebaseIndexFinishedStatus::Completed => Self::Completed,
+            CodebaseIndexFinishedStatus::Failed(error) => Self::Failed(error.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum SyncProgressEventKey {
+    Discovering {
+        total_nodes: usize,
+    },
+    Syncing {
+        completed_nodes: usize,
+        total_nodes: usize,
+    },
+}
+
+impl From<&SyncProgress> for SyncProgressEventKey {
+    fn from(progress: &SyncProgress) -> Self {
+        match progress {
+            SyncProgress::Discovering { total_nodes } => Self::Discovering {
+                total_nodes: *total_nodes,
+            },
+            SyncProgress::Syncing {
+                completed_nodes,
+                total_nodes,
+            } => Self::Syncing {
+                completed_nodes: *completed_nodes,
+                total_nodes: *total_nodes,
+            },
+        }
+    }
+}
 pub enum BuildSource<'a> {
     FromPath(&'a Path),
     FromPersistedMetadata(WorkspaceMetadata),
@@ -210,6 +283,8 @@ impl CodebaseIndexManagerConfig {
 /// Manager for the codebase index states across the app.
 pub struct CodebaseIndexManager {
     codebase_indices: HashMap<PathBuf, ModelHandle<CodebaseIndex>>,
+
+    last_emitted_codebase_index_statuses: HashMap<PathBuf, CodebaseIndexStatusEventKey>,
 
     store_client: Arc<dyn StoreClient>,
 
@@ -306,6 +381,7 @@ impl CodebaseIndexManager {
 
             return Self {
                 codebase_indices: HashMap::new(),
+                last_emitted_codebase_index_statuses: HashMap::new(),
                 store_client,
                 #[cfg(feature = "local_fs")]
                 watcher: file_watcher,
@@ -349,6 +425,7 @@ impl CodebaseIndexManager {
 
         let mut me = Self {
             codebase_indices: HashMap::new(),
+            last_emitted_codebase_index_statuses: HashMap::new(),
             store_client,
             #[cfg(feature = "local_fs")]
             watcher: file_watcher,
@@ -375,6 +452,7 @@ impl CodebaseIndexManager {
         let file_watcher = ctx.add_model(|_| BulkFilesystemWatcher::new_for_test());
         Self {
             codebase_indices: HashMap::new(),
+            last_emitted_codebase_index_statuses: HashMap::new(),
             store_client,
             #[cfg(feature = "local_fs")]
             watcher: file_watcher,
@@ -484,6 +562,7 @@ impl CodebaseIndexManager {
 
         // Drop the in-memory index.
         self.codebase_indices.remove(root_path);
+        self.last_emitted_codebase_index_statuses.remove(root_path);
 
         // Stop the filewatcher from receiving events for this codebase.
         #[cfg(feature = "local_fs")]
@@ -734,16 +813,24 @@ impl CodebaseIndexManager {
         self.indexing_enabled
     }
 
-    pub fn index_directory(&mut self, directory: PathBuf, ctx: &mut ModelContext<Self>) {
+    pub fn index_directory(&mut self, directory: PathBuf, ctx: &mut ModelContext<Self>) -> bool {
         if !self.is_indexing_enabled() {
-            return;
+            return false;
         }
-        let directory = dunce::canonicalize(&directory).unwrap_or(directory);
-        if !self.codebase_indices.contains_key(&directory) {
-            self.build_and_sync_codebase_index(BuildSource::FromPath(&directory), ctx);
+        if self.root_path_for_codebase(&directory).is_none() {
+            if !self.build_and_sync_codebase_index(BuildSource::FromPath(&directory), ctx) {
+                return false;
+            }
+            let indexed_directory = self
+                .root_path_for_codebase(&directory)
+                .unwrap_or_else(|| directory.clone());
+            self.record_codebase_index_status(&indexed_directory, ctx);
             // Starting a new codebase index should be considered into sync state updates.
-            ctx.emit(CodebaseIndexManagerEvent::SyncStateUpdated);
+            ctx.emit(CodebaseIndexManagerEvent::NewIndexCreated {
+                root_path: indexed_directory,
+            });
         }
+        true
     }
 
     #[cfg(feature = "local_fs")]
@@ -783,12 +870,12 @@ impl CodebaseIndexManager {
         &mut self,
         build_source: BuildSource,
         ctx: &mut ModelContext<Self>,
-    ) {
+    ) -> bool {
         if !self.is_indexing_enabled() {
-            return;
+            return false;
         }
         if !self.can_create_new_indices() {
-            return;
+            return false;
         }
 
         let repo_path = match build_source {
@@ -803,7 +890,7 @@ impl CodebaseIndexManager {
                 Ok(path) => path,
                 Err(e) => {
                     log::error!("Failed to canonicalize repository path: {e:?}");
-                    return;
+                    return false;
                 }
             };
 
@@ -814,7 +901,7 @@ impl CodebaseIndexManager {
             Ok(handle) => handle,
             Err(e) => {
                 log::error!("Failed to start tracking repository: {e:?}");
-                return;
+                return false;
             }
         };
 
@@ -849,6 +936,7 @@ impl CodebaseIndexManager {
                 index.update_timestamps_from_metadata(metadata);
             });
         }
+        true
     }
 
     /// Checks whether a snapshot exists for the index and attempts to load it;
@@ -933,8 +1021,8 @@ impl CodebaseIndexManager {
                 fragments: fragments.clone(),
                 out_of_sync_delay: *out_of_sync_delay,
             }),
-            CodebaseIndexEvent::SyncStateUpdated => {
-                ctx.emit(CodebaseIndexManagerEvent::SyncStateUpdated)
+            CodebaseIndexEvent::SyncStateUpdated { root_path } => {
+                self.maybe_emit_sync_state_updated(root_path, ctx);
             }
             CodebaseIndexEvent::IndexMetadataUpdated { root_path, event } => {
                 ctx.emit(CodebaseIndexManagerEvent::IndexMetadataUpdated {
@@ -961,6 +1049,34 @@ impl CodebaseIndexManager {
                 if !has_pending_change {
                     self.write_snapshot(repo_path, ctx);
                 }
+            }
+        }
+    }
+
+    fn maybe_emit_sync_state_updated(&mut self, root_path: &Path, ctx: &mut ModelContext<Self>) {
+        if self.record_codebase_index_status(root_path, ctx) {
+            ctx.emit(CodebaseIndexManagerEvent::SyncStateUpdated {
+                root_path: root_path.to_path_buf(),
+            });
+        }
+    }
+
+    fn record_codebase_index_status(
+        &mut self,
+        root_path: &Path,
+        ctx: &mut ModelContext<Self>,
+    ) -> bool {
+        let root_path = dunce::canonicalize(root_path).unwrap_or_else(|_| root_path.to_path_buf());
+        let Some(status) = self.get_codebase_index_status_for_path(root_path.as_path(), ctx) else {
+            return false;
+        };
+        let key = CodebaseIndexStatusEventKey::from(&status);
+        match self.last_emitted_codebase_index_statuses.get(&root_path) {
+            Some(previous_key) if previous_key == &key => false,
+            Some(_) | None => {
+                self.last_emitted_codebase_index_statuses
+                    .insert(root_path, key);
+                true
             }
         }
     }
@@ -1183,7 +1299,7 @@ impl CodebaseIndexManager {
         codebase_index.update(ctx, |index, _ctx| {
             // Check if the index is in a state where it can perform incremental updates
             let status = index.codebase_index_status();
-            if status.has_pending {
+            if status.last_sync_successful() != Some(true) {
                 return;
             }
 

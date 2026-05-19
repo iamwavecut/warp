@@ -1145,7 +1145,7 @@ pub(crate) fn initialize_app(
 
     if matches!(launch_mode, LaunchMode::RemoteServerDaemon { .. }) {
         let codebase_index_count = persisted_workspaces.len();
-        log::info!(
+        log::debug!(
             "[Remote codebase indexing] Restored daemon codebase index metadata: metadata_count={codebase_index_count}"
         );
         cloud_objects = Default::default();
@@ -2238,6 +2238,7 @@ pub fn init_feature_flags() {
         FeatureFlag::CloudModeSetupV2,
         FeatureFlag::CloudModeInputV2,
         FeatureFlag::RemoteCodebaseIndexing,
+        FeatureFlag::RemoteCodeReview,
         FeatureFlag::AmbientAgentsRTC,
         FeatureFlag::SshRemoteServer,
         FeatureFlag::CreatingSharedSessions,
@@ -2647,6 +2648,8 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::ConfigurableContextWindow,
         #[cfg(feature = "git_credential_refresh")]
         FeatureFlag::GitCredentialRefresh,
+        #[cfg(feature = "remote_code_review")]
+        FeatureFlag::RemoteCodeReview,
     ]);
 
     flags

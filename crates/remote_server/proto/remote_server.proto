@@ -334,6 +334,11 @@ message IndexCodebase {
 message ResyncCodebase {
   string repo_path = 1;
   string auth_token = 2;
+  CodebaseResyncMode mode = 3;
+}
+enum CodebaseResyncMode {
+  CODEBASE_RESYNC_MODE_FULL = 0;
+  CODEBASE_RESYNC_MODE_INCREMENTAL = 1;
 }
 
 message DropCodebaseIndex {
@@ -397,7 +402,6 @@ enum CodebaseIndexStatusState {
   CODEBASE_INDEX_STATUS_STATE_STALE = 7;
   CODEBASE_INDEX_STATUS_STATE_FAILED = 8;
 }
-
 message CodebaseIndexStatus {
   string repo_path = 1;
   CodebaseIndexStatusState state = 2;

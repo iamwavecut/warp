@@ -4,9 +4,10 @@ use diesel::SqliteConnection;
 #[cfg(feature = "local_fs")]
 use parking_lot::Mutex;
 use pathfinder_geometry::vector::vec2f;
+use std::collections::HashMap;
+use std::path::Path;
 #[cfg(feature = "local_fs")]
 use std::sync::Arc;
-use std::{collections::HashMap, path::Path};
 use uuid::Uuid;
 use warp_core::ui::{appearance::Appearance, theme::color::internal_colors};
 use warp_editor::{
@@ -159,7 +160,7 @@ impl MCPServersEditPageView {
                     true,
                 ),
             );
-            editor.set_language_with_path(Path::new("mcp.json"), ctx);
+            editor.set_language_with_local_path(Path::new("/mcp.json"), ctx);
             editor
         });
 

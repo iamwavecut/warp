@@ -16,6 +16,8 @@ pub(crate) mod attachment_utils;
 pub mod aws_credentials;
 pub(crate) mod block_context;
 pub(crate) mod blocklist;
+#[cfg(any(feature = "local_fs", not(target_family = "wasm")))]
+pub(crate) mod codebase_auto_indexing;
 pub mod control_code_parser;
 pub(crate) mod conversation_details_panel;
 pub(crate) mod conversation_navigation;
