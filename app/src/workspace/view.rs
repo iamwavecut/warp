@@ -359,9 +359,8 @@ use warpui::ui_components::button::Button;
 use warpui::windowing::{StateEvent, WindowManager};
 use warpui::{elements::MouseStateHandle, fonts::Properties};
 
-use crate::channel::ChannelState;
-
 use crate::ai::blocklist::{BlocklistAIHistoryEvent, PendingQueryState, SerializedBlockListItem};
+use crate::channel::ChannelState;
 use crate::editor::{
     EditorView, Event as EditorEvent, PropagateAndNoOpNavigationKeys, SingleLineEditorOptions,
     TextOptions,
@@ -7715,6 +7714,7 @@ impl Workspace {
         .with_padding_override(0., 0.)
         .into_item();
         let query = self.worktree_sidecar_search_query.trim().to_lowercase();
+        let home = dirs::home_dir().map(|p| p.display().to_string());
         let mut items = vec![search_item];
         items.extend(
             PersistedWorkspace::as_ref(ctx)
@@ -7733,11 +7733,14 @@ impl Workspace {
                 })
                 .map(|ws| {
                     let path_str = ws.path.to_string_lossy().into_owned();
-                    MenuItemFields::new(path_str.clone())
+                    let display = user_friendly_path(&path_str, home.as_deref()).into_owned();
+                    MenuItemFields::new(display)
                         .with_on_select_action(NewSessionSidecarSelection::OpenWorktreeRepo {
-                            repo_path: path_str,
+                            repo_path: path_str.clone(),
                         })
                         .with_icon(icons::Icon::Folder)
+                        .with_clip_config(ClipConfig::start())
+                        .with_tooltip(path_str)
                         .into_item()
                 })
                 .collect::<Vec<_>>(),
@@ -11370,18 +11373,43 @@ impl Workspace {
                 line_and_column_arg,
             } => {
                 #[cfg(feature = "local_fs")]
-                self.open_code(
-                    CodeSource::Link {
-                        path: path.clone().into(),
-                        range_start: None,
-                        range_end: None,
-                    },
-                    *EditorSettings::as_ref(ctx).open_file_layout.value(),
-                    *line_and_column_arg,
-                    false, // preview
-                    &[],
-                    ctx,
-                );
+                {
+                    // Build a LocalOrRemotePath for the file. For remote sessions
+                    // the host_id comes from the active working directory.
+                    let location = {
+                        let window_id = ctx.window_id();
+                        ActiveSession::as_ref(ctx)
+                            .working_directory(window_id)
+                            .and_then(|wd| match wd {
+                                LocalOrRemotePath::Remote(remote) => {
+                                    let std_path =
+                                        warp_util::standardized_path::StandardizedPath::try_new(
+                                            path,
+                                        )
+                                        .ok()?;
+                                    Some(LocalOrRemotePath::Remote(
+                                        warp_util::remote_path::RemotePath::new(
+                                            remote.host_id.clone(),
+                                            std_path,
+                                        ),
+                                    ))
+                                }
+                                LocalOrRemotePath::Local(_) => None,
+                            })
+                            .unwrap_or_else(|| LocalOrRemotePath::Local(PathBuf::from(path)))
+                    };
+
+                    let code_source = CodeSource::CommandPalette { location };
+
+                    self.open_code(
+                        code_source,
+                        *EditorSettings::as_ref(ctx).open_file_layout.value(),
+                        *line_and_column_arg,
+                        false, // preview
+                        &[],
+                        ctx,
+                    );
+                }
             }
             CommandPaletteEvent::OpenDirectory { path } => {
                 let active_terminal_view = self
@@ -13047,33 +13075,41 @@ impl Workspace {
 
         if let Some(terminal_handle) = pane_group_handle.as_ref(ctx).active_session_view(ctx) {
             #[cfg_attr(not(feature = "local_fs"), allow(unused_variables))]
-            let (session, path_if_local, is_local, is_wsl_session, session_id, has_pending_ssh) =
-                terminal_handle.read(ctx, |terminal, ctx| {
-                    let active_session_id = terminal.active_block_session_id();
-                    let session = active_session_id
-                        .and_then(|id| terminal.sessions_model().as_ref(ctx).get(id));
-                    let path_if_local = terminal.active_session_path_if_local(ctx);
-                    let is_local = terminal.active_session_is_local(ctx);
-                    let is_wsl_session = session.as_ref().map(|s| s.is_wsl()).unwrap_or(false);
-                    let has_pending_ssh = terminal.has_pending_ssh_command();
-                    (
-                        session,
-                        path_if_local,
-                        is_local,
-                        is_wsl_session,
-                        active_session_id,
-                        has_pending_ssh,
-                    )
-                });
+            let (
+                session,
+                pwd_location,
+                path_if_local,
+                is_local,
+                is_wsl_session,
+                session_id,
+                has_pending_ssh,
+            ) = terminal_handle.read(ctx, |terminal, ctx| {
+                let active_session_id = terminal.active_block_session_id();
+                let session =
+                    active_session_id.and_then(|id| terminal.sessions_model().as_ref(ctx).get(id));
+                let pwd_location = terminal.pwd_as_local_or_remote(ctx);
+                let path_if_local = terminal.active_session_path_if_local(ctx);
+                let is_local = terminal.active_session_is_local(ctx);
+                let is_wsl_session = session.as_ref().map(|s| s.is_wsl()).unwrap_or(false);
+                let has_pending_ssh = terminal.has_pending_ssh_command();
+                (
+                    session,
+                    pwd_location,
+                    path_if_local,
+                    is_local,
+                    is_wsl_session,
+                    active_session_id,
+                    has_pending_ssh,
+                )
+            });
 
             let window_id = ctx.window_id();
             let working_directory_clone = path_if_local.clone();
-            let path_if_local_clone = path_if_local.clone();
             ActiveSession::handle(ctx).update(ctx, |active_session, ctx| {
                 active_session.set_session_state(
                     window_id,
                     session,
-                    path_if_local_clone.clone(),
+                    pwd_location,
                     Some(terminal_handle.id()),
                     ctx,
                 );

@@ -10,6 +10,7 @@ use std::time::Duration;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_cli::agent::Harness;
+use warp_core::ui::color::blend::Blend;
 use warp_core::ui::color::coloru_with_opacity;
 use warp_core::ui::theme::Fill;
 use warp_core::ui::{appearance::Appearance, theme::WarpTheme};
@@ -43,7 +44,9 @@ use crate::ai::blocklist::agent_view::orchestration_conversation_links::{
 use crate::ai::blocklist::agent_view::orchestration_pill_bar_model::{
     OrchestrationPillBarEvent, OrchestrationPillBarModel,
 };
-use crate::ai::blocklist::agent_view::{AgentViewController, AgentViewControllerEvent};
+use crate::ai::blocklist::agent_view::{
+    agent_view_bg_color, AgentViewController, AgentViewControllerEvent,
+};
 use crate::ai::blocklist::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel};
 use crate::ai::harness_display;
 use crate::features::FeatureFlag;
@@ -1496,6 +1499,17 @@ fn render_pill(
     let status = spec.status;
     let is_remote_child = spec.is_remote_child;
 
+    // Per Figma: fg_overlay_2 at rest, fg_overlay_3 on hover, composed over
+    // the agent-view surface. Pre-blend to a solid so the avatar cutout ring
+    // matches the painted pill exactly.
+    let pill_rest_bg = Fill::from(agent_view_bg_color(app))
+        .blend(&internal_colors::fg_overlay_2(theme))
+        .into_solid();
+    let pill_hover_bg = Fill::from(agent_view_bg_color(app))
+        .blend(&internal_colors::fg_overlay_3(theme))
+        .into_solid();
+    let pill_text_color = internal_colors::text_main(theme, theme.background());
+
     // `Hoverable::new`'s build closure is `FnOnce` (see
     // `crates/warpui_core/src/elements/hoverable.rs`). We can therefore move
     // `label` into the closure by value rather than cloning it on every
@@ -1512,15 +1526,9 @@ fn render_pill(
                 theme.background().into_solid(),
             )
         } else if hover_state.is_hovered() || hover_state.is_clicked() || menu_is_open_for_this {
-            (
-                warp_core::ui::theme::color::internal_colors::neutral_3(theme),
-                warp_core::ui::theme::color::internal_colors::text_main(theme, theme.background()),
-            )
+            (pill_hover_bg, pill_text_color)
         } else {
-            (
-                warp_core::ui::theme::color::internal_colors::neutral_2(theme),
-                warp_core::ui::theme::color::internal_colors::text_main(theme, theme.background()),
-            )
+            (pill_rest_bg, pill_text_color)
         };
 
         let show_dots = show_overflow_button && (hover_state.is_hovered() || menu_is_open_for_this);

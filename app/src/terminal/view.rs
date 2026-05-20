@@ -10715,6 +10715,31 @@ impl TerminalView {
                                                 );
                                             },
                                         );
+
+                                        // Force the workspace to re-evaluate
+                                        // ActiveSession::working_directory. The
+                                        // AppStateChanged at line 11671 already ran
+                                        // update_active_session once, but for remote
+                                        // sessions pwd_as_local_or_remote() may have
+                                        // returned None at that point because host_id
+                                        // wasn't set yet. Now that remote repo
+                                        // detection succeeded we know host_id is
+                                        // available, so a second pass populates
+                                        // working_directory correctly.
+                                        // Local sessions don't need this because
+                                        // pwd_as_local_or_remote always succeeds for
+                                        // local paths (no host_id dependency).
+                                        ctx.emit(Event::AppStateChanged);
+
+                                        if FeatureFlag::AIContextMenuEnabled.is_enabled() {
+                                            me.input.update(ctx, |input, ctx| {
+                                                input
+                                                    .check_and_update_ai_context_menu_disabled_state(
+                                                        ctx,
+                                                    );
+                                            });
+                                        }
+
                                         ctx.emit(Event::Pane(PaneEvent::RemoteRepoNavigated {
                                             remote_path: remote_path.clone(),
                                         }));
@@ -18693,6 +18718,14 @@ impl TerminalView {
         active_block.index() == block_index && active_block.is_active_and_long_running()
     }
 
+    pub fn has_active_long_running_command(&self) -> bool {
+        let model = self.model.lock();
+        model
+            .block_list()
+            .active_block()
+            .is_active_and_long_running()
+    }
+
     /// If password notification settings enabled, send a notification.
     /// Otherwise, set the banner trigger so that we show the banner the next
     /// time a block completes.
@@ -24578,7 +24611,7 @@ impl View for TerminalView {
 
                     let stack = Stack::new()
                         .with_constrain_absolute_children()
-                        .with_child(column.finish());
+                        .with_child(Clipped::new(column.finish()).finish());
                     if matches!(input_mode, InputMode::Waterfall) && !is_alt_screen_active {
                         self.render_waterfall_mode_background(&model, stack, app)
                     } else {

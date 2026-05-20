@@ -224,7 +224,7 @@ use crate::server::experiments::ServerExperiments;
 pub use crate::server::sync_queue::SyncQueue;
 use crate::session_management::{RunningSessionSummary, SessionNavigationData};
 use crate::settings::manager::SettingsManager;
-use crate::settings::{AccessibilitySettings, ScrollSettings, SelectionSettings};
+use crate::settings::{AISettings, AccessibilitySettings, ScrollSettings, SelectionSettings};
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::settings_view::DisplayCount;
 use crate::suggestions::ignored_suggestions_model::IgnoredSuggestionsModel;
@@ -283,7 +283,7 @@ use crate::terminal::CustomSecretRegexUpdater;
 use crate::util::bindings::is_binding_cross_platform;
 use crate::workspace::{PaneViewLocator, Workspace, WorkspaceAction};
 use crate::workspaces::update_manager::TeamUpdateManager;
-use crate::workspaces::user_workspaces::UserWorkspaces;
+use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 use warp_logging::LogDestination;
 
 use crate::antivirus::AntivirusInfo;
@@ -1651,9 +1651,36 @@ pub(crate) fn initialize_app(
     ctx.add_singleton_model(LLMPreferences::new);
     ctx.add_singleton_model(HarnessAvailabilityModel::new);
 
-    ctx.add_singleton_model(|ctx| {
+    let tip_model_handle = ctx.add_singleton_model(|ctx| {
         ai::agent_tips::AITipModel::<ai::AgentTip>::new_for_agent_tips(ctx)
     });
+    {
+        // Rebuild the tip pool when AI settings change so tips whose applicability
+        // depends on AI settings appear/disappear without waiting for the next cooldown cycle.
+        let tip_model_handle_for_ai = tip_model_handle.clone();
+        ctx.subscribe_to_model(&AISettings::handle(ctx), move |_, _, ctx| {
+            tip_model_handle_for_ai.update(ctx, |model, ctx| {
+                model.revalidate_tips(ctx);
+            });
+        });
+        // Also revalidate when workspace/team policy data changes.
+        let tip_model_handle_for_teams = tip_model_handle.clone();
+        ctx.subscribe_to_model(&UserWorkspaces::handle(ctx), move |_, event, ctx| {
+            if matches!(event, UserWorkspacesEvent::TeamsChanged) {
+                tip_model_handle_for_teams.update(ctx, |model, ctx| {
+                    model.revalidate_tips(ctx);
+                });
+            }
+        });
+        // Revalidate when any keybinding changes so tips with `<keybinding>`
+        // placeholders are hidden/shown when the referenced binding is cleared
+        // or reassigned.
+        ctx.subscribe_to_model(&KeybindingChangedNotifier::handle(ctx), move |_, _, ctx| {
+            tip_model_handle.update(ctx, |model, ctx| {
+                model.revalidate_tips(ctx);
+            });
+        });
+    }
 
     timer.mark_interval_end("SINGLETON_MODELS_REGISTERED");
 

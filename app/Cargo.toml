@@ -541,6 +541,7 @@ default = [
     "open_warp_new_settings_modes",
     "settings_file",
     "directory_tab_colors",
+    "git_credential_refresh",
     "configurable_context_window",
     "pending_user_query_indicator",
 ]

@@ -233,6 +233,7 @@ pub fn new_standard_picker_dropdown<A: OrchestrationControlAction, V: View>(
     ctx.add_typed_action_view(move |ctx_dropdown| {
         let mut dropdown = Dropdown::<A>::new(ctx_dropdown);
         dropdown.set_use_overlay_layer(false, ctx_dropdown);
+        dropdown.set_match_menu_width_to_top_bar(true, ctx_dropdown);
         dropdown.set_main_axis_size(MainAxisSize::Max, ctx_dropdown);
         dropdown.set_style(DropdownStyle::ActionButtonSecondary, ctx_dropdown);
         dropdown.set_top_bar_height(ORCHESTRATION_PICKER_HEIGHT, ctx_dropdown);
