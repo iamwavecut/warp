@@ -30,6 +30,7 @@ use warp_core::ui::theme::Fill;
 use crate::ai::execution_profiles::model_menu_items::available_model_menu_items;
 use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::harness_display;
+use crate::ai::llms::{LLMInfo, LLMProvider};
 use crate::ai::local_child_harnesses::{
     local_child_harness_disabled_message, local_child_harness_is_enabled,
 };
@@ -247,6 +248,15 @@ pub fn new_standard_picker_dropdown<A: OrchestrationControlAction, V: View>(
     })
 }
 
+/// Returns Warp base-model choices for orchestration.
+fn get_base_model_choices<'a>(
+    llm_prefs: &'a LLMPreferences,
+    is_local: bool,
+) -> impl Iterator<Item = &'a LLMInfo> {
+    llm_prefs
+        .get_base_llm_choices_for_agent_mode()
+        .filter(move |llm| is_local || !matches!(&llm.provider, LLMProvider::Custom(_)))
+}
 /// Populates the model picker based on the active harness.
 ///
 /// - **Oz / empty**: shows the Warp LLM catalog (existing behavior).
@@ -268,9 +278,10 @@ pub fn populate_model_picker_for_harness<A: OrchestrationControlAction, V: View>
         let harness = Harness::parse_orchestration_harness(&harness_type);
         match harness {
             Some(Harness::Oz) | None => {
-                // Oz / unset: current behavior — Warp LLM catalog.
+                // Oz / unset: Warp LLM catalog. Custom models are only offered
+                // when the edited execution mode stays local.
                 let llm_prefs = LLMPreferences::as_ref(ctx_dropdown);
-                let choices: Vec<_> = llm_prefs.get_base_llm_choices_for_agent_mode().collect();
+                let choices: Vec<_> = get_base_model_choices(llm_prefs, is_local).collect();
                 let selected_display_name = choices
                     .iter()
                     .find(|llm| llm.id.to_string() == initial_model_id)

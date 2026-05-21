@@ -161,15 +161,7 @@ pub struct RunAgentsCardView {
     state: RunAgentsEditState,
     handles: RunAgentsCardHandles,
     spawning: Option<RunAgentsSpawningSnapshot>,
-    /// Set when an approved plan config triggered immediate dispatch
-    /// without user confirmation.
-    auto_launched: bool,
-    /// Set when the action has a `RunAgentsResult::Denied` result in
-    /// history (e.g. orchestration was disabled at dispatch time).
-    is_denied: bool,
-    /// Retained from construction so `update_request()` can re-evaluate
-    /// the auto-launch condition when `agent_run_configs` arrives via
-    /// streaming after the initial empty chunk.
+    /// Retained for interactive defaults from plan-sourced orchestration state.
     active_config: Option<(OrchestrationConfig, OrchestrationConfigStatus)>,
 
     // Split-button accept menu state
@@ -182,20 +174,6 @@ pub struct RunAgentsCardView {
     /// UI-only per-harness model memory so switching harnesses preserves
     /// the user's previous model selection for each harness.
     saved_model_per_harness: HashMap<String, String>,
-}
-/// Computes the `is_denied` flag at construction time.
-///
-/// The card is denied when either the action already has a `Denied`
-/// result in history *or* the active config is explicitly disapproved.
-pub(crate) fn compute_is_denied(
-    has_denied_result: bool,
-    active_config: &Option<(OrchestrationConfig, OrchestrationConfigStatus)>,
-) -> bool {
-    has_denied_result
-        || matches!(
-            active_config,
-            Some((_, status)) if status.is_disapproved()
-        )
 }
 
 /// Resolves UI-only interactive defaults on edit state that has
@@ -229,28 +207,7 @@ impl RunAgentsCardView {
         block_model: Rc<dyn AIBlockModel<View = AIBlock>>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
-        // Detect an existing Denied result from history (e.g. restored
-        // conversation where orchestration was disabled).
-        let is_denied = if let Some(AIActionStatus::Finished(result)) =
-            action_model.as_ref(ctx).get_action_status(&action_id)
-        {
-            matches!(
-                &result.result,
-                AIAgentActionResultType::RunAgents(RunAgentsResult::Denied { .. })
-            )
-        } else {
-            false
-        };
-
-        // Treat the action as denied when the config is explicitly
-        // disapproved — the card will auto-deny via the subscription
-        // once the action becomes blocked.
-        let is_denied = compute_is_denied(is_denied, &active_config);
-
-        // Auto-launch is deferred to try_auto_launch_on_stream_complete
-        // (called after streaming finishes and agent_run_configs is populated).
         let state = RunAgentsEditState::from_request(request);
-        let auto_launched = false;
 
         let reject_keystroke = CTRL_C_KEYSTROKE.clone();
         let accept_keystroke = ENTER_KEYSTROKE.clone();
@@ -314,11 +271,6 @@ impl RunAgentsCardView {
         });
 
         // Re-render when this action finishes or becomes blocked.
-        // When `auto_launched` is true and the action becomes blocked,
-        // dispatch `execute_run_agents` — the deferred auto-launch
-        // only sets the flag and shows the spawning UI; the actual
-        // execution must wait until the action model has queued the
-        // action.
         let action_id_for_action_events = action_id.clone();
         ctx.subscribe_to_model(&action_model, move |me, _, event, ctx| match event {
             BlocklistAIActionEvent::FinishedAction { action_id, .. }
@@ -327,29 +279,14 @@ impl RunAgentsCardView {
                 ctx.notify();
             }
             BlocklistAIActionEvent::ActionBlockedOnUserConfirmation(action_id)
-                if action_id == &action_id_for_action_events && me.is_denied =>
-            {
-                let action_id = me.action_id.clone();
-                me.action_model.update(ctx, |action_model, action_ctx| {
-                    action_model.deny_run_agents(&action_id, String::new(), action_ctx);
-                });
-            }
-            BlocklistAIActionEvent::ActionBlockedOnUserConfirmation(action_id)
-                if action_id == &action_id_for_action_events && me.auto_launched =>
-            {
-                let request = me.state.to_request();
-                let action_id = me.action_id.clone();
-                me.action_model.update(ctx, |action_model, action_ctx| {
-                    action_model.execute_run_agents(&action_id, request, action_ctx);
-                });
-            }
-            BlocklistAIActionEvent::ActionBlockedOnUserConfirmation(action_id)
                 if action_id == &action_id_for_action_events =>
             {
                 // Normal case: streaming is complete and the action is
                 // ready for user confirmation. Re-render so the card
                 // transitions from the "Configuring agents..." placeholder
                 // to the full confirmation UI.
+                resolve_interactive_defaults(&mut me.state, &*me.block_model, ctx);
+                oc::repopulate_all_pickers(&mut me.state.orch, &me.handles.pickers, ctx);
                 ctx.notify();
             }
             _ => {}
@@ -382,9 +319,6 @@ impl RunAgentsCardView {
             },
         );
 
-        // When auto_launched is true, execution is deferred to the
-        // ActionBlockedOnUserConfirmation subscription above — the action
-        // hasn't been queued in pending_actions yet at construction time.
         let mut view = Self {
             action_id,
             state,
@@ -394,8 +328,6 @@ impl RunAgentsCardView {
                 ..Default::default()
             },
             spawning: None,
-            auto_launched,
-            is_denied,
             active_config,
             is_accept_menu_open: false,
             accept_menu,
@@ -414,7 +346,7 @@ impl RunAgentsCardView {
 
     /// Re-sync edit state from the latest streaming request.
     pub fn update_request(&mut self, request: &RunAgentsRequest, ctx: &mut ViewContext<Self>) {
-        if self.spawning.is_some() || self.auto_launched || self.is_denied {
+        if self.spawning.is_some() {
             return;
         }
         let mut new_state = RunAgentsEditState::from_request(request);
@@ -470,30 +402,10 @@ impl RunAgentsCardView {
                     conv.orchestration_config_for_plan(&self.state.plan_id)
                         .map(|(c, s)| (c.clone(), s))
                 });
-            // Re-evaluate denied status with the refreshed config.
-            self.is_denied = compute_is_denied(self.is_denied, &self.active_config);
-        }
-        // If there's an approved config for this plan, the user has
-        // already approved these settings — auto-launch without
-        // needing to match individual fields.
-        if let Some((config, status)) = &self.active_config {
-            if status.is_approved()
-                && !self.auto_launched
-                && !self.is_denied
-                && self.spawning.is_none()
-                && !self.state.agent_run_configs.is_empty()
-            {
-                self.state.orch.override_from_approved_config(config);
-
-                self.auto_launched = true;
-                ctx.notify();
-                return;
-            }
         }
 
-        // No auto-launchable approved config — the confirmation card
-        // will be shown. Resolve from config (if any) then apply
-        // interactive defaults so the pickers display sensible values.
+        // The confirmation card will be shown. Resolve from config (if any),
+        // then apply interactive defaults so the pickers display sensible values.
         if let Some((config, status)) = &self.active_config {
             if status.is_approved() {
                 self.state.orch.resolve_from_config(config);
@@ -653,32 +565,12 @@ impl View for RunAgentsCardView {
             return Empty::new().finish();
         }
 
-        // Denied at construction — render static disabled card.
-        if self.is_denied {
-            return render_status_only_card(
-                "Orchestration is currently disabled. Re-enable on the plan card to launch."
-                    .to_string(),
-                appearance,
-                StatusKind::Cancelled,
-                app,
-            );
-        }
-
         // In-flight dispatch: check both spawning snapshot and action
         // status because the event arrives one tick after the status.
         if let Some(snapshot) = &self.spawning {
             return render_spawning_card(snapshot, appearance, app);
         }
         if matches!(status, Some(AIActionStatus::RunningAsync)) {
-            let snapshot = RunAgentsSpawningSnapshot {
-                agent_count: self.state.agent_run_configs.len(),
-            };
-            return render_spawning_card(&snapshot, appearance, app);
-        }
-
-        // Auto-launched: show spawning card while dispatch is in
-        // flight (before the executor fires the SpawningStarted event).
-        if self.auto_launched {
             let snapshot = RunAgentsSpawningSnapshot {
                 agent_count: self.state.agent_run_configs.len(),
             };

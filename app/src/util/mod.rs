@@ -8,7 +8,6 @@ pub mod git;
 pub mod image;
 pub(crate) mod link_detection;
 pub mod openable_file_type;
-#[cfg(feature = "local_tty")]
 pub mod path;
 pub mod repo_detection;
 pub mod time_format;

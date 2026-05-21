@@ -1,3 +1,4 @@
+use markdown_parser::FormattedTextFragment;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use super::{
@@ -23,7 +24,7 @@ use crate::{
     },
     terminal::input::{
         buffer_model::InputBufferModel,
-        message_bar::common::render_standard_message_bar,
+        message_bar::common::{render_standard_message_bar, render_wrapping_standard_message_bar},
         message_bar::{Message, MessageItem},
         slash_command_model::SlashCommandModel,
         suggestions_mode_model::InputSuggestionsModeModel,
@@ -94,7 +95,6 @@ struct StateHandles {
     stop_button: MouseStateHandle,
     take_over_button: MouseStateHandle,
     hide_cli_responses_button: MouseStateHandle,
-    github_auth_link: MouseStateHandle,
     /// Tracks hover/press state for the inline `Check now` affordance rendered next to
     /// `Last seen by agent ...` while the agent is polling a long-running command.
     force_refresh_button: MouseStateHandle,
@@ -904,7 +904,10 @@ impl BlocklistAIStatusBar {
         ))
     }
 
-    fn render_cloud_mode_setup_terminal_message(&self, app: &AppContext) -> Option<Message> {
+    fn render_cloud_mode_setup_terminal_message(
+        &self,
+        app: &AppContext,
+    ) -> Option<Box<dyn Element>> {
         if !FeatureFlag::CloudModeSetupV2.is_enabled() {
             return None;
         }
@@ -917,35 +920,37 @@ impl BlocklistAIStatusBar {
         let error_color = theme.ansi_fg_red();
 
         if let Some(auth_url) = ambient_agent_model.github_auth_url() {
-            return Some(Message::new(vec![
-                MessageItem::Icon {
-                    icon: CoreIcon::Triangle,
-                    color: Some(error_color),
-                },
-                MessageItem::Text {
-                    content: "Missing GitHub authentication. ".into(),
-                    color: Some(error_color),
-                },
-                MessageItem::hyperlink(
-                    "Authenticate GitHub",
-                    auth_url.to_owned(),
-                    self.state_handles.github_auth_link.clone(),
-                ),
-            ]));
+            let error_message = ambient_agent_model
+                .github_auth_error_message()
+                .unwrap_or("Missing GitHub authentication.");
+            return Some(render_wrapping_standard_message_bar(
+                CoreIcon::Triangle,
+                error_color,
+                error_color,
+                vec![
+                    FormattedTextFragment::plain_text(format!("{error_message} ")),
+                    FormattedTextFragment::hyperlink("Authenticate GitHub", auth_url.to_owned()),
+                ],
+                app,
+            ));
         }
 
         if ambient_agent_model.is_cancelled() {
             let color = theme.disabled_text_color(theme.background()).into_solid();
-            return Some(Message::new(vec![
-                MessageItem::Icon {
-                    icon: CoreIcon::StopFilled,
-                    color: Some(color),
-                },
-                MessageItem::Text {
-                    content: "Agent run cancelled".into(),
-                    color: Some(color),
-                },
-            ]));
+            return Some(render_standard_message_bar(
+                Message::new(vec![
+                    MessageItem::Icon {
+                        icon: CoreIcon::StopFilled,
+                        color: Some(color),
+                    },
+                    MessageItem::Text {
+                        content: "Agent run cancelled".into(),
+                        color: Some(color),
+                    },
+                ]),
+                None,
+                app,
+            ));
         }
 
         None
@@ -1107,7 +1112,7 @@ impl View for BlocklistAIStatusBar {
         if let Some(cloud_mode_setup_terminal_message) =
             self.render_cloud_mode_setup_terminal_message(app)
         {
-            return render_standard_message_bar(cloud_mode_setup_terminal_message, None, app);
+            return cloud_mode_setup_terminal_message;
         }
         let status_element =
             if let Some(cloud_mode_setup_status) = self.render_cloud_mode_setup_status(app) {

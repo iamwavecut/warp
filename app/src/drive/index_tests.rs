@@ -28,7 +28,7 @@ use crate::{
     workspaces::{
         team_tester::TeamTesterStatus, user_profiles::UserProfiles, user_workspaces::UserWorkspaces,
     },
-    Assets,
+    ASSETS,
 };
 
 use super::{DriveIndex, DriveIndexAction};
@@ -119,7 +119,7 @@ fn label_for_menu_item(item: &MenuItem<DriveIndexAction>) -> &str {
 
 #[test]
 fn test_retry_menu_item_visibility() {
-    App::test(Assets, |mut app| async move {
+    App::test(ASSETS, |mut app| async move {
         initialize_app(&mut app);
         let index = create_index(&mut app);
         let sync_id = create_workflow(&mut app);
@@ -169,7 +169,7 @@ fn test_retry_menu_item_visibility() {
 
 #[test]
 fn test_retry_menu_item_logic() {
-    App::test(Assets, |mut app| async move {
+    App::test(ASSETS, |mut app| async move {
         initialize_app(&mut app);
         let index = create_index(&mut app);
         let sync_id = create_workflow(&mut app);

@@ -267,7 +267,7 @@ use url::Url;
 use warp_core::execution_mode::{AppExecutionMode, ExecutionMode};
 use workspace::sync_inputs::SyncedInputState;
 
-use warpui::{integration::TestDriver, App, AssetProvider, Event};
+use warpui::{integration::TestDriver, App, Event};
 
 use self::features::FeatureFlag;
 use crate::app_state::AppState;
@@ -293,20 +293,8 @@ use warpui::platform::TerminationMode;
 use warpui::windowing::state::ApplicationStage;
 use warpui::{AppContext, SingletonEntity, WindowId};
 
-#[derive(Clone, Copy, RustEmbed)]
-#[folder = "assets"]
-#[include = "bundled/**"] // Should be kept in sync with BUNDLED_ASSETS_DIR.
-#[include = "async/**"] // Should be kept in sync with ASYNC_ASSETS_DIR.
-#[cfg_attr(target_family = "wasm", exclude = "async/**")]
-// Excludes take precedence.
-// Standalone CLI builds (the `oz` tarball) are headless and never render the
-// onboarding/theme imagery in `async/`, so we exclude those bytes from the
-// embedded asset set to keep the CLI binary small — mirroring the carve-out
-// already applied for the WASM target above.
-#[cfg_attr(feature = "standalone", exclude = "async/**")]
-pub struct Assets;
-
-pub static ASSETS: Assets = Assets;
+/// Our embedded application assets.
+pub static ASSETS: warp_assets::Assets = warp_assets::Assets;
 
 fn determine_agent_source(
     launch_mode: &LaunchMode,
@@ -514,14 +502,6 @@ impl LaunchMode {
     }
 }
 
-impl AssetProvider for Assets {
-    fn get(&self, path: &str) -> Result<Cow<'_, [u8]>> {
-        <Assets as RustEmbed>::get(path)
-            .map(|f| f.data)
-            .ok_or_else(|| anyhow!("no asset exists at path {}", path))
-    }
-}
-
 /// If the given event is a key down event containing alt modifiers, and those
 /// alt modifiers should be treated as meta keys, then remove the alts and
 /// prefix the keys with an escape. See WAR-472.
@@ -561,7 +541,7 @@ pub fn run() -> Result<()> {
     platform::init();
 
     // Ensure feature flags are initialized before parsing command-line arguments.
-    init_feature_flags();
+    features::init_feature_flags();
 
     // Parse command-line arguments.
     let args = warp_cli::Args::from_env();
@@ -705,7 +685,7 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
 
     // The `run` function already initializes feature flags, but ensure they're initialized here
     // for other entrypoints.
-    init_feature_flags();
+    features::init_feature_flags();
 
     if launch_mode.needs_profiling() {
         tracing::init()?;
@@ -861,6 +841,7 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         use warpui::platform::mac::AppExt;
+        use warpui::AssetProvider as _;
 
         let activate_on_launch = !launch_mode.is_integration_test()
             || std::env::var("WARPUI_USE_REAL_DISPLAY_IN_INTEGRATION_TESTS").is_ok();
