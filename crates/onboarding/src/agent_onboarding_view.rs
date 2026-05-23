@@ -18,16 +18,16 @@ const APP_BECAME_ACTIVE_DEBOUNCE: Duration = Duration::from_secs(15);
 
 use pathfinder_geometry::vector::vec2f;
 use ui_components::{button, Component as _, Options as _};
-use warp_core::ui::{appearance::Appearance, theme::WarpTheme};
-use warpui::elements::Rect;
+use warp_core::ui::appearance::Appearance;
+use warp_core::ui::theme::WarpTheme;
+use warpui::elements::{
+    CacheOption, ChildAnchor, Container, Empty, Image, OffsetPositioning, ParentAnchor,
+    ParentElement, ParentOffsetBounds, Rect, Shrinkable, Stack,
+};
+use warpui::keymap::macros::*;
+use warpui::keymap::{FixedBinding, Keystroke};
+use warpui::presenter::ChildView;
 use warpui::{
-    elements::{
-        CacheOption, ChildAnchor, Container, Empty, Image, OffsetPositioning, ParentAnchor,
-        ParentElement, ParentOffsetBounds, Shrinkable, Stack,
-    },
-    keymap::Keystroke,
-    keymap::{macros::*, FixedBinding},
-    presenter::ChildView,
     AppContext, Element, Entity, ModelHandle, SingletonEntity as _, TypedActionView, View,
     ViewContext, ViewHandle,
 };

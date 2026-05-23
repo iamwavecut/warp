@@ -1,3 +1,19 @@
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use ai::agent::action::InsertReviewComment;
+use chrono::Local;
+use lsp::LspManagerModel;
+use repo_metadata::repositories::DetectedRepositories;
+use warp_core::features::FeatureFlag;
+use warp_core::ui::appearance::Appearance;
+use warp_editor::content::buffer::InitialBufferState;
+use warp_editor::render::element::VerticalExpansionBehavior;
+use warp_editor::render::model::LineCount;
+use warpui::elements::{Empty, MouseStateHandle};
+use warpui::platform::WindowStyle;
+use warpui::{App, ViewHandle};
+
 use super::*;
 use crate::ai::persisted_workspace::PersistedWorkspace;
 use crate::ai::request_usage_model::AIRequestUsageModel;
@@ -27,20 +43,6 @@ use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::ActiveSession;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::NotebookKeybindings;
-use ai::agent::action::InsertReviewComment;
-use chrono::Local;
-use lsp::LspManagerModel;
-use repo_metadata::repositories::DetectedRepositories;
-use std::path::PathBuf;
-use std::sync::Arc;
-use warp_core::features::FeatureFlag;
-use warp_core::ui::appearance::Appearance;
-use warp_editor::content::buffer::InitialBufferState;
-use warp_editor::render::element::VerticalExpansionBehavior;
-use warp_editor::render::model::LineCount;
-use warpui::elements::{Empty, MouseStateHandle};
-use warpui::platform::WindowStyle;
-use warpui::{App, ViewHandle};
 
 #[derive(Default)]
 struct TestView;

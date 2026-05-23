@@ -6,10 +6,8 @@ use instant::Duration;
 use serde::{de::DeserializeOwned, Serialize};
 use warp_core::{channel::ChannelState, operating_system_info::OperatingSystemInfo};
 
-use crate::{
-    error::{UserFacingError, UserFacingErrorInterface},
-    request_context::{ClientContext, OsContext, RequestContext},
-};
+use crate::error::{UserFacingError, UserFacingErrorInterface};
+use crate::request_context::{ClientContext, OsContext, RequestContext};
 
 #[cfg(not(target_family = "wasm"))]
 pub(crate) type BoxFuture<'a, T> =

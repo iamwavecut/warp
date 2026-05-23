@@ -16,8 +16,8 @@ use warpui::elements::{
 use warpui::platform::Cursor;
 use warpui::ui_components::button::{ButtonVariant, TextAndIcon, TextAndIconAlignment};
 use warpui::ui_components::components::UiComponent as _;
+use warpui::units::{IntoPixels, Pixels};
 use warpui::{
-    units::{IntoPixels, Pixels},
     AppContext, Element, Entity, FocusContext, ModelHandle, SingletonEntity, TypedActionView,
     ViewContext, ViewHandle,
 };

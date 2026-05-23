@@ -2,6 +2,7 @@ use std::{ffi::OsString, fs};
 
 use tempfile::TempDir;
 use warp_cli::agent::Harness;
+use warp_core::features::FeatureFlag;
 
 use super::{
     build_local_claude_child_command, build_local_codex_child_command,
@@ -9,7 +10,6 @@ use super::{
     prepare_local_harness_child_launch, validate_local_harness_shell,
 };
 use crate::terminal::shell::ShellType;
-use warp_core::features::FeatureFlag;
 
 struct EnvVarGuard {
     key: &'static str,

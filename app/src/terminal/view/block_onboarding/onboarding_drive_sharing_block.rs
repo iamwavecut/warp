@@ -1,18 +1,13 @@
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::appearance::Appearance;
-use warpui::{
-    elements::{
-        Border, Container, Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement,
-        Text,
-    },
-    fonts::{Properties, Weight},
-    platform::Cursor,
-    ui_components::{
-        button::{ButtonVariant, TextAndIcon, TextAndIconAlignment},
-        components::{UiComponent, UiComponentStyles},
-    },
-    AppContext, Element, Entity, SingletonEntity, View, ViewContext,
+use warpui::elements::{
+    Border, Container, Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Text,
 };
+use warpui::fonts::{Properties, Weight};
+use warpui::platform::Cursor;
+use warpui::ui_components::button::{ButtonVariant, TextAndIcon, TextAndIconAlignment};
+use warpui::ui_components::components::{UiComponent, UiComponentStyles};
+use warpui::{AppContext, Element, Entity, SingletonEntity, View, ViewContext};
 
 use crate::{
     cloud_object::model::persistence::{CloudModel, CloudModelEvent},

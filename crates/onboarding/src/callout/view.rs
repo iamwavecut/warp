@@ -1,8 +1,9 @@
 use ui_components::Component;
 use warp_core::ui::appearance::Appearance;
+use warpui::elements::Empty;
+use warpui::keymap::macros::*;
+use warpui::keymap::{FixedBinding, Keystroke};
 use warpui::{
-    elements::Empty,
-    keymap::{macros::*, FixedBinding, Keystroke},
     AppContext, Element, Entity, EventContext, ModelHandle, SingletonEntity, TypedActionView, View,
     ViewContext,
 };
@@ -18,14 +19,12 @@ pub struct OnboardingKeybindings {
     pub submit_to_alternate_agent: String,
 }
 
-use crate::{
-    callout::model::{
-        AgentModalityCalloutState, FinalState, OnboardingCalloutModel, OnboardingCalloutModelEvent,
-        OnboardingCalloutState, OnboardingQuery, UniversalInputCalloutState,
-    },
-    components::onboarding_callout::{self, Button, StepStatus},
-    OnboardingIntention,
+use crate::callout::model::{
+    AgentModalityCalloutState, FinalState, OnboardingCalloutModel, OnboardingCalloutModelEvent,
+    OnboardingCalloutState, OnboardingQuery, UniversalInputCalloutState,
 };
+use crate::components::onboarding_callout::{self, Button, StepStatus};
+use crate::OnboardingIntention;
 
 /// Options for rendering a callout.
 struct CalloutOptions {

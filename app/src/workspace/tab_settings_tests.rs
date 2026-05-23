@@ -1,8 +1,9 @@
+use settings::Setting;
+use warpui::{App, SingletonEntity};
+
 use super::*;
 use crate::test_util::settings::initialize_settings_for_tests;
 use crate::workspace::header_toolbar_item::HeaderToolbarItemKind;
-use settings::Setting;
-use warpui::{App, SingletonEntity};
 
 #[test]
 fn use_vertical_tabs_defaults_to_true() {

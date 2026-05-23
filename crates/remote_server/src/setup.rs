@@ -1,10 +1,9 @@
 mod glibc;
 
-pub use glibc::{GlibcVersion, RemoteLibc};
-
 use std::time::Duration;
 
 use anyhow::anyhow;
+pub use glibc::{GlibcVersion, RemoteLibc};
 use warp_core::channel::{Channel, ChannelState};
 
 /// State machine for the remote server install → launch → initialize flow.

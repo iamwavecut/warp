@@ -7,9 +7,7 @@ use serde::Serialize;
 use strum::IntoEnumIterator;
 use strum_macros::{EnumDiscriminants, EnumIter};
 use warp_core::features::FeatureFlag;
-use warpui::Entity;
-use warpui::ModelContext;
-use warpui::SingletonEntity;
+use warpui::{Entity, ModelContext, SingletonEntity};
 
 use super::config::SettingType;
 use super::config::ThemeType;
@@ -42,8 +40,9 @@ impl ImportedConfigModel {
 
     #[cfg(feature = "local_fs")]
     pub fn search_for_settings_to_import(&mut self, ctx: &mut ModelContext<Self>) {
-        use itertools::Itertools;
         use std::sync::Arc;
+
+        use itertools::Itertools;
         use strum::IntoEnumIterator;
         self.started = true;
 

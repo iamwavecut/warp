@@ -1,10 +1,8 @@
 use itertools::Itertools;
-use warpui::{
-    elements::{Container, CrossAxisAlignment, Flex, ParentElement, Shrinkable},
-    presenter::ChildView,
-    ui_components::components::{Coords, UiComponent, UiComponentStyles},
-    Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
-};
+use warpui::elements::{Container, CrossAxisAlignment, Flex, ParentElement, Shrinkable};
+use warpui::presenter::ChildView;
+use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
+use warpui::{Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle};
 
 use crate::{
     appearance::Appearance,

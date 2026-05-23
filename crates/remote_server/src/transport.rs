@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 
 use async_channel::Receiver;
+use serde::Serialize;
 use warpui::r#async::executor;
 
 #[cfg(not(target_family = "wasm"))]
@@ -23,7 +24,6 @@ use crate::client::RemoteServerLog;
 use crate::client::{ClientEvent, RemoteServerClient};
 use crate::manager::RemoteServerExitStatus;
 use crate::setup::{PreinstallCheckResult, RemotePlatform};
-use serde::Serialize;
 
 /// How the remote server binary was installed.
 #[derive(Clone, Copy, Debug, Serialize)]

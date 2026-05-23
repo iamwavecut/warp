@@ -2,19 +2,15 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use warp_editor::content::text::BufferBlockItem;
-use warpui::{
-    elements::{
-        AnchorPair, Border, Container, CornerRadius, MouseStateHandle, OffsetPositioning,
-        OffsetType, PositionedElementOffsetBounds, PositioningAxis, Radius, SavePosition, Stack,
-        XAxisAnchor, YAxisAnchor,
-    },
-    presenter::ChildView,
-    ui_components::{
-        button::ButtonTooltipPosition,
-        components::{UiComponent, UiComponentStyles},
-    },
-    AppContext, Element, SingletonEntity, ViewContext, ViewHandle,
+use warpui::elements::{
+    AnchorPair, Border, Container, CornerRadius, MouseStateHandle, OffsetPositioning, OffsetType,
+    PositionedElementOffsetBounds, PositioningAxis, Radius, SavePosition, Stack, XAxisAnchor,
+    YAxisAnchor,
 };
+use warpui::presenter::ChildView;
+use warpui::ui_components::button::ButtonTooltipPosition;
+use warpui::ui_components::components::{UiComponent, UiComponentStyles};
+use warpui::{AppContext, Element, SingletonEntity, ViewContext, ViewHandle};
 
 use crate::{
     appearance::Appearance,

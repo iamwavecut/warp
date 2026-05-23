@@ -1,30 +1,23 @@
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use pathfinder_color::ColorU;
-use warp_core::{
-    features::FeatureFlag,
-    ui::{
-        external_product_icon::ExternalProductIcon,
-        icons::{Icon, ICON_DIMENSIONS},
-        theme::{color::internal_colors, AnsiColorIdentifier},
-    },
+use warp_core::features::FeatureFlag;
+use warp_core::ui::external_product_icon::ExternalProductIcon;
+use warp_core::ui::icons::{Icon, ICON_DIMENSIONS};
+use warp_core::ui::theme::color::internal_colors;
+use warp_core::ui::theme::AnsiColorIdentifier;
+use warpui::accessibility::ActionAccessibilityContent;
+use warpui::elements::{
+    Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Expanded, Fill, Flex,
+    FormattedTextElement, HighlightedHyperlink, Hoverable, MainAxisAlignment, MainAxisSize,
+    MouseState, MouseStateHandle, Padding, ParentElement, Radius, Text, Wrap,
 };
-use warpui::{
-    accessibility::ActionAccessibilityContent,
-    elements::{
-        Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Expanded, Fill, Flex,
-        FormattedTextElement, HighlightedHyperlink, Hoverable, MainAxisAlignment, MainAxisSize,
-        MouseState, MouseStateHandle, Padding, ParentElement, Radius, Text, Wrap,
-    },
-    fonts::Weight,
-    platform::Cursor,
-    ui_components::{
-        button::ButtonVariant,
-        chip::Chip,
-        components::{Coords, UiComponent, UiComponentStyles},
-        switch::SwitchStateHandle,
-    },
-    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext,
-};
+use warpui::fonts::Weight;
+use warpui::platform::Cursor;
+use warpui::ui_components::button::ButtonVariant;
+use warpui::ui_components::chip::Chip;
+use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
+use warpui::ui_components::switch::SwitchStateHandle;
+use warpui::{AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext};
 
 use crate::{
     ai::mcp::{MCPServerState, TemplatableMCPServerManager},

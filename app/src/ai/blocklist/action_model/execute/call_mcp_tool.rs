@@ -1,20 +1,21 @@
-use super::{ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput};
-use crate::terminal::model::session::active_session::ActiveSession;
-use futures::{future::BoxFuture, FutureExt};
+use futures::future::BoxFuture;
+use futures::FutureExt;
+#[cfg(not(target_family = "wasm"))]
+use itertools::Itertools;
+#[cfg(not(target_family = "wasm"))]
+use warpui::SingletonEntity;
 use warpui::{Entity, EntityId, ModelContext, ModelHandle};
 
 #[cfg(not(target_family = "wasm"))]
 use super::get_server_output_id;
+use super::{ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput};
 #[cfg(not(target_family = "wasm"))]
 use crate::ai::{
     agent::{AIAgentAction, AIAgentActionResultType, CallMCPToolResult},
     blocklist::{action_model::AIAgentActionType, BlocklistAIPermissions},
     mcp::TemplatableMCPServerManager,
 };
-#[cfg(not(target_family = "wasm"))]
-use itertools::Itertools;
-#[cfg(not(target_family = "wasm"))]
-use warpui::SingletonEntity;
+use crate::terminal::model::session::active_session::ActiveSession;
 
 pub struct CallMCPToolExecutor {
     _active_session: ModelHandle<ActiveSession>,

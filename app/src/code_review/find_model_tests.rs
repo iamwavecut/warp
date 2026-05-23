@@ -1,3 +1,15 @@
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use repo_metadata::repositories::DetectedRepositories;
+use string_offset::CharOffset;
+use warp_core::ui::appearance::Appearance;
+use warp_editor::content::buffer::InitialBufferState;
+use warp_editor::render::element::VerticalExpansionBehavior;
+use warpui::elements::Empty;
+use warpui::platform::WindowStyle;
+use warpui::{App, Element as _, ModelHandle, ViewHandle};
+
 use super::*;
 use crate::auth::AuthStateProvider;
 use crate::cloud_object::model::persistence::CloudModel;
@@ -16,16 +28,6 @@ use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspace::ActiveSession;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::NotebookKeybindings;
-use repo_metadata::repositories::DetectedRepositories;
-use std::path::PathBuf;
-use std::sync::Arc;
-use string_offset::CharOffset;
-use warp_core::ui::appearance::Appearance;
-use warp_editor::content::buffer::InitialBufferState;
-use warp_editor::render::element::VerticalExpansionBehavior;
-use warpui::elements::Empty;
-use warpui::platform::WindowStyle;
-use warpui::{App, Element as _, ModelHandle, ViewHandle};
 
 #[derive(Default)]
 struct TestView;

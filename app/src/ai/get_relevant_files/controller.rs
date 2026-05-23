@@ -1,20 +1,16 @@
-use ai::index::{
-    full_source_code_embedding::{
-        manager::{CodebaseIndexManager, CodebaseIndexManagerEvent},
-        RetrievalID,
-    },
-    locations::CodeContextLocation,
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use ai::index::full_source_code_embedding::manager::{
+    CodebaseIndexManager, CodebaseIndexManagerEvent,
 };
+use ai::index::full_source_code_embedding::RetrievalID;
+use ai::index::locations::CodeContextLocation;
 use anyhow::anyhow;
 use futures_util::stream::AbortHandle;
 use instant::Instant;
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
 use warp_core::features::FeatureFlag;
-
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
 
 #[cfg(not(target_family = "wasm"))]

@@ -1,8 +1,20 @@
 use std::collections::HashMap;
 
-use crate::Builder;
 use regex::Regex;
 use settings::Setting as _;
+use warp::integration_testing::terminal::util::{
+    current_shell_starter_and_version, nonce, ExactLine, ExpectedExitStatus,
+};
+use warp::integration_testing::terminal::{
+    assert_active_block_output_for_single_terminal_in_tab,
+    assert_long_running_block_executing_for_single_terminal_in_tab,
+    execute_command_for_single_terminal_in_tab, validate_block_output,
+    wait_until_bootstrapped_single_pane_for_tab,
+};
+use warp::integration_testing::view_getters::{single_terminal_view, single_terminal_view_for_tab};
+use warp::terminal::model::bootstrap::BootstrapStage;
+use warp::terminal::session_settings::{StartupShell, StartupShellOverride};
+use warp::terminal::shell::ShellType;
 use warp::{
     features::FeatureFlag,
     integration_testing::{
@@ -28,12 +40,11 @@ use warp::{
         shell::ShellType,
     },
 };
-use warpui::{
-    async_assert, async_assert_eq,
-    integration::{AssertionCallback, AssertionOutcome, TestStep},
-};
+use warpui::integration::{AssertionCallback, AssertionOutcome, TestStep};
+use warpui::{async_assert, async_assert_eq};
 
 use super::new_builder;
+use crate::Builder;
 
 /// Verifies that the active block is part of a remote session.
 fn assert_active_block_is_remote(user: &'static str, host: &'static str) -> AssertionCallback {

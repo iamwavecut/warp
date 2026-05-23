@@ -2,12 +2,10 @@
 
 use pathfinder_geometry::vector::Vector2F;
 use warp_core::context_flag::ContextFlag;
-use warpui::{
-    elements::{ChildAnchor, OffsetPositioning, ParentAnchor, ParentOffsetBounds, Stack},
-    keymap::Trigger,
-    presenter::ChildView,
-    Action, Element, EventContext, TypedActionView, View, ViewContext, ViewHandle,
-};
+use warpui::elements::{ChildAnchor, OffsetPositioning, ParentAnchor, ParentOffsetBounds, Stack};
+use warpui::keymap::Trigger;
+use warpui::presenter::ChildView;
+use warpui::{Action, Element, EventContext, TypedActionView, View, ViewContext, ViewHandle};
 
 use crate::{
     editor::EditorView,

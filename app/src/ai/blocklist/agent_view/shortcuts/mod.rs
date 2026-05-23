@@ -1,17 +1,17 @@
 mod model;
 
-pub use model::*;
-use pathfinder_color::ColorU;
-
 use std::borrow::Cow;
 
-use warp_core::{features::FeatureFlag, ui::appearance::Appearance};
-use warpui::{
-    elements::{Border, Container, CrossAxisAlignment, Expanded, Flex, ParentElement, Text},
-    keymap::Keystroke,
-    ui_components::components::{Coords, UiComponent, UiComponentStyles},
-    AppContext, Element, SingletonEntity,
+pub use model::*;
+use pathfinder_color::ColorU;
+use warp_core::features::FeatureFlag;
+use warp_core::ui::appearance::Appearance;
+use warpui::elements::{
+    Border, Container, CrossAxisAlignment, Expanded, Flex, ParentElement, Text,
 };
+use warpui::keymap::Keystroke;
+use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
+use warpui::{AppContext, Element, SingletonEntity};
 
 use crate::{
     ai::blocklist::agent_view::{

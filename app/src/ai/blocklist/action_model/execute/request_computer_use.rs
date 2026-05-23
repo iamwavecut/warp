@@ -1,13 +1,13 @@
 use std::collections::HashSet;
 
 use ai::agent::action_result::{AIAgentActionResultType, RequestComputerUseResult};
-use futures::{future::BoxFuture, FutureExt};
+use futures::future::BoxFuture;
+use futures::FutureExt;
 use warpui::{Entity, EntityId, ModelContext, SingletonEntity};
 
+use super::{ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput};
 use crate::ai::agent::{AIAgentActionId, AIAgentActionType};
 use crate::ai::ambient_agents::AmbientAgentTaskId;
-
-use super::{ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput};
 
 pub struct RequestComputerUseExecutor {
     terminal_view_id: EntityId,

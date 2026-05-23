@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 
+use mockall::predicate::eq;
 use tempfile::TempDir;
 use uuid::Uuid;
 

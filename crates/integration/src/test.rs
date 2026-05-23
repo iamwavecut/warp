@@ -34,8 +34,15 @@ mod video_recording;
 mod workflows;
 mod workspace;
 
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::rc::Rc;
+use std::time::Duration;
+
 pub use agent_mode::*;
 pub use ai_assistant::*;
+use anyhow::{anyhow, Result};
 pub use block_filtering::*;
 pub use bootstrapping::*;
 pub use code_review::*;
@@ -49,20 +56,29 @@ pub use keyboard_protocol::*;
 pub use launch_configs::*;
 pub use notebooks::*;
 pub use pane_restoration::*;
+use parking_lot::Mutex;
+use pathfinder_geometry::rect::RectF;
+use pathfinder_geometry::vector::Vector2F;
 #[cfg(target_os = "macos")]
 pub use preview_config_migration::*;
 pub use remote_server::*;
 pub use rules::*;
+use rust_embed::RustEmbed;
 pub use secrets::*;
 pub use session_restoration::*;
+use settings::Setting as _;
 pub use settings_file_errors::*;
 pub use settings_file_hot_reload::*;
 pub use settings_file_migration::*;
 pub use settings_private::*;
+use shell::ShellType;
 pub use ssh::*;
 pub use subshell::*;
+use sum_tree::SeekBias;
 pub use sync_inputs::*;
+use sysinfo::{Pid, ProcessesToUpdate, System};
 pub use typeahead::*;
+use version_compare::Cmp;
 pub use video_recording::*;
 pub use workflows::*;
 pub use workspace::*;
@@ -3376,7 +3392,7 @@ pub fn test_custom_ps1_expansion_bash() -> Builder {
         )
 }
 
-/// Default auto title. We test that Warp's auto title is used and verify that that
+/// Default auto title. We test that Warp's auto title is used and verify that
 /// DISABLE_AUTO_TITLE is set correctly.
 pub fn test_auto_title() -> Builder {
     new_builder()
@@ -3500,6 +3516,72 @@ precmd_functions+=(set_title)
             "Assert the user's tab title used",
             "TEST_TAB_TITLE".to_string(),
         ))
+}
+
+/// Checks that an OSC 7 escape sequence (`\e]7;file://host/path\a`) emitted by
+/// the running command updates the block's current working directory mid-command
+/// without waiting for the next prompt. This lets external tools that change
+/// directory (for example `wt switch` from worktrunk) keep Warp's per-block CWD
+/// in sync with the shell. See issue #9125.
+pub fn test_osc7_updates_current_working_directory() -> Builder {
+    new_builder()
+        .set_should_run_test(|| {
+            let (starter, _) = current_shell_starter_and_version();
+            matches!(
+                starter.shell_type(),
+                shell::ShellType::Bash | shell::ShellType::Zsh
+            )
+        })
+        .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
+        .with_step(clear_blocklist_to_remove_bootstrapped_blocks())
+        .with_step(execute_command_for_single_terminal_in_tab(
+            0, /*tab_idx*/
+            // OSC 7 is only honored when the host portion matches the local
+            // hostname; substitute it dynamically so the test works on any
+            // machine.
+            r#"mkdir -p /tmp/osc7-test && cd /tmp/osc7-test && printf "\033]7;file://$(hostname)/tmp/osc7-test\a""#.to_string(),
+            ExpectedExitStatus::Success,
+            (),
+        ))
+        .with_step(
+            new_step_with_default_assertions("Assert OSC 7 updated the previous block's pwd")
+                .add_assertion(|app, window_id| {
+                    let terminal_view = single_terminal_view_for_tab(app, window_id, 0);
+                    terminal_view.read(app, |view, _ctx| {
+                        let model = view.model.lock();
+                        let last_finished_pwd = model
+                            .block_list()
+                            .blocks()
+                            .iter()
+                            .rev()
+                            .find(|block| block.finished() && !block.is_background())
+                            .and_then(|block| block.pwd().cloned());
+                        async_assert_eq!(
+                            Some("/tmp/osc7-test".to_string()),
+                            last_finished_pwd,
+                            "expected OSC 7 to set the printf block's pwd to /tmp/osc7-test"
+                        )
+                    })
+                })
+                // Locks in the fix for the user-visible regression Zach saw:
+                // the `WorkingDirectory` prompt chip text (read by
+                // `display_working_directory`, which feeds the vertical-tab
+                // subtitle) must be refreshed after OSC 7. Without
+                // `refresh_warp_prompt` in the `BlockWorkingDirectoryUpdated`
+                // path, the block's `pwd` updates but the chip text stays on
+                // the old CWD until the next `BlockCompleted`.
+                .add_assertion(|app, window_id| {
+                    let terminal_view = single_terminal_view_for_tab(app, window_id, 0);
+                    terminal_view.read(app, |view, ctx| {
+                        let displayed = view.display_working_directory(ctx);
+                        async_assert_eq!(
+                            Some("/tmp/osc7-test".to_string()),
+                            displayed,
+                            "expected the WorkingDirectory chip / tab subtitle to reflect the OSC 7 CWD"
+                        )
+                    })
+                }),
+        )
 }
 
 /// Checks that we focus the prompt after executing a command, regardless
@@ -3881,7 +3963,7 @@ pub fn test_command_xray_hover() -> Builder {
         )
         .with_step(
             new_step_with_default_assertions("Hover past buffer text")
-                // Add post step pause so that the the async assert in the next
+                // Add post step pause so that the async assert in the next
                 // step doesn't succeed right away just because we didn't give enough
                 // time for the xray to trigger.
                 .set_post_step_pause(Duration::from_secs(1))
@@ -3943,7 +4025,7 @@ pub fn test_command_xray_for_partial_command() -> Builder {
         )
         .with_step(
             new_step_with_default_assertions("Hover over st")
-                // Add post step pause so that the the async assert in the next
+                // Add post step pause so that the async assert in the next
                 // step doesn't succeed right away just because we didn't give enough
                 // time for the xray to trigger.
                 .set_post_step_pause(Duration::from_secs(1))

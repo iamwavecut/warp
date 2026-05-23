@@ -1,7 +1,8 @@
 use uuid::Uuid;
+use warpui::r#async::SpawnedFutureHandle;
 use warpui::{
-    r#async::SpawnedFutureHandle, AppContext, ClosedWindowData, Entity, EntityId, ModelContext,
-    ModelHandle, SingletonEntity, ViewHandle, WeakViewHandle, WindowId,
+    AppContext, ClosedWindowData, Entity, EntityId, ModelContext, ModelHandle, SingletonEntity,
+    ViewHandle, WeakViewHandle, WindowId,
 };
 
 use crate::{

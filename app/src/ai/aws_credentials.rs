@@ -1,9 +1,5 @@
 use std::time::SystemTime;
 
-use crate::settings::{AISettings, AISettingsChangedEvent};
-use crate::terminal::event::{AfterBlockCompletedEvent, BlockType, UserBlockCompleted};
-use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
-use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 pub use ai::api_keys::AwsCredentials;
 use ai::api_keys::{ApiKeyManager, AwsCredentialsState};
 use aws_credential_types::provider::error::CredentialsError;
@@ -11,6 +7,11 @@ use aws_credential_types::provider::ProvideCredentials;
 use futures::channel::oneshot::channel;
 use futures::future::BoxFuture;
 use warpui::{ModelContext, ModelHandle, SingletonEntity};
+
+use crate::settings::{AISettings, AISettingsChangedEvent};
+use crate::terminal::event::{AfterBlockCompletedEvent, BlockType, UserBlockCompleted};
+use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
+use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 
 /// Errors that can occur when loading AWS credentials.
 #[derive(Debug, Clone)]

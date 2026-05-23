@@ -6,8 +6,10 @@ use std::collections::HashMap;
 use itertools::Itertools;
 use session_sharing_protocol::common::{AgentAttachment, ParticipantId, ServerConversationToken};
 use warp_core::features::FeatureFlag;
+use warp_multi_agent_api::client_action::Action;
+use warp_multi_agent_api::message::Message;
 use warp_multi_agent_api::response_event::{stream_finished, ClientActions};
-use warp_multi_agent_api::{client_action::Action, message::Message};
+use warpui::{AppContext, ModelContext, SingletonEntity};
 
 use super::response_stream::ResponseStreamId;
 use super::{BlocklistAIController, RequestInput};
@@ -16,7 +18,6 @@ use crate::ai::agent::{AIAgentActionId, AIAgentAttachment, EntrypointType};
 use crate::ai::blocklist::agent_view::AgentViewEntryOrigin;
 use crate::ai::blocklist::history_model::BlocklistAIHistoryModel;
 use crate::terminal::model::block::BlockId;
-use warpui::{AppContext, ModelContext, SingletonEntity};
 
 #[derive(Default)]
 pub(super) struct SharedSessionState {

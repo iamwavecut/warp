@@ -801,10 +801,8 @@ fn open_file(window_id: Option<WindowId>, path: PathBuf, ctx: &mut AppContext) {
         {
             use crate::code::editor_management::CodeSource;
             use crate::root_view::{open_new_with_workspace_source, NewWorkspaceSource};
-            use crate::util::{
-                file::external_editor::EditorSettings,
-                openable_file_type::resolve_file_target_to_open_in_warp,
-            };
+            use crate::util::file::external_editor::EditorSettings;
+            use crate::util::openable_file_type::resolve_file_target_to_open_in_warp;
 
             // Open text/code files in Warp's code editor, respecting the user's layout preference.
             let editor_settings = EditorSettings::as_ref(ctx);

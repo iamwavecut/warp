@@ -2,6 +2,20 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use settings::Setting as _;
+use warp::integration_testing::step::new_step_with_default_assertions;
+use warp::integration_testing::subshell::{
+    enter_remote_server_ssh_command, enter_ssh_password, setup_gcloud_sdk,
+    wait_for_remote_server_password_prompt,
+};
+use warp::integration_testing::terminal::util::{
+    current_shell_starter_and_version, ExpectedExitStatus,
+};
+use warp::integration_testing::terminal::{
+    execute_command_for_single_terminal_in_tab, run_completer,
+    wait_until_bootstrapped_single_pane_for_tab,
+};
+use warp::terminal::shell::ShellType;
+use warp::terminal::warpify::settings::{SshExtensionInstallMode, SshExtensionInstallModeSetting};
 use warp::{
     features::FeatureFlag,
     integration_testing::{

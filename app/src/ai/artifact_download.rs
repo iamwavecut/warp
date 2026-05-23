@@ -10,6 +10,9 @@ pub(crate) fn sanitized_basename(path_or_filename: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "local_fs")]
+    use chrono::{TimeZone, Utc};
+
     use super::*;
 
     #[test]

@@ -1,5 +1,7 @@
-use warpui::AppContext;
-use warpui::ModelContext;
+use std::collections::{HashMap, HashSet};
+
+use uuid::Uuid;
+use warpui::{AppContext, ModelContext};
 
 use super::TemplatableMCPServerManager;
 use crate::ai::mcp::templatable::TemplatableMCPServer;

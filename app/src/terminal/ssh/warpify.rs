@@ -2,19 +2,18 @@ use asset_macro::bundled_asset;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use warp_core::ui::theme::WarpTheme;
 use warpui::assets::asset_cache::{AssetCache, AssetState};
+use warpui::elements::{
+    Border, Container, CrossAxisAlignment, Flex, HighlightedHyperlink, Hoverable, Icon,
+    MouseStateHandle, ParentElement,
+};
+use warpui::keymap::FixedBinding;
+use warpui::{AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext};
 
 use crate::ai::blocklist::inline_action::requested_action::RenderableAction;
 use crate::appearance::Appearance;
 use crate::terminal::shell::ShellType;
 use crate::terminal::warpify;
 use crate::ui_components::icons::Icon as UiIcon;
-use warpui::elements::{HighlightedHyperlink, Hoverable, Icon, MouseStateHandle};
-use warpui::keymap::FixedBinding;
-use warpui::AppContext;
-use warpui::{
-    elements::{Border, Container, CrossAxisAlignment, Flex, ParentElement},
-    Element, Entity, SingletonEntity, TypedActionView, View, ViewContext,
-};
 
 #[derive(Debug, Clone)]
 pub enum SshWarpifyBlockEvent {
