@@ -3,8 +3,6 @@ use std::collections::HashMap;
 use warp_core::features::FeatureFlag;
 use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity, ViewHandle, WindowId};
 
-use crate::settings::AISettings;
-
 use crate::ai::active_agent_views_model::{ActiveAgentViewsEvent, ActiveAgentViewsModel};
 use crate::ai::agent::conversation::{AIConversationId, ConversationStatus};
 use crate::ai::agent_management::notifications::{
@@ -422,10 +420,6 @@ impl AgentNotificationsModel {
         branch: Option<String>,
         ctx: &mut ModelContext<Self>,
     ) {
-        if !*AISettings::as_ref(ctx).show_agent_notifications {
-            return;
-        }
-
         let is_visible = is_terminal_view_visible(terminal_view_id, ctx);
         let item = NotificationItem::new(
             title,
