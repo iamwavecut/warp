@@ -310,6 +310,7 @@ pub enum Icon {
     Pin,
     PinFilled,
     Dataflow04,
+    LayersThree01,
     // Language-specific icons for the code block dropdown
     MermaidLang,
     GoLang,
@@ -628,6 +629,7 @@ impl From<Icon> for &'static str {
             Icon::HeartHand => "bundled/svg/heart-hand.svg",
             Icon::MessageChatSquare => "bundled/svg/message-chat-square.svg",
             Icon::Dataflow04 => "bundled/svg/dataflow-04.svg",
+            Icon::LayersThree01 => "bundled/svg/layers-three-01.svg",
             Icon::MermaidLang => "bundled/svg/file_type/mermaid.svg",
             Icon::GoLang => "bundled/svg/file_type/go.svg",
             Icon::CppLang => "bundled/svg/file_type/cpp.svg",
