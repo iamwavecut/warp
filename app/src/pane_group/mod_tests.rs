@@ -278,6 +278,7 @@ fn ambient_agent_task_for_current_user(task_id: AmbientAgentTaskId) -> AmbientAg
         created_at: now,
         started_at: Some(now),
         updated_at: now,
+        run_time: None,
         status_message: None,
         source: Some(AgentSource::Interactive),
         session_id: None,

@@ -29,6 +29,7 @@ fn task_with_run_time_and_credits() -> AmbientAgentTask {
         created_at: started_at,
         started_at: Some(started_at),
         updated_at,
+        run_time: Some("PT90S".parse().unwrap()),
         status_message: None,
         source: None,
         session_id: None,
@@ -56,6 +57,7 @@ fn task_with_run_time_and_credits() -> AmbientAgentTask {
 fn task_without_run_time_or_credits() -> AmbientAgentTask {
     let mut task = task_with_run_time_and_credits();
     task.started_at = None;
+    task.run_time = None;
     task.request_usage = None;
     task
 }

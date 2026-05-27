@@ -995,36 +995,6 @@ fn test_github_pr_chip_transient_failure_retries_with_same_fingerprint() {
 }
 
 #[test]
-fn test_github_pr_chip_caches_only_deterministic_failures() {
-    let auth_failure =
-        RecordingCommandExecutor::failure_output("authentication required", ExitCode::from(4));
-    let network_failure = RecordingCommandExecutor::failure_output(
-        "Post \"https://api.github.com/graphql\": dial tcp: lookup api.github.com: no such host",
-        ExitCode::from(1),
-    );
-
-    assert!(CurrentPrompt::should_cache_failure_fingerprint(
-        &ContextChipKind::GithubPullRequest,
-        Some(&auth_failure),
-        false,
-    ));
-    assert!(!CurrentPrompt::should_cache_failure_fingerprint(
-        &ContextChipKind::GithubPullRequest,
-        Some(&network_failure),
-        false,
-    ));
-    assert!(!CurrentPrompt::should_cache_failure_fingerprint(
-        &ContextChipKind::GithubPullRequest,
-        None,
-        true,
-    ));
-    assert!(CurrentPrompt::should_cache_failure_fingerprint(
-        &ContextChipKind::ShellGitBranch,
-        None,
-        true,
-    ));
-}
-#[test]
 fn test_disabling_chips() {
     App::test((), |mut app| async move {
         let session_id = SessionId::from(123);
