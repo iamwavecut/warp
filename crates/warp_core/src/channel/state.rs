@@ -268,14 +268,8 @@ fn app_id_from_bundle() -> Option<AppId> {
     // We skip this for tests, as the call to `mainBundle` can take 30+ms,
     // which is a significant portion of the total test runtime.
     #[cfg(all(target_os = "macos", not(feature = "test-util")))]
-    #[allow(deprecated)]
-    unsafe {
-        use cocoa::{
-            base::{id, nil},
-            foundation::NSBundle,
-        };
-        use objc::{msg_send, sel, sel_impl};
-        use warpui::platform::mac::utils::nsstring_as_str;
+    {
+        use objc2_foundation::NSBundle;
 
         let bundle = NSBundle::mainBundle();
         if let Some(bundle_identifier) = bundle.bundleIdentifier() {
