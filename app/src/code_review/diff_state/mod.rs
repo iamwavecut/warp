@@ -349,16 +349,15 @@ impl DiffStateModel {
         Self::Local(local)
     }
 
-    /// Creates a new remote-backed `DiffStateModel`. Requires a connected
-    /// `session_id` to anchor the initial `GetDiffState` subscription.
-    pub fn new_remote(
-        remote_path: RemotePath,
-        session_id: SessionId,
-        ctx: &mut ModelContext<Self>,
-    ) -> Self {
-        let remote = ctx.add_model(|ctx| {
-            RemoteDiffStateModel::new(remote_path, DiffMode::default(), session_id, ctx)
-        });
+    /// Creates a new remote-backed `DiffStateModel`. The model is
+    /// session-agnostic and is keyed by `(host_id, repo, mode)`; the
+    /// `RemoteServerManager` resolves a connected session for the host at
+    /// every outbound RPC, so the wrapper does not need to thread a
+    /// `SessionId` through. Callers must ensure a session for the host is
+    /// connected before constructing.
+    pub fn new_remote(remote_path: RemotePath, ctx: &mut ModelContext<Self>) -> Self {
+        let remote =
+            ctx.add_model(|ctx| RemoteDiffStateModel::new(remote_path, DiffMode::default(), ctx));
         ctx.subscribe_to_model(&remote, Self::forward_event);
         Self::Remote(remote)
     }

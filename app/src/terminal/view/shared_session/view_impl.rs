@@ -570,10 +570,20 @@ impl TerminalView {
 
     fn stop_sharing_session_for_reason(
         &mut self,
-        _source: SharedSessionActionSource,
+        source: SharedSessionActionSource,
         reason: SessionEndedReason,
         ctx: &mut ViewContext<Self>,
     ) {
+        let session_id = self.shared_session_id().cloned();
+        let source_task_id = self.model.lock().shared_session_source_type().and_then(
+            |source_type| match source_type {
+                SessionSourceType::User => None,
+                SessionSourceType::AmbientAgent { task_id } => task_id,
+            },
+        );
+        log::info!(
+            "Shared session view stop requested: session_id={session_id:?} source_task_id={source_task_id:?} action_source={source:?} reason={reason:?}"
+        );
         ctx.emit(Event::StopSharingCurrentSession { reason });
     }
 

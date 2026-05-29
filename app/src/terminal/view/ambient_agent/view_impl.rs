@@ -117,10 +117,13 @@ impl TerminalView {
                     return;
                 }
                 if FeatureFlag::CloudModeSetupV2.is_enabled() {
-                    // Render the submitted cloud prompt via the queued-prompt UI while the
-                    // real shared-session transcript catches up. `request.prompt` is stored
-                    // stripped of any `/plan` / `/orchestrate` prefix; rebuild the display
-                    // form from `request.mode` so the user sees exactly what they typed.
+                    // Render the submitted cloud prompt while the real shared-session transcript
+                    // catches up. The pending block is removed later by
+                    // `HarnessCommandStarted` / failure / cancel / auth handlers.
+                    //
+                    // `request.prompt` is stored stripped of any `/plan` / `/orchestrate`
+                    // prefix; rebuild the display form from `request.mode` so the user sees
+                    // exactly what they typed.
                     let prompt = ambient_agent_view_model
                         .as_ref(ctx)
                         .request()

@@ -728,6 +728,13 @@ impl LLMPreferences {
         self.models_by_feature.info_for_id(id)
     }
 
+    fn custom_llm_info_for_id_if_enabled(&self, id: &LLMId, app: &AppContext) -> Option<&LLMInfo> {
+        self.models_by_feature
+            .agent_mode
+            .usable_info_for_id(id, app)
+            .filter(|info| matches!(info.provider, LLMProvider::Custom(_)))
+    }
+
     /// Returns the default base model as a fallback.
     pub fn get_default_base_model(&self) -> &LLMInfo {
         self.models_by_feature.agent_mode.default_llm_info()
@@ -1022,7 +1029,10 @@ impl LLMPreferences {
                     let effective_base_model_usable = self
                         .models_by_feature
                         .agent_mode
-                        .usable_info_for_id(effective_base_model_id, ctx);
+                        .usable_info_for_id(effective_base_model_id, ctx)
+                        .or_else(|| {
+                            self.custom_llm_info_for_id_if_enabled(effective_base_model_id, ctx)
+                        });
                     let effective_base_model_unusable = effective_base_model_usable.is_none();
                     let effective_base_model_is_configurable = effective_base_model_usable
                         .is_some_and(|info| info.context_window.is_configurable);
@@ -1041,6 +1051,9 @@ impl LLMPreferences {
                             .models_by_feature
                             .coding
                             .usable_info_for_id(preferred_llm_id, ctx)
+                            .or_else(|| {
+                                self.custom_llm_info_for_id_if_enabled(preferred_llm_id, ctx)
+                            })
                             .is_none()
                         {
                             profiles.set_coding_model(profile_id, None, ctx);
@@ -1050,6 +1063,9 @@ impl LLMPreferences {
                         if self
                             .get_cli_agent_available()
                             .usable_info_for_id(preferred_llm_id, ctx)
+                            .or_else(|| {
+                                self.custom_llm_info_for_id_if_enabled(preferred_llm_id, ctx)
+                            })
                             .is_none()
                         {
                             profiles.set_cli_agent_model(profile_id, None, ctx);

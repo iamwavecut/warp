@@ -45,7 +45,6 @@ use warpui::{
 use crate::{
     appearance::Appearance,
     completer::SessionAgnosticContext,
-    debounce::debounce,
     drive::workflows::arguments::ArgumentsState,
     editor::InteractionState,
     features::FeatureFlag,
@@ -68,6 +67,7 @@ use crate::{
     workflows::{workflow::Workflow, WorkflowType},
     ASSETS,
 };
+use warp_core::r#async::debounce;
 
 use super::{
     interaction_state_model::InteractionStateModel,
@@ -201,7 +201,7 @@ impl NotebookCommand {
             dropdown.set_rich_items(
                 CodeBlockType::all().map(|code_block_type| {
                     let mut item = MenuItemFields::new(code_block_type.to_string())
-                        .with_on_select_action(DropdownAction::SelectActionAndClose(
+                        .with_on_select_action(DropdownAction::select_action_and_close(
                             EditorViewAction::CodeBlockTypeSelectedAtOffset {
                                 code_block_type: code_block_type.clone(),
                                 start_anchor: start.clone(),

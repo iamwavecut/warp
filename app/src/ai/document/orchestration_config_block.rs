@@ -74,7 +74,7 @@ const BASE_MODEL_HELPER: &str = "The primary model all agents will use.";
 
 // ── Action type ─────────────────────────────────────────────────────
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OrchestrationConfigBlockAction {
     ToggleApproval,
     ToggleDetails,
@@ -227,7 +227,7 @@ impl OrchestrationConfigBlockView {
         }
 
         let appearance = Appearance::as_ref(ctx);
-        let (_, colors) = oc::picker_styles(appearance);
+        let (styles, colors) = oc::picker_styles(appearance);
 
         // When the agent didn't specify a model, fall back to the
         // conversation's current base model so the picker isn't blank.
@@ -240,7 +240,7 @@ impl OrchestrationConfigBlockView {
         } else {
             self.edit_state.model_id.clone()
         };
-        let model_handle = oc::new_standard_picker_dropdown(&colors, ctx);
+        let model_handle = oc::new_standard_filterable_picker_dropdown(&styles, ctx);
         model_handle.update(ctx, |d, c| d.set_use_overlay_layer(true, c));
         oc::populate_model_picker_for_harness(
             &model_handle,

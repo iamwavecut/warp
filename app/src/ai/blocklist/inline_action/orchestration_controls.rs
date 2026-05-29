@@ -17,6 +17,7 @@ use warpui::elements::{
     ParentElement, Point, Radius, Text,
 };
 use warpui::event::DispatchedEvent;
+use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponentStyles};
 use warpui::{
     AfterLayoutContext, AppContext, Element, EventContext, LayoutContext, PaintContext,
@@ -37,7 +38,10 @@ use crate::ai::local_child_harnesses::{
 use crate::appearance::Appearance;
 use crate::menu::{MenuItem, MenuItemFields};
 use crate::ui_components::blended_colors;
-use crate::view_components::dropdown::{Dropdown, DropdownAction, DropdownStyle};
+use crate::view_components::dropdown::{
+    Dropdown, DropdownAction, DropdownItemAction, DropdownStyle,
+};
+use crate::view_components::FilterableDropdown;
 use crate::LLMPreferences;
 
 // ── Shared constants ────────────────────────────────────────────────
@@ -49,13 +53,17 @@ pub const ORCHESTRATION_PICKER_RADIUS: f32 = 4.;
 pub const ORCHESTRATION_PICKER_MAX_WIDTH: f32 = 205.;
 
 const DEFAULT_MODEL_LABEL: &str = "Default model";
+const ORCHESTRATION_SEGMENTED_CONTROL_PADDING: f32 = 4.;
+const ORCHESTRATION_SEGMENT_VERTICAL_PADDING: f32 = 4.;
 
 // ── Action trait ────────────────────────────────────────────────────
 
 /// Trait that both `RunAgentsCardViewAction` and
 /// `OrchestrationConfigBlockAction` implement so the shared picker
 /// creation and render helpers can produce the correct action variant.
-pub trait OrchestrationControlAction: Clone + Debug + Send + Sync + 'static {
+pub trait OrchestrationControlAction:
+    DropdownItemAction + Clone + Debug + Send + Sync + 'static
+{
     fn model_changed(model_id: String) -> Self;
     fn harness_changed(harness_type: String) -> Self;
 }
@@ -160,7 +168,7 @@ impl OrchestrationEditState {
 /// block. Generic over the action type `A`.
 #[derive(Clone)]
 pub struct OrchestrationPickerHandles<A: OrchestrationControlAction> {
-    pub model_picker: Option<ViewHandle<Dropdown<A>>>,
+    pub model_picker: Option<ViewHandle<FilterableDropdown<A>>>,
     pub harness_picker: Option<ViewHandle<Dropdown<A>>>,
 }
 
@@ -248,6 +256,26 @@ pub fn new_standard_picker_dropdown<A: OrchestrationControlAction, V: View>(
     })
 }
 
+/// Creates a searchable dropdown with the shared orchestration picker
+/// chrome (border, radius, background, font).
+pub fn new_standard_filterable_picker_dropdown<A: OrchestrationControlAction, V: View>(
+    styles: &UiComponentStyles,
+    ctx: &mut ViewContext<V>,
+) -> ViewHandle<FilterableDropdown<A>> {
+    let styles = *styles;
+    ctx.add_typed_action_view(move |ctx_dropdown| {
+        let mut dropdown = FilterableDropdown::<A>::new(ctx_dropdown);
+        dropdown.set_use_overlay_layer(false, ctx_dropdown);
+        dropdown.set_match_menu_width_to_top_bar(true, ctx_dropdown);
+        dropdown.set_main_axis_size(MainAxisSize::Max, ctx_dropdown);
+        dropdown.set_button_variant(ButtonVariant::Secondary);
+        dropdown.set_style(styles);
+        dropdown.set_top_bar_height(ORCHESTRATION_PICKER_HEIGHT, ctx_dropdown);
+        dropdown.set_top_bar_max_width(f32::INFINITY);
+        dropdown
+    })
+}
+
 /// Returns Warp base-model choices for orchestration.
 fn get_base_model_choices<'a>(
     llm_prefs: &'a LLMPreferences,
@@ -266,7 +294,7 @@ fn get_base_model_choices<'a>(
 ///   by the server-provided harness model catalog from
 ///   `HarnessAvailabilityModel::models_for()`.
 pub fn populate_model_picker_for_harness<A: OrchestrationControlAction, V: View>(
-    dropdown: &ViewHandle<Dropdown<A>>,
+    dropdown: &ViewHandle<FilterableDropdown<A>>,
     initial_model_id: &str,
     harness_type: &str,
     is_local: bool,
@@ -289,7 +317,9 @@ pub fn populate_model_picker_for_harness<A: OrchestrationControlAction, V: View>
                 let items = available_model_menu_items(
                     choices,
                     move |llm| {
-                        DropdownAction::SelectActionAndClose(A::model_changed(llm.id.to_string()))
+                        DropdownAction::select_action_and_close(A::model_changed(
+                            llm.id.to_string(),
+                        ))
                     },
                     None,
                     None,
@@ -311,14 +341,13 @@ pub fn populate_model_picker_for_harness<A: OrchestrationControlAction, V: View>
             Some(harness) => {
                 // Non-Oz harness: "Default model" at top, then server-provided
                 // harness models.
-                let mut items: Vec<MenuItem<DropdownAction<A>>> =
-                    vec![default_model_menu_item::<A>()];
+                let mut items: Vec<MenuItem<DropdownAction>> = vec![default_model_menu_item::<A>()];
                 let availability = HarnessAvailabilityModel::as_ref(ctx_dropdown);
                 if let Some(models) = availability.models_for(harness) {
                     for model in models {
                         let model_id = model.id.clone();
                         let fields = MenuItemFields::new(&model.display_name)
-                            .with_on_select_action(DropdownAction::SelectActionAndClose(
+                            .with_on_select_action(DropdownAction::select_action_and_close(
                                 A::model_changed(model_id),
                             ));
                         items.push(MenuItem::Item(fields));
@@ -348,10 +377,10 @@ pub fn populate_model_picker_for_harness<A: OrchestrationControlAction, V: View>
 }
 
 /// Creates a "Default model" menu item that emits an empty model_id.
-fn default_model_menu_item<A: OrchestrationControlAction>() -> MenuItem<DropdownAction<A>> {
+fn default_model_menu_item<A: OrchestrationControlAction>() -> MenuItem<DropdownAction> {
     MenuItem::Item(
         MenuItemFields::new(DEFAULT_MODEL_LABEL).with_on_select_action(
-            DropdownAction::SelectActionAndClose(A::model_changed(String::new())),
+            DropdownAction::select_action_and_close(A::model_changed(String::new())),
         ),
     )
 }
@@ -456,7 +485,7 @@ pub fn populate_harness_picker<A: OrchestrationControlAction, V: View>(
         // cached entry.harness deserialized as Unknown.
         let target_harness = Harness::parse_orchestration_harness(&initial_harness);
 
-        let mut items: Vec<MenuItem<DropdownAction<A>>> = Vec::new();
+        let mut items: Vec<MenuItem<DropdownAction>> = Vec::new();
         let mut selected_name: Option<String> = None;
         let target_display = target_harness.map(|harness| availability.display_name_for(harness));
 
@@ -472,7 +501,7 @@ pub fn populate_harness_picker<A: OrchestrationControlAction, V: View>(
             }
             let harness_str = harness.to_string();
             if entry.enabled {
-                fields = fields.with_on_select_action(DropdownAction::SelectActionAndClose(
+                fields = fields.with_on_select_action(DropdownAction::select_action_and_close(
                     A::harness_changed(harness_str.clone()),
                 ));
             } else {

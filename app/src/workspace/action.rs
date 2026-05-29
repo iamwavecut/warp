@@ -27,6 +27,7 @@ use crate::terminal::view::inline_banner::ZeroStatePromptSuggestionType;
 use crate::themes::theme::AnsiColorIdentifier;
 use crate::themes::theme_chooser::ThemeChooserMode;
 use crate::workflows::{WorkflowSelectionSource, WorkflowSource, WorkflowType};
+use crate::workspace::tab_group::TabGroupId;
 use crate::workspace::PaneViewLocator;
 
 use ui_components::lightbox;
@@ -162,6 +163,10 @@ pub enum WorkspaceAction {
     CloseNonActiveTabs,
     CloseTabsRight(usize),
     CloseTabsRightActiveTab,
+    /// Close every tab that belongs to the given tab group.
+    CloseTabGroup(TabGroupId),
+    /// Toggle collapsed state for the given tab group.
+    ToggleTabGroupCollapsed(TabGroupId),
     AddDefaultTab,
     AddTerminalTab {
         hide_homepage: bool,
@@ -481,10 +486,6 @@ pub enum WorkspaceAction {
         /// Optional prompt to send after summarization completes successfully.
         initial_prompt: Option<String>,
     },
-    /// Queue a prompt to be sent after the current conversation finishes.
-    QueuePromptForConversation {
-        prompt: String,
-    },
     /// Install the Warp CLI command to /usr/local/bin
     #[cfg(target_os = "macos")]
     InstallCLI,
@@ -671,6 +672,8 @@ impl WorkspaceAction {
             | CloseNonActiveTabs
             | CloseTabsRight(_)
             | CloseTabsRightActiveTab
+            | CloseTabGroup(_)
+            | ToggleTabGroupCollapsed(_)
             | ToggleTabColor { .. }
             | AddDefaultTab
             | AddTerminalTab { .. }
@@ -806,7 +809,6 @@ impl WorkspaceAction {
             | RunCommand { .. }
             | InsertInInput { .. }
             | InsertForkSlashCommand
-            | QueuePromptForConversation { .. }
             | UndoTrash(_)
             | OpenFilePath { .. }
             | ViewObjectInWarpDrive(_)

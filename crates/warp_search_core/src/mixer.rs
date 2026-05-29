@@ -1,17 +1,16 @@
-use super::data_source::{Query, QueryResult};
-use crate::debounce::debounce;
-use crate::search::QueryFilter;
+use super::data_source::{Query, QueryFilter, QueryResult};
 use async_channel::Sender;
 use async_trait::async_trait;
 use futures_util::stream::AbortHandle;
 use itertools::Itertools;
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use warpui::r#async::Timer;
-use warpui::{Action, AppContext, Entity, ModelContext};
+use warp_core::r#async::debounce;
+use warpui_core::r#async::Timer;
+use warpui_core::{Action, AppContext, Entity, ModelContext};
 
 /// Maximum time to wait for matching data sources to return results before showing
 /// partial results.
@@ -25,11 +24,10 @@ const INITIAL_RESULTS_TIMEOUT: Duration = Duration::from_millis(500);
 struct DataSourceDebounceArg;
 
 #[cfg(not(target_family = "wasm"))]
-pub(crate) type BoxFuture<'a, T> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
+pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
 #[cfg(target_family = "wasm")]
-pub(crate) type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
+pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + 'a>>;
 
 #[derive(Debug, Clone, Default)]
 pub enum DedupeStrategy {
@@ -174,10 +172,9 @@ impl<T: Action + Clone> SearchMixer<T> {
                 latest_run_abort_handle,
                 ..
             } = &mut registered_source.source
+                && let Some(abort_handle) = latest_run_abort_handle.take()
             {
-                if let Some(abort_handle) = latest_run_abort_handle.take() {
-                    abort_handle.abort();
-                }
+                abort_handle.abort();
             }
         }
     }
@@ -408,11 +405,11 @@ impl<T: Action + Clone> SearchMixer<T> {
                 }
 
                 // Check if we should just be debouncing the query rather than running it right now.
-                if let Some(debounce_tx) = debounce_tx {
-                    if !skip_debounce {
-                        let _ = debounce_tx.try_send(DataSourceDebounceArg {});
-                        return;
-                    }
+                if let Some(debounce_tx) = debounce_tx
+                    && !skip_debounce
+                {
+                    let _ = debounce_tx.try_send(DataSourceDebounceArg {});
+                    return;
                 }
 
                 // If we get here, then we should run the query against the data source right now.

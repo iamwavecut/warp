@@ -1,4 +1,5 @@
 use crate::ai::blocklist::history_model::CloudConversationData;
+use crate::ai::blocklist::QueuedQueryModel;
 use crate::server::ids::ServerId;
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::{
@@ -150,6 +151,9 @@ fn initialize_app(app: &mut App) {
     app.add_singleton_model(NotebookKeybindings::new);
     app.add_singleton_model(TerminalKeybindings::new);
     app.add_singleton_model(|_| BlocklistAIHistoryModel::new_for_test());
+    // QueuedQueryModel subscribes to history events; register after the
+    // history model is in place.
+    app.add_singleton_model(QueuedQueryModel::new);
     // Pill bar model subscribes to history events; register after the
     // history model is in place.
     app.add_singleton_model(|ctx| {

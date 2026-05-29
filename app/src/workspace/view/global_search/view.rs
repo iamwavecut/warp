@@ -14,7 +14,6 @@ use warp_editor::editor::NavigationKey;
 use warp_ripgrep::search::{Match as RipgrepMatch, Submatch};
 
 use crate::code::icon_from_file_path;
-use crate::debounce::debounce;
 use crate::editor::{
     EditorOptions, EditorView, Event as EditorEvent, InteractionState,
     PropagateAndNoOpNavigationKeys, PropagateHorizontalNavigationKeys, TextOptions,
@@ -27,6 +26,7 @@ use crate::ui_components::render_file_search_row::{render_file_search_row, FileS
 use crate::view_components::action_button::{ActionButton, ButtonSize, NakedTheme};
 use crate::workspace::view::global_search::model::GlobalSearch;
 use crate::workspace::view::global_search::SearchConfig;
+use warp_core::r#async::debounce;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as ThemeFill};

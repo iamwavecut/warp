@@ -54,6 +54,7 @@ use crate::view_components::compactible_action_button::{
 };
 use crate::view_components::compactible_split_action_button::CompactibleSplitActionButton;
 use crate::view_components::dropdown::DropdownEvent;
+use crate::view_components::{FilterableDropdownEvent, FilterableDropdownOrientation};
 
 const RUN_AGENTS_CARD_TITLE: &str = "Can I start additional agents for this task?";
 
@@ -141,7 +142,7 @@ struct RunAgentsCardHandles {
     pickers: OrchestrationPickerHandles<RunAgentsCardViewAction>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunAgentsCardViewAction {
     Accept,
     AcceptWithoutOrchestration,
@@ -434,7 +435,7 @@ impl RunAgentsCardView {
     /// Construct the picker dropdown views (idempotent).
     fn ensure_pickers(&mut self, ctx: &mut ViewContext<Self>) {
         let appearance = Appearance::as_ref(ctx);
-        let (_, colors) = oc::picker_styles(appearance);
+        let (styles, colors) = oc::picker_styles(appearance);
 
         let initial_model_id_default = self
             .block_model
@@ -449,8 +450,8 @@ impl RunAgentsCardView {
             } else {
                 state.orch.model_id.clone()
             };
-            let handle = oc::new_standard_picker_dropdown(&colors, ctx);
-            Self::set_upward_menu_position(&handle, ctx);
+            let handle = oc::new_standard_filterable_picker_dropdown(&styles, ctx);
+            Self::set_upward_filterable_menu_position(&handle, ctx);
             oc::populate_model_picker_for_harness(
                 &handle,
                 &initial_model_id,
@@ -458,7 +459,7 @@ impl RunAgentsCardView {
                 true,
                 ctx,
             );
-            Self::subscribe_picker_close(&handle, ctx);
+            Self::subscribe_filterable_picker_close(&handle, ctx);
             self.handles.pickers.model_picker = Some(handle);
         }
 
@@ -496,6 +497,17 @@ impl RunAgentsCardView {
         });
     }
 
+    fn set_upward_filterable_menu_position(
+        dropdown_handle: &ViewHandle<
+            crate::view_components::FilterableDropdown<RunAgentsCardViewAction>,
+        >,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        dropdown_handle.update(ctx, |dropdown, _| {
+            dropdown.set_orientation(FilterableDropdownOrientation::Up)
+        });
+    }
+
     fn subscribe_picker_close(
         dropdown_handle: &ViewHandle<
             crate::view_components::dropdown::Dropdown<RunAgentsCardViewAction>,
@@ -504,6 +516,19 @@ impl RunAgentsCardView {
     ) {
         ctx.subscribe_to_view(dropdown_handle, move |me, _, event, ctx| {
             if let DropdownEvent::Close = event {
+                me.refocus_after_picker_close(ctx);
+            }
+        });
+    }
+
+    fn subscribe_filterable_picker_close(
+        dropdown_handle: &ViewHandle<
+            crate::view_components::FilterableDropdown<RunAgentsCardViewAction>,
+        >,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.subscribe_to_view(dropdown_handle, move |me, _, event, ctx| {
+            if let FilterableDropdownEvent::Close = event {
                 me.refocus_after_picker_close(ctx);
             }
         });

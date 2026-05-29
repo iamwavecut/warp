@@ -1232,6 +1232,8 @@ pub enum NewWorkspaceSource {
         options: Box<NewTerminalOptions>,
         initial_query: Option<String>,
     },
+    /// Starts the workspace with the Cloud Agent setup tab.
+    AmbientAgent,
     /// A tab is being transferred from another window via the transferable views framework.
     /// The workspace will create a placeholder tab, which will be replaced by the transferred
     /// PaneGroup after window creation.

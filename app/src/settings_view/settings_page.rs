@@ -22,7 +22,7 @@ use crate::{
     appearance::Appearance,
     themes::theme::Fill,
     ui_components::icons::Icon,
-    view_components::{Dropdown, SubmittableTextInput},
+    view_components::{Dropdown, DropdownItemAction, SubmittableTextInput},
 };
 use pathfinder_geometry::vector::vec2f;
 use settings::Setting;
@@ -752,7 +752,7 @@ pub fn render_dropdown_item_label(
     label
 }
 
-pub(crate) fn render_dropdown_item<T: Clone + Action>(
+pub(crate) fn render_dropdown_item<T: DropdownItemAction>(
     appearance: &Appearance,
     label: &str,
     secondary_text: Option<&str>,

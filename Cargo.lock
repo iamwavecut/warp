@@ -2537,6 +2537,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "cloud_objects"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "cynic",
+ "derivative",
+ "itertools 0.14.0",
+ "lasso",
+ "pathfinder_geometry",
+ "schemars",
+ "serde",
+ "session-sharing-protocol",
+ "settings_value",
+ "thiserror 2.0.17",
+ "uuid",
+ "warp_core",
+ "warp_graphql",
+ "warpui_core",
+]
+
+[[package]]
 name = "cmake"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5833,7 +5855,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.61.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -9286,7 +9308,7 @@ version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
- "heck 0.4.1",
+ "heck 0.5.0",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -13202,6 +13224,7 @@ dependencies = [
  "channel_versions",
  "chrono",
  "clap",
+ "cloud_objects",
  "cocoa 0.26.0",
  "comfy-table",
  "command",
@@ -13283,12 +13306,15 @@ dependencies = [
  "num-traits",
  "oauth2",
  "objc",
+ "objc2 0.6.3",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
  "onboarding",
  "once_cell",
  "ordered-float 3.9.2",
  "palette",
  "parking_lot",
- "paste",
  "pathfinder_color",
  "pathfinder_geometry",
  "permissions",
@@ -13342,7 +13368,6 @@ dependencies = [
  "syntect",
  "sysinfo",
  "tabwriter",
- "tantivy",
  "tempfile",
  "thiserror 2.0.17",
  "thousands",
@@ -13384,6 +13409,7 @@ dependencies = [
  "warp_managed_secrets",
  "warp_multi_agent_api",
  "warp_ripgrep",
+ "warp_search_core",
  "warp_server_client",
  "warp_terminal",
  "warp_util",
@@ -13406,7 +13432,7 @@ dependencies = [
 [[package]]
 name = "warp-command-signatures"
 version = "0.0.0"
-source = "git+https://github.com/warpdotdev/command-signatures.git?rev=00a032b8ea0ee5711e2077e39a92dc9ca2051cd3#00a032b8ea0ee5711e2077e39a92dc9ca2051cd3"
+source = "git+https://github.com/warpdotdev/command-signatures.git?rev=b3061096d193bf4915eabb0d03b4e6b403c6ea45#b3061096d193bf4915eabb0d03b4e6b403c6ea45"
 dependencies = [
  "cfg-if",
  "itertools 0.10.5",
@@ -13424,7 +13450,7 @@ dependencies = [
 [[package]]
 name = "warp-completion-metadata"
 version = "0.0.0"
-source = "git+https://github.com/warpdotdev/command-signatures.git?rev=00a032b8ea0ee5711e2077e39a92dc9ca2051cd3#00a032b8ea0ee5711e2077e39a92dc9ca2051cd3"
+source = "git+https://github.com/warpdotdev/command-signatures.git?rev=b3061096d193bf4915eabb0d03b4e6b403c6ea45#b3061096d193bf4915eabb0d03b4e6b403c6ea45"
 dependencies = [
  "html-escape",
  "itertools 0.10.5",
@@ -13528,13 +13554,13 @@ dependencies = [
  "anyhow",
  "async-broadcast",
  "cfg-if",
- "cocoa 0.26.0",
  "command-corrections",
  "concat-idents",
  "directories",
  "dirs 6.0.0",
  "enum-iterator",
  "futures",
+ "futures-lite 1.13.0",
  "getset",
  "http 1.4.0",
  "instant",
@@ -13544,9 +13570,9 @@ dependencies = [
  "line-ending",
  "log",
  "mockito",
- "objc",
  "objc2-foundation 0.3.2",
  "parking_lot",
+ "pin-project",
  "rand 0.8.6",
  "regex",
  "reqwest",
@@ -13706,6 +13732,7 @@ dependencies = [
  "js-sys",
  "log",
  "log-panics",
+ "tempfile",
  "warp_core",
  "warp_web_event_bus",
  "wasm-bindgen",
@@ -13753,12 +13780,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "warp_search_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "async-trait",
+ "enum-iterator",
+ "futures",
+ "futures-util",
+ "instant",
+ "itertools 0.14.0",
+ "lazy_static",
+ "log",
+ "ordered-float 3.9.2",
+ "parking_lot",
+ "paste",
+ "pathfinder_color",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "string-offset",
+ "strum",
+ "strum_macros",
+ "tantivy",
+ "warp_core",
+ "warpui_core",
+]
+
+[[package]]
 name = "warp_server_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
  "chrono",
+ "cloud_objects",
  "cynic",
  "derivative",
  "diesel",
@@ -13907,6 +13964,9 @@ dependencies = [
  "notify-rust",
  "num-traits",
  "objc",
+ "objc2 0.6.3",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "open",
  "ordered-float 3.9.2",
  "owned_ttf_parser",
@@ -14022,10 +14082,10 @@ name = "warpui_extras"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "cocoa 0.26.0",
  "gloo-storage",
  "log",
- "objc",
+ "objc2 0.6.3",
+ "objc2-foundation 0.3.2",
  "ouroboros",
  "rand 0.8.6",
  "ring",

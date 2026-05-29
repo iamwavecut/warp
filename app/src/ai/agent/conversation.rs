@@ -313,78 +313,123 @@ impl AIConversation {
         }
     }
 
-    // TODO: derive todo list state from tasks instead of taking args.
-    //
-    // This would make it possible to fully restore a convo from tasks, instead of having to persist this additional data.
+    /// Strict restore: returns `Err(NoRootTask)` if `tasks` is empty. Use
+    /// for cloud-restore and fork-insert paths, where an empty payload is
+    /// malformed input rather than a not-yet-populated child.
     pub fn new_restored(
         id: AIConversationId,
         tasks: Vec<api::Task>,
         conversation_data: Option<AgentConversationData>,
     ) -> Result<Self, RestoreConversationError> {
-        let root_task_is_optimistic = conversation_data
-            .as_ref()
-            .and_then(|data| data.root_task_is_optimistic)
-            .unwrap_or_default();
-        let api_tasks_by_id: HashMap<String, api::Task> =
-            tasks.into_iter().map(|t| (t.id.clone(), t)).collect();
-
-        // To process a task, we need to reference some of the data in its parent task.  To
-        // avoid cloning, we process the task tree from deepest tasks to shallowest tasks.  This
-        // ensures that children are always processed before their parents, avoiding any need to
-        // clone task data to ensure the parent is available when processing the child.
-        let depths = compute_task_depths(&api_tasks_by_id);
-        let mut task_ids: Vec<String> = api_tasks_by_id.keys().cloned().collect();
-        task_ids.sort_by(|a, b| {
-            depths
-                .get(b.as_str())
-                .unwrap_or(&0)
-                .cmp(depths.get(a.as_str()).unwrap_or(&0))
-        });
-
-        let mut api_tasks_and_exchanges_by_id: HashMap<_, _> = api_tasks_by_id
-            .into_iter()
-            .map(|(id, task)| {
-                let exchanges = task.into_exchanges();
-                (id, (task, exchanges))
-            })
-            .collect();
-
-        let mut tasks_by_id = HashMap::new();
-        let mut root_task = None;
-        for task_id in task_ids {
-            let Some((task, exchanges)) = api_tasks_and_exchanges_by_id.remove(&task_id) else {
-                continue;
-            };
-
-            if let Some(parent_id) = task.parent_id() {
-                if let Some((parent_task, _)) = api_tasks_and_exchanges_by_id.get(parent_id) {
-                    tasks_by_id.insert(
-                        TaskId::new(task.id.clone()),
-                        Task::new_restored_subtask(task, parent_task, exchanges),
-                    );
-                } else {
-                    log::error!(
-                        "Could not find parent task (id: {}) for task (id: {})",
-                        parent_id,
-                        task.id
-                    );
-                }
-            } else if root_task.is_none() {
-                root_task = Some(if root_task_is_optimistic {
-                    Task::new_restored_optimistic_root(task.id.clone(), exchanges.into_iter())
-                } else {
-                    Task::new_restored_root(task, exchanges.into_iter())
-                });
-            }
-        }
-
-        let Some(root_task) = root_task else {
+        if tasks.is_empty() {
             return Err(RestoreConversationError::NoRootTask);
+        }
+        Self::new_restored_synthesizing_on_empty(id, tasks, conversation_data)
+    }
+
+    // TODO: derive todo list state from tasks instead of taking args. This
+    // would make it possible to fully restore a convo from tasks, instead of
+    // having to persist this additional data.
+    /// Lenient restore: when `tasks` is empty, synthesizes a fresh in-memory
+    /// conversation with a new `Optimistic(Root)` root task and the persisted
+    /// overlay metadata applied (mirroring the shape `AIConversation::new()`
+    /// produces). Use for the local-DB restore path, where an empty
+    /// `agent_tasks` set is the normal shape of a child conversation
+    /// persisted before its first server response.
+    pub fn new_restored_synthesizing_on_empty(
+        id: AIConversationId,
+        tasks: Vec<api::Task>,
+        conversation_data: Option<AgentConversationData>,
+    ) -> Result<Self, RestoreConversationError> {
+        let (task_store, todo_lists, status) = if tasks.is_empty() {
+            // Bypass `derive_status_from_root_task`: it would return `Success`
+            // for a root with no exchanges, silently misclassifying a restored
+            // "child waiting on server response" as done.
+            let root_task = Task::new_optimistic_root();
+            let task_store = TaskStore::with_root_task(root_task);
+            (task_store, Vec::new(), ConversationStatus::InProgress)
+        } else {
+            let api_tasks_by_id: HashMap<String, api::Task> =
+                tasks.into_iter().map(|t| (t.id.clone(), t)).collect();
+
+            // To process a task, we need to reference some of the data in its parent task.  To
+            // avoid cloning, we process the task tree from deepest tasks to shallowest tasks.  This
+            // ensures that children are always processed before their parents, avoiding any need to
+            // clone task data to ensure the parent is available when processing the child.
+            let depths = compute_task_depths(&api_tasks_by_id);
+            let mut task_ids: Vec<String> = api_tasks_by_id.keys().cloned().collect();
+            task_ids.sort_by(|a, b| {
+                depths
+                    .get(b.as_str())
+                    .unwrap_or(&0)
+                    .cmp(depths.get(a.as_str()).unwrap_or(&0))
+            });
+
+            let mut api_tasks_and_exchanges_by_id: HashMap<_, _> = api_tasks_by_id
+                .into_iter()
+                .map(|(id, task)| {
+                    let exchanges = task.into_exchanges();
+                    (id, (task, exchanges))
+                })
+                .collect();
+
+            let mut tasks_by_id = HashMap::new();
+            // Defer root selection until we've seen every parentless task so
+            // we can deterministically prefer a candidate with non-empty
+            // messages. Heals legacy DB rows that contain an orphan
+            // optimistic-UUID stub alongside the real server root; without
+            // this dedupe, `HashMap` iteration order picks between them
+            // non-deterministically. See QUALITY-774.
+            let mut parentless_candidates: Vec<(api::Task, Vec<AIAgentExchange>)> = Vec::new();
+            for task_id in task_ids {
+                let Some((task, exchanges)) = api_tasks_and_exchanges_by_id.remove(&task_id) else {
+                    continue;
+                };
+
+                if let Some(parent_id) = task.parent_id() {
+                    if let Some((parent_task, _)) = api_tasks_and_exchanges_by_id.get(parent_id) {
+                        tasks_by_id.insert(
+                            TaskId::new(task.id.clone()),
+                            Task::new_restored_subtask(task, parent_task, exchanges),
+                        );
+                    } else {
+                        log::error!(
+                            "Could not find parent task (id: {}) for task (id: {})",
+                            parent_id,
+                            task.id
+                        );
+                    }
+                } else {
+                    parentless_candidates.push((task, exchanges));
+                }
+            }
+
+            // Prefer the parentless candidate with non-empty messages (the
+            // real server root) over an empty stub. If multiple have messages
+            // or none have messages, fall back to the first-encountered
+            // candidate.
+            let root_task_pick = parentless_candidates
+                .iter()
+                .position(|(task, _)| !task.messages.is_empty())
+                .or_else(|| (!parentless_candidates.is_empty()).then_some(0))
+                .map(|idx| parentless_candidates.swap_remove(idx));
+
+            let Some((root_api_task, root_exchanges)) = root_task_pick else {
+                return Err(RestoreConversationError::NoRootTask);
+            };
+            let root_task = Task::new_restored_root(root_api_task, root_exchanges.into_iter());
+
+            // Derive todo lists from tasks by replaying UpdateTodos operations
+            let todo_lists = derive_todo_lists_from_root_task(&root_task);
+            let root_task_id = root_task.id().clone();
+            tasks_by_id.insert(root_task.id().clone(), root_task);
+
+            // Determine the correct status based on the exchanges before constructing
+            let status = Self::derive_status_from_root_task(&tasks_by_id.get(&root_task_id));
+
+            let task_store = TaskStore::from_tasks(tasks_by_id, root_task_id);
+            (task_store, todo_lists, status)
         };
-        // Derive todo lists from tasks by replaying UpdateTodos operations
-        let todo_lists = derive_todo_lists_from_root_task(&root_task);
-        let root_task_id = root_task.id().clone();
-        tasks_by_id.insert(root_task.id().clone(), root_task);
 
         let (
             server_conversation_token,
@@ -406,11 +451,16 @@ impl AIConversation {
                 .server_conversation_token
                 .map(ServerConversationToken::new);
             let conversation_usage_metadata = data.conversation_usage_metadata.unwrap_or_default();
-            let reverted_action_ids = data.reverted_action_ids.unwrap_or_default();
+            let reverted_action_ids: HashSet<AIAgentActionId> = data
+                .reverted_action_ids
+                .unwrap_or_default()
+                .into_iter()
+                .map_into()
+                .collect();
             let forked_from_server_conversation_token = data
                 .forked_from_server_conversation_token
                 .map(ServerConversationToken::new);
-            let artifacts = data
+            let artifacts: Vec<Artifact> = data
                 .artifacts_json
                 .and_then(|json| {
                     serde_json::from_str(&json)
@@ -418,14 +468,9 @@ impl AIConversation {
                         .ok()
                 })
                 .unwrap_or_default();
-            let parent_agent_id = data.parent_agent_id;
-            let agent_name = data.agent_name;
-            let orchestration_harness_type = data.orchestration_harness_type;
             let parent_conversation_id = data
                 .parent_conversation_id
                 .and_then(|id| AIConversationId::try_from(id).ok());
-            let is_remote_child = data.is_remote_child;
-            let run_id = data.run_id;
             let autoexecute_override = if FeatureFlag::RememberFastForwardState.is_enabled() {
                 data.autoexecute_override
                     .map(Into::into)
@@ -433,31 +478,28 @@ impl AIConversation {
             } else {
                 AIConversationAutoexecuteMode::default()
             };
-            let last_event_sequence = data.last_event_sequence;
-            let pinned = data.pinned;
-
             (
                 server_conversation_token,
                 forked_from_server_conversation_token,
                 conversation_usage_metadata,
                 reverted_action_ids,
                 artifacts,
-                parent_agent_id,
-                agent_name,
-                orchestration_harness_type,
+                data.parent_agent_id,
+                data.agent_name,
+                data.orchestration_harness_type,
                 parent_conversation_id,
-                is_remote_child,
-                run_id,
+                data.is_remote_child,
+                data.run_id,
                 autoexecute_override,
-                last_event_sequence,
-                pinned,
+                data.last_event_sequence,
+                data.pinned,
             )
         } else {
             (
                 None,
                 None,
                 ConversationUsageMetadata::default(),
-                Default::default(),
+                HashSet::new(),
                 Vec::new(),
                 None,
                 None,
@@ -470,14 +512,6 @@ impl AIConversation {
                 false,
             )
         };
-
-        // Convert these from the persistence type to the runtime one.
-        let reverted_action_ids = reverted_action_ids.into_iter().map_into().collect();
-
-        // Determine the correct status based on the exchanges before constructing
-        let status = Self::derive_status_from_root_task(&tasks_by_id.get(&root_task_id));
-
-        let task_store = TaskStore::from_tasks(tasks_by_id, root_task_id);
 
         Ok(Self {
             id,
@@ -998,9 +1032,9 @@ impl AIConversation {
 
     /// Returns all the tasks in this conversation.
     ///
-    /// Note that until we've fully migrated to the multi-agent endpoint, in reality, each
-    /// conversation is comprised of a single task (the legacy endpoint `GenerateAIAgentOutput` does
-    /// not support multiple tasks within a conversation).
+    /// Note that some restored conversations are still single-task records from
+    /// older local persistence shapes, while newer conversations may contain
+    /// subagent tasks.
     pub fn all_tasks(&self) -> impl Iterator<Item = &Task> {
         self.task_store.tasks()
     }
@@ -3022,8 +3056,6 @@ impl AIConversation {
             }
         };
 
-        let root_task_is_optimistic = self.get_root_task().map(Task::is_optimistic_root_task);
-
         let event = ModelEvent::UpdateMultiAgentConversation {
             conversation_id: self.id.to_string(),
             updated_tasks: self
@@ -3047,7 +3079,11 @@ impl AIConversation {
                 orchestration_harness_type: self.orchestration_harness_type.clone(),
                 parent_conversation_id: self.parent_conversation_id.map(|id| id.to_string()),
                 is_remote_child: self.is_remote_child,
-                root_task_is_optimistic,
+                // Legacy field; retained for backward-compatible
+                // deserialization but no longer written. The optimistic-root
+                // case is now handled by `Task::source_for_persistence`
+                // (returns `None`) and `new_restored_synthesizing_on_empty`.
+                root_task_is_optimistic: None,
                 run_id: self.task_id.map(|id| id.to_string()),
                 autoexecute_override: Some(self.autoexecute_override.into()),
                 last_event_sequence: self.last_event_sequence,

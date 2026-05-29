@@ -24,7 +24,6 @@ use warpui::{
 
 use crate::{
     cloud_object::model::persistence::{CloudModel, CloudModelEvent},
-    debounce::debounce,
     editor::InteractionState,
     notebooks::editor::embedding_model::NotebookEmbed,
     notebooks::BlockInfo,
@@ -35,6 +34,7 @@ use crate::{
 };
 use string_offset::CharOffset;
 use warp_core::features::FeatureFlag;
+use warp_core::r#async::debounce;
 use warp_core::semantic_selection::SemanticSelection;
 use warp_editor::{
     content::{buffer::ShouldAutoscroll, selection_model::BufferSelectionModel},

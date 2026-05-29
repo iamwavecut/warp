@@ -59,7 +59,6 @@ use crate::{
         global_buffer_model::{BufferState, GlobalBufferModel},
         SaveOutcome, ShowFindReferencesCardProvider,
     },
-    debounce::debounce,
     settings::AISettings,
     terminal::TerminalView,
 };
@@ -72,6 +71,7 @@ use pathfinder_color::ColorU;
 #[cfg(feature = "local_fs")]
 use repo_metadata::repositories::DetectedRepositories;
 use vim::vim::{MotionType, VimMode};
+use warp_core::r#async::debounce;
 use warp_core::ui::icons::Icon;
 #[cfg(feature = "local_fs")]
 use warp_util::local_or_remote_path::LocalOrRemotePath;

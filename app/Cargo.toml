@@ -79,6 +79,7 @@ cfg-if.workspace = true
 channel_versions.workspace = true
 chrono.workspace = true
 clap.workspace = true
+cloud_objects.workspace = true
 command = { workspace = true }
 command-corrections.workspace = true
 command-signatures-v2 = { workspace = true, optional = true }
@@ -140,7 +141,6 @@ once_cell.workspace = true
 ordered-float.workspace = true
 palette = { version = "0.6.0", default-features = false, features = ["std"] }
 parking_lot = { version = "0.12.1", features = ["serde"] }
-paste = "1.0"
 pathfinder_color = "0.5.0"
 pathfinder_geometry.workspace = true
 persistence.workspace = true
@@ -212,6 +212,7 @@ warp_core.workspace = true
 warp_editor.workspace = true
 warp_graphql.workspace = true
 warp_js = { workspace = true, optional = true }
+warp_search_core.workspace = true
 warp_server_client.workspace = true
 warp_util.workspace = true
 warpui = { workspace = true, features = ["schema_gen", "settings_value"] }
@@ -245,6 +246,22 @@ cocoa.workspace = true
 core-foundation.workspace = true
 mach2 = "0.5"
 objc.workspace = true
+objc2.workspace = true
+objc2-app-kit = { workspace = true, features = [
+    "NSApplication",
+    "NSImage",
+    "NSResponder",
+    "NSRunningApplication",
+    "NSWorkspace",
+] }
+objc2-core-foundation.workspace = true
+objc2-foundation = { workspace = true, features = [
+    "NSBundle",
+    "NSLocale",
+    "NSPathUtilities",
+    "NSString",
+    "NSURL",
+] }
 permissions = "0.4.1"
 pprof = { workspace = true, optional = true, features = ["frame-pointer"] }
 
@@ -288,7 +305,6 @@ is_executable = "1.0.1"
 gethostname = "1.1.0"
 watcher.workspace = true
 warp_files.workspace = true
-tantivy = "0.26.0"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 # Make sure we embed the data into the wasm binary even when running in debug
@@ -519,6 +535,7 @@ default = [
     "github_pr_prompt_chip",
     "conversations_as_context",
     "markdown_tables",
+    "blocklist_markdown_table_rendering",
     "markdown_mermaid",
     "blocklist_markdown_images",
     "pr_comments_slash_command",

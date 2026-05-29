@@ -10,7 +10,8 @@ use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::ai::blocklist::SessionContext;
 use crate::ai::codebase_auto_indexing::{
-    auto_index_candidate_roots, should_auto_index_codebase, CodebaseAutoIndexingSurface,
+    auto_index_candidate_roots, should_auto_index_codebase, should_use_codebase_indexing,
+    CodebaseAutoIndexingSurface,
 };
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 
@@ -152,6 +153,9 @@ impl RemoteCodebaseIndexModel {
         explicit_repo_path: Option<&str>,
         ctx: &mut ModelContext<Self>,
     ) -> bool {
+        if !should_use_codebase_indexing(CodebaseAutoIndexingSurface::Remote, ctx) {
+            return false;
+        }
         let Some(host_id) = session_context.host_id() else {
             return false;
         };
@@ -175,12 +179,13 @@ impl RemoteCodebaseIndexModel {
         true
     }
 
-    pub fn codebases_for_agent_context(&self) -> Vec<RemoteCodebaseContextEntry> {
+    pub fn codebases_for_agent_context(&self, host_id: &HostId) -> Vec<RemoteCodebaseContextEntry> {
         let mut entries = self
             .statuses
             .iter()
             .filter(|&(remote_path, status)| {
-                search_availability_for_status(status, remote_path.clone()).is_ready()
+                remote_path.host_id == *host_id
+                    && search_availability_for_status(status, remote_path.clone()).is_ready()
             })
             .map(|(remote_path, _)| {
                 let path = remote_path.path.as_str().to_string();
@@ -195,6 +200,9 @@ impl RemoteCodebaseIndexModel {
     }
 
     pub fn request_index(&self, remote_path: RemotePath, ctx: &mut ModelContext<Self>) {
+        if !should_use_codebase_indexing(CodebaseAutoIndexingSurface::Remote, ctx) {
+            return;
+        }
         RemoteServerManager::handle(ctx).update(ctx, |manager, ctx| {
             manager.ensure_codebase_indexed(
                 remote_path,
@@ -207,6 +215,9 @@ impl RemoteCodebaseIndexModel {
     }
 
     pub fn resync_index(&self, remote_path: RemotePath, ctx: &mut ModelContext<Self>) {
+        if !should_use_codebase_indexing(CodebaseAutoIndexingSurface::Remote, ctx) {
+            return;
+        }
         RemoteServerManager::handle(ctx).update(ctx, |manager, ctx| {
             manager.resync_codebase(remote_path, ctx);
         });
@@ -328,23 +339,18 @@ impl RemoteCodebaseIndexModel {
             | RemoteServerManagerEvent::ServerMessageDecodingError { .. } => {}
         }
     }
-    fn should_request_auto_index_for_navigated_git_repo(&self, remote_path: &RemotePath) -> bool {
-        let Some(status) = self.status_for_repo(remote_path) else {
-            return true;
-        };
-
-        match search_availability_for_status(status, remote_path.clone()) {
-            RemoteCodebaseSearchAvailability::Ready(_)
-            | RemoteCodebaseSearchAvailability::Indexing { .. } => false,
-            RemoteCodebaseSearchAvailability::NoConnectedHost
-            | RemoteCodebaseSearchAvailability::NoActiveRepo
-            | RemoteCodebaseSearchAvailability::NotIndexed { .. }
-            | RemoteCodebaseSearchAvailability::Unavailable { .. } => true,
-        }
-    }
 
     fn handle_codebase_context_enablement_changed(&mut self, ctx: &mut ModelContext<Self>) {
-        if !should_auto_index_codebase(CodebaseAutoIndexingSurface::Remote, ctx) {
+        if !should_use_codebase_indexing(CodebaseAutoIndexingSurface::Remote, ctx) {
+            let remote_paths = self.clear_remote_codebase_indexing_state();
+            if !remote_paths.is_empty() {
+                ctx.emit(RemoteCodebaseIndexModelEvent::SettingsEntriesChanged);
+            }
+            for remote_path in remote_paths {
+                RemoteServerManager::handle(ctx).update(ctx, |manager, ctx| {
+                    manager.drop_codebase_index(remote_path, ctx);
+                });
+            }
             return;
         }
 
@@ -359,6 +365,25 @@ impl RemoteCodebaseIndexModel {
                     ctx,
                 );
             });
+        }
+    }
+
+    fn clear_remote_codebase_indexing_state(&mut self) -> Vec<RemotePath> {
+        let statuses = std::mem::take(&mut self.statuses);
+        statuses.into_keys().collect()
+    }
+    fn should_request_auto_index_for_navigated_git_repo(&self, remote_path: &RemotePath) -> bool {
+        let Some(status) = self.status_for_repo(remote_path) else {
+            return true;
+        };
+
+        match search_availability_for_status(status, remote_path.clone()) {
+            RemoteCodebaseSearchAvailability::Ready(_)
+            | RemoteCodebaseSearchAvailability::Indexing { .. } => false,
+            RemoteCodebaseSearchAvailability::NoConnectedHost
+            | RemoteCodebaseSearchAvailability::NoActiveRepo
+            | RemoteCodebaseSearchAvailability::NotIndexed { .. }
+            | RemoteCodebaseSearchAvailability::Unavailable { .. } => true,
         }
     }
 

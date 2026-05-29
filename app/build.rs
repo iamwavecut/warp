@@ -40,7 +40,6 @@ fn main() -> Result<()> {
         println!("cargo:rerun-if-changed=src/platform/mac/objc/services.m");
 
         cc::Build::new()
-            .file("src/platform/mac/objc/app_bundle.m")
             .file("src/platform/mac/objc/services.m")
             .compile("warp_objc");
 

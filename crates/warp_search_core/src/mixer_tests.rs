@@ -1,13 +1,10 @@
 use super::*;
-use crate::auth::auth_manager::AuthManager;
-use crate::auth::AuthStateProvider;
-use crate::search::item::SearchItem;
-use crate::server::server_api::ServerApiProvider;
+use crate::item::SearchItem;
 use ordered_float::OrderedFloat;
 use std::collections::HashSet;
 use std::time::Duration;
-use warpui::r#async::Timer;
-use warpui::{App, AppContext, Element};
+use warpui_core::r#async::Timer;
+use warpui_core::{App, AppContext, Element};
 
 #[derive(Clone, Debug, PartialEq)]
 struct TestAction {
@@ -27,15 +24,15 @@ impl SearchItem for TestSearchItem {
 
     fn render_icon(
         &self,
-        _highlight_state: crate::search::result_renderer::ItemHighlightState,
-        _appearance: &crate::appearance::Appearance,
+        _highlight_state: crate::result_renderer::ItemHighlightState,
+        _appearance: &warp_core::ui::appearance::Appearance,
     ) -> Box<dyn Element> {
         unimplemented!()
     }
 
     fn render_item(
         &self,
-        _highlight_state: crate::search::result_renderer::ItemHighlightState,
+        _highlight_state: crate::result_renderer::ItemHighlightState,
         _app: &AppContext,
     ) -> Box<dyn Element> {
         unimplemented!()
@@ -148,11 +145,7 @@ impl AsyncDataSource for QueryDrivenDelayedAsyncSource {
     }
 }
 
-fn initialize_app(app: &mut App) {
-    app.add_singleton_model(|_| ServerApiProvider::new_for_test());
-    app.add_singleton_model(|_| AuthStateProvider::new_for_test());
-    app.add_singleton_model(AuthManager::new_for_test);
-}
+fn initialize_app(_app: &mut App) {}
 
 #[test]
 fn test_dedupe_on_keeps_highest_score() {

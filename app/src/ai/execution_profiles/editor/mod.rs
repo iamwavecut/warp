@@ -13,7 +13,8 @@ use crate::settings::{AISettings, AISettingsChangedEvent, AgentModeCommandExecut
 use crate::ui_components::icons::Icon;
 use crate::view_components::{
     action_button::{ActionButton, DangerSecondaryTheme},
-    Dropdown, DropdownItem, FilterableDropdown, SubmittableTextInput, SubmittableTextInputEvent,
+    Dropdown, DropdownAction, DropdownItem, FilterableDropdown, SubmittableTextInput,
+    SubmittableTextInputEvent,
 };
 use crate::workspaces::user_workspaces::UserWorkspacesEvent;
 use crate::TemplatableMCPServerManager;
@@ -1091,7 +1092,7 @@ impl ExecutionProfileEditorView {
 
             let items = available_model_menu_items(
                 choices,
-                |llm| create_action(llm.id.clone()).into(),
+                |llm| DropdownAction::select_action_and_close(create_action(llm.id.clone())),
                 None,
                 None,
                 false,
@@ -1131,7 +1132,9 @@ impl ExecutionProfileEditorView {
             let items = available_model_menu_items(
                 choices,
                 |llm| {
-                    ExecutionProfileEditorViewAction::SetCodingModel { id: llm.id.clone() }.into()
+                    DropdownAction::select_action_and_close(
+                        ExecutionProfileEditorViewAction::SetCodingModel { id: llm.id.clone() },
+                    )
                 },
                 None,
                 None,

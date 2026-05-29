@@ -140,6 +140,7 @@ pub enum FileNotebookAction {
     OpenAsCode,
     ContextMenu(ContextMenuAction),
     ToggleMarkdownDisplayMode(MarkdownDisplayMode),
+    ToggleMaximized,
 }
 
 impl From<ContextMenuAction> for FileNotebookAction {
@@ -864,6 +865,12 @@ impl TypedActionView for FileNotebookView {
                     }
                 }
             }
+            FileNotebookAction::ToggleMaximized => {
+                ctx.emit(FileNotebookEvent::Pane(PaneEvent::ToggleMaximized));
+                self.pane_configuration.update(ctx, |pane_config, ctx| {
+                    pane_config.refresh_pane_header_overflow_menu_items(ctx);
+                });
+            }
         }
     }
 }
@@ -883,7 +890,7 @@ impl BackingView for FileNotebookView {
 
     fn pane_header_overflow_menu_items(
         &self,
-        _ctx: &AppContext,
+        ctx: &AppContext,
     ) -> Vec<MenuItem<FileNotebookAction>> {
         let mut actions = vec![];
         if let Some(SourceFile::Local {

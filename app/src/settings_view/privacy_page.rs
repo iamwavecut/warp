@@ -26,7 +26,7 @@ use warpui::ui_components::{
     switch::SwitchStateHandle,
 };
 use warpui::{
-    Action, AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView,
+    id, Action, AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView,
     UpdateModel, View, ViewContext, ViewHandle,
 };
 

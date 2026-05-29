@@ -277,19 +277,14 @@ fn app_id_from_bundle() -> Option<AppId> {
         use objc::{msg_send, sel, sel_impl};
         use warpui::platform::mac::utils::nsstring_as_str;
 
-        let bundle = id::mainBundle();
-        if bundle != nil {
-            let nsstring: id = msg_send![bundle, bundleIdentifier];
-            if nsstring != nil {
-                let app_id = nsstring_as_str(nsstring)
-                    .expect("bundle IDs should always be valid UTF-8 strings");
-
-                if !app_id.is_empty() {
-                    return Some(
-                        AppId::parse(app_id)
-                            .expect("macOS bundle identifier has an unexpected format"),
-                    );
-                }
+        let bundle = NSBundle::mainBundle();
+        if let Some(bundle_identifier) = bundle.bundleIdentifier() {
+            let app_id = bundle_identifier.to_string();
+            if !app_id.is_empty() {
+                return Some(
+                    AppId::parse(&app_id)
+                        .expect("macOS bundle identifier has an unexpected format"),
+                );
             }
         }
     }

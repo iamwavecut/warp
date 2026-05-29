@@ -8,6 +8,7 @@ use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::agent_conversations_model::AgentConversationsModel;
 use crate::ai::agent_tips::AITipModel;
 use crate::ai::ambient_agents::github_auth_notifier::GitHubAuthNotifier;
+use crate::ai::blocklist::QueuedQueryModel;
 use crate::ai::document::ai_document_model::AIDocumentModel;
 use crate::ai::mcp::{
     gallery::MCPGalleryManager, templatable_manager::TemplatableMCPServerManager,
@@ -93,6 +94,9 @@ pub fn initialize_app_for_terminal_view(app: &mut App) {
     app.add_singleton_model(LocalWorkflows::new);
     app.add_singleton_model(|_| History::default());
     app.add_singleton_model(|_| BlocklistAIHistoryModel::new_for_test());
+    // QueuedQueryModel subscribes to history events; register after the
+    // history model is in place.
+    app.add_singleton_model(QueuedQueryModel::new);
     // Pill bar model subscribes to history events; register after the
     // history model is in place.
     app.add_singleton_model(|ctx| OrchestrationPillBarModel::new(Default::default(), ctx));
