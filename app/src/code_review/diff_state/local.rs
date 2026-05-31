@@ -1436,7 +1436,7 @@ impl LocalDiffStateModel {
             self.load_diffs_for_current_repo(false, ctx);
         }
         if let Some(metadata) = self.metadata.clone() {
-            ctx.emit(DiffStateModelEvent::MetadataRefreshed(metadata));
+            ctx.emit(DiffStateModelEvent::MetadataRefreshed(Box::new(metadata)));
         }
     }
 
@@ -2612,7 +2612,9 @@ impl LocalDiffStateModel {
                 me.refreshing_pr_info_handle = None;
                 if let Some(metadata) = &mut me.metadata {
                     metadata.pr_info = pr_info;
-                    ctx.emit(DiffStateModelEvent::MetadataRefreshed(metadata.clone()));
+                    ctx.emit(DiffStateModelEvent::MetadataRefreshed(Box::new(
+                        metadata.clone(),
+                    )));
                 }
             },
         );
