@@ -8,7 +8,7 @@ use repo_metadata::entry::IgnoredPathStrategy;
 use repo_metadata::Repository;
 use std::{path::Path, sync::Arc};
 use warp_core::safe_error;
-use warpui::{Entity, ModelContext, ModelHandle};
+use warpui_core::{Entity, ModelContext, ModelHandle};
 
 #[cfg(feature = "local_fs")]
 use super::search_shaping::build_fragments_from_file_contents;
@@ -48,8 +48,8 @@ cfg_if::cfg_if! {
             matches_gitignores,
             full_source_code_embedding::sync_client::CodebaseIndexSyncOperation,
         };
-        use warpui::r#async::Timer;
-        use warpui::SingletonEntity;
+        use warpui_core::r#async::Timer;
+        use warpui_core::SingletonEntity;
         use warp_core::sync_queue::SyncQueue;
         use sha2::Digest;
     }

@@ -38,8 +38,8 @@ use warp_core::SessionId;
 use warp_util::remote_path::{RemoteNavigationResult, RemotePath};
 use warp_util::standardized_path::StandardizedPath;
 #[cfg(not(target_family = "wasm"))]
-use warpui::r#async::FutureExt as _;
-use warpui::{Entity, ModelContext, ModelSpawner, SingletonEntity};
+use warpui_core::r#async::FutureExt as _;
+use warpui_core::{Entity, ModelContext, ModelSpawner, SingletonEntity};
 
 /// Maximum number of reconnection attempts after a spontaneous disconnect.
 pub const MAX_RECONNECT_ATTEMPTS: u32 = 2;
@@ -1159,7 +1159,7 @@ impl RemoteServerManager {
         transport: &dyn RemoteTransport,
         auth_context: &RemoteServerAuthContext,
         spawner: &ModelSpawner<Self>,
-        executor: &Arc<warpui::r#async::executor::Background>,
+        executor: &Arc<warpui_core::r#async::executor::Background>,
     ) -> Result<InitializeHandshake, ConnectAndHandshakeError> {
         // Phase 1: Connect (establish streams, create client).
         let Connection {

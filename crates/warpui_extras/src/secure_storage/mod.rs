@@ -27,7 +27,7 @@ use windows_only::*;
 /// app context, enabling usage such as:
 ///
 /// ```
-/// use warpui::{App, SingletonEntity};
+/// use warpui_core::{App, SingletonEntity};
 /// use warpui_extras::secure_storage;
 ///
 /// App::test((), |mut app| async move {
@@ -51,7 +51,7 @@ pub type Model = Box<dyn SecureStorage>;
 /// is recommended that this be a unique identifier for the application; one
 /// common scheme is reverse-DNS notation (e.g.: "dev.warp.Warp").
 #[cfg(not(target_os = "windows"))]
-pub fn register(service_name: &str, ctx: &mut warpui::AppContext) {
+pub fn register(service_name: &str, ctx: &mut warpui_core::AppContext) {
     ctx.add_singleton_model(|_| -> Model { Box::new(imp::SecureStorage::new(service_name)) });
 }
 
@@ -63,7 +63,7 @@ pub fn read_value_for_service(service_name: &str, key: &str) -> Result<String, E
 }
 
 /// Registers a no-op Secure Storage provider with the application.
-pub fn register_noop(service_name: &str, ctx: &mut warpui::AppContext) {
+pub fn register_noop(service_name: &str, ctx: &mut warpui_core::AppContext) {
     ctx.add_singleton_model(|_| -> Model { Box::new(noop::SecureStorage::new(service_name)) });
 }
 
@@ -71,7 +71,7 @@ pub fn register_noop(service_name: &str, ctx: &mut warpui::AppContext) {
 pub fn register_with_fallback(
     service_name: &str,
     fallback_dir: std::path::PathBuf,
-    ctx: &mut warpui::AppContext,
+    ctx: &mut warpui_core::AppContext,
 ) {
     ctx.add_singleton_model(|_| -> Model {
         Box::new(imp::SecureStorage::new_with_fallback(
@@ -87,7 +87,7 @@ pub fn register_with_fallback(
 pub fn register_with_dir(
     service_name: &str,
     storage_dir: std::path::PathBuf,
-    ctx: &mut warpui::AppContext,
+    ctx: &mut warpui_core::AppContext,
 ) {
     ctx.add_singleton_model(|_| -> Model {
         Box::new(imp::SecureStorage::new_with_path(service_name, storage_dir))
@@ -108,11 +108,11 @@ pub trait SecureStorage {
     fn remove_value(&self, key: &str) -> Result<(), Error>;
 }
 
-impl warpui::Entity for Model {
+impl warpui_core::Entity for Model {
     type Event = ();
 }
 
-impl warpui::SingletonEntity for Model {}
+impl warpui_core::SingletonEntity for Model {}
 
 /// Enumerates the various errors that can occur when interacting with secure
 /// storage.
@@ -161,7 +161,7 @@ impl From<FromUtf8Error> for Error {
 /// An extension trait to make secure storage easier to use.
 ///
 /// ```
-/// use warpui::{App, SingletonEntity};
+/// use warpui_core::{App, SingletonEntity};
 /// use warpui_extras::secure_storage;
 ///
 /// App::test((), |mut app| async move {
@@ -182,9 +182,9 @@ pub trait AppContextExt {
     fn secure_storage(&self) -> &dyn SecureStorage;
 }
 
-impl AppContextExt for warpui::AppContext {
+impl AppContextExt for warpui_core::AppContext {
     fn secure_storage(&self) -> &dyn SecureStorage {
-        use warpui::SingletonEntity;
+        use warpui_core::SingletonEntity;
 
         <Model as SingletonEntity>::as_ref(self).as_ref()
     }

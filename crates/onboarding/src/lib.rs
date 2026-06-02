@@ -61,7 +61,7 @@ pub use agent_onboarding_view::{AgentOnboardingAction, AgentOnboardingEvent, Age
 pub use model::{SelectedSettings, UICustomizationSettings};
 pub use slides::ProjectOnboardingSettings;
 
-pub fn init(app: &mut warpui::AppContext) {
+pub fn init(app: &mut warpui_core::AppContext) {
     agent_onboarding_view::init(app);
     callout::init(app);
 }

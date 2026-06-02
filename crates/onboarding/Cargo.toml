@@ -25,4 +25,5 @@ rust-embed.workspace = true
 ui_components.workspace = true
 warp_core = { workspace = true }
 warpui.workspace = true
+warpui_core.workspace = true
 warp_logging.workspace = true

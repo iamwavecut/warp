@@ -11,7 +11,7 @@ use crate::codebase_index_proto::{
 use dashmap::DashMap;
 use futures::channel::oneshot;
 use futures::io::{AsyncRead, AsyncWrite};
-use warpui::r#async::{executor, FutureExt as _};
+use warpui_core::r#async::{executor, FutureExt as _};
 
 use crate::proto::{
     client_message, get_branches_response, get_fragment_metadata_from_hash_response,
@@ -35,7 +35,7 @@ pub use remote_server_log::RemoteServerLog;
 use crate::protocol::{self, ProtocolError, RequestId};
 use warp_core::{safe_error, safe_warn, SessionId};
 use warp_util::standardized_path::StandardizedPath;
-use warpui::r#async::TransportStream;
+use warpui_core::r#async::TransportStream;
 
 /// Default request timeout (2 minutes).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);

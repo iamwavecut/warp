@@ -181,7 +181,7 @@ impl SkillWatcher {
                 RepoMetadataEvent::RepositoryUpdated { id } => {
                     me.refresh_project_skills_for_repo(id, ctx);
                 }
-                RepoMetadataEvent::FileTreeEntryUpdated { id } => {
+                RepoMetadataEvent::FileTreeEntryUpdated { id, .. } => {
                     me.refresh_project_skills_for_repo(id, ctx);
                 }
                 RepoMetadataEvent::RepositoryRemoved { id } => {

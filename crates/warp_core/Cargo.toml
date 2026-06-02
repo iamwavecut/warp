@@ -47,7 +47,7 @@ warp_util.workspace = true
 async-broadcast.workspace = true
 futures.workspace = true
 line-ending.workspace = true
-warpui.workspace = true
+warpui_core.workspace = true
 warpui_extras = { workspace = true, features = ["default"] }
 mockito = { workspace = true, optional = true }
 string-offset.workspace = true
