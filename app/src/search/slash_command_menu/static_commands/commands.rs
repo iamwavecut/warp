@@ -333,7 +333,6 @@ pub static QUEUE: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand {
     icon_path: "bundled/svg/clock-plus.svg",
     availability: Availability::AGENT_VIEW
         | Availability::ACTIVE_CONVERSATION
-        | Availability::NO_LRC_CONTROL
         | Availability::AI_ENABLED
         | Availability::NOT_AMBIENT_AGENT,
     auto_enter_ai_mode: true,

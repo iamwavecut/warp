@@ -3149,7 +3149,7 @@ impl Input {
             BlocklistAIStatusBar::new(
                 ai_controller.clone(),
                 agent_view_controller.clone(),
-                cli_subagent_controller,
+                cli_subagent_controller.clone(),
                 ai_action_model.clone(),
                 ai_context_model.clone(),
                 ai_input_model.clone(),

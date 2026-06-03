@@ -3912,7 +3912,7 @@ pub struct ServerAIConversationMetadata {
     /// Usage metadata including token counts, credits spent, etc.
     pub usage: ConversationUsageMetadata,
 
-    /// Server metadata (revision, timestamps, creator info, etc.).
+    /// Server metadata (revision, timestamps, etc.).
     pub metadata: crate::cloud_object::ServerMetadata,
 
     /// Permissions for this conversation (space, guests, link sharing).

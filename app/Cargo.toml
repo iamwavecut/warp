@@ -479,7 +479,6 @@ default = [
     "allow_opening_file_links_using_editor_env",
     "read_image_files",
     "selection_as_context",
-    "changed_lines_only_apply_diff_result",
     "undo_closed_panes",
     "revert_diff_hunk",
     "code_review_save_changes",
@@ -594,6 +593,7 @@ grep_tool = []
 gui = []
 nld_classifier_v1 = ["input_classifier/nld_classifier_v1"]
 nld_classifier_v2 = ["input_classifier/nld_classifier_v2"]
+nld_classifier_v3 = ["input_classifier/nld_classifier_v3"]
 nld_heuristic_v1 = ["input_classifier/nld_heuristic_v1"]
 nld_heuristic_v2 = ["input_classifier/nld_heuristic_v2"]
 msys2_shells = []
@@ -751,7 +751,6 @@ expand_edit_to_pane = []
 fallback_model_load_output_messaging = []
 profiles_design_revamp = []
 search_codebase_ui = []
-changed_lines_only_apply_diff_result = []
 linked_code_blocks = []
 tabbed_editor_view = []
 selection_as_context = []
@@ -819,6 +818,7 @@ incremental_auto_reload = []
 orchestration_v2 = []
 orchestration_pill_bar = []
 orchestration_viewer_pill_bar = []
+orchestration_viewer_streamer = []
 run_agents_tool = []
 pending_user_query_indicator = []
 queue_slash_command = []

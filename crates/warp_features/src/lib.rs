@@ -318,9 +318,6 @@ pub enum FeatureFlag {
     /// Enables new Search Codebase UI
     SearchCodebaseUI,
 
-    /// Enables return changed lines on apply diff result
-    ChangedLinesOnlyApplyDiffResult,
-
     /// Enables us to render linked code blocks
     LinkedCodeBlocks,
 
@@ -822,7 +819,10 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
 
 /// Features enabled for feature preview build users (e.g.: Friends of Warp).
 /// All PREVIEW_FLAGS are also automatically added to dogfood builds (WarpDev).
-pub const PREVIEW_FLAGS: &[FeatureFlag] = &[];
+pub const PREVIEW_FLAGS: &[FeatureFlag] = &[
+    #[cfg(target_os = "macos")]
+    FeatureFlag::DragTabsToWindows,
+];
 
 /// Features enabled for all release builds (i.e.: everything but WarpLocal).
 /// NOTE: if you are promoting a feature from Preview to launch, you'll likely

@@ -59,7 +59,11 @@ pub use conversation_loader::{
     CloudConversationData,
 };
 
-pub(super) const MAX_HISTORICAL_CONVERSATIONS: usize = 100;
+/// Mirrors [`crate::persistence::agent::MAX_PERSISTED_CONVERSATION_COUNT`].
+/// Moot at steady state because the disk-side prune already keeps the
+/// persisted set within this window; kept as defense-in-depth if rows ever
+/// arrive from another source (cross-machine import, prune bypass).
+pub(super) const MAX_HISTORICAL_CONVERSATIONS: usize = 200;
 
 /// Metadata for conversations
 /// When created from local DB, has_local_data=true and server_metadata=None.
