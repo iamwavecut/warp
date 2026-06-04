@@ -3405,7 +3405,7 @@ dependencies = [
 [[package]]
 name = "dagre_rust"
 version = "0.0.5"
-source = "git+https://github.com/warpdotdev/mermaid-to-svg.git?rev=81551775746cd86bdeec29cb96ba278fd08c9074#81551775746cd86bdeec29cb96ba278fd08c9074"
+source = "git+https://github.com/warpdotdev/mermaid-to-svg.git?rev=40cecf2be376e47e15053eadbfb782a531777420#40cecf2be376e47e15053eadbfb782a531777420"
 dependencies = [
  "graphlib_rust",
  "ordered_hashmap",
@@ -3850,7 +3850,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3910,7 +3910,7 @@ checksum = "6738d2e996274e499bc7b0d693c858b7720b9cd2543a0643a3087e6cb0a4fa16"
 dependencies = [
  "cfg-if",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5855,7 +5855,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -6340,7 +6340,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi 0.5.2",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6533,7 +6533,7 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7322,7 +7322,7 @@ dependencies = [
 [[package]]
 name = "mermaid_to_svg"
 version = "0.1.0"
-source = "git+https://github.com/warpdotdev/mermaid-to-svg.git?rev=81551775746cd86bdeec29cb96ba278fd08c9074#81551775746cd86bdeec29cb96ba278fd08c9074"
+source = "git+https://github.com/warpdotdev/mermaid-to-svg.git?rev=40cecf2be376e47e15053eadbfb782a531777420#40cecf2be376e47e15053eadbfb782a531777420"
 dependencies = [
  "dagre_rust",
  "graphlib_rust",
@@ -7802,7 +7802,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8602,7 +8602,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.45.0",
 ]
 
 [[package]]
@@ -9307,7 +9307,7 @@ version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -10449,7 +10449,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10516,7 +10516,7 @@ dependencies = [
  "security-framework 3.5.1",
  "security-framework-sys",
  "webpki-root-certs 1.0.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11014,7 +11014,7 @@ dependencies = [
 [[package]]
 name = "session-sharing-protocol"
 version = "0.0.0"
-source = "git+https://github.com/warpdotdev/session-sharing-protocol.git?rev=5a0ad6135809feee9da2e9efae8bd6b54b89172e#5a0ad6135809feee9da2e9efae8bd6b54b89172e"
+source = "git+https://github.com/warpdotdev/session-sharing-protocol.git?rev=c2226e8d9d2c87ac0bea4b01f98e0027355e1a5d#c2226e8d9d2c87ac0bea4b01f98e0027355e1a5d"
 dependencies = [
  "byte-unit",
  "serde",
@@ -11960,7 +11960,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -13437,7 +13437,7 @@ dependencies = [
 [[package]]
 name = "warp-command-signatures"
 version = "0.0.0"
-source = "git+https://github.com/warpdotdev/command-signatures.git?rev=b3061096d193bf4915eabb0d03b4e6b403c6ea45#b3061096d193bf4915eabb0d03b4e6b403c6ea45"
+source = "git+https://github.com/warpdotdev/command-signatures.git?rev=a1000677e302b8fdcefb08365f3f7a81bbba23b3#a1000677e302b8fdcefb08365f3f7a81bbba23b3"
 dependencies = [
  "cfg-if",
  "itertools 0.10.5",
@@ -13455,7 +13455,7 @@ dependencies = [
 [[package]]
 name = "warp-completion-metadata"
 version = "0.0.0"
-source = "git+https://github.com/warpdotdev/command-signatures.git?rev=b3061096d193bf4915eabb0d03b4e6b403c6ea45#b3061096d193bf4915eabb0d03b4e6b403c6ea45"
+source = "git+https://github.com/warpdotdev/command-signatures.git?rev=a1000677e302b8fdcefb08365f3f7a81bbba23b3#a1000677e302b8fdcefb08365f3f7a81bbba23b3"
 dependencies = [
  "html-escape",
  "itertools 0.10.5",
@@ -14658,7 +14658,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

@@ -412,6 +412,8 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::WarpifyFooter,
         #[cfg(feature = "solo_user_byok")]
         FeatureFlag::SoloUserByok,
+        #[cfg(feature = "gpt_configurable_context_window")]
+        FeatureFlag::GPTConfigurableContextWindow,
         #[cfg(feature = "hoa_onboarding_flow")]
         FeatureFlag::HOAOnboardingFlow,
         #[cfg(feature = "git_operations_in_code_review")]
@@ -420,10 +422,20 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::HOARemoteControl,
         #[cfg(feature = "codex_notifications")]
         FeatureFlag::CodexNotifications,
+        #[cfg(feature = "codex_plugin")]
+        FeatureFlag::CodexPlugin,
         #[cfg(feature = "trim_trailing_blank_lines")]
         FeatureFlag::TrimTrailingBlankLines,
         #[cfg(feature = "configurable_context_window")]
         FeatureFlag::ConfigurableContextWindow,
+        #[cfg(feature = "cloud_mode_setup_v2")]
+        FeatureFlag::CloudModeSetupV2,
+        #[cfg(feature = "cloud_mode_input_v2")]
+        FeatureFlag::CloudModeInputV2,
+        #[cfg(feature = "git_credential_refresh")]
+        FeatureFlag::GitCredentialRefresh,
+        #[cfg(feature = "remote_code_review")]
+        FeatureFlag::RemoteCodeReview,
     ]);
 
     flags

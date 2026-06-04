@@ -9,6 +9,7 @@ use ai::agent::action::{RunAgentsAgentRunConfig, RunAgentsExecutionMode};
 use ai::skills::SkillReference;
 use settings::Setting;
 use std::path::PathBuf;
+use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::{App, SingletonEntity};
 
 #[test]
@@ -145,7 +146,9 @@ fn agent_cfg() -> RunAgentsAgentRunConfig {
 fn remote_arm_uses_local_defaults_and_model() {
     let skills = vec![
         SkillReference::BundledSkillId("writing-pr-descriptions".to_string()),
-        SkillReference::Path(PathBuf::from("/tmp/skill/SKILL.md")),
+        SkillReference::Path(LocalOrRemotePath::Local(PathBuf::from(
+            "/tmp/skill/SKILL.md",
+        ))),
     ];
     let mode = run_agents_to_start_agent_mode(
         &RunAgentsExecutionMode::Remote {

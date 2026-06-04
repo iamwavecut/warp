@@ -10,6 +10,7 @@ use std::collections::HashSet;
 #[cfg(feature = "local_fs")]
 use std::path::Path;
 use std::path::PathBuf;
+use warp_core::SessionId;
 #[cfg(feature = "local_fs")]
 use warp_util::remote_path::RemotePath;
 #[cfg(feature = "local_fs")]
@@ -401,6 +402,7 @@ impl WorkingDirectoriesModel {
     pub fn get_or_create_diff_state_model(
         &mut self,
         key: LocalOrRemotePath,
+        preferred_session: Option<SessionId>,
         ctx: &mut ModelContext<Self>,
     ) -> Option<ModelHandle<DiffStateModel>> {
         if let Some(model) = self.diff_state_models.get(&key) {
@@ -991,6 +993,7 @@ impl WorkingDirectoriesModel {
     pub fn get_or_create_diff_state_model(
         &mut self,
         _key: LocalOrRemotePath,
+        _preferred_session: Option<SessionId>,
         _ctx: &mut ModelContext<Self>,
     ) -> Option<ModelHandle<DiffStateModel>> {
         None

@@ -1,5 +1,6 @@
 //! Conversions from agent wire types to application types.
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::ai::agent::api::convert_conversation::{
@@ -29,6 +30,7 @@ use ai::skills::SkillReference;
 use api::ask_user_question::question::QuestionType;
 use warp_core::channel::ChannelState;
 use warp_multi_agent_api as api;
+use warp_util::local_or_remote_path::LocalOrRemotePath;
 
 use crate::ai::agent::{AIAgentAttachment, UserQueryMode};
 
@@ -173,7 +175,9 @@ fn convert_start_agent_v2_execution_mode(
 
 fn convert_skill_reference(skill_ref: api::SkillRef) -> Option<SkillReference> {
     match skill_ref.skill_reference {
-        Some(api::skill_ref::SkillReference::Path(path)) => Some(SkillReference::Path(path.into())),
+        Some(api::skill_ref::SkillReference::Path(path)) => Some(SkillReference::Path(
+            LocalOrRemotePath::Local(PathBuf::from(path)),
+        )),
         Some(api::skill_ref::SkillReference::BundledSkillId(id)) => {
             Some(SkillReference::BundledSkillId(id))
         }

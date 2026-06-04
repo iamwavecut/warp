@@ -112,7 +112,7 @@ pub enum FeatureFlag {
     /// Enables next action prediction within Warp, powered by AI.
     AgentPredict,
 
-    /// Enables receiving shared Warp Drive objects.
+    /// Enables receiving shared cloud objects.
     SharedWithMe,
 
     /// Enables workflows for use with Agent Mode.
@@ -154,7 +154,7 @@ pub enum FeatureFlag {
     /// Adds avatar to the tab bar.
     AvatarInTabBar,
 
-    /// Adds aliases for executing Warp Drive workflows.
+    /// Adds aliases for executing cloud object workflows.
     WorkflowAliases,
 
     SshDragAndDrop,
@@ -657,7 +657,7 @@ pub enum FeatureFlag {
     /// adopt the configured color when their working directory matches.
     DirectoryTabColors,
 
-    /// Enables the new settings to control visibility of Warp Drive, Code Review Panel,
+    /// Enables the new settings to control visibility of cloud-object, Code Review Panel,
     /// and Project Explorer & Global Search features.
     OpenWarpNewSettingsModes,
 
@@ -672,9 +672,6 @@ pub enum FeatureFlag {
     /// CLIs (e.g. `claude`) to execute prompts instead of Warp's agent harness.
     AgentHarness,
 
-    /// Enables workspace handoff between agent runs and the local Warp client.
-    /// When enabled:
-    /// - Subsequent executions download the prior execution's handoff snapshot attachments.
     /// Enables the upgraded CLI agent session tracking and notifications infrastructure.
     HOANotifications,
 
@@ -685,6 +682,10 @@ pub enum FeatureFlag {
     /// Enables the install/update chip for the Codex Warp notification plugin.
     /// Requires HOANotifications to also be enabled.
     CodexNotifications,
+
+    /// Enables the Codex Warp plugin marketplace integration.
+    /// When disabled, Codex uses native OSC9 notifications.
+    CodexPlugin,
 
     /// Enables the install/update chip for the Gemini CLI Warp extension.
     /// Requires HOANotifications to also be enabled.
@@ -732,6 +733,7 @@ pub enum FeatureFlag {
     /// `base_model_context_window_limit` is not sent on outbound requests, so
     /// the server falls back to its default.
     ConfigurableContextWindow,
+
     /// Enables creating API keys scoped to named agents in the API key
     /// management UI. When enabled the "Team" option in the key-type
     /// selector is replaced with "Agent" and users can pick which agent
@@ -741,6 +743,9 @@ pub enum FeatureFlag {
     /// (`~/.git-credentials`, `~/.config/gh/hosts.yaml`) and runs the
     /// background refresh loop that keeps them fresh during a task run.
     GitCredentialRefresh,
+
+    /// Enables configurable expanded context windows for eligible GPT models.
+    GPTConfigurableContextWindow,
 
     /// Replaces the raw harness CLI command with a styled header showing CLI name + status icon.
     HarnessSessionHeader,
@@ -807,6 +812,7 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::CodeReviewScrollPreservation,
     FeatureFlag::AgentHarness,
     FeatureFlag::RememberFastForwardState,
+    FeatureFlag::CodexPlugin,
     FeatureFlag::GeminiNotifications,
     FeatureFlag::LocalDockerSandbox,
     #[cfg(not(windows))]
@@ -815,6 +821,7 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::NamedAgents,
     FeatureFlag::HarnessSessionHeader,
     FeatureFlag::AsyncFind,
+    FeatureFlag::GPTConfigurableContextWindow,
 ];
 
 /// Features enabled for feature preview build users (e.g.: Friends of Warp).
@@ -897,7 +904,7 @@ impl FeatureFlag {
         // very least, the feature flag should be removed from the Preview changelog by removing it from PREVIEW_FLAGS.
         // ** ONLY Preview-exclusive features should be added to this list! **
         match self {
-            AgentSharedSessions => Some("Hosted agent shared sessions are disabled locally."),
+            AgentSharedSessions => Some("Agent shared sessions are disabled in this local-first build."),
             CodeReviewFind => Some("Enables the find bar in the code review pane."),
             BlocklistMarkdownImages => {
                 Some("Enables rendering markdown images inline in AI block list responses.")

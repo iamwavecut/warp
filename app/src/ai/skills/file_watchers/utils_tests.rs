@@ -6,6 +6,7 @@ use repo_metadata::file_tree_update::{
 use repo_metadata::repositories::DetectedRepositories;
 use repo_metadata::{
     DirectoryWatcher, RepoMetadataModel, RepoMetadataUpdate, RepositoryIdentifier,
+    StandingQueryContent, StandingQueryResults, StandingQueryResultsDelta,
 };
 use std::path::Path;
 use virtual_fs::{Stub, VirtualFS};
@@ -19,6 +20,15 @@ use super::{
     extract_skill_parent_directory, find_skill_files_in_tree, is_home_provider_path,
     is_home_skill_directory, is_skill_file, read_skills_from_files,
 };
+fn project_standing_results(
+    skill_paths: impl IntoIterator<Item = StandardizedPath>,
+) -> StandingQueryResults {
+    let mut results = StandingQueryResults::default();
+    for skill_path in skill_paths {
+        results.insert_project_skill(StandingQueryContent::file(skill_path));
+    }
+    results
+}
 
 // ============================================================================
 // Tests for is_skill_file
@@ -521,7 +531,21 @@ fn find_skill_files_in_tree_finds_root_skills() {
                 let key =
                     warp_util::standardized_path::StandardizedPath::from_local_canonicalized(&repo)
                         .unwrap();
-                model.insert_test_state(key, state, ctx);
+                model.insert_test_state(key.clone(), state, ctx);
+                model.insert_test_standing_results(
+                    key,
+                    project_standing_results([
+                        StandardizedPath::try_from_local(
+                            &repo.join(".agents/skills/root-skill-1/SKILL.md"),
+                        )
+                        .unwrap(),
+                        StandardizedPath::try_from_local(
+                            &repo.join(".claude/skills/root-skill-2/SKILL.md"),
+                        )
+                        .unwrap(),
+                    ]),
+                    ctx,
+                );
             });
 
             model_handle.read(&app, |model, ctx| {
@@ -673,7 +697,21 @@ fn find_skill_files_in_tree_finds_subdirectory_skills() {
                 let key =
                     warp_util::standardized_path::StandardizedPath::from_local_canonicalized(&repo)
                         .unwrap();
-                model.insert_test_state(key, state, ctx);
+                model.insert_test_state(key.clone(), state, ctx);
+                model.insert_test_standing_results(
+                    key,
+                    project_standing_results([
+                        StandardizedPath::try_from_local(
+                            &repo.join(".agents/skills/root-skill/SKILL.md"),
+                        )
+                        .unwrap(),
+                        StandardizedPath::try_from_local(
+                            &repo.join("packages/frontend/.agents/skills/frontend-skill/SKILL.md"),
+                        )
+                        .unwrap(),
+                    ]),
+                    ctx,
+                );
             });
 
             model_handle.read(&app, |model, ctx| {
@@ -741,6 +779,10 @@ fn find_skill_files_in_tree_returns_remote_skill_paths_for_remote_repos() {
                     }),
                 ],
             }],
+            standing_results_delta: StandingQueryResultsDelta {
+                upserted_project_skills: vec![StandingQueryContent::file(skill_path.clone())],
+                ..Default::default()
+            },
         };
 
         model_handle.update(&mut app, |model, ctx| {
@@ -814,7 +856,15 @@ fn find_skill_files_in_tree_includes_ignored_skill_files() {
             let model_handle = app.add_singleton_model(RepoMetadataModel::new);
             model_handle.update(&mut app, |model, ctx| {
                 let key = StandardizedPath::from_local_canonicalized(&repo).unwrap();
-                model.insert_test_state(key, state, ctx);
+                model.insert_test_state(key.clone(), state, ctx);
+                model.insert_test_standing_results(
+                    key,
+                    project_standing_results([StandardizedPath::try_from_local(
+                        &repo.join(".agents/skills/ignored-skill/SKILL.md"),
+                    )
+                    .unwrap()]),
+                    ctx,
+                );
             });
 
             model_handle.read(&app, |model, ctx| {

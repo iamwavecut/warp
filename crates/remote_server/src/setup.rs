@@ -62,6 +62,18 @@ impl RemoteServerSetupState {
     }
 }
 
+impl From<&crate::transport::Error> for RemoteServerSetupState {
+    fn from(error: &crate::transport::Error) -> Self {
+        if let Some(reason) = UnsupportedReason::from_transport_error(error) {
+            Self::Unsupported { reason }
+        } else {
+            Self::Failed {
+                error: error.to_string(),
+            }
+        }
+    }
+}
+
 /// Outcome of [`crate::transport::RemoteTransport::run_preinstall_check`].
 ///
 /// The script runs over the existing SSH socket before any install UI
@@ -99,9 +111,39 @@ pub enum UnsupportedReason {
     NonGlibc {
         name: String,
     },
+    UnsupportedOs {
+        os: String,
+    },
+    UnsupportedArch {
+        arch: String,
+    },
+}
+
+impl UnsupportedReason {
+    pub fn from_transport_error(error: &crate::transport::Error) -> Option<Self> {
+        match error {
+            crate::transport::Error::UnsupportedOs { os } => {
+                Some(Self::UnsupportedOs { os: os.clone() })
+            }
+            crate::transport::Error::UnsupportedArch { arch } => {
+                Some(Self::UnsupportedArch { arch: arch.clone() })
+            }
+            crate::transport::Error::TimedOut
+            | crate::transport::Error::ScriptFailed { .. }
+            | crate::transport::Error::Other(_) => None,
+        }
+    }
 }
 
 impl PreinstallCheckResult {
+    pub fn unsupported(reason: UnsupportedReason) -> Self {
+        Self {
+            status: PreinstallStatus::Unsupported { reason },
+            libc: RemoteLibc::Unknown,
+            raw: String::new(),
+        }
+    }
+
     /// Whether the host is supported. Both `Supported` and `Unknown`
     /// return true — only positive detection of an incompatible libc
     /// triggers the silent fall-back.

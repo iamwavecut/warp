@@ -40,7 +40,7 @@ impl ReadSkillExecutor {
         match SkillManager::as_ref(ctx).skill_by_reference(skill_ref) {
             Some(skill) => {
                 let content = FileContext::new(
-                    skill.path.to_string_lossy().into_owned(),
+                    skill.path.display_path(),
                     AnyFileContent::StringContent(skill.content.clone()),
                     skill.line_range.clone(),
                     None,

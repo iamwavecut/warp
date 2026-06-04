@@ -1692,27 +1692,29 @@ fn render_read_skill(
     // Renders the 'open skill' button for known, non-bundled skills.
     if let Some(skill) = skill {
         if !skill.is_bundled() {
-            let source = CodeSource::Skill {
-                reference: skill_reference.clone(),
-                path: skill.path.clone(),
-                origin: SkillOpenOrigin::ReadSkill,
-            };
+            if let Some(skill_path) = skill.path.to_local_path() {
+                let source = CodeSource::Skill {
+                    reference: skill_reference.clone(),
+                    path: skill_path.to_path_buf(),
+                    origin: SkillOpenOrigin::ReadSkill,
+                };
 
-            let skill_icon_override = icon_override_for_skill_name(&skill.name);
-            let open_button = render_skill_button(
-                "Open skill",
-                props.state_handles.open_skill_button_handle.clone(),
-                appearance,
-                skill.provider,
-                skill_icon_override,
-                move |ctx| {
-                    ctx.dispatch_typed_action(AIBlockAction::OpenCodeInWarp {
-                        source: source.clone(),
-                    });
-                },
-            );
+                let skill_icon_override = icon_override_for_skill_name(&skill.name);
+                let open_button = render_skill_button(
+                    "Open skill",
+                    props.state_handles.open_skill_button_handle.clone(),
+                    appearance,
+                    skill.provider,
+                    skill_icon_override,
+                    move |ctx| {
+                        ctx.dispatch_typed_action(AIBlockAction::OpenCodeInWarp {
+                            source: source.clone(),
+                        });
+                    },
+                );
 
-            renderable_action = renderable_action.with_action_button(open_button);
+                renderable_action = renderable_action.with_action_button(open_button);
+            }
         }
     }
 
@@ -1794,12 +1796,15 @@ fn render_read_files(
 
     // Renders the 'open skill' button if all files belong to the same skill directory.
     if let Some(skill) = parsed_skill {
+        let Some(skill_path) = skill.path.to_local_path().map(Path::to_path_buf) else {
+            return renderable_action.render(app).finish();
+        };
         let reference = SkillManager::handle(app)
             .as_ref(app)
             .reference_for_skill_path(&skill.path);
         let source = CodeSource::Skill {
             reference,
-            path: skill.path.clone(),
+            path: skill_path,
             origin: SkillOpenOrigin::ReadFiles,
         };
         let skill_icon_override = icon_override_for_skill_name(&skill.name);

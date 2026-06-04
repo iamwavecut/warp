@@ -6,6 +6,9 @@ cfg_if::cfg_if! {
 }
 
 pub use ai::skills::SkillReference;
+use std::path::{Path, PathBuf};
+use warp_util::local_or_remote_path::LocalOrRemotePath;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -30,6 +33,28 @@ pub use skill_utils::{
     skill_path_from_file_path,
 };
 
+pub trait SkillPathQuery {
+    fn to_skill_location(&self) -> LocalOrRemotePath;
+}
+
+impl SkillPathQuery for LocalOrRemotePath {
+    fn to_skill_location(&self) -> LocalOrRemotePath {
+        self.clone()
+    }
+}
+
+impl SkillPathQuery for Path {
+    fn to_skill_location(&self) -> LocalOrRemotePath {
+        LocalOrRemotePath::Local(self.to_path_buf())
+    }
+}
+
+impl SkillPathQuery for PathBuf {
+    fn to_skill_location(&self) -> LocalOrRemotePath {
+        LocalOrRemotePath::Local(self.clone())
+    }
+}
+
 #[cfg(not(target_family = "wasm"))]
 mod resolve_skill_spec;
 #[cfg(not(target_family = "wasm"))]
@@ -41,5 +66,7 @@ cfg_if::cfg_if! {
     if #[cfg(feature = "local_fs")] {
         mod skill_manager;
         pub use skill_manager::{read_skills_from_directories, SkillManager, SkillWatcher};
+        #[cfg(test)]
+        pub use skill_manager::BundledSkillActivation;
     }
 }

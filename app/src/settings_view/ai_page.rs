@@ -9,7 +9,9 @@ use crate::ai::execution_profiles::model_menu_items::available_model_menu_items;
 use crate::ai::execution_profiles::profiles::{
     AIExecutionProfilesModel, AIExecutionProfilesModelEvent, ClientProfileId,
 };
-use crate::ai::execution_profiles::{AIExecutionProfile, ActionPermission, WriteToPtyPermission};
+use crate::ai::execution_profiles::{
+    long_context_pricing_warning_title, AIExecutionProfile, ActionPermission, WriteToPtyPermission,
+};
 use crate::ai::llms::{LLMContextWindow, LLMId, LLMPreferences, LLMPreferencesEvent};
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::ai::paths::host_native_absolute_path;
@@ -32,7 +34,8 @@ use crate::terminal::session_settings::{SessionSettings, SessionSettingsChangedE
 use crate::terminal::CLIAgent;
 use crate::view_components::{
     action_button::{ActionButton, ButtonSize, DangerNakedTheme, SecondaryTheme},
-    FilterableDropdown, SubmittableTextInput, SubmittableTextInputEvent,
+    render_warning_box, FilterableDropdown, SubmittableTextInput, SubmittableTextInputEvent,
+    WarningBoxConfig,
 };
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 use ::ai::api_keys::ApiKeyManager;
@@ -498,6 +501,7 @@ pub struct AISettingsPageView {
     context_window_slider_state: SliderStateHandle,
     context_window_editor: ViewHandle<EditorView>,
     last_synced_context_window_editor_value: Option<u32>,
+    dragged_context_window_value: Option<u32>,
 
     thinking_display_mode_dropdown: ViewHandle<Dropdown<AISettingsPageAction>>,
     #[cfg(feature = "local_fs")]
@@ -1386,6 +1390,7 @@ impl AISettingsPageView {
             context_window_slider_state,
             context_window_editor,
             last_synced_context_window_editor_value,
+            dragged_context_window_value: None,
             autonomy_dropdown_menu,
             code_read_allowlist_editor,
             code_read_autonomy_dropdown_menu,
@@ -1586,6 +1591,7 @@ impl AISettingsPageView {
     }
 
     fn sync_context_window_editor(&mut self, ctx: &mut ViewContext<Self>, force: bool) {
+        self.dragged_context_window_value = None;
         let Some(value) = Self::current_context_window_display_value(ctx) else {
             self.last_synced_context_window_editor_value = None;
             self.context_window_slider_state.reset_offset();
@@ -2483,6 +2489,7 @@ impl TypedActionView for AISettingsPageView {
                     return;
                 }
                 if Self::configurable_context_window(ctx).is_some() {
+                    self.dragged_context_window_value = Some(*value);
                     let formatted = value.to_string();
                     self.context_window_editor.update(ctx, |editor, ctx| {
                         editor.system_reset_buffer_text(&formatted, ctx);
@@ -2491,6 +2498,7 @@ impl TypedActionView for AISettingsPageView {
                 }
             }
             AISettingsPageAction::SetContextWindowSize(value) => {
+                self.dragged_context_window_value = None;
                 if !AISettings::as_ref(ctx).is_any_ai_enabled(ctx) {
                     self.sync_context_window_editor(ctx, true);
                     return;
@@ -3496,8 +3504,7 @@ impl AgentsWidget {
 
     /// Renders the context window slider + numeric input row shown below the
     /// base model dropdown. Returns `None` if the active base model does not
-    /// advertise a configurable context window, global AI is disabled, or the
-    /// [`FeatureFlag::ConfigurableContextWindow`] flag is disabled.
+    /// advertise a configurable context window or global AI is disabled.
     fn render_context_window_setting(
         &self,
         view: &AISettingsPageView,
@@ -3505,9 +3512,6 @@ impl AgentsWidget {
         appearance: &Appearance,
         app: &AppContext,
     ) -> Option<Box<dyn Element>> {
-        if !FeatureFlag::ConfigurableContextWindow.is_enabled() {
-            return None;
-        }
         if !ai_settings.is_any_ai_enabled(app) {
             return None;
         }
@@ -3607,12 +3611,22 @@ impl AgentsWidget {
         let row = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_child(min_label)
-            .with_child(slider)
+            .with_child(Shrinkable::new(1., slider).finish())
             .with_child(max_label)
             .with_child(input_box)
             .finish();
 
-        Some(Flex::column().with_child(label).with_child(row).finish())
+        let mut column = Flex::column().with_child(label).with_child(row);
+        if AISettingsPageView::active_profile_data(app)
+            .should_show_long_context_pricing_warning(view.dragged_context_window_value, app)
+        {
+            column.add_child(render_warning_box(
+                WarningBoxConfig::formatted_title(long_context_pricing_warning_title()),
+                appearance,
+            ));
+        }
+
+        Some(column.finish())
     }
 
     fn render_permissions_section(
@@ -4758,7 +4772,7 @@ impl SettingsWidget for AIFactWidget {
     type View = AISettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "agent oz ai a.i. knowledge fact memory memories rules warp drive context workflows notebooks environment variables"
+        "agent oz ai a.i. knowledge fact memory memories rules context workflows notebooks environment variables"
     }
 
     fn should_render(&self, _app: &AppContext) -> bool {
@@ -5361,7 +5375,7 @@ impl SettingsWidget for CloudAgentComputerUseWidget {
     type View = AISettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "oz agent workspace computer use orchestration multi-agent"
+        "oz agent workspace computer use"
     }
 
     fn render(

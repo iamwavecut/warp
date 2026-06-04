@@ -24333,10 +24333,24 @@ impl TypedActionView for TerminalView {
 
                     match skill_reference {
                         SkillReference::Path(path) => {
+                            let Some(path) = path.to_local_path().map(std::path::Path::to_path_buf)
+                            else {
+                                let window_id = ctx.window_id();
+                                ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+                                    toast_stack.add_ephemeral_toast(
+                                        DismissibleToast::error(
+                                            "Remote skills cannot be edited".to_string(),
+                                        ),
+                                        window_id,
+                                        ctx,
+                                    );
+                                });
+                                return;
+                            };
                             ctx.emit(Event::OpenCodeInWarp {
                                 source: CodeSource::Skill {
                                     reference: skill_reference.clone(),
-                                    path: path.clone(),
+                                    path,
                                     origin: SkillOpenOrigin::OpenSkillCommand,
                                 },
                                 layout:

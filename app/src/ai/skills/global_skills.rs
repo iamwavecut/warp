@@ -2,11 +2,12 @@
 //! ensure are available on disk before the agent runs.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 
 use ai::skills::{provider_rank, ParsedSkill};
 use warp_cli::skill::SkillSpec;
+use warp_util::local_or_remote_path::LocalOrRemotePath;
 
 use crate::ai::agent_environments::GithubRepo;
 
@@ -78,11 +79,11 @@ pub fn filter_skills_by_spec(
 
 fn matching_skill_path(
     repo_path: &Path,
-    skills_by_path: &HashMap<PathBuf, &ParsedSkill>,
+    skills_by_path: &HashMap<LocalOrRemotePath, &ParsedSkill>,
     spec: &SkillSpec,
-) -> Option<PathBuf> {
+) -> Option<LocalOrRemotePath> {
     if spec.is_full_path() {
-        let path = repo_path.join(&spec.skill_identifier);
+        let path = LocalOrRemotePath::Local(repo_path.join(&spec.skill_identifier));
         return skills_by_path.contains_key(&path).then_some(path);
     }
     matching_simple_skill_path(repo_path, skills_by_path, &spec.skill_identifier)
@@ -90,19 +91,25 @@ fn matching_skill_path(
 
 fn matching_simple_skill_path(
     repo_path: &Path,
-    skills_by_path: &HashMap<PathBuf, &ParsedSkill>,
+    skills_by_path: &HashMap<LocalOrRemotePath, &ParsedSkill>,
     skill_name: &str,
-) -> Option<PathBuf> {
+) -> Option<LocalOrRemotePath> {
     let mut matches = skills_by_path
         .values()
         .copied()
-        .filter(|skill| skill.path.starts_with(repo_path) && skill.name == skill_name)
+        .filter(|skill| {
+            skill
+                .path
+                .to_local_path()
+                .is_some_and(|path| path.starts_with(repo_path))
+                && skill.name == skill_name
+        })
         .collect::<Vec<_>>();
 
     matches.sort_by(|left, right| {
         provider_rank(left.provider)
             .cmp(&provider_rank(right.provider))
-            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.path.display_path().cmp(&right.path.display_path()))
     });
     matches.into_iter().map(|skill| skill.path.clone()).next()
 }

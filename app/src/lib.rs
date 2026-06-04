@@ -1324,6 +1324,18 @@ pub(crate) fn initialize_app(
     #[cfg(not(target_family = "wasm"))]
     {
         ctx.add_singleton_model(DirectoryWatcher::new);
+        // Register the skill provider directories as force-included paths so
+        // the gitignore-pruning watch descend filter still watches gitignored
+        // skill directories (e.g. `.agents/skills`) for `Repository`
+        // subscribers (LSP, MCP). Registered before any repository begins
+        // watching so it gates descent on the very first registration.
+        DirectoryWatcher::handle(ctx).update(ctx, |watcher, _| {
+            watcher.register_force_included_paths(
+                ::ai::skills::SKILL_PROVIDER_DEFINITIONS
+                    .iter()
+                    .map(|provider| provider.skills_path.clone()),
+            );
+        });
         ctx.add_singleton_model(|_| DetectedRepositories::default());
         if let Some(home_dir) = dirs::home_dir() {
             ctx.add_singleton_model(|ctx| HomeDirectoryWatcher::new(home_dir, ctx));
@@ -1349,7 +1361,13 @@ pub(crate) fn initialize_app(
             } else {
                 RepoMetadataModel::new(ctx)
             };
-            model.register_ignored_path_interests(
+            model.register_force_included_paths(
+                ::ai::skills::SKILL_PROVIDER_DEFINITIONS
+                    .iter()
+                    .map(|provider| provider.skills_path.clone()),
+                ctx,
+            );
+            model.set_project_skill_provider_paths(
                 ::ai::skills::SKILL_PROVIDER_DEFINITIONS
                     .iter()
                     .map(|provider| provider.skills_path.clone()),
@@ -2669,6 +2687,8 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::CloudModeSetupV2,
         #[cfg(feature = "cloud_mode_input_v2")]
         FeatureFlag::CloudModeInputV2,
+        #[cfg(feature = "gpt_configurable_context_window")]
+        FeatureFlag::GPTConfigurableContextWindow,
         #[cfg(feature = "configurable_context_window")]
         FeatureFlag::ConfigurableContextWindow,
         #[cfg(feature = "git_credential_refresh")]

@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use futures::stream::AbortHandle;
 use ignore::gitignore::Gitignore;
 #[cfg(feature = "local_fs")]
-use repo_metadata::entry::IgnoredPathStrategy;
+use repo_metadata::entry::{BudgetExceededBehavior, IgnoredPathStrategy};
 use repo_metadata::Repository;
 use std::{path::Path, sync::Arc};
 use warp_core::safe_error;
@@ -871,6 +871,9 @@ impl CodebaseIndex {
         // First traverse the repo path to retrieve all files we want to parse.
         let mut files = Vec::new();
         let mut remaining_file_quotas = max_num_files_limit;
+        // Codebase embedding must not operate on a partial tree: the file limit
+        // is an intentional cost cap, so exceeding it fails the build rather
+        // than silently indexing a breadth-first subset of the repository.
         let entry = Entry::build_tree(
             &repo_path,
             &mut files,
@@ -879,6 +882,7 @@ impl CodebaseIndex {
             MAX_DEPTH,
             0,
             &IgnoredPathStrategy::Exclude, // override_ignore_for_files
+            BudgetExceededBehavior::FailFast,
         )?;
 
         Ok(BuildFileTreeResult {

@@ -1,6 +1,7 @@
 pub(crate) mod codex;
 
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::path::PathBuf;
@@ -8,9 +9,11 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 
 use crate::features::FeatureFlag;
+use crate::terminal::model::session::LocalCommandExecutor;
 use crate::terminal::shell::ShellType;
 use crate::terminal::CLIAgent;
 use codex::CodexPluginManager;
+use warp_completer::completer::CommandExitStatus;
 
 /// Distinguishes whether the plugin instructions modal should show install or update steps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +82,52 @@ pub(crate) fn compare_versions(a: &str, b: &str) -> Ordering {
         [major, minor, patch]
     };
     parse(a).cmp(&parse(b))
+}
+
+/// Runs a CLI subcommand through [`LocalCommandExecutor`], appending the
+/// command and its output to `log`.
+pub(crate) async fn run_cli_command_logged(
+    cli_name: &str,
+    args: &[&str],
+    executor: &LocalCommandExecutor,
+    env_vars: Option<HashMap<String, String>>,
+    log: &mut String,
+) -> Result<(), PluginInstallError> {
+    let display_cmd = format!("{cli_name} {}", args.join(" "));
+    log.push_str(&format!("$ {display_cmd}\n"));
+    let result = executor
+        .execute_local_command_in_login_shell(&display_cmd, None, env_vars)
+        .await;
+    match result {
+        Ok(output) if matches!(output.status, CommandExitStatus::Success) => {
+            if !output.stdout.is_empty() {
+                log.push_str(&String::from_utf8_lossy(&output.stdout));
+            }
+            if !output.stderr.is_empty() {
+                log.push_str(&String::from_utf8_lossy(&output.stderr));
+            }
+            Ok(())
+        }
+        Ok(output) => {
+            if !output.stdout.is_empty() {
+                log.push_str(&String::from_utf8_lossy(&output.stdout));
+            }
+            if !output.stderr.is_empty() {
+                log.push_str(&String::from_utf8_lossy(&output.stderr));
+            }
+            Err(PluginInstallError {
+                message: format!("{display_cmd} failed"),
+                log: log.clone(),
+            })
+        }
+        Err(err) => {
+            log.push_str(&err.to_string());
+            Err(PluginInstallError {
+                message: format!("Failed to run {display_cmd}"),
+                log: log.clone(),
+            })
+        }
+    }
 }
 
 /// Manages local notification setup for a specific CLI agent.
@@ -160,16 +209,20 @@ pub(crate) fn plugin_manager_for(agent: CLIAgent) -> Option<Box<dyn CliAgentPlug
 /// (needed for nvm-installed tools that are only on PATH in interactive shells).
 pub(crate) fn plugin_manager_for_with_shell(
     agent: CLIAgent,
-    _shell_path: Option<PathBuf>,
-    _shell_type: Option<ShellType>,
-    _path_env_var: Option<String>,
+    shell_path: Option<PathBuf>,
+    shell_type: Option<ShellType>,
+    path_env_var: Option<String>,
 ) -> Option<Box<dyn CliAgentPluginManager>> {
     match agent {
         CLIAgent::Codex
             if FeatureFlag::CodexNotifications.is_enabled()
                 && FeatureFlag::HOANotifications.is_enabled() =>
         {
-            Some(Box::new(CodexPluginManager))
+            Some(Box::new(CodexPluginManager::new(
+                shell_path,
+                shell_type,
+                path_env_var,
+            )))
         }
         CLIAgent::Claude
         | CLIAgent::OpenCode

@@ -7341,7 +7341,7 @@ impl Workspace {
             read_result.and_then(|(repo_path, terminal_view)| {
                 let diff_state_model = repo_path.as_ref().and_then(|rp| {
                     self.working_directories_model.update(ctx, |model, ctx| {
-                        model.get_or_create_diff_state_model(rp.clone(), ctx)
+                        model.get_or_create_diff_state_model(rp.clone(), None, ctx)
                     })
                 })?;
                 Some((repo_path, diff_state_model, terminal_view))
@@ -7380,7 +7380,7 @@ impl Workspace {
         let repo_location = panel_context.repo_path.clone();
         let diff_state_model = repo_location.as_ref().and_then(|rp| {
             self.working_directories_model.update(ctx, |model, ctx| {
-                model.get_or_create_diff_state_model(rp.clone(), ctx)
+                model.get_or_create_diff_state_model(rp.clone(), None, ctx)
             })
         });
         let Some(diff_state_model) = diff_state_model else {
@@ -7493,7 +7493,7 @@ impl Workspace {
             )| {
                 let diff_state_model = repo_path.as_ref().and_then(|rp| {
                     self.working_directories_model.update(ctx, |model, ctx| {
-                        model.get_or_create_diff_state_model(rp.clone(), ctx)
+                        model.get_or_create_diff_state_model(rp.clone(), None, ctx)
                     })
                 })?;
                 Some(CodeReviewPaneContext {
@@ -18522,7 +18522,7 @@ impl TypedActionView for Workspace {
                     if let Some((repo_path, terminal_view)) = read_result {
                         let diff_state_model = repo_path.as_ref().and_then(|rp| {
                             self.working_directories_model.update(ctx, |model, ctx| {
-                                model.get_or_create_diff_state_model(rp.clone(), ctx)
+                                model.get_or_create_diff_state_model(rp.clone(), None, ctx)
                             })
                         });
                         if let Some(diff_state_model) = diff_state_model {

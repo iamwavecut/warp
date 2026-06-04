@@ -167,6 +167,13 @@ impl<T: Send + 'static> IdleTimeoutSender<T> {
         });
     }
 
+    fn complete_with_optional_idle(&self, idle_timeout: Option<Duration>, value: T) {
+        match idle_timeout {
+            Some(timeout) => self.end_run_after(timeout, value),
+            None => self.end_run_now(value),
+        }
+    }
+
     /// Cancel any pending idle timers.
     fn cancel_idle_timeout(&self) {
         if self.generation.load(Ordering::SeqCst) > 0 {

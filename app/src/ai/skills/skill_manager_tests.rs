@@ -1,13 +1,18 @@
 use super::*;
 use crate::warp_managed_paths_watcher::WarpManagedPathsWatcher;
-use ai::skills::{ParsedSkill, SkillProvider, SkillScope};
+use ai::skills::{get_provider_for_path, ParsedSkill, SkillProvider, SkillScope};
 use repo_metadata::{repositories::DetectedRepositories, DirectoryWatcher, RepoMetadataModel};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use tempfile::TempDir;
 use warp_core::channel::ChannelState;
+use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::App;
 use watcher::HomeDirectoryWatcher;
+
+fn local(path: impl Into<PathBuf>) -> LocalOrRemotePath {
+    LocalOrRemotePath::Local(path.into())
+}
 
 // ============================================================================
 // Tests for get_skills_for_working_directory subdirectory scoping
@@ -37,7 +42,7 @@ fn get_skills_for_working_directory_scopes_subdirectory_skills() {
     let root_skill = ParsedSkill {
         name: "root-skill".to_string(),
         description: "A root skill".to_string(),
-        path: root_skill_path.clone(),
+        path: local(root_skill_path.clone()),
         content: "# Root skill".to_string(),
         line_range: None,
         provider: SkillProvider::Agents,
@@ -47,7 +52,7 @@ fn get_skills_for_working_directory_scopes_subdirectory_skills() {
     let frontend_skill = ParsedSkill {
         name: "frontend-skill".to_string(),
         description: "A frontend skill".to_string(),
-        path: frontend_skill_path.clone(),
+        path: local(frontend_skill_path.clone()),
         content: "# Frontend skill".to_string(),
         line_range: None,
         provider: SkillProvider::Agents,
@@ -55,19 +60,20 @@ fn get_skills_for_working_directory_scopes_subdirectory_skills() {
     };
 
     // Build the internal state manually
-    let mut directory_skills: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+    let mut directory_skills: HashMap<LocalOrRemotePath, HashSet<LocalOrRemotePath>> =
+        HashMap::new();
     directory_skills
-        .entry(repo.clone())
+        .entry(local(repo.clone()))
         .or_default()
-        .insert(root_skill_path.clone());
+        .insert(local(root_skill_path.clone()));
     directory_skills
-        .entry(frontend_dir.clone())
+        .entry(local(frontend_dir.clone()))
         .or_default()
-        .insert(frontend_skill_path.clone());
+        .insert(local(frontend_skill_path.clone()));
 
-    let mut skills_by_path: HashMap<PathBuf, ParsedSkill> = HashMap::new();
-    skills_by_path.insert(root_skill_path.clone(), root_skill);
-    skills_by_path.insert(frontend_skill_path.clone(), frontend_skill);
+    let mut skills_by_path: HashMap<LocalOrRemotePath, ParsedSkill> = HashMap::new();
+    skills_by_path.insert(local(root_skill_path.clone()), root_skill);
+    skills_by_path.insert(local(frontend_skill_path.clone()), frontend_skill);
 
     App::test((), |mut app| async move {
         app.add_singleton_model(DirectoryWatcher::new);
@@ -160,7 +166,7 @@ fn get_skills_for_working_directory_name_collision_returns_both() {
     let root_skill = ParsedSkill {
         name: "deploy".to_string(),
         description: "Root deploy".to_string(),
-        path: root_skill_path.clone(),
+        path: local(root_skill_path.clone()),
         content: "# Root deploy".to_string(),
         line_range: None,
         provider: SkillProvider::Agents,
@@ -170,26 +176,27 @@ fn get_skills_for_working_directory_name_collision_returns_both() {
     let subdir_skill = ParsedSkill {
         name: "deploy".to_string(),
         description: "Subdir deploy".to_string(),
-        path: subdir_skill_path.clone(),
+        path: local(subdir_skill_path.clone()),
         content: "# Subdir deploy".to_string(),
         line_range: None,
         provider: SkillProvider::Agents,
         scope: SkillScope::Project,
     };
 
-    let mut directory_skills: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+    let mut directory_skills: HashMap<LocalOrRemotePath, HashSet<LocalOrRemotePath>> =
+        HashMap::new();
     directory_skills
-        .entry(repo.clone())
+        .entry(local(repo.clone()))
         .or_default()
-        .insert(root_skill_path.clone());
+        .insert(local(root_skill_path.clone()));
     directory_skills
-        .entry(subdir.clone())
+        .entry(local(subdir.clone()))
         .or_default()
-        .insert(subdir_skill_path.clone());
+        .insert(local(subdir_skill_path.clone()));
 
-    let mut skills_by_path: HashMap<PathBuf, ParsedSkill> = HashMap::new();
-    skills_by_path.insert(root_skill_path.clone(), root_skill);
-    skills_by_path.insert(subdir_skill_path.clone(), subdir_skill);
+    let mut skills_by_path: HashMap<LocalOrRemotePath, ParsedSkill> = HashMap::new();
+    skills_by_path.insert(local(root_skill_path.clone()), root_skill);
+    skills_by_path.insert(local(subdir_skill_path.clone()), subdir_skill);
 
     App::test((), |mut app| async move {
         app.add_singleton_model(DirectoryWatcher::new);
@@ -256,7 +263,7 @@ fn agent_environment_skills_always_included() {
     let skill_a = ParsedSkill {
         name: "build".to_string(),
         description: "Repo A skill".to_string(),
-        path: skill_a_path.clone(),
+        path: local(skill_a_path.clone()),
         content: "# Build".to_string(),
         line_range: None,
         provider: SkillProvider::Agents,
@@ -266,26 +273,27 @@ fn agent_environment_skills_always_included() {
     let skill_b = ParsedSkill {
         name: "deploy".to_string(),
         description: "Repo B skill".to_string(),
-        path: skill_b_path.clone(),
+        path: local(skill_b_path.clone()),
         content: "# Deploy".to_string(),
         line_range: None,
         provider: SkillProvider::Agents,
         scope: SkillScope::Project,
     };
 
-    let mut directory_skills: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
+    let mut directory_skills: HashMap<LocalOrRemotePath, HashSet<LocalOrRemotePath>> =
+        HashMap::new();
     directory_skills
-        .entry(repo_a.clone())
+        .entry(local(repo_a.clone()))
         .or_default()
-        .insert(skill_a_path.clone());
+        .insert(local(skill_a_path.clone()));
     directory_skills
-        .entry(repo_b.clone())
+        .entry(local(repo_b.clone()))
         .or_default()
-        .insert(skill_b_path.clone());
+        .insert(local(skill_b_path.clone()));
 
-    let mut skills_by_path: HashMap<PathBuf, ParsedSkill> = HashMap::new();
-    skills_by_path.insert(skill_a_path.clone(), skill_a);
-    skills_by_path.insert(skill_b_path.clone(), skill_b);
+    let mut skills_by_path: HashMap<LocalOrRemotePath, ParsedSkill> = HashMap::new();
+    skills_by_path.insert(local(skill_a_path.clone()), skill_a);
+    skills_by_path.insert(local(skill_b_path.clone()), skill_b);
 
     App::test((), |mut app| async move {
         app.add_singleton_model(DirectoryWatcher::new);
@@ -366,10 +374,9 @@ Run `{{warp_cli_binary_name}}` to connect to {{warp_server_url}}.
     let skill = skills.get("test-skill").unwrap();
 
     let expected_cli = ChannelState::channel().cli_command_name();
-    let expected_url = ChannelState::server_root_url();
-    assert!(skill.content.contains(&format!(
-        "Run `{expected_cli}` to connect to {expected_url}."
-    )));
+    assert!(skill
+        .content
+        .contains(&format!("Run `{expected_cli}` to connect to .")));
 }
 
 #[test]
@@ -445,10 +452,7 @@ fn test_build_bundled_skill_context() {
     assert!(context.contains_key("settings_file_path"));
     assert!(context.contains_key("keybindings_file_path"));
 
-    assert_eq!(
-        context.get("warp_server_url").unwrap(),
-        &ChannelState::server_root_url().to_string()
-    );
+    assert_eq!(context.get("warp_server_url").unwrap(), "");
     assert_eq!(
         context.get("warp_cli_binary_name").unwrap(),
         ChannelState::channel().cli_command_name()
@@ -478,16 +482,14 @@ fn test_build_bundled_skill_context() {
 /// Helper: creates a ParsedSkill under a given provider directory.
 fn make_skill(name: &str, provider_dir: &str) -> ParsedSkill {
     let path = PathBuf::from(format!("/repo/{provider_dir}/skills/{name}/SKILL.md"));
+    let skill_path = local(path);
     ParsedSkill {
         name: name.to_string(),
         description: format!("{name} skill"),
-        path,
+        path: skill_path.clone(),
         content: format!("# {name}"),
         line_range: None,
-        provider: get_provider_for_path(&PathBuf::from(format!(
-            "/repo/{provider_dir}/skills/{name}/SKILL.md"
-        )))
-        .unwrap_or(SkillProvider::Warp),
+        provider: get_provider_for_path(&skill_path).unwrap_or(SkillProvider::Warp),
         scope: SkillScope::Project,
     }
 }

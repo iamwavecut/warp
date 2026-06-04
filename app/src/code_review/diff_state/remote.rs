@@ -71,7 +71,13 @@ impl RemoteDiffStateModel {
         let repo_path = remote_path.path.clone();
         let mode_clone = mode.clone();
         mgr_handle.update(ctx, |mgr, ctx| {
-            mgr.get_diff_state(host_id, repo_path, proto::DiffMode::from(&mode_clone), ctx);
+            mgr.get_diff_state(
+                host_id,
+                repo_path,
+                proto::DiffMode::from(&mode_clone),
+                None,
+                ctx,
+            );
         });
 
         Self {
@@ -189,7 +195,7 @@ impl RemoteDiffStateModel {
         let repo_path = self.remote_path.path.clone();
         let mode = self.mode.clone();
         RemoteServerManager::handle(ctx).update(ctx, |mgr, ctx| {
-            mgr.get_diff_state(host_id, repo_path, proto::DiffMode::from(&mode), ctx);
+            mgr.get_diff_state(host_id, repo_path, proto::DiffMode::from(&mode), None, ctx);
         });
         self.state = InternalRemoteDiffState::Loading;
         ctx.emit(DiffStateModelEvent::NewDiffsComputed(None));
@@ -260,7 +266,7 @@ impl RemoteDiffStateModel {
         let repo_path = self.remote_path.path.clone();
         let mode = self.mode.clone();
         RemoteServerManager::handle(ctx).update(ctx, |mgr, ctx| {
-            mgr.get_diff_state(host_id, repo_path, proto::DiffMode::from(&mode), ctx);
+            mgr.get_diff_state(host_id, repo_path, proto::DiffMode::from(&mode), None, ctx);
         });
     }
 

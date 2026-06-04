@@ -565,11 +565,9 @@ impl TerminalView {
     /// instead). Otherwise, respects the auto-dismiss-after-submit setting.
     fn maybe_close_rich_input_after_submit(&mut self, ctx: &mut ViewContext<Self>) {
         let session = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id);
-        let has_plugin = session.as_ref().is_some_and(|s| {
-            s.listener.is_some()
-                && s.should_auto_toggle_input
-                && agent_supports_rich_status(&s.agent)
-        });
+        let has_plugin = session
+            .as_ref()
+            .is_some_and(|s| agent_supports_rich_status(&s.agent) && s.should_auto_toggle_input);
         let ai_settings = AISettings::as_ref(ctx);
 
         let should_close = if has_plugin && *ai_settings.auto_toggle_rich_input {

@@ -1116,6 +1116,15 @@ impl LLMPreferences {
             ctx.emit(LLMPreferencesEvent::UpdatedActiveAgentModeLLM);
         }
     }
+
+    #[cfg(test)]
+    pub fn update_models_for_testing(
+        &mut self,
+        update: ModelsByFeature,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.on_server_update(update, ctx);
+    }
 }
 
 #[derive(Clone, Debug)]
