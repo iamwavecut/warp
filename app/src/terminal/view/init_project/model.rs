@@ -6,7 +6,6 @@ use enum_iterator::Sequence;
 use lsp::supported_servers::LSPServerType;
 #[cfg(not(target_family = "wasm"))]
 use repo_metadata::repositories::DetectedRepositories;
-#[cfg(not(target_family = "wasm"))]
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::{Entity, ModelContext, SingletonEntity as _};
 

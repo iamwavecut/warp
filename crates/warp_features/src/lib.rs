@@ -544,6 +544,10 @@ pub enum FeatureFlag {
     /// When enabled, profile selection is displayed in an inline view above the Agent input (e.g. via /profile).
     InlineProfileSelector,
 
+    /// Clears the current prompt when opening the inline model selector from the
+    /// model chip, then restores that prompt when the selector closes.
+    RestorePromptOnInlineModelSelectorSearch,
+
     /// Enables sending the server a list of Skills that the client has access to.
     ///
     /// If disabled, the server will send None as the SkillsContext.
