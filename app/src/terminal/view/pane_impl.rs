@@ -467,7 +467,7 @@ impl TerminalView {
         // parent navigation card (the parent pill is the "back to parent" link)
         // and is shown for the orchestrator and the swap-target child panes.
         // Split-off panes ("Open in new pane" / "Open in new tab") instead
-        // render a parent→child breadcrumb row so the user has a clear way
+        // render a parent-child breadcrumb row so the user has a clear way
         // back to the orchestrator without rendering the full sibling pill
         // list a second time alongside the orchestrator's own pill bar.
         //

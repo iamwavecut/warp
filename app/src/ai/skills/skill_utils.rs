@@ -90,12 +90,12 @@ pub(crate) fn unique_skills(
 /// Returns the list of skills if they have changed since the last time we sent them to the server.
 /// Skills are always included except when the current list matches the last list sent.
 pub fn list_skills_if_changed(
-    working_directory: Option<&Path>,
+    working_directory: Option<&LocalOrRemotePath>,
     conversation_id: Option<AIConversationId>,
     app: &AppContext,
 ) -> Option<Vec<SkillDescriptor>> {
     let current_skills =
-        SkillManager::as_ref(app).get_skills_for_working_directory(working_directory, app);
+        SkillManager::as_ref(app).get_skills_for_working_location(working_directory, app);
 
     let previous_skills: Option<Vec<SkillDescriptor>> =
         conversation_id.and_then(|conversation_id| {

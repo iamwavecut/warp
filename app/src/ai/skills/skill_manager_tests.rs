@@ -246,7 +246,7 @@ fn get_skills_for_working_directory_name_collision_returns_both() {
 
 #[test]
 fn agent_environment_skills_always_included() {
-    // In a cloud environment, all skills should be in scope regardless of
+    // In an agent environment, all skills should be in scope regardless of
     // the working directory—even when cwd is inside a different repo or
     // when working_directory is None.
 
@@ -328,7 +328,7 @@ fn agent_environment_skills_always_included() {
         );
         assert!(
             names.contains(&"deploy"),
-            "Repo B skill should be visible from repo A in cloud environment"
+            "Repo B skill should be visible from repo A in agent environment"
         );
 
         // With no working directory, all skills are still included.
@@ -344,6 +344,101 @@ fn agent_environment_skills_always_included() {
             names_none.contains(&"deploy"),
             "Repo B skill should be visible even without a working directory"
         );
+    });
+}
+
+#[test]
+fn get_skills_for_working_location_keeps_local_and_remote_skills_separate() {
+    let temp = TempDir::new().unwrap();
+    let local_repo = temp.path().join("local-repo");
+    fs::create_dir_all(&local_repo).unwrap();
+    let local_repo = dunce::canonicalize(local_repo).unwrap();
+
+    let same_host = warp_util::host_id::HostId::new("same-host".to_string());
+    let other_host = warp_util::host_id::HostId::new("other-host".to_string());
+    let same_host_repo = LocalOrRemotePath::Remote(warp_util::remote_path::RemotePath::new(
+        same_host.clone(),
+        warp_util::standardized_path::StandardizedPath::try_new("/repo").unwrap(),
+    ));
+    let other_host_repo = LocalOrRemotePath::Remote(warp_util::remote_path::RemotePath::new(
+        other_host,
+        warp_util::standardized_path::StandardizedPath::try_new("/repo").unwrap(),
+    ));
+
+    let local_skill_path = local(local_repo.join(".agents/skills/local-only/SKILL.md"));
+    let same_host_skill_path = same_host_repo.join(".agents/skills/same-host/SKILL.md");
+    let other_host_skill_path = other_host_repo.join(".agents/skills/other-host/SKILL.md");
+
+    let mut directory_skills: HashMap<LocalOrRemotePath, HashSet<LocalOrRemotePath>> =
+        HashMap::new();
+    directory_skills
+        .entry(local(local_repo.clone()))
+        .or_default()
+        .insert(local_skill_path.clone());
+    directory_skills
+        .entry(same_host_repo.clone())
+        .or_default()
+        .insert(same_host_skill_path.clone());
+    directory_skills
+        .entry(other_host_repo)
+        .or_default()
+        .insert(other_host_skill_path.clone());
+
+    let mut skills_by_path = HashMap::new();
+    for (name, path) in [
+        ("local-only", local_skill_path),
+        ("same-host", same_host_skill_path),
+        ("other-host", other_host_skill_path),
+    ] {
+        skills_by_path.insert(
+            path.clone(),
+            ParsedSkill {
+                name: name.to_string(),
+                description: format!("{name} skill"),
+                path,
+                content: format!("# {name}"),
+                line_range: None,
+                provider: SkillProvider::Agents,
+                scope: SkillScope::Project,
+            },
+        );
+    }
+
+    App::test((), |mut app| async move {
+        app.add_singleton_model(DirectoryWatcher::new);
+        app.add_singleton_model(|_| DetectedRepositories::default());
+        app.add_singleton_model(RepoMetadataModel::new);
+        app.add_singleton_model(HomeDirectoryWatcher::new_for_test);
+        app.add_singleton_model(WarpManagedPathsWatcher::new_for_testing);
+        let skill_manager_handle = app.add_singleton_model(SkillManager::new);
+
+        skill_manager_handle.update(&mut app, |manager, _ctx| {
+            manager.directory_skills = directory_skills;
+            manager.skills_by_path = skills_by_path;
+            manager.is_agent_environment = true;
+        });
+
+        let remote_skills = skill_manager_handle.read(&app, |manager, ctx| {
+            manager.get_skills_for_working_location(Some(&same_host_repo), ctx)
+        });
+        let remote_names: HashSet<&str> = remote_skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect();
+        assert!(remote_names.contains("same-host"));
+        assert!(!remote_names.contains("local-only"));
+        assert!(!remote_names.contains("other-host"));
+
+        let local_skills = skill_manager_handle.read(&app, |manager, ctx| {
+            manager.get_skills_for_working_location(Some(&local(local_repo.clone())), ctx)
+        });
+        let local_names: HashSet<&str> = local_skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect();
+        assert!(local_names.contains("local-only"));
+        assert!(!local_names.contains("same-host"));
+        assert!(!local_names.contains("other-host"));
     });
 }
 

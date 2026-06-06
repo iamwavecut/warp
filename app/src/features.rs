@@ -23,6 +23,7 @@ pub fn init_feature_flags() {
         FeatureFlag::NamedAgents,
         FeatureFlag::GitCredentialRefresh,
         FeatureFlag::OrchestrationV2,
+        FeatureFlag::RunAgentsTool,
         FeatureFlag::OrchestrationPillBar,
         FeatureFlag::OrchestrationViewerPillBar,
         FeatureFlag::OzLaunchModal,

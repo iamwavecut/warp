@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
 use chrono::Local;
@@ -80,11 +80,8 @@ pub(super) fn input_context_for_request(
     }
 
     if FeatureFlag::ListSkills.is_enabled() {
-        let skills = list_skills_if_changed(
-            active_session.current_working_directory().map(Path::new),
-            conversation_id,
-            app,
-        );
+        let working_directory = active_session.current_working_directory_location(app);
+        let skills = list_skills_if_changed(working_directory.as_ref(), conversation_id, app);
 
         if let Some(skills) = skills {
             context.push(AIAgentContext::Skills { skills });

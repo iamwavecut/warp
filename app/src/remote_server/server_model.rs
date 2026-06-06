@@ -1406,6 +1406,9 @@ impl ServerModel {
         log::info!("Handling Initialize (request_id={request_id})");
         self.apply_initialize_auth(&msg);
         Self::apply_codebase_index_limits(msg.codebase_index_limits.as_ref(), ctx);
+        CodebaseIndexManager::handle(ctx).update(ctx, |manager, ctx| {
+            manager.start_persisted_index_restore(ctx);
+        });
 
         let server_version = ChannelState::app_version().unwrap_or("").to_string();
         HandlerOutcome::Sync(server_message::Message::InitializeResponse(
