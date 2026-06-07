@@ -17,6 +17,7 @@ pub mod agent;
 pub mod completions;
 pub mod config_file;
 pub mod json_filter;
+pub mod local_control;
 pub mod mcp;
 pub mod model;
 pub const OZ_RUN_ID_ENV: &str = "OZ_RUN_ID";
