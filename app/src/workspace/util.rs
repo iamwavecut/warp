@@ -7,6 +7,7 @@ use crate::appearance::Appearance;
 use crate::pane_group::PaneId;
 use crate::terminal::TerminalView;
 use crate::window_settings::WindowSettings;
+use crate::workspace::tab_group::TabGroupId;
 use crate::workspace::Workspace;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -117,6 +118,8 @@ pub struct WorkspaceState {
     pub is_transcript_details_panel_open: bool,
     tab_being_renamed: Option<usize>, // The index of the tab being renamed
     pane_being_renamed: Option<PaneViewLocator>,
+    /// The tab group whose header is currently being renamed inline.
+    tab_group_being_renamed: Option<TabGroupId>,
 }
 
 impl WorkspaceState {
@@ -133,6 +136,7 @@ impl WorkspaceState {
             || self.is_theme_deletion_modal_open
             || self.tab_being_renamed.is_some()
             || self.pane_being_renamed.is_some()
+            || self.tab_group_being_renamed.is_some()
             || self.is_launch_config_save_modal_open
             || self.is_command_search_open
             || self.is_prompt_editor_open
@@ -167,6 +171,7 @@ impl WorkspaceState {
         self.is_theme_deletion_modal_open = false;
         self.tab_being_renamed = None;
         self.pane_being_renamed = None;
+        self.tab_group_being_renamed = None;
         self.is_launch_config_save_modal_open = false;
         self.is_command_search_open = false;
         self.is_workflow_modal_open = false;
@@ -203,6 +208,7 @@ impl WorkspaceState {
     pub fn set_tab_being_renamed(&mut self, index: usize) {
         self.tab_being_renamed = Some(index);
         self.pane_being_renamed = None;
+        self.tab_group_being_renamed = None;
     }
 
     pub fn clear_tab_being_renamed(&mut self) {
@@ -224,6 +230,7 @@ impl WorkspaceState {
     pub fn set_pane_being_renamed(&mut self, pane: PaneViewLocator) {
         self.pane_being_renamed = Some(pane);
         self.tab_being_renamed = None;
+        self.tab_group_being_renamed = None;
     }
 
     pub fn clear_pane_being_renamed(&mut self) {
@@ -232,6 +239,28 @@ impl WorkspaceState {
 
     pub fn pane_being_renamed(&self) -> Option<PaneViewLocator> {
         self.pane_being_renamed
+    }
+
+    pub fn is_tab_group_being_renamed(&self, group_id: TabGroupId) -> bool {
+        self.tab_group_being_renamed == Some(group_id)
+    }
+
+    pub fn is_any_tab_group_being_renamed(&self) -> bool {
+        self.tab_group_being_renamed.is_some()
+    }
+
+    pub fn set_tab_group_being_renamed(&mut self, group_id: TabGroupId) {
+        self.tab_group_being_renamed = Some(group_id);
+        self.tab_being_renamed = None;
+        self.pane_being_renamed = None;
+    }
+
+    pub fn clear_tab_group_being_renamed(&mut self) {
+        self.tab_group_being_renamed = None;
+    }
+
+    pub fn tab_group_being_renamed(&self) -> Option<TabGroupId> {
+        self.tab_group_being_renamed
     }
 }
 
