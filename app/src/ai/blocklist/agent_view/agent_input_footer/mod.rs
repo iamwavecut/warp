@@ -18,7 +18,7 @@ use crate::{
     completer::SessionContext,
     context_chips::{
         self,
-        display_chip::{DisplayChip, DisplayChipConfig},
+        display_chip::{DisplayChip, DisplayChipConfig, PromptChipShellCommand},
         prompt_type::PromptType,
         ContextChipKind,
     },
@@ -2201,7 +2201,7 @@ pub enum AgentInputFooterEvent {
     ToggledChipMenu {
         open: bool,
     },
-    TryExecuteChipCommand(String),
+    TryExecuteChipCommand(PromptChipShellCommand),
     PromptAlert(PromptAlertEvent),
     ModelSelectorOpened,
     ModelSelectorClosed,

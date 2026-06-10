@@ -187,6 +187,7 @@ pub(super) fn spawn(options: PtyOptions) -> Result<PtySpawnInfo> {
         enable_ssh_wrapper,
         shell_debug_mode,
         honor_ps1,
+        node_version_chip_enabled,
         close_fds,
     } = options;
     let shell_starter = match shell_starter {
@@ -206,6 +207,7 @@ pub(super) fn spawn(options: PtyOptions) -> Result<PtySpawnInfo> {
         enable_ssh_wrapper,
         shell_debug_mode,
         honor_ps1,
+        node_version_chip_enabled,
     );
 
     spawn_command_in_pty(command, &size, close_fds)
@@ -216,6 +218,7 @@ pub(super) fn spawn(options: PtyOptions) -> Result<PtySpawnInfo> {
 ///
 /// Does not perform any PTY-level setup; hand the returned `Command`
 /// to [`spawn_command_in_pty`].
+#[allow(clippy::too_many_arguments)]
 fn build_host_shell_command(
     shell_starter: DirectShellStarter,
     window_id: Option<usize>,
@@ -224,6 +227,7 @@ fn build_host_shell_command(
     enable_ssh_wrapper: bool,
     shell_debug_mode: bool,
     honor_ps1: bool,
+    node_version_chip_enabled: bool,
 ) -> Command {
     let mut buf = [0; 1024];
     let pw = get_pw_entry(&mut buf);
@@ -324,6 +328,14 @@ fn build_host_shell_command(
     } else {
         builder.env("WARP_HONOR_PS1", "0");
     }
+
+    // Gate the shell's per-prompt `node --version` detection on whether the
+    // Node.js Version chip is enabled. The bootstrap treats any value other than
+    // "0" as enabled, so we only ever set "0" to disable it.
+    builder.env(
+        "WARP_PROMPT_NODE_VERSION_ENABLED",
+        if node_version_chip_enabled { "1" } else { "0" },
+    );
 
     // Pass through any additional entries to add to PATH.
     let path_append = extra_path_entries()
@@ -700,6 +712,7 @@ fn spawn_docker_sandbox(
         enable_ssh_wrapper,
         shell_debug_mode,
         honor_ps1,
+        node_version_chip_enabled,
         close_fds,
     } = options;
 
@@ -710,6 +723,7 @@ fn spawn_docker_sandbox(
         enable_ssh_wrapper,
         shell_debug_mode,
         honor_ps1,
+        node_version_chip_enabled,
     );
 
     spawn_command_in_pty(command, &size, close_fds)
@@ -721,6 +735,7 @@ fn spawn_docker_sandbox(
 ///
 /// Does not perform any PTY-level setup; hand the returned `Command`
 /// to [`spawn_command_in_pty`].
+#[allow(clippy::too_many_arguments)]
 fn build_docker_sandbox_command(
     docker_starter: &DockerSandboxShellStarter,
     window_id: Option<usize>,
@@ -728,6 +743,7 @@ fn build_docker_sandbox_command(
     enable_ssh_wrapper: bool,
     shell_debug_mode: bool,
     honor_ps1: bool,
+    node_version_chip_enabled: bool,
 ) -> Command {
     let mut buf = [0; 1024];
     let pw = get_pw_entry(&mut buf);
@@ -789,6 +805,10 @@ fn build_docker_sandbox_command(
         builder.env("WARP_SHELL_DEBUG_MODE", "1");
     }
     builder.env("WARP_HONOR_PS1", if honor_ps1 { "1" } else { "0" });
+    builder.env(
+        "WARP_PROMPT_NODE_VERSION_ENABLED",
+        if node_version_chip_enabled { "1" } else { "0" },
+    );
     let path_append = extra_path_entries()
         .map(|p| p.to_string_lossy().into_owned())
         .join(":");
@@ -853,7 +873,8 @@ fn prepare_docker_sandbox(starter: &DockerSandboxShellStarter) -> Result<()> {
     };
 
     // 1. Write the init script to this sandbox's dedicated host init dir.
-    let init_script = raw_init_shell_script_for_shell(ShellType::Bash, &ASSETS);
+    let init_script =
+        raw_init_shell_script_for_shell(ShellType::Bash, &ASSETS, starter.session_id());
     let init_dir = starter.init_dir();
     mk_owner_only_dir(&init_dir)?;
     std::fs::write(starter.init_path(), init_script).context("write sandbox init script")?;

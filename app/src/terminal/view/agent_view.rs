@@ -1,6 +1,7 @@
 use warp_core::{features::FeatureFlag, ui::appearance::Appearance};
 use warpui::{keymap::Keystroke, EntityId, SingletonEntity, ViewContext};
 
+use super::load_ai_conversation::RestoreConversationEntryBehavior;
 use crate::{
     ai::{
         agent::conversation::AIConversationId,
@@ -185,6 +186,8 @@ impl TerminalView {
                 };
                 me.restore_conversation_and_directory_context(
                     conversation,
+                    false,
+                    RestoreConversationEntryBehavior::PreserveAgentViewState,
                     false,
                     on_restored,
                     ctx,

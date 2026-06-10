@@ -14,6 +14,7 @@ use crate::ai::agent::{
 };
 use crate::ai::blocklist::BlocklistAIPermissions;
 use crate::ai::paths::{host_native_absolute_path, join_paths, shell_native_absolute_path};
+use crate::terminal::model::session::command_executor::shell_quote_arg;
 use crate::terminal::model::session::ExecuteCommandOptions;
 use crate::{
     ai::agent::AIAgentActionResultType,
@@ -209,18 +210,21 @@ async fn run_file_glob(
             false
         });
 
+    let shell_type = session.shell().shell_type();
+
     if is_in_git_repo {
         run_git_ls_files_command(
             &patterns,
             &absolute_path,
             session.as_ref(),
             shell_launch_data,
+            shell_type,
         )
         .await
-    } else if session.shell().shell_type() == ShellType::PowerShell {
+    } else if shell_type == ShellType::PowerShell {
         run_powershell_get_childitem_command(&patterns, &absolute_path, session.as_ref()).await
     } else {
-        run_find_command(&patterns, &absolute_path, session.as_ref()).await
+        run_find_command(&patterns, &absolute_path, session.as_ref(), shell_type).await
     }
 }
 
@@ -230,20 +234,14 @@ async fn run_git_ls_files_command(
     target_path: &str,
     session: &Session,
     shell_launch_data: Option<ShellLaunchData>,
+    shell_type: ShellType,
 ) -> anyhow::Result<FileGlobV2Result> {
-    let pattern_args = patterns
-        .iter()
-        .flat_map(|pattern| {
-            [
-                // Matches on files in the target path.
-                join_paths(&[target_path, pattern], shell_launch_data.as_ref()),
-                // Matches on files in any subdirectory of the target path.
-                join_paths(&[target_path, "*", pattern], shell_launch_data.as_ref()),
-            ]
-        })
-        .map(|pattern| format!("'{pattern}'"))
-        .join(" ");
-    let command = format!("git ls-files -c -o --exclude-standard -- {pattern_args}");
+    let command = build_git_ls_files_command(
+        patterns,
+        target_path,
+        shell_launch_data.as_ref(),
+        shell_type,
+    );
 
     let command_output = session
         .execute_command(
@@ -278,13 +276,9 @@ async fn run_find_command(
     patterns: &[String],
     target_path: &str,
     session: &Session,
+    shell_type: ShellType,
 ) -> anyhow::Result<FileGlobV2Result> {
-    // Build a find command with -name for each pattern
-    let pattern_args = patterns
-        .iter()
-        .map(|pattern| format!(" -name '{pattern}'"))
-        .join(" -o");
-    let find_command = format!("find \"{target_path}\" -type f {pattern_args}");
+    let find_command = build_find_command(patterns, target_path, shell_type);
 
     let command_output = session
         .execute_command(
@@ -323,13 +317,7 @@ async fn run_powershell_get_childitem_command(
     target_path: &str,
     session: &Session,
 ) -> anyhow::Result<FileGlobV2Result> {
-    let pattern_args = patterns
-        .iter()
-        .map(|pattern| format!("'{pattern}'"))
-        .join(",");
-    let command = format!(
-        "Get-ChildItem -File -Recurse -Include {pattern_args} -Path \"{target_path}\" | ForEach-Object {{ $_.FullName }}"
-    );
+    let command = build_powershell_get_childitem_command(patterns, target_path);
 
     let command_output = session
         .execute_command(
@@ -352,6 +340,49 @@ async fn run_powershell_get_childitem_command(
     } else {
         Err(anyhow::anyhow!(output))
     }
+}
+
+fn build_git_ls_files_command(
+    patterns: &[String],
+    target_path: &str,
+    shell_launch_data: Option<&ShellLaunchData>,
+    shell_type: ShellType,
+) -> String {
+    let pattern_args = patterns
+        .iter()
+        .flat_map(|pattern| {
+            [
+                // Matches on files in the target path.
+                join_paths(&[target_path, pattern], shell_launch_data),
+                // Matches on files in any subdirectory of the target path.
+                join_paths(&[target_path, "*", pattern], shell_launch_data),
+            ]
+        })
+        .map(|pattern| shell_quote_arg(&pattern, shell_type))
+        .join(" ");
+    format!("git ls-files -c -o --exclude-standard -- {pattern_args}")
+}
+
+fn build_find_command(patterns: &[String], target_path: &str, shell_type: ShellType) -> String {
+    let pattern_args = patterns
+        .iter()
+        .map(|pattern| format!("-name {}", shell_quote_arg(pattern, shell_type)))
+        .join(" -o ");
+    format!(
+        "find {} -type f {pattern_args}",
+        shell_quote_arg(target_path, shell_type)
+    )
+}
+
+fn build_powershell_get_childitem_command(patterns: &[String], target_path: &str) -> String {
+    let pattern_args = patterns
+        .iter()
+        .map(|pattern| shell_quote_arg(pattern, ShellType::PowerShell))
+        .join(",");
+    format!(
+        "Get-ChildItem -File -Recurse -Include {pattern_args} -Path {} | ForEach-Object {{ $_.FullName }}",
+        shell_quote_arg(target_path, ShellType::PowerShell)
+    )
 }
 
 fn non_empty_lines(str: &str) -> impl Iterator<Item = &str> {

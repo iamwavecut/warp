@@ -37,7 +37,8 @@ use session_sharing_protocol::common::{
 };
 #[cfg(not(any(test, feature = "integration_tests")))]
 use session_sharing_protocol::common::{
-    LongRunningCommandAgentInteractionState, SelectedConversation, UniversalDeveloperInputContext,
+    LongRunningCommandAgentInteraction, LongRunningCommandAgentInteractionState,
+    SelectedConversation, UniversalDeveloperInputContext,
 };
 use settings::Setting as _;
 use warpui::r#async::executor::Background;
@@ -55,8 +56,10 @@ use crate::terminal::view::ConversationRestorationInNewPaneType;
 
 use crate::banner::BannerState;
 use crate::context_chips::current_prompt::CurrentPrompt;
+use crate::context_chips::prompt::Prompt;
 use crate::context_chips::prompt_snapshot::PromptSnapshot;
 use crate::context_chips::prompt_type::PromptType;
+use crate::context_chips::ContextChipKind;
 use crate::features::FeatureFlag;
 use crate::pane_group::TerminalViewResources;
 use crate::persistence::ModelEvent;
@@ -67,7 +70,9 @@ use crate::terminal::model::session::Sessions;
 
 use crate::terminal::model_events::ModelEventDispatcher;
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
-use crate::terminal::session_settings::{SessionSettings, SessionSettingsChangedEvent};
+use crate::terminal::session_settings::{
+    SessionSettings, SessionSettingsChangedEvent, ToolbarChipSelection,
+};
 use crate::terminal::shared_session::manager::Manager;
 use crate::terminal::shared_session::sharer::network::{
     failed_to_initialize_session_user_error, Network, NetworkEvent,
@@ -992,8 +997,13 @@ impl TerminalManager {
             // For more on why this is necessary on Git Bash, see internal issue CORE-3202.
             || shell_starter.is_msys2()
         {
-            let init_shell_script =
-                crate::terminal::bootstrap::init_shell_script_for_shell(shell_type, &crate::ASSETS);
+            let session_id = crate::terminal::bootstrap::generate_session_id();
+            self.model.lock().register_session_id(session_id);
+            let init_shell_script = crate::terminal::bootstrap::init_shell_script_for_shell(
+                shell_type,
+                &crate::ASSETS,
+                session_id,
+            );
             let tx = self.event_loop_tx.lock();
             tx.send(Message::Input(init_shell_script.into_bytes().into()))?;
             tx.send(Message::Input(shell_type.execute_command_bytes().into()))
@@ -1014,6 +1024,22 @@ impl TerminalManager {
             .is_shell_debug_mode_enabled
             .value();
         let is_honor_ps1_enabled = *SessionSettings::as_ref(ctx).honor_ps1;
+        let node_version_chip_enabled = {
+            let in_prompt = !is_honor_ps1_enabled
+                && Prompt::as_ref(ctx)
+                    .chip_kinds()
+                    .contains(&ContextChipKind::NodeVersion);
+            let settings = SessionSettings::as_ref(ctx);
+            in_prompt
+                || settings
+                    .agent_footer_chip_selection
+                    .all_chips()
+                    .contains(&ContextChipKind::NodeVersion)
+                || settings
+                    .cli_agent_footer_chip_selection
+                    .all_chips()
+                    .contains(&ContextChipKind::NodeVersion)
+        };
         // The TMUX SSH wrapper supercedes the original ControlMaster wrapper.
         let enable_ssh_wrapper = if FeatureFlag::SSHTmuxWrapper.is_enabled() {
             *WarpifySettings::as_ref(ctx)
@@ -1034,6 +1060,7 @@ impl TerminalManager {
             enable_ssh_wrapper,
             shell_debug_mode: is_shell_debug_mode_enabled,
             honor_ps1: is_honor_ps1_enabled,
+            node_version_chip_enabled,
             close_fds: true,
         };
 
@@ -1324,21 +1351,30 @@ impl TerminalManager {
                     )
                     .and_then(|update| update.selected_conversation);
 
-                let long_running_command_agent_interaction_state = {
+                let (
+                    long_running_command_agent_interaction_state,
+                    long_running_command_agent_interaction,
+                ) = {
                     let model = model.lock();
                     let active_block = model.block_list().active_block();
-                    let state = if active_block.is_active_and_long_running() {
-                        if active_block.is_agent_in_control() {
+                    if active_block.is_active_and_long_running() {
+                        let state = if active_block.is_agent_in_control() {
                             LongRunningCommandAgentInteractionState::InControl
                         } else if active_block.is_agent_tagged_in() {
                             LongRunningCommandAgentInteractionState::TaggedIn
                         } else {
                             LongRunningCommandAgentInteractionState::NotInteracting
-                        }
+                        };
+                        (
+                            Some(state),
+                            Some(LongRunningCommandAgentInteraction {
+                                block_id: active_block.id().clone().into(),
+                                state,
+                            }),
+                        )
                     } else {
-                        LongRunningCommandAgentInteractionState::NotInteracting
-                    };
-                    Some(state)
+                        (Some(LongRunningCommandAgentInteractionState::NotInteracting), None)
+                    }
                 };
 
                 // Include CLI agent session state in initial context so
@@ -1361,6 +1397,7 @@ impl TerminalManager {
                     auto_approve_agent_actions: Some(auto_approve_agent_actions),
                     selected_model: None,
                     long_running_command_agent_interaction_state,
+                    long_running_command_agent_interaction,
                     cli_agent_session,
                 };
 

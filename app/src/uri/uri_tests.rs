@@ -264,17 +264,28 @@ fn test_warp_web_link_failure() {
     );
 }
 #[test]
-fn test_app_web_link_rewrites_to_new_cloud_agent_conversation() {
+fn test_app_web_link_rewrites_to_new_agent_conversation() {
     let url = Url::parse(&format!("{}/app", ChannelState::server_root_url())).unwrap();
     let intent = web_intent_parser::maybe_rewrite_web_url_to_intent(&url).unwrap();
 
     assert_eq!(
         intent.as_str(),
         format!(
-            "{}://action/new_cloud_agent_conversation?source=web_home",
+            "{}://action/new_agent_conversation?source=web_home",
             ChannelState::url_scheme()
         )
     );
+}
+
+#[test]
+fn test_focus_cloud_mode_web_action_parse_is_disabled() {
+    let url = Url::parse(&format!(
+        "{}/action/focus_cloud_mode",
+        ChannelState::server_root_url()
+    ))
+    .unwrap();
+
+    assert!(web_intent_parser::maybe_rewrite_web_url_to_intent(&url).is_none());
 }
 
 #[test]
@@ -473,6 +484,8 @@ fn safe_url_log_fields_handles_file_urls_without_host() {
         "expected path: {logged}"
     );
 }
+
+// -- handle_incoming_uri validation errors -----------------------------------
 
 /// `validate_custom_uri` returns `anyhow::Error`s whose messages feed the
 /// non-dogfood `log::warn!("Custom URI is invalid: {e:?}")` fallback in

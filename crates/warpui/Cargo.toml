@@ -43,6 +43,7 @@ pathfinder_color.workspace = true
 pathfinder_geometry.workspace = true
 takecell = "0.1.1"
 thiserror.workspace = true
+url.workspace = true
 vec1.workspace = true
 version-compare = { workspace = true, optional = true }
 warpui_core.workspace = true

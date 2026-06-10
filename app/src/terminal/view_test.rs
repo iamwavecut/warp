@@ -54,7 +54,9 @@ use crate::terminal::model::grid::Dimensions as _;
 use crate::terminal::model::terminal_model::WithinBlock;
 use crate::terminal::session_settings::AgentToolbarChipSelection;
 use crate::terminal::view::ambient_agent::AmbientAgentViewModelEvent;
-use crate::terminal::view::load_ai_conversation::RestoredAIConversation;
+use crate::terminal::view::load_ai_conversation::{
+    RestoreConversationEntryBehavior, RestoredAIConversation,
+};
 use crate::terminal::view::shared_session::ConversationEndedTombstoneView;
 use crate::terminal::CLIAgent;
 
@@ -529,6 +531,7 @@ fn appended_exchange_renders_in_current_owner_after_conversation_transfer() {
             view.restore_conversation_after_view_creation(
                 RestoredAIConversation::new(restored_conversation),
                 true,
+                RestoreConversationEntryBehavior::EnterRestoredConversation,
                 ctx,
             );
         });

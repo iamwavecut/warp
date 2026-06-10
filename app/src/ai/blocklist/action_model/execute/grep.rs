@@ -14,7 +14,7 @@ use warpui::{AppContext, Entity, EntityId, ModelContext, ModelHandle, SingletonE
 use crate::ai::agent::{AIAgentAction, AIAgentActionType, GrepResult};
 use crate::ai::blocklist::BlocklistAIPermissions;
 use crate::ai::paths::{host_native_absolute_path, shell_native_absolute_path};
-use crate::terminal::model::session::ExecuteCommandOptions;
+use crate::terminal::model::session::{shell_quote_arg, ExecuteCommandOptions};
 use crate::{
     ai::agent::{AIAgentActionResultType, GrepFileMatch, GrepLineMatch},
     terminal::{
@@ -30,14 +30,6 @@ use super::{
 
 const GREP_TIMEOUT: Duration = Duration::from_secs(10);
 const NON_ZERO_EXIT_CODE_ERROR: &str = "Grep command exited with non-zero exit code";
-
-fn escape_double_quotes(s: &str) -> String {
-    s.replace('"', "\\\"")
-}
-
-fn powershell_escape_double_quotes(s: &str) -> String {
-    s.replace('"', "`\"")
-}
 
 /// Information about the Grep call that resulted in an error.
 struct GrepError {
@@ -315,6 +307,7 @@ async fn run_grep(
                 &absolute_path,
                 &session,
                 shell_launch_data,
+                shell_type,
                 &execute_directory,
             )
             .await
@@ -363,17 +356,9 @@ async fn run_git_grep_command(
     // This command works on all the shells we support (even PowerShell).
     let mut grep_command = "git --no-pager grep --color=never --untracked -nIE".to_string();
     for query in queries {
-        let escaped_query = format!(
-            "\"{}\"",
-            if shell_type == ShellType::PowerShell {
-                powershell_escape_double_quotes(query)
-            } else {
-                escape_double_quotes(query)
-            }
-        );
-        grep_command.push_str(format!(" -e {escaped_query}").as_str());
+        grep_command.push_str(format!(" -e {}", shell_quote_arg(query, shell_type)).as_str());
     }
-    grep_command.push_str(format!(" \"{target_path}\"").as_str());
+    grep_command.push_str(format!(" {}", shell_quote_arg(target_path, shell_type)).as_str());
 
     let command_output = session
         .execute_command(
@@ -419,6 +404,7 @@ async fn run_grep_command(
     target_path: &str,
     session: &Session,
     shell_launch_data: Option<ShellLaunchData>,
+    shell_type: ShellType,
     execute_directory: &str,
 ) -> Result<GrepResult, GrepError> {
     // Summary of the options we use:
@@ -430,9 +416,9 @@ async fn run_grep_command(
     // * "-E" uses extended regex expressions
     let mut grep_command = "grep --color=never -nrIHE --devices=skip".to_string();
     for query in queries {
-        grep_command.push_str(format!(" -e \"{}\"", escape_double_quotes(query)).as_str());
+        grep_command.push_str(format!(" -e {}", shell_quote_arg(query, shell_type)).as_str());
     }
-    grep_command.push_str(format!(" \"{target_path}\"").as_str());
+    grep_command.push_str(format!(" {}", shell_quote_arg(target_path, shell_type)).as_str());
 
     let command_output = session
         .execute_command(
@@ -484,11 +470,11 @@ async fn run_select_string_command(
     // We enable the `-CaseSensitive` flag to match the default behavior of grep.
     // TODO(CODE-239): Make this command more efficient when searching a file.
     let select_string_command = format!(
-        "Get-ChildItem -Path \"{}\" -Recurse -File | Select-String -NoEmphasis -CaseSensitive -Pattern {}",
-        target_path,
+        "Get-ChildItem -Path {} -Recurse -File | Select-String -NoEmphasis -CaseSensitive -Pattern {}",
+        shell_quote_arg(target_path, ShellType::PowerShell),
         queries
             .iter()
-            .map(|q| format!("\"{}\"", powershell_escape_double_quotes(q)))
+            .map(|q| shell_quote_arg(q, ShellType::PowerShell))
             .collect::<Vec<_>>()
             .join(",")
     );

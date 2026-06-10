@@ -35,7 +35,7 @@ impl WebIntent {
                 match segments[0] {
                     "app" => {
                         return Ok(WebIntent::CloudAgentHome(Url::parse(&format!(
-                            "{url_scheme}://action/new_cloud_agent_conversation?source=web_home"
+                            "{url_scheme}://action/new_agent_conversation?source=web_home"
                         ))?));
                     }
                     // For sessions, we expect the URL to be in the format: {scheme}/session/{session_id}
@@ -120,7 +120,7 @@ impl WebIntent {
                         let action_type = segments[1];
                         // Allowlist of valid actions,
                         // since we shouldn't expose all Warp actions as web URLs.
-                        const ALLOWED_ACTIONS: &[&str] = &["open-repo", "focus_cloud_mode"];
+                        const ALLOWED_ACTIONS: &[&str] = &["open-repo"];
                         if !ALLOWED_ACTIONS.contains(&action_type) {
                             return Err(anyhow!("Unknown action type in url: {}", action_type));
                         }

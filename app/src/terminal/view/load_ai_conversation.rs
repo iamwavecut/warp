@@ -73,6 +73,8 @@ pub(crate) enum RestorationDirState {
     MissingOriginalDir,
     /// The terminal needs to cd into the conversation's directory.
     NeedsCd { path: String },
+    /// Skipped auto-cd because this conversation wasn't started on this machine.
+    SkippedNonLocalConversation,
 }
 
 /// Specifies how AI conversations should be restored when creating a TerminalView.
@@ -212,13 +214,24 @@ impl RestoredAIConversation {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RestoreConversationEntryBehavior {
+    EnterRestoredConversation,
+    PreserveAgentViewState,
+}
+
 impl TerminalView {
     /// Determine the directory state for restoring the conversation: whether it's missing, we're
     /// already in the right directory, or we need to cd.
     fn resolve_dir_restoration_state(
         &self,
         cloud_conversation: &CloudConversationData,
+        is_local_conversation: bool,
     ) -> RestorationDirState {
+        if !is_local_conversation {
+            return RestorationDirState::SkippedNonLocalConversation;
+        }
+
         let target_dir = match cloud_conversation {
             CloudConversationData::Oz(conversation) => {
                 conversation.initial_working_directory().or_else(|| {
@@ -252,12 +265,15 @@ impl TerminalView {
         &mut self,
         cloud_conversation: CloudConversationData,
         use_live_appearance: bool,
+        _entry_behavior: RestoreConversationEntryBehavior,
+        is_local_conversation: bool,
         on_restored: F,
         ctx: &mut ViewContext<Self>,
     ) where
         F: FnOnce(&mut Self, &mut ViewContext<Self>) + 'static,
     {
-        let restore_context_state = self.resolve_dir_restoration_state(&cloud_conversation);
+        let restore_context_state =
+            self.resolve_dir_restoration_state(&cloud_conversation, is_local_conversation);
 
         let restore_and_continue =
             move |me: &mut TerminalView,
@@ -270,6 +286,7 @@ impl TerminalView {
                         me.restore_conversation_after_view_creation(
                             RestoredAIConversation::new(*conversation),
                             use_live_appearance,
+                            RestoreConversationEntryBehavior::EnterRestoredConversation,
                             ctx,
                         );
                     }
@@ -290,8 +307,9 @@ impl TerminalView {
         match restore_context_state {
             RestorationDirState::NeedsCd { path } => {
                 let path_for_hint = path.clone();
+                let escaped = self.shell_family(ctx).shell_escape(&path);
                 let did_execute_cd = self.input.update(ctx, |input, ctx| {
-                    input.try_execute_command(&format!("cd \"{path}\""), ctx)
+                    input.try_execute_command(&format!("cd {escaped}"), ctx)
                 });
                 if did_execute_cd {
                     self.on_next_block_completed(move |me, ctx| {
@@ -307,7 +325,9 @@ impl TerminalView {
                     restore_and_continue(self, RestorationDirState::Unchanged, ctx);
                 }
             }
-            RestorationDirState::Unchanged | RestorationDirState::MissingOriginalDir => {
+            RestorationDirState::Unchanged
+            | RestorationDirState::MissingOriginalDir
+            | RestorationDirState::SkippedNonLocalConversation => {
                 restore_and_continue(self, restore_context_state, ctx);
             }
         }
@@ -424,6 +444,7 @@ impl TerminalView {
         &mut self,
         ai_block_params: Vec<AIBlockCreationParams>,
         restored_conversations: Vec<RestoredAIConversation>,
+        entry_behavior: RestoreConversationEntryBehavior,
         ctx: &mut ViewContext<Self>,
     ) -> usize {
         let conversations: Vec<AIConversation> = restored_conversations
@@ -477,7 +498,9 @@ impl TerminalView {
         // loading a conversation due to selection from the command palette), then we don't eagerly
         // set the pending query state (which is equivalent to _entering_ the agent view when the
         // FeatureFlag is enabled).
-        if !FeatureFlag::AgentView.is_enabled() || !is_restoring_on_startup {
+        if entry_behavior == RestoreConversationEntryBehavior::EnterRestoredConversation
+            && (!FeatureFlag::AgentView.is_enabled() || !is_restoring_on_startup)
+        {
             // Set agent pending state for follow-up if we have an active conversation
             if let Some(conversation_id) = active_conversation_id {
                 let origin = AgentViewEntryOrigin::RestoreExistingConversation;
@@ -550,6 +573,7 @@ impl TerminalView {
         &mut self,
         restored: RestoredAIConversation,
         use_live_appearance: bool,
+        entry_behavior: RestoreConversationEntryBehavior,
         ctx: &mut ViewContext<Self>,
     ) {
         let conversation_id = restored.ai_conversation.id();
@@ -617,8 +641,12 @@ impl TerminalView {
         }
 
         // Restore action results from all exchanges
-        let blocks_created =
-            self.restore_conversations_from_block_params(all_ai_block_params, vec![restored], ctx);
+        let blocks_created = self.restore_conversations_from_block_params(
+            all_ai_block_params,
+            vec![restored],
+            entry_behavior,
+            ctx,
+        );
 
         if !BlocklistAIHistoryModel::as_ref(ctx)
             .is_terminal_view_conversation_transcript_viewer(self.view_id)
@@ -761,6 +789,7 @@ impl TerminalView {
         let blocks_created = self.restore_conversations_from_block_params(
             all_ai_block_params,
             restored_conversations,
+            RestoreConversationEntryBehavior::EnterRestoredConversation,
             ctx,
         );
 
@@ -877,7 +906,7 @@ impl TerminalView {
                 items.push(open_repo_hint.clone());
                 items.push(MessageItem::text(" change repos"));
             }
-            RestorationDirState::Unchanged => {}
+            RestorationDirState::Unchanged | RestorationDirState::SkippedNonLocalConversation => {}
         }
 
         if !items.is_empty() {
@@ -959,6 +988,7 @@ impl TerminalView {
                 self.restore_conversation_after_view_creation(
                     RestoredAIConversation::new(conversation),
                     true,
+                    RestoreConversationEntryBehavior::EnterRestoredConversation,
                     ctx,
                 );
             }
