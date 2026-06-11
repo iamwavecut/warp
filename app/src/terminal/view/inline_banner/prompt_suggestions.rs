@@ -38,6 +38,7 @@ use crate::ai::agent::{PassiveSuggestionTrigger, StaticQueryType};
 
 const INLINE_BANNER_SPACING: f32 = 8.;
 const INLINE_BANNER_BUTTON_PADDING: f32 = 8.;
+const INLINE_BANNER_BUTTON_VERTICAL_PADDING: f32 = 4.;
 
 const LLM_PROVIDER_NOT_CONFIGURED_TOOLTIP_MESSAGE: &str = "Configure an LLM provider to use AI";
 
@@ -124,7 +125,6 @@ fn render_button(
     prompt_alert_state: &PromptAlertState,
     should_shrink: bool,
     appearance: &Appearance,
-    app: &AppContext,
 ) -> Box<dyn Element> {
     let theme = appearance.theme();
     let is_button_disabled = matches!(prompt_alert_state, PromptAlertState::ProviderNotConfigured);
@@ -145,21 +145,17 @@ fn render_button(
         }
 
         let icon_size = appearance.monospace_font_size();
-        let button_height = app.font_cache().line_height(
-            appearance.monospace_font_size(),
-            appearance.line_height_ratio(),
-        ) + 14.;
-        // Need this to have reasonable keyboard shortcut heights.
-        // let keyboard_shortcut_icon_height = button_height - 6.;
         let mut icon_color = blended_colors::text_main(theme, theme.surface_1());
         icon_color.a = opacity_u8;
 
+        let should_expand_button = mouse_state.is_hovered();
         let text = {
-            let base = Text::new_inline(
+            let base = Text::new(
                 text,
                 appearance.ui_font_family(),
                 appearance.monospace_font_size(),
             )
+            .soft_wrap(should_expand_button)
             .with_color(text_color)
             .finish();
 
@@ -214,7 +210,9 @@ fn render_button(
         let mut container = Container::new(flex.finish())
             .with_background(background_fill)
             .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
-            .with_padding_right(INLINE_BANNER_BUTTON_PADDING);
+            .with_padding_right(INLINE_BANNER_BUTTON_PADDING)
+            .with_padding_top(INLINE_BANNER_BUTTON_VERTICAL_PADDING)
+            .with_padding_bottom(INLINE_BANNER_BUTTON_VERTICAL_PADDING);
 
         if button_index != 0 {
             container = container.with_margin_left(INLINE_BANNER_SPACING);
@@ -252,9 +250,7 @@ fn render_button(
             }
         }
 
-        ConstrainedBox::new(stack.finish())
-            .with_height(button_height)
-            .finish()
+        stack.finish()
     })
     .with_cursor(Cursor::PointingHand);
 
@@ -364,7 +360,6 @@ impl View for PromptSuggestionsView {
                     prompt_alert_state,
                     true, // should_shrink
                     appearance,
-                    app,
                 ),
             )
             .finish(),
