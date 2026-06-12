@@ -45,6 +45,10 @@ fn user_query(text: &str) -> QueuedQuery {
     QueuedQuery::new(text.to_owned(), QueuedQueryOrigin::QueueSlashCommand)
 }
 
+fn initial_cloud_mode_query(text: &str) -> QueuedQuery {
+    QueuedQuery::new(text.to_owned(), QueuedQueryOrigin::InitialCloudMode)
+}
+
 fn append_user(
     model: &warpui::ModelHandle<QueuedQueryModel>,
     app: &mut App,

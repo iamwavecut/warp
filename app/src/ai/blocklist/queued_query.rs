@@ -57,6 +57,10 @@ impl QueuedQuery {
     pub fn origin(&self) -> QueuedQueryOrigin {
         self.origin
     }
+
+    pub fn is_locked(&self) -> bool {
+        matches!(self.origin, QueuedQueryOrigin::InitialCloudMode)
+    }
 }
 
 /// What the auto-fire drain should do with a popped row.
