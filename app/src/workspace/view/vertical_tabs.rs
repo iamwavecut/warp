@@ -1599,6 +1599,9 @@ fn render_vertical_tabs_panel(
             });
         }
     })
+    .on_double_click(|ctx, _, _| {
+        ctx.dispatch_typed_action(WorkspaceAction::AddDefaultTab);
+    })
     .with_defer_events_to_children()
     .finish();
 
