@@ -23,13 +23,6 @@ use self::vertical_tabs::{
     SummaryPaneKind, SummaryPaneKindIcons, VerticalTabsPanelState,
     VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
 };
-use crate::workspace::cross_window_tab_drag::{
-    AttachTarget, CrossWindowTabDrag, DragResult, DropResult, GhostState,
-};
-use crate::workspace::tab_group::{TabGroup, TabGroupId};
-use crate::workspace::uses_vertical_tabs;
-pub(crate) use onboarding::OnboardingTutorial;
-
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::agent_conversations_model::{
     AgentConversationNavigationSubject, AgentConversationsModel,
@@ -98,12 +91,18 @@ use crate::terminal::view::{
 #[cfg(feature = "local_fs")]
 use crate::util::file::external_editor::settings::OpenConversationPreference;
 use crate::workspace::bonus_grant_notification_model::BonusGrantNotificationEvent;
+use crate::workspace::cross_window_tab_drag::{
+    AttachTarget, CrossWindowTabDrag, DragResult, DropResult, GhostState,
+};
+use crate::workspace::tab_group::{TabGroup, TabGroupId};
 use crate::workspace::toast_stack::ToastStack;
+use crate::workspace::uses_vertical_tabs;
 use crate::workspace::view::global_search::view::GlobalSearchEntryFocus;
 use crate::workspace::view::left_panel::{
     LeftPanelAction, LeftPanelEvent, LeftPanelView, ToolPanelView,
 };
 use crate::workspace::view::right_panel::{RightPanelEvent, RightPanelView};
+pub(crate) use onboarding::OnboardingTutorial;
 
 use crate::ui_components::window_focus_dimming::WindowFocusDimming;
 #[cfg(feature = "local_fs")]
@@ -379,8 +378,9 @@ use super::action::{
     InitContent, NewSessionMenuAnchor, RestoreConversationLayout, TabContextMenuAnchor,
     VerticalTabsPaneContextMenuTarget, WorkspaceAction,
 };
+pub(crate) use super::close_session_confirmation_dialog::OpenDialogSource;
 use super::close_session_confirmation_dialog::{
-    CloseSessionConfirmationDialog, CloseSessionConfirmationEvent, OpenDialogSource,
+    CloseSessionConfirmationDialog, CloseSessionConfirmationEvent,
 };
 use super::delete_conversation_confirmation_dialog::{
     DeleteConversationConfirmationDialog, DeleteConversationConfirmationEvent,
@@ -9768,7 +9768,7 @@ impl Workspace {
     /// Checks if the provided tab indices need to be confirmed before closing, unless skip_confirmation is true.
     /// If none of them need confirmation (or the confirm setting is turned off), we close all the provided tabs.
     /// Returns true iff all of the tabs were closed.
-    fn close_tabs(
+    pub(crate) fn close_tabs(
         &mut self,
         tab_indices: impl Iterator<Item = usize>,
         dialog_source: OpenDialogSource,
@@ -19363,6 +19363,11 @@ impl TypedActionView for Workspace {
             ToggleVerticalTabsPanel => {
                 self.toggle_vertical_tabs_panel(ctx);
             }
+            OpenVerticalTabsPanel => {
+                if !self.vertical_tabs_panel_open {
+                    self.toggle_vertical_tabs_panel(ctx);
+                }
+            }
             ToggleNotificationMailbox { select_first } => {
                 if FeatureFlag::HOANotifications.is_enabled()
                     && *AISettings::as_ref(ctx).show_agent_notifications
@@ -19492,6 +19497,15 @@ impl TypedActionView for Workspace {
                         self.focus_active_tab(ctx);
                     }
 
+                    ctx.notify();
+                }
+            }
+            OpenAgentManagementView => {
+                if AISettings::as_ref(ctx).is_any_ai_enabled(ctx)
+                    && FeatureFlag::AgentManagementView.is_enabled()
+                {
+                    self.set_is_agent_management_view_open(true, ctx);
+                    ctx.focus(&self.agent_management_view);
                     ctx.notify();
                 }
             }
@@ -20224,6 +20238,11 @@ impl TypedActionView for Workspace {
                     self.toggle_left_panel_view(&LeftPanelAction::ProjectExplorer, is_showing, ctx);
                 }
             }
+            OpenProjectExplorer => {
+                if *CodeSettings::as_ref(ctx).show_project_explorer {
+                    self.open_left_panel_view(&LeftPanelAction::ProjectExplorer, ctx);
+                }
+            }
             ToggleWarpDrive => {
                 // Hosted drive panel entry points are disabled in this local-first build.
             }
@@ -20283,6 +20302,11 @@ impl TypedActionView for Workspace {
                         is_showing,
                         ctx,
                     );
+                }
+            }
+            OpenConversationListView => {
+                if FeatureFlag::AgentViewConversationListView.is_enabled() {
+                    self.open_left_panel_view(&LeftPanelAction::ConversationListView, ctx);
                 }
             }
             ShowRewindConfirmationDialog {

@@ -146,7 +146,7 @@ impl SettingsWidget for LocalControlModeWidget {
     type View = ScriptingSettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "scripting warp control automation warpctrl local cli inside warp outside warp external scripts disabled enabled"
+        "scripting warp control automation warpctrl local cli scripts disabled enabled"
     }
 
     fn render(

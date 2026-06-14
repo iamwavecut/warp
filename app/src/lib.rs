@@ -1795,7 +1795,7 @@ pub(crate) fn initialize_app(
         ];
         http_server::HttpServer::new(routers, ctx)
     });
-    #[cfg(not(target_family = "wasm"))]
+    #[cfg(feature = "local_fs")]
     if matches!(
         launch_mode,
         LaunchMode::App { .. } | LaunchMode::Test { .. }

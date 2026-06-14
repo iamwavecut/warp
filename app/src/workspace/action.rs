@@ -327,6 +327,7 @@ pub enum WorkspaceAction {
     OpenCodeReviewPanel(PaneViewLocator),
     /// Toggles the vertical tabs panel. This happens as an explicit action from the user.
     ToggleVerticalTabsPanel,
+    OpenVerticalTabsPanel,
     ToggleVerticalTabsSettingsPopup,
     SetVerticalTabsDisplayGranularity(VerticalTabsDisplayGranularity),
     SetVerticalTabsTabItemMode(VerticalTabsTabItemMode),
@@ -581,10 +582,13 @@ pub enum WorkspaceAction {
     NavigatePrevPaneOrPanel,
     NavigateNextPaneOrPanel,
     ToggleProjectExplorer,
+    OpenProjectExplorer,
     ToggleGlobalSearch,
     ToggleHiddenFiles,
     OpenGlobalSearch,
     ToggleConversationListView,
+    OpenConversationListView,
+    OpenAgentManagementView,
     /// Reset the AWS Bedrock login banner dismissed state (for debugging).
     #[cfg(debug_assertions)]
     DebugResetAwsBedrockLoginBannerDismissed,
@@ -770,7 +774,8 @@ impl WorkspaceAction {
             | SummarizeAIConversation { .. }
             | OpenRepository { .. }
             | SelectTabConfig(_)
-            | ToggleVerticalTabsPanel => true, // actions that actually change a state of the state of user's
+            | ToggleVerticalTabsPanel
+            | OpenVerticalTabsPanel => true, // actions that actually change a state of the state of user's
             // workspace would most likely require a save, so that if the app gets
             // restarted, the user can continue working
             CopyVersion(_)
@@ -905,12 +910,15 @@ impl WorkspaceAction {
             | NavigatePrevPaneOrPanel
             | NavigateNextPaneOrPanel
             | ToggleProjectExplorer
+            | OpenProjectExplorer
             | ToggleGlobalSearch
             | ToggleHiddenFiles
             | OpenGlobalSearch
             | ToggleConversationListView
+            | OpenConversationListView
             | ToggleNotificationMailbox { .. }
             | ToggleAgentManagementView
+            | OpenAgentManagementView
             | ToggleAIDocumentPane { .. }
             | HideAIDocumentPanes
             | OpenAIDocumentPane { .. }

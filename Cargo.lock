@@ -411,6 +411,7 @@ dependencies = [
  "arborium-json",
  "arborium-kotlin",
  "arborium-lua",
+ "arborium-nix",
  "arborium-objc",
  "arborium-php",
  "arborium-powershell",
@@ -616,6 +617,17 @@ name = "arborium-lua"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0132cce1b343560a26ae8a9af8da70bcec44432106c9670399ac9c59c61f2dee"
+dependencies = [
+ "arborium-sysroot",
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "arborium-nix"
+version = "2.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a08a703d5502526e68f7ad8dbffd303537d6828005bed0ef0fc7d37e45bf7078"
 dependencies = [
  "arborium-sysroot",
  "cc",
@@ -3405,7 +3417,7 @@ dependencies = [
 [[package]]
 name = "dagre_rust"
 version = "0.0.5"
-source = "git+https://github.com/warpdotdev/mermaid-to-svg.git?rev=40cecf2be376e47e15053eadbfb782a531777420#40cecf2be376e47e15053eadbfb782a531777420"
+source = "git+https://github.com/warpdotdev/mermaid-to-svg.git?rev=79aecc74187c29a027e85e18d070ff0dd884a0a7#79aecc74187c29a027e85e18d070ff0dd884a0a7"
 dependencies = [
  "graphlib_rust",
  "ordered_hashmap",
@@ -7339,7 +7351,7 @@ dependencies = [
 [[package]]
 name = "mermaid_to_svg"
 version = "0.1.0"
-source = "git+https://github.com/warpdotdev/mermaid-to-svg.git?rev=40cecf2be376e47e15053eadbfb782a531777420#40cecf2be376e47e15053eadbfb782a531777420"
+source = "git+https://github.com/warpdotdev/mermaid-to-svg.git?rev=79aecc74187c29a027e85e18d070ff0dd884a0a7#79aecc74187c29a027e85e18d070ff0dd884a0a7"
 dependencies = [
  "dagre_rust",
  "graphlib_rust",
