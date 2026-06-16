@@ -545,11 +545,8 @@ impl From<warp_graphql::workspace::LlmModelHost> for crate::ai::llms::LLMModelHo
             GqlLlmModelHost::AwsBedrock => Self::AwsBedrock,
             GqlLlmModelHost::CustomEndpoint => Self::CustomEndpoint,
             GqlLlmModelHost::Other(value) => {
-                report_error!(
-                    anyhow!(
-                        "Unknown LlmModelHost '{value}'. Make sure to update client GraphQL types!"
-                    ),
-                    warp_core::errors::ReportErrorLogMode::OncePerRun
+                log::warn!(
+                    "Unknown LlmModelHost '{value}'. Make sure to update client GraphQL types!"
                 );
                 Self::Unknown
             }
