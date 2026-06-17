@@ -166,6 +166,7 @@ impl UriHost {
                 // - warp://settings/mcp - opens MCP servers settings page
                 // - warp://settings/platform - opens platform settings page
                 // - warp://settings/appearance - opens appearance settings page (themes, fonts, etc.)
+                // - warp://settings/warp_agent - opens the Warp Agent settings page (inference / API keys)
                 let settings_sub_page: Option<String> = url
                     .path_segments()
                     .into_iter()
@@ -199,6 +200,15 @@ impl UriHost {
                                 "root_view:open_settings_page_in_existing_window",
                                 "root_view:open_settings_page_in_new_window",
                                 &SettingsSection::Appearance,
+                                ctx,
+                            );
+                        }
+                        "warp_agent" => {
+                            dispatch_action_in_new_or_existing_window(
+                                primary_window_id,
+                                "root_view:open_settings_page_in_existing_window",
+                                "root_view:open_settings_page_in_new_window",
+                                &SettingsSection::WarpAgent,
                                 ctx,
                             );
                         }
