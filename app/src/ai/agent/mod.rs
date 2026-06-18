@@ -2702,6 +2702,10 @@ impl AIAgentInput {
         }
     }
 
+    pub fn display_query(&self) -> Option<String> {
+        self.user_query()
+    }
+
     /// Returns the user query text as it should be displayed in the UI.
     /// This includes the "/agent" prefix for the initial conversation query.
     pub fn display_user_query(

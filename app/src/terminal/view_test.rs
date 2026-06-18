@@ -13,7 +13,7 @@ use std::pin::pin;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::Arc;
-use warp_terminal::model::escape_sequences::{BRACKETED_PASTE_END, BRACKETED_PASTE_START};
+use warp_terminal::model::escape_sequences::{BRACKETED_PASTE_END, BRACKETED_PASTE_START, C0};
 use warpui::{
     notification::UserNotification, platform::WindowStyle, Presenter, WindowInvalidation,
 };

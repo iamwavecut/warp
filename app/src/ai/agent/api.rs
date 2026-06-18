@@ -116,6 +116,27 @@ pub struct ConversationData {
 }
 
 impl RequestParams {
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        Self {
+            input: vec![],
+            request_task_id: None,
+            conversation_token: None,
+            tasks: vec![],
+            session_context: SessionContext::new_for_test(),
+            model: LLMId::from("test-model"),
+            mcp_context: None,
+            should_redact_secrets: false,
+            custom_provider_route: None,
+            computer_use_enabled: false,
+            ask_user_question_enabled: false,
+            orchestration_enabled: false,
+            supported_tools_override: None,
+            parent_agent_id: None,
+            agent_name: None,
+        }
+    }
+
     pub fn new(
         terminal_view_id: Option<EntityId>,
         session_context: SessionContext,
