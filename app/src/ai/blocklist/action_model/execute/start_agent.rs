@@ -74,7 +74,9 @@ pub struct StartAgentExecutor {
 impl StartAgentExecutor {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
         let history_model = BlocklistAIHistoryModel::handle(ctx);
-        ctx.subscribe_to_model(&history_model, Self::handle_history_event);
+        ctx.subscribe_to_model(&history_model, |me, _, event, ctx| {
+            me.handle_history_event(event, ctx)
+        });
 
         Self {
             pending: HashMap::new(),

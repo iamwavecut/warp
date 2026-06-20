@@ -237,7 +237,7 @@ impl ProjectContextModel {
         {
             ctx.subscribe_to_model(
                 &RepoMetadataModel::handle(ctx),
-                |me, event, ctx| match event {
+                |me, _, event, ctx| match event {
                     RepoMetadataEvent::RepositoryUpdated {
                         id: RepositoryIdentifier::Local(repo_path),
                     } => me.refresh_project_rules_for_repo(repo_path.clone(), ctx),

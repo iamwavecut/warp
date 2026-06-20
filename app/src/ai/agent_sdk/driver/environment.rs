@@ -338,9 +338,7 @@ async fn subscribe_to_codebase_index_events(
     spawner
         .spawn(move |_, ctx| {
             let repo_channels = Arc::clone(&repo_channels);
-            ctx.subscribe_to_model(
-                &CodebaseIndexManager::handle(ctx),
-                move |_, event, ctx| {
+            ctx.subscribe_to_model(&CodebaseIndexManager::handle(ctx), move |_, _, event, ctx| {
                     if !matches!(
                         event,
                         CodebaseIndexManagerEvent::SyncStateUpdated { .. }
@@ -380,8 +378,7 @@ async fn subscribe_to_codebase_index_events(
                             let _ = tx.send(());
                         }
                     }
-                },
-            );
+                });
         })
         .await
         .map_err(|_| PrepareEnvironmentError::InvalidRuntimeState)

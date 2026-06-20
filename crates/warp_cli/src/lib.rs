@@ -69,7 +69,11 @@ pub struct GlobalOptions {
     pub output_format: OutputFormat,
 }
 
-/// Command-line argument parser for the main Warp binary. This is used across all channels.
+/// Normal argument parser for the shared Warp executable across all channels.
+///
+/// Oz commands are subcommands of this parser, so invoking an `oz` symlink does
+/// not require a mode flag. Warp Control uses its separate [`local_control::ControlArgs`]
+/// parser, selected before this parser sees the arguments.
 #[derive(Debug, Default, Parser, Clone)]
 #[command(
     name = "oz",
@@ -271,6 +275,20 @@ pub enum CliCommand {
     Logout,
     /// Print information about the logged-in user.
     Whoami,
+}
+
+impl CliCommand {
+    /// Returns the command path used to identify this invocation in tracing.
+    pub fn as_str_for_tracing(&self) -> &'static str {
+        match self {
+            CliCommand::Agent(command) => command.as_str_for_tracing(),
+            CliCommand::MCP(command) => command.as_str_for_tracing(),
+            CliCommand::Model(command) => command.as_str_for_tracing(),
+            CliCommand::Login => "login",
+            CliCommand::Logout => "logout",
+            CliCommand::Whoami => "whoami",
+        }
+    }
 }
 
 /// A subcommand of the main Warp application. This includes all [`WorkerCommand`]s as well as app-specific debugging tools.

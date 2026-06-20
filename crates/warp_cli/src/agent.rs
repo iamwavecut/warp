@@ -224,6 +224,16 @@ pub enum AgentCommand {
     List(ListAgentConfigsArgs),
 }
 
+impl AgentCommand {
+    pub(crate) fn as_str_for_tracing(&self) -> &'static str {
+        match self {
+            AgentCommand::Run(_) => "agent run",
+            AgentCommand::Profile(_) => "agent profile",
+            AgentCommand::List(_) => "agent list",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Args)]
 #[command(
     visible_alias = "r",

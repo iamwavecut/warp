@@ -188,83 +188,89 @@ impl BlocklistAIContextModel {
         agent_view_controller: ModelHandle<AgentViewController>,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
-        ctx.subscribe_to_model(model_event_dispatcher, move |me, event, ctx| match event {
-            ModelEvent::BlockCompleted(BlockCompletedEvent {
-                block_type: BlockType::User(user_block_completed),
-                block_id,
-                ..
-            }) => {
-                // If AgentViewBlockContext is enabled and we're in agent view, track user-executed
-                // blocks for auto-attachment as context.
-                if FeatureFlag::AgentViewBlockContext.is_enabled()
-                    && me.agent_view_controller.as_ref(ctx).is_fullscreen()
-                    && !user_block_completed.was_part_of_agent_interaction
+        ctx.subscribe_to_model(
+            model_event_dispatcher,
+            move |me, _, event, ctx| match event {
+                ModelEvent::BlockCompleted(BlockCompletedEvent {
+                    block_type: BlockType::User(user_block_completed),
+                    block_id,
+                    ..
+                }) => {
+                    // If AgentViewBlockContext is enabled and we're in agent view, track user-executed
+                    // blocks for auto-attachment as context.
+                    if FeatureFlag::AgentViewBlockContext.is_enabled()
+                        && me.agent_view_controller.as_ref(ctx).is_fullscreen()
+                        && !user_block_completed.was_part_of_agent_interaction
+                    {
+                        me.auto_attached_agent_view_user_block_ids
+                            .push(block_id.clone());
+                    }
+
+                    // If the block that finished was part of an agent interaction (i.e. LRC finishing),
+                    // we should preserve input context.
+                    if !FeatureFlag::AgentViewBlockContext.is_enabled()
+                        && !user_block_completed.was_part_of_agent_interaction
+                    {
+                        me.reset_context_to_default(ctx);
+                    }
+                }
+                ModelEvent::BlockMetadataReceived(block_metadata_received) => {
+                    let pwd = block_metadata_received
+                        .block_metadata
+                        .current_working_directory()
+                        .map(|s| PathBuf::from(s.to_owned()));
+                    let session_id = block_metadata_received.block_metadata.session_id();
+
+                    if let Some(session_id) = session_id {
+                        let active_session = sessions.as_ref(ctx).get(session_id);
+                        if let Some(active_session) = active_session {
+                            me.update_directory_context(
+                                pwd.map(|p| p.to_string_lossy().to_string()),
+                                active_session.home_dir().map(|sq| sq.to_owned()),
+                                ctx,
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            },
+        );
+
+        ctx.subscribe_to_model(
+            &BlocklistAIHistoryModel::handle(ctx),
+            |me, _, event, ctx| {
+                if event
+                    .terminal_view_id()
+                    .is_some_and(|id| id != me.terminal_view_id)
                 {
-                    me.auto_attached_agent_view_user_block_ids
-                        .push(block_id.clone());
+                    return;
                 }
 
-                // If the block that finished was part of an agent interaction (i.e. LRC finishing),
-                // we should preserve input context.
-                if !FeatureFlag::AgentViewBlockContext.is_enabled()
-                    && !user_block_completed.was_part_of_agent_interaction
-                {
-                    me.reset_context_to_default(ctx);
-                }
-            }
-            ModelEvent::BlockMetadataReceived(block_metadata_received) => {
-                let pwd = block_metadata_received
-                    .block_metadata
-                    .current_working_directory()
-                    .map(|s| PathBuf::from(s.to_owned()));
-                let session_id = block_metadata_received.block_metadata.session_id();
-
-                if let Some(session_id) = session_id {
-                    let active_session = sessions.as_ref(ctx).get(session_id);
-                    if let Some(active_session) = active_session {
-                        me.update_directory_context(
-                            pwd.map(|p| p.to_string_lossy().to_string()),
-                            active_session.home_dir().map(|sq| sq.to_owned()),
+                match event {
+                    BlocklistAIHistoryEvent::ClearedConversationsInTerminalView { .. } => {
+                        me.set_pending_query_state(PendingQueryState::default(), ctx);
+                        if FeatureFlag::AgentView.is_enabled() {
+                            me.agent_view_controller.update(ctx, |controller, ctx| {
+                                controller.exit_agent_view(ctx);
+                            });
+                        }
+                    }
+                    BlocklistAIHistoryEvent::SplitConversation {
+                        new_conversation_id,
+                        ..
+                    } => {
+                        me.set_pending_query_state_for_existing_conversation(
+                            *new_conversation_id,
+                            AgentViewEntryOrigin::AgentRequestedNewConversation,
                             ctx,
                         );
                     }
+                    _ => {}
                 }
-            }
-            _ => {}
-        });
+            },
+        );
 
-        ctx.subscribe_to_model(&BlocklistAIHistoryModel::handle(ctx), |me, event, ctx| {
-            if event
-                .terminal_view_id()
-                .is_some_and(|id| id != me.terminal_view_id)
-            {
-                return;
-            }
-
-            match event {
-                BlocklistAIHistoryEvent::ClearedConversationsInTerminalView { .. } => {
-                    me.set_pending_query_state(PendingQueryState::default(), ctx);
-                    if FeatureFlag::AgentView.is_enabled() {
-                        me.agent_view_controller.update(ctx, |controller, ctx| {
-                            controller.exit_agent_view(ctx);
-                        });
-                    }
-                }
-                BlocklistAIHistoryEvent::SplitConversation {
-                    new_conversation_id,
-                    ..
-                } => {
-                    me.set_pending_query_state_for_existing_conversation(
-                        *new_conversation_id,
-                        AgentViewEntryOrigin::AgentRequestedNewConversation,
-                        ctx,
-                    );
-                }
-                _ => {}
-            }
-        });
-
-        ctx.subscribe_to_model(&LLMPreferences::handle(ctx), |me, event, ctx| {
+        ctx.subscribe_to_model(&LLMPreferences::handle(ctx), |me, _, event, ctx| {
             if let LLMPreferencesEvent::UpdatedActiveAgentModeLLM = event {
                 let llm_prefs = LLMPreferences::as_ref(ctx);
                 let vision_supported = llm_prefs.vision_supported(ctx, Some(me.terminal_view_id));
@@ -275,7 +281,7 @@ impl BlocklistAIContextModel {
         });
 
         // Clear auto-attached blocks when exiting agent view or switching conversations
-        ctx.subscribe_to_model(&agent_view_controller, |me, event, _ctx| {
+        ctx.subscribe_to_model(&agent_view_controller, |me, _, event, _ctx| {
             use super::agent_view::AgentViewControllerEvent;
             match event {
                 AgentViewControllerEvent::ExitedAgentView { .. }

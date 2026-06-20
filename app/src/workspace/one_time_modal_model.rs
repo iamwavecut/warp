@@ -28,7 +28,7 @@ pub struct OneTimeModalModel {
 impl OneTimeModalModel {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
         // Subscribe to the local auth transition to trigger one-time modals after the workspace opens.
-        ctx.subscribe_to_model(&AuthManager::handle(ctx), |me, _event, ctx| {
+        ctx.subscribe_to_model(&AuthManager::handle(ctx), |me, _, _event, ctx| {
             let auth_state = crate::auth::AuthStateProvider::as_ref(ctx).get().clone();
             let is_existing_user = auth_state.is_onboarded().unwrap_or_default();
             if is_existing_user {

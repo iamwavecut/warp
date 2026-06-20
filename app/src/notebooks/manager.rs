@@ -80,12 +80,13 @@ pub enum NotebookSource {
 impl NotebookManager {
     /// Create a new [`NotebookManager`] singleton.
     pub fn new(cached_notebooks: Vec<CloudNotebook>, ctx: &mut ModelContext<Self>) -> Self {
-        ctx.subscribe_to_model(
-            &UpdateManager::handle(ctx),
-            Self::handle_update_manager_event,
-        );
+        ctx.subscribe_to_model(&UpdateManager::handle(ctx), |me, _, event, ctx| {
+            me.handle_update_manager_event(event, ctx)
+        });
 
-        ctx.subscribe_to_model(&CloudModel::handle(ctx), Self::handle_cloud_model_event);
+        ctx.subscribe_to_model(&CloudModel::handle(ctx), |me, _, event, ctx| {
+            me.handle_cloud_model_event(event, ctx)
+        });
 
         let mut raw_text_by_hashed_id: HashMap<String, NotebookRawTextStatus> = HashMap::new();
         // Parse all the cached notebook raw text

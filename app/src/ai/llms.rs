@@ -540,7 +540,7 @@ impl LLMPreferences {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
         let models_by_feature = get_cached_models(ctx).unwrap_or_default();
 
-        ctx.subscribe_to_model(&UserWorkspaces::handle(ctx), |me, event, ctx| {
+        ctx.subscribe_to_model(&UserWorkspaces::handle(ctx), |me, _, event, ctx| {
             if let UserWorkspacesEvent::TeamsChanged = event {
                 me.refresh_available_models(ctx);
             }
@@ -550,7 +550,7 @@ impl LLMPreferences {
         // provider availability can change with local key configuration.
         ctx.subscribe_to_model(
             &ApiKeyManager::handle(ctx),
-            |me, _event: &ApiKeyManagerEvent, ctx| {
+            |me, _, _event: &ApiKeyManagerEvent, ctx| {
                 me.reconcile_disabled_model_preferences(ctx);
             },
         );

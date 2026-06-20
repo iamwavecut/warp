@@ -82,7 +82,7 @@ pub struct OrchestrationEventStreamer {
 impl OrchestrationEventStreamer {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
         let history_model = BlocklistAIHistoryModel::handle(ctx);
-        ctx.subscribe_to_model(&history_model, |me, event, ctx| {
+        ctx.subscribe_to_model(&history_model, |me, _, event, ctx| {
             me.handle_history_event(event, ctx);
         });
         Self {
@@ -102,7 +102,7 @@ impl OrchestrationEventStreamer {
         ctx: &mut ModelContext<Self>,
     ) -> Self {
         let history_model = BlocklistAIHistoryModel::handle(ctx);
-        ctx.subscribe_to_model(&history_model, |me, event, ctx| {
+        ctx.subscribe_to_model(&history_model, |me, _, event, ctx| {
             me.handle_history_event(event, ctx);
         });
         let _ = (ai_client, server_api);

@@ -174,7 +174,7 @@ impl AIExecutionProfilesModel {
 
         ctx.subscribe_to_model(
             &TemplatableMCPServerManager::handle(ctx),
-            |me, event, ctx| {
+            |me, _, event, ctx| {
                 me.handle_templatable_mcp_server_manager_event(event, ctx);
             },
         );

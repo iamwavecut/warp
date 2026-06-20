@@ -132,17 +132,19 @@ impl SkillWatcher {
         );
 
         if home_dir.is_some() {
-            ctx.subscribe_to_model(
-                &HomeDirectoryWatcher::handle(ctx),
-                |me, event, ctx| match event {
+            ctx.subscribe_to_model(&HomeDirectoryWatcher::handle(ctx), |me, _, event, ctx| {
+                match event {
                     HomeDirectoryWatcherEvent::HomeFilesChanged(event) => {
                         me.handle_home_files_changed(event, ctx);
                     }
+                }
+            });
+            ctx.subscribe_to_model(
+                &WarpManagedPathsWatcher::handle(ctx),
+                |me, _, event, ctx| {
+                    me.handle_warp_managed_paths_event(event, ctx);
                 },
             );
-            ctx.subscribe_to_model(&WarpManagedPathsWatcher::handle(ctx), |me, event, ctx| {
-                me.handle_warp_managed_paths_event(event, ctx);
-            });
         }
 
         // Subscribe to home directory skills via DirectoryWatcher.
@@ -186,7 +188,7 @@ impl SkillWatcher {
         // RepoMetadataModel for both local and remote repos when available, while
         // local repos fall back to a direct project watcher only if metadata
         // indexing fails.
-        ctx.subscribe_to_model(&RepoMetadataModel::handle(ctx), |me, event, ctx| {
+        ctx.subscribe_to_model(&RepoMetadataModel::handle(ctx), |me, _, event, ctx| {
             use repo_metadata::wrapper_model::RepoMetadataEvent;
             match event {
                 RepoMetadataEvent::RepositoryUpdated { id } => {
@@ -1072,6 +1074,7 @@ async fn read_and_parse_project_skills(
 ) -> anyhow::Result<Vec<ParsedSkill>> {
     Ok(parse_project_skill_contents(read_skill_contents.await?))
 }
+
 fn remote_skill_read_request(skill_paths: &[LocalOrRemotePath]) -> ReadFileContextRequest {
     ReadFileContextRequest {
         files: skill_paths

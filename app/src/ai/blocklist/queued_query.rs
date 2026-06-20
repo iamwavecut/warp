@@ -139,7 +139,7 @@ impl QueuedQueryModel {
         // from its owning terminal view. Agent-view exit is intentionally NOT subscribed to:
         // conversations (cloud agents in particular) outlive their visible session.
         let history_handle = BlocklistAIHistoryModel::handle(ctx);
-        ctx.subscribe_to_model(&history_handle, |this, event, ctx| {
+        ctx.subscribe_to_model(&history_handle, |this, _, event, ctx| {
             this.handle_history_event(event, ctx);
         });
 

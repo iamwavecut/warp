@@ -144,7 +144,7 @@ impl TemplatableMCPServerManager {
     ) -> Self {
         // Subscribe to FileBasedMCPManager events.
         let file_based_mcp_manager = FileBasedMCPManager::handle(ctx);
-        ctx.subscribe_to_model(&file_based_mcp_manager, |me, event, ctx| match event {
+        ctx.subscribe_to_model(&file_based_mcp_manager, |me, _, event, ctx| match event {
             FileBasedMCPManagerEvent::SpawnServers { installations } => {
                 me.spawn_file_based_servers(installations, ctx);
             }

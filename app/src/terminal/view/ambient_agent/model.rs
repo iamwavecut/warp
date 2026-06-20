@@ -127,9 +127,12 @@ pub struct AmbientAgentViewModel {
 
 impl AmbientAgentViewModel {
     pub fn new(terminal_view_id: EntityId, ctx: &mut ModelContext<Self>) -> Self {
-        ctx.subscribe_to_model(&HarnessAvailabilityModel::handle(ctx), |me, _event, ctx| {
-            me.validate_selected_harness(ctx);
-        });
+        ctx.subscribe_to_model(
+            &HarnessAvailabilityModel::handle(ctx),
+            |me, _, _event, ctx| {
+                me.validate_selected_harness(ctx);
+            },
+        );
 
         let ui_state = AmbientAgentProgressUIState::new(ctx);
 

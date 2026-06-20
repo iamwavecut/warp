@@ -335,6 +335,7 @@ impl WarpManagedPathsWatcher {
 
     fn handle_fs_event(
         &mut self,
+        _: ModelHandle<BulkFilesystemWatcher>,
         event: &BulkFilesystemWatcherEvent,
         ctx: &mut ModelContext<Self>,
     ) {

@@ -449,12 +449,12 @@ impl AgentConversationsModel {
         }
 
         let history_model = BlocklistAIHistoryModel::handle(ctx);
-        ctx.subscribe_to_model(&history_model, move |me, event, ctx| {
+        ctx.subscribe_to_model(&history_model, move |me, _, event, ctx| {
             me.handle_history_event(event, ctx);
         });
 
         let active_views_model = ActiveAgentViewsModel::handle(ctx);
-        ctx.subscribe_to_model(&active_views_model, |me, _event, ctx| {
+        ctx.subscribe_to_model(&active_views_model, |me, _, _event, ctx| {
             me.sync_conversations(ctx);
         });
 

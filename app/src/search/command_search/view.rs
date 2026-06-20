@@ -303,8 +303,9 @@ impl CommandSearchView {
                     ctx,
                 );
             } else {
-                ctx.subscribe_to_model(&History::handle(ctx), move |mixer, history_event, ctx| {
-                    match history_event {
+                ctx.subscribe_to_model(
+                    &History::handle(ctx),
+                    move |mixer, _, history_event, ctx| match history_event {
                         HistoryEvent::Initialized(id) => {
                             if id == &session_id {
                                 let source = history_data_source_for_session(
@@ -328,8 +329,8 @@ impl CommandSearchView {
                                 ctx.notify();
                             }
                         }
-                    }
-                });
+                    },
+                );
             }
         })
     }

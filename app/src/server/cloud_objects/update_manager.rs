@@ -141,12 +141,12 @@ impl UpdateManager {
         ctx: &mut ModelContext<Self>,
     ) -> Self {
         let network_status = NetworkStatus::handle(ctx);
-        ctx.subscribe_to_model(&network_status, |me, event, ctx| {
+        ctx.subscribe_to_model(&network_status, |me, _, event, ctx| {
             me.handle_network_status_changed(event, ctx);
         });
 
         let sync_queue = SyncQueue::handle(ctx);
-        ctx.subscribe_to_model(&sync_queue, |me, event, ctx| {
+        ctx.subscribe_to_model(&sync_queue, |me, _, event, ctx| {
             me.handle_model_event(event, ctx);
         });
 

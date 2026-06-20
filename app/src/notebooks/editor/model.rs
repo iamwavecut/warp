@@ -188,7 +188,7 @@ impl NotebooksEditorModel {
             Buffer::new(Box::new(notebook_tab_indentation))
                 .with_embedded_item_conversion(super::notebook_embedded_item_conversion)
         });
-        ctx.subscribe_to_model(&content, |me, event, ctx| {
+        ctx.subscribe_to_model(&content, |me, _, event, ctx| {
             me.handle_content_model_event(event, ctx);
         });
 
@@ -215,7 +215,7 @@ impl NotebooksEditorModel {
         );
 
         let cloud_model = CloudModel::handle(ctx);
-        ctx.subscribe_to_model(&cloud_model, |me, event, ctx| {
+        ctx.subscribe_to_model(&cloud_model, |me, _, event, ctx| {
             me.handle_cloud_model_event(event, ctx)
         });
 
@@ -326,7 +326,12 @@ impl NotebooksEditorModel {
         <Self as RichTextEditorModel>::update_to_new_markdown(self, markdown, ctx);
     }
 
-    fn handle_render_model_event(&mut self, event: &RenderEvent, ctx: &mut ModelContext<Self>) {
+    fn handle_render_model_event(
+        &mut self,
+        _: ModelHandle<RenderState>,
+        event: &RenderEvent,
+        ctx: &mut ModelContext<Self>,
+    ) {
         // Ignore render events until bound to a real window, and when the window is closed.
         let Some(window_id) = self.rte_window_id else {
             return;
@@ -360,6 +365,7 @@ impl NotebooksEditorModel {
 
     fn handle_interaction_state_model_event(
         &mut self,
+        _: ModelHandle<InteractionStateModel>,
         event: &InteractionStateModelEvent,
         ctx: &mut ModelContext<Self>,
     ) {

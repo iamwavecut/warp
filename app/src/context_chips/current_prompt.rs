@@ -192,19 +192,22 @@ impl CurrentPrompt {
         ctx: &mut ModelContext<Self>,
     ) -> Self {
         let prompt = Prompt::handle(ctx);
-        ctx.subscribe_to_model(&prompt, Self::handle_prompt_changed);
-        ctx.subscribe_to_model(
-            &SessionSettings::handle(ctx),
-            Self::handle_session_settings_changed,
-        );
-        ctx.subscribe_to_model(&sessions, |me, event, ctx| {
+        ctx.subscribe_to_model(&prompt, |me, _, event, ctx| {
+            me.handle_prompt_changed(event, ctx)
+        });
+        ctx.subscribe_to_model(&SessionSettings::handle(ctx), |me, _, event, ctx| {
+            me.handle_session_settings_changed(event, ctx)
+        });
+        ctx.subscribe_to_model(&sessions, |me, _, event, ctx| {
             if let SessionsEvent::EnvironmentVariablesUpdated { .. } = event {
                 me.update_states_with_new_context(ctx);
             }
         });
 
         if let Some(model_events) = model_events {
-            ctx.subscribe_to_model(model_events, Self::handle_model_event);
+            ctx.subscribe_to_model(model_events, |me, _, event, ctx| {
+                me.handle_model_event(event, ctx)
+            });
         }
 
         let (update_tx, update_rx) = async_channel::unbounded();
@@ -246,7 +249,7 @@ impl CurrentPrompt {
     ) {
         // A WeakViewHandle is used here to avoid leaking the terminal model
         let weak_editor_handle = editor.downgrade();
-        ctx.subscribe_to_view(&editor, move |me, _, ctx| {
+        ctx.subscribe_to_view(&editor, move |me, _, _, ctx| {
             // CurrentPrompt exists and this fn is called even if we're not using warp prompt.
             // We don't need to do anything if we're honoring PS1 unless universal developer input
             // or AgentView is enabled (agent view needs chips regardless of PS1 setting).
@@ -1389,7 +1392,7 @@ impl CurrentPrompt {
         if let Some(weak) = handle {
             if let Some(strong) = weak.upgrade(ctx) {
                 self.git_repo_status = Some(weak);
-                ctx.subscribe_to_model(&strong, |me, event, ctx| match event {
+                ctx.subscribe_to_model(&strong, |me, _, event, ctx| match event {
                     GitRepoStatusEvent::MetadataChanged => {
                         me.apply_git_repo_metadata(ctx);
                         me.sync_pr_chip_from_singleton(ctx);

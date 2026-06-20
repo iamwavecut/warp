@@ -31,10 +31,9 @@ pub enum EnvVarCollectionSource {
 /// Manages EnvVarCollection panes
 impl EnvVarCollectionManager {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
-        ctx.subscribe_to_model(
-            &UpdateManager::handle(ctx),
-            Self::handle_update_manager_event,
-        );
+        ctx.subscribe_to_model(&UpdateManager::handle(ctx), |me, _, event, ctx| {
+            me.handle_update_manager_event(event, ctx)
+        });
 
         EnvVarCollectionManager {
             panes_by_hashed_id: HashMap::new(),
