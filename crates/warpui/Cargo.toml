@@ -17,6 +17,8 @@ fontkit-rasterizer = []
 traces = ["warpui_core/traces"]
 # Feature enabled only when app is compiled for integration tests.
 integration_tests = ["warpui_core/integration_tests"]
+# See warpui_core's defer_scene_build feature.
+defer_scene_build = ["warpui_core/defer_scene_build"]
 schema_gen = ["warpui_core/schema_gen"]
 settings_value = ["warpui_core/settings_value"]
 # Enables utilities for testing.
