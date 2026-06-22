@@ -132,7 +132,7 @@ impl StoredView {
         match self {
             StoredView::Gui(view) => view.child_view_ids(app),
             #[cfg(feature = "tui")]
-            StoredView::Tui(_) => Vec::new(),
+            StoredView::Tui(view) => view.child_view_ids(app),
         }
     }
 
