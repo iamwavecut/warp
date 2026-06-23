@@ -253,12 +253,53 @@ fn needs_update_via_trait_when_installed_without_manifest() {
     assert!(result);
 }
 
+#[test]
+#[serial_test::serial]
+fn ensure_codex_home_dir_creates_missing_env_dir() {
+    let parent = tempfile::tempdir().unwrap();
+    let codex_home = parent.path().join("workspace-codex-home");
+
+    std::env::set_var("CODEX_HOME", &codex_home);
+    let result = super::ensure_codex_home_dir();
+    std::env::remove_var("CODEX_HOME");
+
+    assert!(result.is_ok());
+    assert!(codex_home.is_dir());
+}
+
+#[test]
+#[serial_test::serial]
+fn does_not_need_update_for_non_git_marketplace_override() {
+    let _guard = FeatureFlag::CodexPlugin.override_enabled(true);
+    let dir = tempfile::tempdir().unwrap();
+    write_enabled_config(dir.path());
+    write_marketplace_config(dir.path(), "directory");
+    write_manifest(dir.path(), "0.2.0");
+
+    std::env::set_var("CODEX_HOME", dir.path());
+    let result = CodexPluginManager::new(None, None, None).needs_update();
+    std::env::remove_var("CODEX_HOME");
+
+    assert!(!result);
+}
+
 fn write_enabled_config(dir: &std::path::Path) {
     fs::write(
         dir.join("config.toml"),
         "[plugins.\"warp@codex-warp\"]\nenabled = true\n",
     )
     .unwrap();
+}
+
+fn write_marketplace_config(dir: &std::path::Path, source_type: &str) {
+    let mut config = fs::read_to_string(dir.join("config.toml")).unwrap_or_default();
+    if !config.is_empty() && !config.ends_with('\n') {
+        config.push('\n');
+    }
+    config.push_str(&format!(
+        "[marketplaces.codex-warp]\nsource_type = \"{source_type}\"\nsource = \"/tmp/codex-warp\"\n"
+    ));
+    fs::write(dir.join("config.toml"), config).unwrap();
 }
 
 fn write_manifest(dir: &std::path::Path, version: &str) {

@@ -49,6 +49,23 @@ impl CodexPluginManager {
             .map(|path| HashMap::from([("PATH".to_owned(), path.to_owned())]));
         run_cli_command_logged("codex", args, &self.executor, env_vars, log).await
     }
+
+    async fn ensure_marketplace(&self, log: &mut String) -> Result<(), PluginInstallError> {
+        match codex_home_dir()
+            .ok()
+            .and_then(|dir| codex_warp_marketplace_config(&dir))
+        {
+            Some(config) if config.is_git() => {
+                self.run_logged(&["plugin", "marketplace", "upgrade", MARKETPLACE_NAME], log)
+                    .await
+            }
+            Some(_) => Ok(()),
+            None => {
+                self.run_logged(&["plugin", "marketplace", "add", MARKETPLACE_REPO], log)
+                    .await
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -82,6 +99,9 @@ impl CliAgentPluginManager for CodexPluginManager {
         let Ok(codex_dir) = codex_home_dir() else {
             return false;
         };
+        if codex_warp_marketplace_config(&codex_dir).is_some_and(|config| !config.is_git()) {
+            return false;
+        }
         match installed_version(&codex_dir) {
             Some(v) => compare_versions(&v, MINIMUM_PLUGIN_VERSION).is_lt(),
             None => check_installed(&codex_dir),
@@ -93,11 +113,8 @@ impl CliAgentPluginManager for CodexPluginManager {
             return Ok(());
         }
         let mut log = String::new();
-        self.run_logged(
-            &["plugin", "marketplace", "add", MARKETPLACE_REPO],
-            &mut log,
-        )
-        .await?;
+        ensure_codex_home_dir()?;
+        self.ensure_marketplace(&mut log).await?;
         self.run_logged(&["plugin", "add", PLUGIN_KEY], &mut log)
             .await?;
         Ok(())
@@ -108,6 +125,7 @@ impl CliAgentPluginManager for CodexPluginManager {
             return Ok(());
         }
         let mut log = String::new();
+        ensure_codex_home_dir()?;
         self.run_logged(
             &["plugin", "marketplace", "upgrade", MARKETPLACE_NAME],
             &mut log,
@@ -293,6 +311,33 @@ fn codex_home_dir() -> io::Result<PathBuf> {
                 "could not determine home directory",
             )
         })
+}
+
+fn ensure_codex_home_dir() -> io::Result<()> {
+    fs::create_dir_all(codex_home_dir()?)
+}
+
+struct CodexWarpMarketplaceConfig {
+    source_type: Option<String>,
+}
+
+impl CodexWarpMarketplaceConfig {
+    fn is_git(&self) -> bool {
+        self.source_type.as_deref() == Some("git")
+    }
+}
+
+fn codex_warp_marketplace_config(codex_dir: &Path) -> Option<CodexWarpMarketplaceConfig> {
+    let config_path = codex_dir.join("config.toml");
+    let contents = fs::read_to_string(config_path).ok()?;
+    let parsed = contents.parse::<toml_edit::DocumentMut>().ok()?;
+    let marketplace = parsed.get("marketplaces")?.get(MARKETPLACE_NAME)?;
+    Some(CodexWarpMarketplaceConfig {
+        source_type: marketplace
+            .get("source_type")
+            .and_then(|source_type| source_type.as_str())
+            .map(str::to_owned),
+    })
 }
 
 #[cfg(test)]

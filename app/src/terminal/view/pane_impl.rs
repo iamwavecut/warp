@@ -19,8 +19,9 @@ use crate::pane_group::pane::view::header::components::{
     render_three_column_header, CenteredHeaderEdgeWidth,
 };
 use crate::pane_group::pane::view::header::{render_pane_header_draggable, PANE_HEADER_HEIGHT};
-use crate::pane_group::pane::PaneStack;
-use crate::pane_group::{pane::view, pane::view::PaneHeaderAction, BackingView, SplitPaneState};
+use crate::pane_group::pane::view::PaneHeaderAction;
+use crate::pane_group::pane::{view, PaneStack};
+use crate::pane_group::{BackingView, SplitPaneState, TOGGLE_MAXIMIZE_PANE_BINDING_NAME};
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::terminal::shared_session::participant_avatar_view::render_participants_and_role_elements;
 use crate::terminal::shared_session::render_util::shared_session_indicator_color;
@@ -32,6 +33,7 @@ use crate::ui_components::blended_colors;
 use crate::ui_components::buttons::icon_button_with_color;
 use crate::ui_components::icon_with_status::render_icon_with_status;
 use crate::ui_components::icons;
+use crate::util::bindings::keybinding_name_to_display_string;
 use crate::workspace::tab_settings::TabSettings;
 use warpui::elements::{
     ConstrainedBox, CrossAxisAlignment, Empty, Flex, MainAxisAlignment, MainAxisSize,
@@ -654,6 +656,10 @@ impl BackingView for TerminalView {
             items.push(
                 MenuItemFields::toggle_pane_action(is_maximized)
                     .with_on_select_action(TerminalAction::ToggleMaximizePane)
+                    .with_key_shortcut_label(keybinding_name_to_display_string(
+                        TOGGLE_MAXIMIZE_PANE_BINDING_NAME,
+                        ctx,
+                    ))
                     .into_item(),
             );
         }

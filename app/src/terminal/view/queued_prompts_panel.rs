@@ -327,6 +327,10 @@ impl QueuedPromptsPanelView {
         QueuedQueryModel::as_ref(ctx).editing_row(conv_id)
     }
 
+    pub(in crate::terminal) fn is_inline_edit_editor_focused(&self, ctx: &AppContext) -> bool {
+        self.editing_row_id(ctx).is_some() && self.edit_editor.is_focused(ctx)
+    }
+
     fn commit_edit(&mut self, ctx: &mut ViewContext<Self>) {
         let Some(conv_id) = self.active_conversation_id else {
             return;

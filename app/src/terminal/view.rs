@@ -7489,9 +7489,17 @@ impl TerminalView {
         block: &ViewHandle<AIBlock>,
         ctx: &mut ViewContext<Self>,
     ) {
-        if ctx.is_self_or_child_focused() {
-            block.update(ctx, |block, ctx| block.try_steal_focus(ctx));
+        if !ctx.is_self_or_child_focused() || self.is_queued_prompt_inline_editor_focused(ctx) {
+            return;
         }
+
+        block.update(ctx, |block, ctx| block.try_steal_focus(ctx));
+    }
+
+    fn is_queued_prompt_inline_editor_focused(&self, ctx: &AppContext) -> bool {
+        self.input
+            .as_ref(ctx)
+            .is_queued_prompt_inline_editor_focused(ctx)
     }
 
     #[cfg(not(windows))]
@@ -9780,7 +9788,8 @@ impl TerminalView {
         // of the app, or from an AI block / code diff the user is navigating.
         let reset_focus = ctx.is_self_or_child_focused()
             && !self.find_bar.is_self_or_child_focused(ctx)
-            && !self.block_filter_editor.is_self_or_child_focused(ctx);
+            && !self.block_filter_editor.is_self_or_child_focused(ctx)
+            && !self.is_queued_prompt_inline_editor_focused(ctx);
         if reset_focus {
             self.redetermine_global_focus_with_policy(selection_focus_policy, ctx);
         }
