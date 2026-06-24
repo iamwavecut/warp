@@ -1887,14 +1887,15 @@ impl BlocklistAIController {
             ResponseStream::new(request_params.clone(), can_attempt_resume_on_error, ctx)
         });
         let response_stream_id = response_stream.as_ref(ctx).id().clone();
+        let response_stream_clone = response_stream.clone();
         let input_contains_user_query = request_input
             .all_inputs()
             .any(|input| input.is_user_query());
-        ctx.subscribe_to_model(&response_stream, move |me, response_stream, event, ctx| {
+        ctx.subscribe_to_model(&response_stream, move |me, _, event, ctx| {
             me.handle_response_stream_event(
                 input_contains_user_query,
                 event,
-                &response_stream,
+                &response_stream_clone,
                 ctx,
             );
         });

@@ -824,7 +824,6 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::CodeReviewScrollPreservation,
     FeatureFlag::AgentHarness,
     FeatureFlag::RememberFastForwardState,
-    FeatureFlag::CodexPlugin,
     FeatureFlag::GeminiNotifications,
     FeatureFlag::LocalDockerSandbox,
     #[cfg(not(windows))]
