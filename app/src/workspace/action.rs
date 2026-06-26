@@ -172,6 +172,10 @@ pub enum WorkspaceAction {
     CloseTabsRightActiveTab,
     /// Close every tab that belongs to the given tab group.
     CloseTabGroup(TabGroupId),
+    PinActiveTab,
+    UnpinActiveTab,
+    PinActiveTabGroup,
+    UnpinActiveTabGroup,
     /// Toggle collapsed state for the given tab group.
     ToggleTabGroupCollapsed(TabGroupId),
     /// Opens an inline editor over the given group's header for renaming.
@@ -200,12 +204,20 @@ pub enum WorkspaceAction {
     ClearTabMultiSelection,
     /// Creates a new tab group from the current tab multi-selection.
     NewTabGroupFromSelectedTabs,
+    /// Context-aware "create group" entry point for the keybinding: groups
+    /// the multi-selection when 2+ tabs are selected, otherwise groups the
+    /// active tab.
+    NewTabGroupFromActiveOrSelectedTabs,
     /// Moves every selected tab into `group_id`.
     MoveSelectedTabsToGroup {
         group_id: TabGroupId,
     },
     /// Removes every selected tab from its group (requires a single shared group).
     RemoveSelectedTabsFromGroup,
+    /// Context-aware "remove from group" entry point for the keybinding:
+    /// removes the multi-selection from its shared group when 2+ tabs are
+    /// selected, otherwise removes the active tab.
+    RemoveActiveOrSelectedTabsFromGroup,
     ToggleTabGroupRightClickMenu {
         group_id: TabGroupId,
         anchor: TabContextMenuAnchor,
@@ -735,14 +747,20 @@ impl WorkspaceAction {
             | CloseTabsRight(_)
             | CloseTabsRightActiveTab
             | CloseTabGroup(_)
+            | PinActiveTab
+            | UnpinActiveTab
+            | PinActiveTabGroup
+            | UnpinActiveTabGroup
             | ToggleTabGroupCollapsed(_)
             | RenameTabGroup(_)
             | NewTabGroupFromTab(_)
             | MoveTabToGroup { .. }
             | RemoveTabFromGroup(_)
             | NewTabGroupFromSelectedTabs
+            | NewTabGroupFromActiveOrSelectedTabs
             | MoveSelectedTabsToGroup { .. }
             | RemoveSelectedTabsFromGroup
+            | RemoveActiveOrSelectedTabsFromGroup
             | UngroupTabs(_)
             | NewTabInGroup(_)
             | MoveTabGroupUp(_)

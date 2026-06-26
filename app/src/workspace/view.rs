@@ -6276,8 +6276,6 @@ impl Workspace {
         if !self.auth_state.is_onboarded().unwrap_or_default() {
             if self.should_show_agent_onboarding(ctx) {
                 self.trigger_agent_onboarding(ctx);
-            } else {
-                self.trigger_legacy_onboarding(ctx);
             }
 
             // After onboarding is triggered, mark the user as onboarded
@@ -6289,13 +6287,6 @@ impl Workspace {
         }
 
         false
-    }
-
-    fn trigger_legacy_onboarding(&self, ctx: &mut ViewContext<Self>) {
-        self.dispatch_onboarding(
-            TerminalAction::OnboardingFlow(OnboardingVersion::Legacy),
-            ctx,
-        );
     }
 
     fn trigger_agent_onboarding(&self, ctx: &mut ViewContext<Self>) {
@@ -16485,26 +16476,16 @@ impl Workspace {
                     || is_any_group_dragging,
                 hover_fixed_width,
             };
-            // Collapse the detached-placeholder slot to 0 width while it
-            // exists in this (source) window. After a put-back handoff the
-            // placeholder has been removed and the real tab re-inserted at a
-            // different index, so `source_placeholder_tab_index()` returns
-            // `None` and nothing is hidden — otherwise the stale
-            // `source_tab_index` would collapse an unrelated tab (e.g. the
-            // first tab shifting into that slot after a leftward put-back).
-            let transferred_tab_index = if drag_model.is_active()
-                && drag_model.source_window_id() == Some(self.window_id)
-            {
-                let has_dedicated_preview = drag_model.has_dedicated_preview_window();
-                let has_handoff = drag_model.handed_off_target().is_some();
-                if has_dedicated_preview || has_handoff {
-                    drag_model.source_placeholder_tab_index()
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+            // The detached-placeholder slot in this (source) window is
+            // collapsed to zero width only while the dragged tab is actually
+            // away (floating in the preview, or ghosted / handed off to
+            // another window). While the cursor is back over this window's own
+            // tab bar the placeholder is reordered in place like an in-window
+            // drag and must stay full width, otherwise the drop zone vanishes
+            // and the slot oscillates ("fuzzy shake"). See
+            // `CrossWindowTabDrag::collapsed_source_placeholder_index`.
+            let transferred_tab_index =
+                drag_model.collapsed_source_placeholder_index(self.window_id);
             // Ghost state for cross-window drag hovering over this tab bar.
             let ghost = drag_model.ghost_state_for_window(self.window_id);
 
@@ -18849,6 +18830,26 @@ impl TypedActionView for Workspace {
                 self.close_tabs_direction(self.active_tab_index, TabMovement::Right, false, ctx)
             }
             CloseTabGroup(group_id) => self.close_tab_group(*group_id, ctx),
+            PinActiveTab => self.pin_tab(self.active_tab_index, ctx),
+            UnpinActiveTab => self.unpin_tab(self.active_tab_index, ctx),
+            PinActiveTabGroup => {
+                if let Some(group_id) = self
+                    .tabs
+                    .get(self.active_tab_index)
+                    .and_then(|tab| tab.group_id)
+                {
+                    self.pin_tab_group(group_id, ctx);
+                }
+            }
+            UnpinActiveTabGroup => {
+                if let Some(group_id) = self
+                    .tabs
+                    .get(self.active_tab_index)
+                    .and_then(|tab| tab.group_id)
+                {
+                    self.unpin_tab_group(group_id, ctx);
+                }
+            }
             ToggleTabGroupCollapsed(group_id) => self.toggle_tab_group_collapsed(*group_id, ctx),
             RenameTabGroup(group_id) => self.rename_tab_group(*group_id, ctx),
             NewTabGroupFromTab(tab_index) => self.new_tab_group_from_tab(*tab_index, ctx),
@@ -18861,10 +18862,16 @@ impl TypedActionView for Workspace {
             ToggleTabMultiSelection { locator } => self.toggle_tab_multi_selection(*locator, ctx),
             ClearTabMultiSelection => self.clear_tab_multi_selection(ctx),
             NewTabGroupFromSelectedTabs => self.new_tab_group_from_selected_tabs(ctx),
+            NewTabGroupFromActiveOrSelectedTabs => {
+                self.new_tab_group_from_active_or_selected_tabs(ctx)
+            }
             MoveSelectedTabsToGroup { group_id } => {
                 self.move_selected_tabs_to_group(*group_id, ctx)
             }
             RemoveSelectedTabsFromGroup => self.remove_selected_tabs_from_group(ctx),
+            RemoveActiveOrSelectedTabsFromGroup => {
+                self.remove_active_or_selected_tabs_from_group(ctx)
+            }
             ToggleTabGroupRightClickMenu { group_id, anchor } => {
                 self.toggle_tab_group_right_click_menu(*group_id, *anchor, ctx)
             }
@@ -20528,6 +20535,43 @@ impl View for Workspace {
                 }
             }
         };
+
+        // Surface the active tab's group/pin state to the keymap so the
+        // tab-grouping/pinning bindings can gate themselves to the contexts
+        // where they're actually meaningful (e.g. "Unpin tab" only when the
+        // active tab is pinned, "Pin tab group" only when the active tab is
+        // grouped, etc.).
+        if let Some(active_tab) = self.tabs.get(self.active_tab_index) {
+            if let Some(group_id) = active_tab.group_id {
+                context.set.insert("Workspace_ActiveTabInGroup");
+                if self
+                    .tab_groups
+                    .get(&group_id)
+                    .is_some_and(|group| group.pinned)
+                {
+                    context.set.insert("Workspace_ActiveTabGroupPinned");
+                }
+            }
+            if active_tab.pinned {
+                context.set.insert("Workspace_ActiveTabPinned");
+            }
+        }
+
+        // "Remove from group" is valid when there's an unambiguous target: a
+        // 2+ multi-selection that shares one group, or—failing that—an active
+        // tab that's in a group. Mirrors the multi-tab right-click menu, which
+        // only offers "Remove from group" for a single-group selection.
+        let selected = self.selected_tab_indices();
+        let removable_from_group = if selected.len() >= 2 {
+            self.selection_shared_group().is_some()
+        } else {
+            self.tabs
+                .get(self.active_tab_index)
+                .is_some_and(|tab| tab.group_id.is_some())
+        };
+        if removable_from_group {
+            context.set.insert("Workspace_ActiveOrSelectedTabsInGroup");
+        }
 
         if WarpDriveSettings::is_warp_drive_enabled(app) {
             context.set.insert(flags::ENABLE_WARP_DRIVE);

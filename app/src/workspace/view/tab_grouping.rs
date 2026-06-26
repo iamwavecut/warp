@@ -109,7 +109,7 @@ impl Workspace {
     /// The active tab index is always included if any other tab is marked
     /// as selected. This is to handle the edge case where we only mark other
     /// tabs as selected via command click.
-    fn selected_tab_indices(&self) -> Vec<usize> {
+    pub(super) fn selected_tab_indices(&self) -> Vec<usize> {
         let any_flagged = self.tabs.iter().any(|tab| tab.in_multi_selection);
         // If no tab is part of the multi selection, return empty list.
         if !any_flagged {
@@ -137,7 +137,7 @@ impl Workspace {
 
     /// Gates the "Remove from group" menu item. All selected tabs
     /// must be in the same group in order to display this option.
-    fn selection_shared_group(&self) -> Option<TabGroupId> {
+    pub(super) fn selection_shared_group(&self) -> Option<TabGroupId> {
         let indices = self.selected_tab_indices();
         let mut group_ids = indices
             .iter()
@@ -627,6 +627,17 @@ impl Workspace {
         ctx.dispatch_typed_action_deferred(WorkspaceAction::RenameTabGroup(group_id));
     }
 
+    pub(super) fn new_tab_group_from_active_or_selected_tabs(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.selected_tab_indices().len() >= 2 {
+            self.new_tab_group_from_selected_tabs(ctx);
+        } else {
+            self.new_tab_group_from_tab(self.active_tab_index, ctx);
+        }
+    }
+
     /// "Move to group" menu action. The destination group's first-member
     /// position is preserved so the group doesn't visually jump while the
     /// selected tabs are folded in.
@@ -772,6 +783,17 @@ impl Workspace {
 
         ctx.dispatch_global_action("workspace:save_app", ());
         ctx.notify();
+    }
+
+    pub(super) fn remove_active_or_selected_tabs_from_group(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.selected_tab_indices().len() >= 2 {
+            self.remove_selected_tabs_from_group(ctx);
+        } else {
+            self.remove_tab_from_group(self.active_tab_index, ctx);
+        }
     }
 
     /// Items shown in the multi-tab right-click menu. Composition depends on
