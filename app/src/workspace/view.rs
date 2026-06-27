@@ -22790,17 +22790,20 @@ impl Workspace {
     }
 
     /// Returns the group whose saved container rect contains `cursor` along
-    /// the active axis, if any. A small edge margin at each end of the rect
-    /// is treated as "between groups" so the cursor can land in the
-    /// ungrouped zone between adjacent groups. `is_vertical` picks the
-    /// layout-correct `SavePosition` id and the axis to test along.
+    /// the active axis, if any. Small edge margins exist at each end of the rect
+    /// treated as "between groups" so the cursor can land in the ungrouped zone
+    /// between adjactent groups. The trailing edge margin is larger to account for
+    /// the group header, the leading edge margin makes dropping into the last position
+    /// of a group more reactive. `is_vertical` picks the layout-correct `SavePosition`
+    /// id and the axis to test along.
     fn target_group_at_axis(
         &self,
         cursor: f32,
         is_vertical: bool,
         ctx: &mut ViewContext<Self>,
     ) -> Option<TabGroupId> {
-        const EDGE_MARGIN: f32 = 6.0;
+        const LEADING_EDGE_MARGIN: f32 = 4.0;
+        const TRAILING_EDGE_MARGIN: f32 = 8.0;
         self.tab_groups.keys().copied().find(|group_id| {
             let id = if is_vertical {
                 vtab_group_position_id(*group_id)
@@ -22813,7 +22816,7 @@ impl Workspace {
                 } else {
                     (rect.min_x(), rect.max_x())
                 };
-                min + EDGE_MARGIN <= cursor && cursor <= max - EDGE_MARGIN
+                min + LEADING_EDGE_MARGIN <= cursor && cursor <= max - TRAILING_EDGE_MARGIN
             })
         })
     }
@@ -22850,13 +22853,40 @@ impl Workspace {
         ctx.element_position_by_id(tab_position_id(neighbor_index))
     }
 
+    /// Threshold rect for a group-drag swap against the neighbor at
+    /// `neighbor_index`. When that neighbor belongs to a group, the dragged
+    /// block hops past the whole neighbor group (see `move_group_block`), so
+    /// the swap must trigger on the whole group's rect rather than the single
+    /// adjacent member. Comparing against the near member instead causes flickering.
+    /// Falls back to the per-member rect when the group rect is missing.
+    fn group_swap_threshold_rect(
+        &self,
+        neighbor_index: usize,
+        is_vertical: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<RectF> {
+        if let Some(group_id) = self.tabs.get(neighbor_index).and_then(|t| t.group_id) {
+            let id = if is_vertical {
+                vtab_group_position_id(group_id)
+            } else {
+                htab_group_position_id(group_id)
+            };
+            if let Some(rect) = ctx.element_position_by_id(id) {
+                return Some(rect);
+            }
+        }
+        self.neighbor_drag_rect(neighbor_index, is_vertical, ctx)
+    }
+
     /// Swaps the group's entire member block with its preceding/following
-    /// neighbor when the drag midpoint crosses the appropriate threshold on
-    /// the active axis. Per-axis thresholds match the per-tab swap logic:
-    /// vertical compares against the neighbor's midpoint (mirrors
-    /// `calculate_updated_tab_index_vertical`); horizontal compares against
-    /// the neighbor's leading/trailing edge (mirrors
-    /// `calculate_updated_tab_index`).
+    /// neighbor when the dragged group's center crosses a per-axis threshold.
+    ///
+    /// Vertical compares against the neighbor's midpoint. Horizontal compares
+    /// against the neighbor's near edge (matching per-tab dragging) except when
+    /// the neighbor is itself a group, where it uses the group's midpoint.
+    ///
+    /// Comparing against the group's midpoint prevents oscilation when the
+    /// neighbouring group is larger than the group being dragged.
     pub(crate) fn on_group_drag(
         &mut self,
         group_id: TabGroupId,
@@ -22872,24 +22902,23 @@ impl Workspace {
         } else {
             (position.min_x() + position.max_x()) / 2.
         };
-        // Threshold for swapping toward the start of the bar (compared
-        // against the previous neighbor's rect). Vertical uses the
-        // neighbor's midpoint; horizontal uses its trailing edge so the
-        // swap fires as soon as the drag midpoint crosses into the
-        // neighbor, matching the per-tab horizontal swap rule.
-        let swap_before_threshold = |rect: RectF| -> f32 {
+        // Horizontal swaps fire as soon as the dragged group's center reaches
+        // the neighbor's near edge (matching per-tab dragging), except when the
+        // neighbor is itself a group. Vertical always uses the midpoint.
+        let swap_before_threshold = |rect: RectF, neighbor_is_group: bool| -> f32 {
             if is_vertical {
                 (rect.min_y() + rect.max_y()) / 2.
+            } else if neighbor_is_group {
+                (rect.min_x() + rect.max_x()) / 2.
             } else {
                 rect.max_x()
             }
         };
-        // Threshold for swapping toward the end of the bar (compared
-        // against the next neighbor's rect). Vertical uses the neighbor's
-        // midpoint; horizontal uses its leading edge.
-        let swap_after_threshold = |rect: RectF| -> f32 {
+        let swap_after_threshold = |rect: RectF, neighbor_is_group: bool| -> f32 {
             if is_vertical {
                 (rect.min_y() + rect.max_y()) / 2.
+            } else if neighbor_is_group {
+                (rect.min_x() + rect.max_x()) / 2.
             } else {
                 rect.min_x()
             }
@@ -22899,8 +22928,9 @@ impl Workspace {
         // before the group's first member.
         if first > 0 {
             let before_index = first - 1;
-            if let Some(rect) = self.neighbor_drag_rect(before_index, is_vertical, ctx) {
-                if midpoint_drag < swap_before_threshold(rect) {
+            let neighbor_is_group = self.tabs[before_index].group_id.is_some();
+            if let Some(rect) = self.group_swap_threshold_rect(before_index, is_vertical, ctx) {
+                if midpoint_drag < swap_before_threshold(rect, neighbor_is_group) {
                     let target = if let Some(other_gid) = self.tabs[before_index].group_id {
                         group_member_index_range(&self.tabs, other_gid)
                             .map(|(f, _)| f)
@@ -22920,8 +22950,9 @@ impl Workspace {
         // drain internally when `target > last`.
         if last + 1 < self.tabs.len() {
             let after_index = last + 1;
-            if let Some(rect) = self.neighbor_drag_rect(after_index, is_vertical, ctx) {
-                if midpoint_drag > swap_after_threshold(rect) {
+            let neighbor_is_group = self.tabs[after_index].group_id.is_some();
+            if let Some(rect) = self.group_swap_threshold_rect(after_index, is_vertical, ctx) {
+                if midpoint_drag > swap_after_threshold(rect, neighbor_is_group) {
                     let after_block_last = if let Some(other_gid) = self.tabs[after_index].group_id
                     {
                         group_member_index_range(&self.tabs, other_gid)

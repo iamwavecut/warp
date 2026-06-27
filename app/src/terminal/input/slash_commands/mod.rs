@@ -821,9 +821,7 @@ impl Input {
                 self.open_repos_menu(ctx);
             }
             _command_that_just_sends_ai_request_with_prefix
-                if command.name == commands::COMPACT.name
-                    || command.name == commands::PLAN.name
-                    || command.name == commands::ORCHESTRATE.name =>
+                if slash_command_is_submitted_as_prompt(command) =>
             {
                 // These slash commands just send AI requests with the slash command text as a
                 // prefix, and special handling is done downstream as an implementation detail
@@ -985,4 +983,14 @@ impl Input {
         }
     }
 }
+
+/// Slash commands that submit their text into the conversation as a prompt.
+/// Other slash commands emit immediate local actions and should not be queued
+/// or forwarded as prompt text.
+pub(crate) fn slash_command_is_submitted_as_prompt(command: &StaticCommand) -> bool {
+    command.name == commands::COMPACT.name
+        || command.name == commands::PLAN.name
+        || command.name == commands::ORCHESTRATE.name
+}
+
 use crate::code_review::CodeReviewPaneEntrypoint;
