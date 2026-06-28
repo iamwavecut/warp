@@ -360,7 +360,7 @@ use warpui::clipboard::ClipboardContent;
 use warpui::elements::Percentage;
 use warpui::elements::{
     CacheOption, DispatchEventResult, DragAxis, Draggable, DraggableState, DropTarget,
-    EventHandler, Image, MouseInBehavior, Rect,
+    EventHandler, Image, MouseInBehavior, Rect, SizeConstraintCondition, SizeConstraintSwitch,
 };
 use warpui::ui_components::button::Button;
 use warpui::windowing::{StateEvent, WindowManager};
@@ -418,7 +418,8 @@ use crate::palette::PaletteMode;
 use crate::search::command_palette::view::{Event as CommandPaletteEvent, View as CommandPalette};
 use crate::tab::{
     tab_position_id, NewSessionMenuItem, PaneNameMenuTarget, SelectedTabColor, TabBarState,
-    TabComponent, TabData, MOVE_TO_GROUP_LABEL, TAB_BAR_BORDER_HEIGHT, TAB_PIN_INDICATOR_ICON_SIZE,
+    TabComponent, TabData, COMPACT_TAB_WIDTH_THRESHOLD, MOVE_TO_GROUP_LABEL, TAB_BAR_BORDER_HEIGHT,
+    TAB_INDICATOR_HEIGHT, TAB_PIN_INDICATOR_ICON_SIZE,
 };
 use crate::terminal::view::ssh_file_upload::FileUploadId;
 use crate::ui_components::icons;
@@ -15578,6 +15579,18 @@ impl Workspace {
         .finish()
     }
 
+    /// Flex weight of the spacer on each side of an expanded group's members.
+    /// Flex (not fixed px) keeps it a separate slot, so members stay the same
+    /// width as ungrouped tabs and the group shrinks proportionally.
+    /// Approximately equal to 8px when tabs are 150px wide.
+    /// A tab group is now as follows:
+    /// [Header (spacer)(tab1)(tab2)...(spacer)]
+    const GROUP_EDGE_SPACER_FLEX: f32 = 0.06;
+
+    /// Upper bound on each edge spacer's rendered width, proportional to
+    /// tab's max width (tabs have flex 1 and max width of 200).
+    const GROUP_EDGE_SPACER_MAX_WIDTH: f32 = Self::GROUP_EDGE_SPACER_FLEX * 200.0;
+
     /// Renders a contiguous run of grouped tabs as one tab-bar slot: header
     /// + (when expanded) member tabs.
     #[allow(clippy::too_many_arguments)]
@@ -15591,7 +15604,6 @@ impl Workspace {
         appearance: &Appearance,
         ctx: &AppContext,
     ) -> Box<dyn Element> {
-        let theme = appearance.theme();
         let is_collapsed = group.collapsed;
 
         let mouse_states = self
@@ -15606,16 +15618,37 @@ impl Workspace {
             && member_range.contains(&self.active_tab_index);
 
         let mut row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-        row.add_child(self.render_horizontal_tab_group_header(
-            group,
-            &mouse_states,
-            is_collapsed,
-            any_member_active,
-            appearance,
-            ctx,
-        ));
+        // Header fills one slot like a member tab capped at the same 200px as a tab.
+        row.add_child(
+            Shrinkable::new(
+                1.0,
+                ConstrainedBox::new(self.render_horizontal_tab_group_header(
+                    group,
+                    &mouse_states,
+                    is_collapsed,
+                    any_member_active,
+                    is_first_in_bar,
+                    appearance,
+                    ctx,
+                ))
+                .with_max_width(200.)
+                .finish(),
+            )
+            .finish(),
+        );
 
         if !is_collapsed {
+            // Edge spacer before the first member (own flex slot, doesn't
+            // shrink tabs).
+            row.add_child(
+                Shrinkable::new(
+                    Self::GROUP_EDGE_SPACER_FLEX,
+                    ConstrainedBox::new(Empty::new().finish())
+                        .with_max_width(Self::GROUP_EDGE_SPACER_MAX_WIDTH)
+                        .finish(),
+                )
+                .finish(),
+            );
             let close_button_position = if FeatureFlag::TabCloseButtonOnLeft.is_enabled() {
                 TabSettings::as_ref(ctx).close_button_position
             } else {
@@ -15649,19 +15682,36 @@ impl Workspace {
             row.add_child(render_horizontal_group_pin_indicator(appearance));
         }
 
-        // Additional padding on expanded groups,
-        // allowing tabs to be dropped into the last position of the group.
-        const EXPANDED_GROUP_TRAILING_PADDING: f32 = 8.;
-        let mut container = Container::new(row.finish()).with_border(
-            Border::all(1.)
-                // Left border only on the first slot to avoid double borders.
-                .with_sides(false, is_first_in_bar, false, true)
-                .with_border_fill(internal_colors::fg_overlay_1(theme)),
-        );
         if !is_collapsed {
-            container = container.with_padding_right(EXPANDED_GROUP_TRAILING_PADDING);
+            // Matching edge spacer after the last member. The trailing divider
+            // lives inside this spacer's own flex slot (drawn at its right edge,
+            // which is the group's far edge), so it doesn't steal width from the
+            // members the way a border on the group container would. Same loose
+            // flex cap as the leading spacer so the group shrink-wraps instead
+            // of this spacer ballooning out toward the bar's trailing edge.
+            row.add_child(
+                Shrinkable::new(
+                    Self::GROUP_EDGE_SPACER_FLEX,
+                    ConstrainedBox::new(
+                        Container::new(Empty::new().finish())
+                            .with_border(
+                                Border::all(1.)
+                                    .with_sides(false, false, false, true)
+                                    .with_border_fill(internal_colors::fg_overlay_1(
+                                        appearance.theme(),
+                                    )),
+                            )
+                            .finish(),
+                    )
+                    .with_max_width(Self::GROUP_EDGE_SPACER_MAX_WIDTH)
+                    .finish(),
+                )
+                .finish(),
+            );
         }
-        let container = container.finish();
+
+        // Collapsed groups draw their divider on the header instead.
+        let container = Container::new(row.finish()).finish();
 
         let group_id = group.id;
         let group_draggable_state = group.draggable_state.clone();
@@ -15687,25 +15737,28 @@ impl Workspace {
         let positioned_container =
             SavePosition::new(positioned_container, &htab_group_position_id(group_id)).finish();
 
-        // Flex = header + one per member so the group shrinks proportionally
-        // with sibling tabs. A collapsed group renders only its header, so it
-        // should claim a single slot's worth of flex.
+        // Flex = header + one per member + a spacer each side, so every tab is
+        // one slot wide. A collapsed group claims one slot; the flex it gives up
+        // is re-added to the bar's trailing spacer (see render_tab_bar_contents)
+        // so total flex stays constant and the header doesn't move.
         let group_flex = if is_collapsed {
             1.0
         } else {
-            1.0 + run_len as f32
+            1.0 + run_len as f32 + 2.0 * Self::GROUP_EDGE_SPACER_FLEX
         };
         Shrinkable::new(group_flex, positioned_container).finish()
     }
 
     /// Header (icon collage + name) for a horizontal tab group. Click
     /// toggles collapse; double-click renames; right-click opens the menu.
+    #[allow(clippy::too_many_arguments)]
     fn render_horizontal_tab_group_header(
         &self,
         group: &TabGroup,
         mouse_states: &HorizontalTabGroupMouseStates,
         is_collapsed: bool,
         any_member_active: bool,
+        is_first_in_bar: bool,
         appearance: &Appearance,
         ctx: &AppContext,
     ) -> Box<dyn Element> {
@@ -15719,7 +15772,6 @@ impl Workspace {
         let header_selected = is_collapsed && any_member_active;
 
         let member_kinds = self.compute_group_member_kinds(group.id, ctx);
-        let icon_circle = render_group_member_icon_collage(&member_kinds, appearance);
 
         let is_being_renamed = self
             .current_workspace_state
@@ -15737,33 +15789,69 @@ impl Workspace {
                 .name
                 .clone()
                 .unwrap_or_else(|| "New Group".to_string());
-            // Cap width so long names ellipsize and the tab bar's unbounded
-            // measurement stays finite.
-            ConstrainedBox::new(
-                Text::new_inline(title, font_family, 12.)
-                    .with_clip(ClipConfig::ellipsis())
-                    .with_color(main_text_color.into())
-                    .finish(),
-            )
-            .with_max_width(150.)
-            .finish()
+            // No inner cap: the name fills the header slot and fades like a tab
+            // title; the header's outer `ConstrainedBox` bounds the width and
+            // keeps the tab bar's unbounded measurement finite.
+            Text::new_inline(title, font_family, 12.)
+                .with_clip(ClipConfig::end())
+                .with_color(main_text_color.into())
+                .finish()
         };
 
-        let mut row = Flex::row()
+        // Full header: collage + name, with the horizontal padding inside it so
+        // the size switch below measures the full slot width, like a tab.
+        let mut full_row = Flex::row()
+            // Fill the slot and center the icon + title.
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_main_axis_alignment(MainAxisAlignment::Center)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(6.)
-            .with_child(icon_circle)
-            .with_child(name_element);
+            .with_child(render_group_member_icon_collage(
+                &member_kinds,
+                GROUP_ICON_COLLAGE_SIZE,
+                appearance,
+            ))
+            .with_child(Shrinkable::new(1.0, name_element).finish());
         // Collapsed + pinned: pin indicator to the right of the name, where an
         // ungrouped tab would show its close button. Expanded groups show the
         // pin after their last member instead.
         if FeatureFlag::PinnedTabs.is_enabled() && group.pinned && is_collapsed {
-            row.add_child(render_horizontal_group_pin_indicator(appearance));
+            full_row.add_child(render_horizontal_group_pin_indicator(appearance));
         }
-        let row = row.finish();
+        let full_content = Container::new(full_row.finish())
+            .with_padding_left(8.)
+            .with_padding_right(if is_collapsed { 8. } else { 9. })
+            .finish();
+
+        // Compact header (narrow slot): just the collage at the tab's compact
+        // icon size, centered and clipped, like a tab dropping its title.
+        let compact_content = Clipped::new(
+            Flex::row()
+                .with_main_axis_size(MainAxisSize::Max)
+                .with_main_axis_alignment(MainAxisAlignment::Center)
+                .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                .with_child(render_group_member_icon_collage(
+                    &member_kinds,
+                    TAB_INDICATOR_HEIGHT,
+                    appearance,
+                ))
+                .finish(),
+        )
+        .finish();
+
+        // Go compact at the same width as a tab, so headers and tabs shrink in step.
+        let content = SizeConstraintSwitch::new(
+            full_content,
+            vec![(
+                SizeConstraintCondition::WidthLessThan(COMPACT_TAB_WIDTH_THRESHOLD),
+                compact_content,
+            )],
+        )
+        .finish();
 
         let header_active_bg = internal_colors::fg_overlay_2(theme);
         let header_hover_bg = internal_colors::fg_overlay_1(theme);
+        let header_border_fill = internal_colors::fg_overlay_1(theme);
         let mut header = Hoverable::new(mouse_states.header.clone(), move |state| {
             let bg: ElementFill = if header_selected {
                 header_active_bg.into()
@@ -15773,10 +15861,17 @@ impl Workspace {
                 ElementFill::None
             };
 
-            Container::new(row)
-                .with_horizontal_padding(8.)
+            // Tab-style border: left edge if first, right edge only when
+            // collapsed (the divider). Expanded swaps that right border for
+            // padding so the title doesn't shift on collapse/expand.
+            Container::new(content)
                 .with_vertical_padding(6.)
                 .with_background(bg)
+                .with_border(
+                    Border::all(1.)
+                        .with_sides(false, is_first_in_bar, false, is_collapsed)
+                        .with_border_fill(header_border_fill),
+                )
                 .finish()
         })
         .with_cursor(Cursor::PointingHand)
@@ -16579,8 +16674,33 @@ impl Workspace {
             }
         }
 
-        // Placeholder to make sure the flex row expands across the entire width of the app.
-        tab_bar.add_child(Shrinkable::new(0.5, Empty::new().finish()).finish());
+        // Trailing spacer fills leftover width, and re-adds the flex each
+        // collapsed group gives up vs expanded (its members + 2 spacers), so the
+        // bar's total flex stays constant across collapse/expand and headers
+        // don't move.
+        let collapsed_group_flex_giveback: f32 = if FeatureFlag::GroupedTabs.is_enabled() {
+            self.tab_groups
+                .values()
+                .filter(|group| group.collapsed)
+                .map(|group| {
+                    let members = self
+                        .tabs
+                        .iter()
+                        .filter(|tab| tab.group_id == Some(group.id))
+                        .count();
+                    if members == 0 {
+                        0.0
+                    } else {
+                        members as f32 + 2.0 * Self::GROUP_EDGE_SPACER_FLEX
+                    }
+                })
+                .sum()
+        } else {
+            0.0
+        };
+        tab_bar.add_child(
+            Shrinkable::new(0.5 + collapsed_group_flex_giveback, Empty::new().finish()).finish(),
+        );
 
         self.add_configurable_right_side_tab_bar_controls(&mut tab_bar, &config, appearance, ctx);
 
@@ -22592,16 +22712,17 @@ impl Workspace {
         let groups_enabled = FeatureFlag::GroupedTabs.is_enabled();
 
         if groups_enabled {
-            // Reassign membership when the dragged tab's midpoint enters a
-            // different expanded group. Collapsed groups are handled by the
-            // safety-net hop below so we don't drop into it.
+            // Reassign membership when the dragged tab enters a different
+            // expanded group. Collapsed groups are handled by the safety-net
+            // hop below so we don't drop into it.
             let midpoint_drag = if use_vertical_tabs {
                 (position.min_y() + position.max_y()) / 2.
             } else {
                 (position.min_x() + position.max_x()) / 2.
             };
-            let hovered_group = self.target_group_at_axis(midpoint_drag, use_vertical_tabs, ctx);
             let source_group = self.tabs[current_index].group_id;
+            let hovered_group =
+                self.target_group_at_axis(midpoint_drag, source_group, use_vertical_tabs, ctx);
             let expanded_target =
                 hovered_group.filter(|gid| !self.tab_groups.get(gid).is_some_and(|g| g.collapsed));
             if expanded_target != source_group {
@@ -22789,35 +22910,74 @@ impl Workspace {
         current_index
     }
 
-    /// Returns the group whose saved container rect contains `cursor` along
-    /// the active axis, if any. Small edge margins exist at each end of the rect
-    /// treated as "between groups" so the cursor can land in the ungrouped zone
-    /// between adjactent groups. The trailing edge margin is larger to account for
-    /// the group header, the leading edge margin makes dropping into the last position
-    /// of a group more reactive. `is_vertical` picks the layout-correct `SavePosition`
-    /// id and the axis to test along.
+    /// Returns the group the dragged tab is over along the active axis so it can
+    /// join it, or `None`. Vertical tabs inset both ends of the group rect by a
+    /// fixed margin (`LEADING_EDGE_MARGIN` / `TRAILING_EDGE_MARGIN`). Horizontal
+    /// tabs use the position of a dynamic spacer, since tab groups resize dynamically.
     fn target_group_at_axis(
         &self,
         cursor: f32,
+        source_group: Option<TabGroupId>,
         is_vertical: bool,
         ctx: &mut ViewContext<Self>,
     ) -> Option<TabGroupId> {
         const LEADING_EDGE_MARGIN: f32 = 4.0;
         const TRAILING_EDGE_MARGIN: f32 = 8.0;
+        // Fallback margin for a collapsed horizontal group (no members/spacer).
+        const EDGE_MARGIN: f32 = 6.0;
         self.tab_groups.keys().copied().find(|group_id| {
             let id = if is_vertical {
                 vtab_group_position_id(*group_id)
             } else {
                 htab_group_position_id(*group_id)
             };
-            ctx.element_position_by_id(id).is_some_and(|rect| {
-                let (min, max) = if is_vertical {
-                    (rect.min_y(), rect.max_y())
-                } else {
-                    (rect.min_x(), rect.max_x())
-                };
-                min + LEADING_EDGE_MARGIN <= cursor && cursor <= max - TRAILING_EDGE_MARGIN
-            })
+            let Some(rect) = ctx.element_position_by_id(id) else {
+                return false;
+            };
+
+            // Vertical tabs: fixed margin at each end of the group rect.
+            if is_vertical {
+                return rect.min_y() + LEADING_EDGE_MARGIN <= cursor
+                    && cursor <= rect.max_y() - TRAILING_EDGE_MARGIN;
+            }
+
+            // An expanded group has a flex spacer on each side of its members
+            // ([header][spacer][members][spacer]); the spacer is used to determine
+            // whether the dragging tab should land at the first/last position of the
+            // group, or just outside the group. The spacer is flex, so we fetch the
+            // the element position below to use it for our bounds calculations.
+            let collapsed = self
+                .tab_groups
+                .get(group_id)
+                .is_some_and(|group| group.collapsed);
+            // The edge of the last member is the right bound of the flex spacer.
+            let last_member_max_x = if collapsed {
+                None
+            } else {
+                group_member_index_range(&self.tabs, *group_id)
+                    .and_then(|(_, last)| ctx.element_position_by_id(tab_position_id(last)))
+                    .map(|last_rect| last_rect.max_x())
+            };
+
+            // Leading: start the accept zone a full spacer in from the header
+            // edge so joining a group from the left is deliberate. This makes
+            // dropping between groups easy.
+            let leading_inset = last_member_max_x
+                .map(|last_max_x| rect.max_x() - last_max_x)
+                .unwrap_or(EDGE_MARGIN);
+
+            // Trailing resolves two opposite needs. Your own group releases at
+            // its inner edge, so the trailing spacer is cushion before the cursor
+            // reaches the next tab (leaving doesn't instantly swap). Any other
+            // group accepts out to its outer edge, so dropping into its last slot
+            // stays easy.
+            let trailing = if Some(*group_id) == source_group {
+                last_member_max_x.unwrap_or(rect.max_x())
+            } else {
+                rect.max_x()
+            };
+
+            rect.min_x() + leading_inset <= cursor && cursor <= trailing
         })
     }
 
@@ -22997,19 +23157,20 @@ fn render_horizontal_group_pin_indicator(appearance: &Appearance) -> Box<dyn Ele
 /// Renders the icon block for a tab-group header from 0-4 deduped pane kinds.
 fn render_group_member_icon_collage(
     kinds: &[SummaryPaneKind],
+    total_size: f32,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
     let count = kinds.len().min(4);
     if count == 0 {
         return ConstrainedBox::new(Empty::new().finish())
-            .with_width(GROUP_ICON_COLLAGE_SIZE)
-            .with_height(GROUP_ICON_COLLAGE_SIZE)
+            .with_width(total_size)
+            .with_height(total_size)
             .finish();
     }
     if count == 1 {
         return render_summary_pane_kind_icons(
             SummaryPaneKindIcons::Single(kinds[0].clone()),
-            GROUP_ICON_COLLAGE_SIZE,
+            total_size,
             appearance,
         );
     }
@@ -23019,26 +23180,25 @@ fn render_group_member_icon_collage(
                 primary: kinds[0].clone(),
                 secondary: kinds[1].clone(),
             },
-            GROUP_ICON_COLLAGE_SIZE,
+            total_size,
             appearance,
         );
     }
 
-    let radius = GROUP_ICON_COLLAGE_SIZE / 2.0 - GROUP_ICON_COLLAGE_CENTER_INSET;
+    let scale = total_size / GROUP_ICON_COLLAGE_SIZE;
+    let mini_size = GROUP_ICON_COLLAGE_MINI_SIZE * scale;
+    let center_inset = GROUP_ICON_COLLAGE_CENTER_INSET * scale;
+    let radius = total_size / 2.0 - center_inset;
     let diag = radius / std::f32::consts::SQRT_2;
 
     let mut stack = Stack::new().with_child(
         ConstrainedBox::new(Empty::new().finish())
-            .with_width(GROUP_ICON_COLLAGE_SIZE)
-            .with_height(GROUP_ICON_COLLAGE_SIZE)
+            .with_width(total_size)
+            .with_height(total_size)
             .finish(),
     );
     for (idx, kind) in kinds.iter().take(count).enumerate() {
-        let mini = render_summary_pane_kind_icon_circle(
-            kind.clone(),
-            GROUP_ICON_COLLAGE_MINI_SIZE,
-            appearance,
-        );
+        let mini = render_summary_pane_kind_icon_circle(kind.clone(), mini_size, appearance);
         let offset = match (count, idx) {
             (3, 0) => vec2f(-diag, -diag),
             (3, 1) => vec2f(diag, -diag),
