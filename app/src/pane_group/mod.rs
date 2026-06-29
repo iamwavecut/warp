@@ -53,6 +53,7 @@ use crate::uri::browser_url_handler::update_browser_url;
 use crate::util::openable_file_type::FileTarget;
 use crate::view_components::ToastFlavor;
 use crate::workflows::workflow::Workflow;
+use crate::workspace::tab_group::TabGroupId;
 use warp_terminal::shell::{ShellName, ShellType};
 
 use std::any::Any;
@@ -605,6 +606,9 @@ pub enum Event {
     /// as a header is dragged
     UpdateHoveredTabIndex {
         tab_hover_index: TabBarHoverIndex,
+        /// Drag cursor rect. The workspace uses it to resolve which tab group a
+        /// `BeforeTab` insertion lands.
+        drag_position: RectF,
     },
     /// Clears the hovered tab index so it no longer appears as highlighted drop target
     ClearHoveredTabIndex,
@@ -741,8 +745,24 @@ pub enum Event {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabBarHoverIndex {
-    BeforeTab(usize),
+    /// Insert the dragged pane as a new tab at `index`. `group` is the tab
+    /// group the insertion lands inside, so the new tab can inherit that
+    /// group's membership. `None` for an ungrouped insertion or a group
+    /// boundary (before/after a group). This is used to differentiate a drop
+    /// right before/after a group from a drop inside the group at its boundaries.
+    BeforeTab {
+        index: usize,
+        group: Option<TabGroupId>,
+    },
     OverTab(usize),
+}
+
+/// Axis of the tab bar a pane is being dragged over. Selects horizontal vs
+/// vertical-axis geometry when resolving the hovered insertion point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabBarAxis {
+    Horizontal,
+    Vertical,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1159,13 +1179,14 @@ impl PaneGroup {
                     origin,
                     tab_hover_index,
                     hidden_pane_preview_direction,
+                    drag_position,
                 } => {
                     if matches!(origin, ActionOrigin::Pane) {
                         // Clear hidden closed panes since dragging invalidates undo functionality
                         self.clear_hidden_closed_panes(ctx);
 
                         match tab_hover_index {
-                            TabBarHoverIndex::BeforeTab(_) => {
+                            TabBarHoverIndex::BeforeTab { .. } => {
                                 self.hide_pane_for_move(pane_id, ctx);
                             }
                             TabBarHoverIndex::OverTab(tab_idx) => {
@@ -1181,6 +1202,7 @@ impl PaneGroup {
 
                     ctx.emit(Event::UpdateHoveredTabIndex {
                         tab_hover_index: *tab_hover_index,
+                        drag_position: *drag_position,
                     })
                 }
 

@@ -19,8 +19,8 @@ mod wasm_view;
 
 use self::vertical_tabs::{
     htab_group_position_id, pane_summary_kind, render_detail_sidecar, render_settings_popup,
-    render_summary_pane_kind_icon_circle, render_summary_pane_kind_icons, vtab_group_position_id,
-    SummaryPaneKind, SummaryPaneKindIcons, VerticalTabsPanelState,
+    render_summary_pane_kind_icon_circle, render_summary_pane_kind_icons, show_before_indicator,
+    vtab_group_position_id, SummaryPaneKind, SummaryPaneKindIcons, VerticalTabsPanelState,
     VERTICAL_TABS_SETTINGS_BUTTON_POSITION_ID,
 };
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
@@ -417,9 +417,10 @@ use crate::interaction_sources::PaletteSource;
 use crate::palette::PaletteMode;
 use crate::search::command_palette::view::{Event as CommandPaletteEvent, View as CommandPalette};
 use crate::tab::{
-    tab_position_id, NewSessionMenuItem, PaneNameMenuTarget, SelectedTabColor, TabBarState,
-    TabComponent, TabData, COMPACT_TAB_WIDTH_THRESHOLD, MOVE_TO_GROUP_LABEL, TAB_BAR_BORDER_HEIGHT,
-    TAB_INDICATOR_HEIGHT, TAB_PIN_INDICATOR_ICON_SIZE,
+    color_picker_menu_items, tab_position_id, ColorPickerTarget, NewSessionMenuItem,
+    PaneNameMenuTarget, SelectedTabColor, TabBarState, TabComponent, TabData,
+    COMPACT_TAB_WIDTH_THRESHOLD, MOVE_TO_GROUP_LABEL, TAB_BAR_BORDER_HEIGHT, TAB_INDICATOR_HEIGHT,
+    TAB_PIN_INDICATOR_ICON_SIZE,
 };
 use crate::terminal::view::ssh_file_upload::FileUploadId;
 use crate::ui_components::icons;
@@ -436,7 +437,7 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::{mpsc, Mutex};
 use std::{cmp::Ordering, sync::Arc};
-use warp_core::ui::theme::{color::internal_colors, phenomenon::PhenomenonStyle, Fill};
+use warp_core::ui::theme::{color::internal_colors, phenomenon::PhenomenonStyle, AnsiColors, Fill};
 use warp_core::ui::{color::coloru_with_opacity, Icon};
 use warp_editor::editor::NavigationKey;
 use warpui::keymap::Context;
@@ -4427,6 +4428,15 @@ impl Workspace {
         self.tabs.get(index).and_then(|tab| tab.color())
     }
 
+    /// Returns the effective render color for a tab. A tab in a group is fully
+    /// colored by that group; ungrouped tabs use their own color.
+    fn effective_tab_color(&self, tab: &TabData) -> Option<AnsiColorIdentifier> {
+        if let Some(group) = tab.group_id.and_then(|gid| self.tab_groups.get(&gid)) {
+            return group.color.resolve(None);
+        }
+        tab.color()
+    }
+
     /// Finds the tab index containing a terminal viewing the given ambient agent conversation,
     /// returning None if the ambient conversation is not open in any tab.
     fn find_tab_with_ambient_agent_conversation(
@@ -4767,6 +4777,48 @@ impl Workspace {
             SelectedTabColor::Color(color)
         };
         self.set_tab_color(index, next, ctx);
+    }
+
+    /// Sets a tab group's color. The group fully owns its members' color, so:
+    /// - `Color(c)` — every member renders with `c`.
+    /// - `Cleared` / `Unset` — every member renders with no color (a fresh group
+    ///   is `Unset`; the picker sets `Cleared` when you toggle the current color
+    ///   off). A member's own tab/directory color is ignored while it's grouped.
+    fn set_tab_group_color(
+        &mut self,
+        group_id: TabGroupId,
+        color: SelectedTabColor,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let Some(group) = self.tab_groups.get_mut(&group_id) else {
+            return;
+        };
+        if group.color == color {
+            return;
+        }
+        group.color = color;
+        ctx.dispatch_global_action("workspace:save_app", ());
+        ctx.notify();
+    }
+
+    /// Toggles the color for a tab group: applies `color` if not already set to it,
+    /// otherwise clears it.
+    fn toggle_tab_group_color(
+        &mut self,
+        group_id: TabGroupId,
+        color: AnsiColorIdentifier,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let current = self
+            .tab_groups
+            .get(&group_id)
+            .and_then(|g| g.color.resolve(None));
+        let next = if current == Some(color) {
+            SelectedTabColor::Cleared
+        } else {
+            SelectedTabColor::Color(color)
+        };
+        self.set_tab_group_color(group_id, next, ctx);
     }
 
     /// Syncs the tab color for the given tab based on the active terminal's CWD.
@@ -7881,6 +7933,7 @@ impl Workspace {
         &self,
         group_id: TabGroupId,
         is_vertical: bool,
+        terminal_colors: AnsiColors,
     ) -> Vec<MenuItem<WorkspaceAction>> {
         let Some((first, last)) = group_member_index_range(&self.tabs, group_id) else {
             return vec![];
@@ -7956,6 +8009,18 @@ impl Workspace {
             items
         };
 
+        let color_section = {
+            let effective_color = self
+                .tab_groups
+                .get(&group_id)
+                .and_then(|g| g.color.resolve(None));
+            color_picker_menu_items(
+                effective_color,
+                terminal_colors,
+                ColorPickerTarget::Group { group_id },
+            )
+        };
+
         let mut menu_items = vec![];
         for section_items in [
             vec![
@@ -7971,6 +8036,7 @@ impl Workspace {
                 .with_on_select_action(WorkspaceAction::RenameTabGroup(group_id))
                 .into_item()],
             close_section,
+            color_section,
         ] {
             if section_items.is_empty() {
                 continue;
@@ -12850,7 +12916,10 @@ impl Workspace {
             pane_group::Event::DroppedOnTabBar { origin, pane_id } => {
                 if let Some(hovered_tab_index) = self.hovered_tab_index {
                     match hovered_tab_index {
-                        TabBarHoverIndex::BeforeTab(workspace_tab_index) => {
+                        TabBarHoverIndex::BeforeTab {
+                            index: workspace_tab_index,
+                            group: _,
+                        } => {
                             // If an editor tab is dropped into a new position in the workspace tab group,
                             // create a new pane and insert it into the group.
                             let pane = if let ActionOrigin::EditorTab(editor_tab_index) = origin {
@@ -13076,8 +13145,12 @@ impl Workspace {
                     });
                 }
             }
-            pane_group::Event::UpdateHoveredTabIndex { tab_hover_index } => {
-                self.hovered_tab_index = Some(*tab_hover_index);
+            pane_group::Event::UpdateHoveredTabIndex {
+                tab_hover_index,
+                drag_position,
+            } => {
+                self.hovered_tab_index =
+                    Some(self.refine_hovered_tab_index(*tab_hover_index, *drag_position, ctx));
                 ctx.notify();
             }
             pane_group::Event::ClearHoveredTabIndex => self.hovered_tab_index = None,
@@ -15563,7 +15636,7 @@ impl Workspace {
             .as_ref()
             .is_some_and(|hovered_index| match hovered_index {
                 TabBarHoverIndex::OverTab(idx) => *idx == tab_index,
-                TabBarHoverIndex::BeforeTab(_) => false,
+                TabBarHoverIndex::BeforeTab { .. } => false,
             });
 
         TabComponent::new(
@@ -15604,7 +15677,13 @@ impl Workspace {
         appearance: &Appearance,
         ctx: &AppContext,
     ) -> Box<dyn Element> {
+        let theme = appearance.theme();
         let is_collapsed = group.collapsed;
+
+        let group_color: Option<ColorU> = group
+            .color
+            .resolve(None)
+            .map(|c| c.to_ansi_color(&theme.terminal_colors().normal).into());
 
         let mouse_states = self
             .horizontal_tab_group_mouse_states
@@ -15628,6 +15707,7 @@ impl Workspace {
                     is_collapsed,
                     any_member_active,
                     is_first_in_bar,
+                    group_color,
                     appearance,
                     ctx,
                 ))
@@ -15659,20 +15739,37 @@ impl Workspace {
             // instead, dragging the whole group rather than orphaning it.
             let is_sole_member = group_has_single_member(&self.tabs, group.id);
             for idx in member_range {
+                // Insertion divider before this member when a pane drop lands
+                // here (into the group at `idx`).
+                if show_before_indicator(self.hovered_tab_index, idx, Some(group.id)) {
+                    row.add_child(self.render_tab_hover_indicator(appearance));
+                }
                 let tab = &self.tabs[idx];
+                let effective_color = self.effective_tab_color(tab);
+                // Highlight the member when a drag is hovering directly over it.
+                let is_drag_target = self.hovered_tab_index == Some(TabBarHoverIndex::OverTab(idx));
                 let member = TabComponent::new(
                     idx,
                     tab_bar_state,
                     tab,
                     self.tab_rename_editor.clone(),
                     close_button_position,
-                    false,
+                    is_drag_target,
                     ctx,
                 )
+                .with_effective_color(effective_color)
                 .for_grouped_member(is_sole_member)
                 .build()
                 .finish();
                 row.add_child(member);
+            }
+            // Divider after the last member (into the group's last slot).
+            if show_before_indicator(
+                self.hovered_tab_index,
+                first_index + run_len,
+                Some(group.id),
+            ) {
+                row.add_child(self.render_tab_hover_indicator(appearance));
             }
         }
 
@@ -15710,8 +15807,52 @@ impl Workspace {
             );
         }
 
-        // Collapsed groups draw their divider on the header instead.
-        let container = Container::new(row.finish()).finish();
+        // Collapsed groups draw their divider on the header instead. When the
+        // group is colored, back the whole container with the group color at the
+        // same idle opacity a member tab uses, so the member tabs blend into the
+        // container and the group reads as one colored block.
+        let mut container = Container::new(row.finish());
+        if let Some(color) = group_color {
+            container = container.with_background(coloru_with_opacity(color, 20));
+        }
+        let container = container.finish();
+        // While dragging, back the floating chip with an opaque color so it
+        // doesn't render translucently like the resting group background.
+        let container: Box<dyn Element> = if group.draggable_state.is_dragging() {
+            Container::new(container)
+                .with_background_color(theme.background().into_solid_bias_top_color())
+                .finish()
+        } else {
+            container
+        };
+
+        // While a pane is being dragged, the whole group is a drop target.
+        // Members also carry their own, smaller targets, so the framework's
+        // smallest-area hit-test lets a member win wherever they overlap; this
+        // group target effectively just covers the header and the flex spacers
+        // on either side of the members.
+        //
+        // `tab_bar_location` is the input to the shared drag hit-testing, not a
+        // fixed landing slot. `TabIndex(first)` makes the resolver hit-test
+        // the first member's geometry against the cursor, then lets the
+        // workspace (which can see the group's rect) decide whether the drop is
+        // before the group or into it, and at which slot. A collapsed group has
+        // no visible members to drop between, so it uses `AfterTabIndex(first)`,
+        // which resolves straight to "before the group" with no hit-testing.
+        //
+        // (A drop over the trailing spacer resolves toward the group's front via
+        // `first`; in practice the last member's smaller target wins there, so
+        // it's a harmless fallback.)
+        let container = if vertical_tabs::any_workspace_pane_being_dragged(self, ctx) {
+            let tab_bar_location = if is_collapsed {
+                TabBarLocation::AfterTabIndex(first_index)
+            } else {
+                TabBarLocation::TabIndex(first_index)
+            };
+            DropTarget::new(container, TabBarDropTargetData { tab_bar_location }).finish()
+        } else {
+            container
+        };
 
         let group_id = group.id;
         let group_draggable_state = group.draggable_state.clone();
@@ -15759,6 +15900,7 @@ impl Workspace {
         is_collapsed: bool,
         any_member_active: bool,
         is_first_in_bar: bool,
+        group_color: Option<ColorU>,
         appearance: &Appearance,
         ctx: &AppContext,
     ) -> Box<dyn Element> {
@@ -15853,9 +15995,22 @@ impl Workspace {
         let header_hover_bg = internal_colors::fg_overlay_1(theme);
         let header_border_fill = internal_colors::fg_overlay_1(theme);
         let mut header = Hoverable::new(mouse_states.header.clone(), move |state| {
-            let bg: ElementFill = if header_selected {
+            let hovered = state.is_hovered();
+            // Tint the header with the group's color on hover/active (40/60), and
+            // stay transparent at idle so the colored group container shows
+            // through. Fall back to the neutral overlay when the group has no
+            // color.
+            let bg: ElementFill = if let Some(color) = group_color {
+                if header_selected {
+                    coloru_with_opacity(color, 60).into()
+                } else if hovered {
+                    coloru_with_opacity(color, 40).into()
+                } else {
+                    ElementFill::None
+                }
+            } else if header_selected {
                 header_active_bg.into()
-            } else if state.is_hovered() {
+            } else if hovered {
                 header_hover_bg.into()
             } else {
                 ElementFill::None
@@ -15967,6 +16122,7 @@ impl Workspace {
             // outer `SavePosition`, `Draggable`, and `DropTarget` wrappers
             // so the chip overlay doesn't pollute the target window's
             // position cache (see `TabComponent::for_drag_ghost`).
+            let effective_color = self.effective_tab_color(tab);
             TabComponent::new(
                 tab_index,
                 tab_bar_state,
@@ -15976,6 +16132,8 @@ impl Workspace {
                 false,
                 ctx,
             )
+            // Show the tab groups color on this tab while it is dragging and part of a group.
+            .with_effective_color(effective_color)
             .for_drag_ghost()
             .build()
             .finish()
@@ -16624,14 +16782,9 @@ impl Workspace {
                     TabBarSlot::Single { index } => {
                         let i = *index;
                         let is_transferred = transferred_tab_index == Some(i);
-                        if !is_transferred
-                            && self
-                                .hovered_tab_index
-                                .as_ref()
-                                .is_some_and(|hovered_index| match hovered_index {
-                                    TabBarHoverIndex::BeforeTab(idx) => i == *idx,
-                                    TabBarHoverIndex::OverTab(_) => false,
-                                })
+                        // Single tabs are ungrouped, so their before-indicator
+                        // only matches an ungrouped insertion.
+                        if !is_transferred && show_before_indicator(self.hovered_tab_index, i, None)
                         {
                             tab_bar.add_child(self.render_tab_hover_indicator(appearance));
                         }
@@ -16658,14 +16811,7 @@ impl Workspace {
                 .is_some_and(|g| g.insertion_index == self.tabs.len())
             {
                 tab_bar.add_child(self.render_ghost_tab_slot(appearance, ctx));
-            } else if self
-                .hovered_tab_index
-                .as_ref()
-                .is_some_and(|hovered_index| match hovered_index {
-                    TabBarHoverIndex::BeforeTab(idx) => self.tabs.len() == *idx,
-                    TabBarHoverIndex::OverTab(_) => false,
-                })
-            {
+            } else if show_before_indicator(self.hovered_tab_index, self.tabs.len(), None) {
                 tab_bar.add_child(self.render_tab_hover_indicator(appearance));
             }
 
@@ -16674,33 +16820,9 @@ impl Workspace {
             }
         }
 
-        // Trailing spacer fills leftover width, and re-adds the flex each
-        // collapsed group gives up vs expanded (its members + 2 spacers), so the
-        // bar's total flex stays constant across collapse/expand and headers
-        // don't move.
-        let collapsed_group_flex_giveback: f32 = if FeatureFlag::GroupedTabs.is_enabled() {
-            self.tab_groups
-                .values()
-                .filter(|group| group.collapsed)
-                .map(|group| {
-                    let members = self
-                        .tabs
-                        .iter()
-                        .filter(|tab| tab.group_id == Some(group.id))
-                        .count();
-                    if members == 0 {
-                        0.0
-                    } else {
-                        members as f32 + 2.0 * Self::GROUP_EDGE_SPACER_FLEX
-                    }
-                })
-                .sum()
-        } else {
-            0.0
-        };
-        tab_bar.add_child(
-            Shrinkable::new(0.5 + collapsed_group_flex_giveback, Empty::new().finish()).finish(),
-        );
+        // Trailing spacer fills only the leftover width. When groups are collapsed
+        // the freed flex is distributed accross the remaining flex items in the tab bar.
+        tab_bar.add_child(Shrinkable::new(0.5, Empty::new().finish()).finish());
 
         self.add_configurable_right_side_tab_bar_controls(&mut tab_bar, &config, appearance, ctx);
 
@@ -18925,7 +19047,20 @@ impl TypedActionView for Workspace {
                 );
             }
             SetActiveTabName(name) => self.set_active_tab_name(name, ctx),
-            SetActiveTabColor(color) => self.set_tab_color(self.active_tab_index, *color, ctx),
+            SetActiveTabColor(color) => {
+                // When the active tab is in a group, redirect to the group's color.
+                // The tab color selection menu is hidden when a tab is part of a group
+                // this handles the case where a tab color is set via a slash command.
+                let active_group_id = self
+                    .tabs
+                    .get(self.active_tab_index)
+                    .and_then(|t| t.group_id);
+                if let Some(group_id) = active_group_id {
+                    self.set_tab_group_color(group_id, *color, ctx);
+                } else {
+                    self.set_tab_color(self.active_tab_index, *color, ctx);
+                }
+            }
             ToggleTabRightClickMenu { tab_index, anchor } => {
                 self.toggle_tab_right_click_menu(*tab_index, *anchor, ctx)
             }
@@ -19286,6 +19421,9 @@ impl TypedActionView for Workspace {
             SetA11yVerbosityLevel(verbosity) => self.set_a11y_verbosity(*verbosity, ctx),
             ToggleNotifications => self.toggle_notifications(ctx),
             ToggleTabColor { color, tab_index } => self.toggle_tab_color(*tab_index, *color, ctx),
+            ToggleTabGroupColor { color, group_id } => {
+                self.toggle_tab_group_color(*group_id, *color, ctx)
+            }
             DispatchToSettingsTab(action) => {
                 let window_id = ctx.window_id();
                 ctx.dispatch_typed_action_for_view(window_id, self.settings_pane.id(), action)
@@ -22908,6 +23046,99 @@ impl Workspace {
         }
 
         current_index
+    }
+
+    /// Resolves the tab group a `BeforeTab` insertion lands in, using the drag
+    /// cursor, for whichever tab bar is active. The header computes the bare
+    /// before/over/after from the hovered row's geometry; this fills in the
+    /// group from the workspace's own tab-group geometry (which the header can't
+    /// see) and clamps ungrouped insertions out of the pinned region. `OverTab`
+    /// is returned unchanged.
+    fn refine_hovered_tab_index(
+        &self,
+        hovered: TabBarHoverIndex,
+        drag_position: RectF,
+        ctx: &mut ViewContext<Self>,
+    ) -> TabBarHoverIndex {
+        let TabBarHoverIndex::BeforeTab { index, .. } = hovered else {
+            return hovered;
+        };
+        // Resolve the group along whichever axis the active tab bar uses, then
+        // clamp ungrouped insertions out of the pinned region below.
+        let is_vertical = uses_vertical_tabs(ctx);
+        let group = if FeatureFlag::GroupedTabs.is_enabled() {
+            self.insertion_group(index, drag_position.center(), is_vertical, ctx)
+        } else {
+            None
+        };
+        // An ungrouped insertion can't land in the pinned region, so clamp it to
+        // the first unpinned slot so the indicator stays in sync with where the
+        // pane lands. A drop into a group inherits that group's pinned status.
+        let index = if FeatureFlag::PinnedTabs.is_enabled() && group.is_none() {
+            self.clamp_to_unpinned_region(&self.tabs, index)
+        } else {
+            index
+        };
+        TabBarHoverIndex::BeforeTab { index, group }
+    }
+
+    /// Returns the expanded tab group a `BeforeTab` insertion at `index` should
+    /// join, based on the drag cursor against the group's saved container rect
+    /// along the active axis (Y for the vertical panel, X for the horizontal
+    /// bar). Collapsed groups are excluded (you can't drop into one). "Before
+    /// the group" is only the leading half of the header; the in-group zone runs
+    /// to the group's trailing edge so the last slot is easy to hit.
+    fn insertion_group(
+        &self,
+        index: usize,
+        cursor: Vector2F,
+        is_vertical: bool,
+        ctx: &mut ViewContext<Self>,
+    ) -> Option<TabGroupId> {
+        for (group_id, group) in &self.tab_groups {
+            if group.collapsed {
+                continue;
+            }
+            let Some((first, last)) = group_member_index_range(&self.tabs, *group_id) else {
+                continue;
+            };
+            // The insertion index must fall within this group's slots to join.
+            if index < first || index > last + 1 {
+                continue;
+            }
+            let position_id = if is_vertical {
+                vtab_group_position_id(*group_id)
+            } else {
+                htab_group_position_id(*group_id)
+            };
+            let Some(group_rect) = ctx.element_position_by_id(position_id) else {
+                continue;
+            };
+            // Project the group rect and cursor onto the active axis.
+            let (group_start, group_end, cursor_pos) = if is_vertical {
+                (group_rect.min_y(), group_rect.max_y(), cursor.y())
+            } else {
+                (group_rect.min_x(), group_rect.max_x(), cursor.x())
+            };
+            // "Before the group" is the leading half of the header (before the
+            // first member's leading edge); everything past that, to the group's
+            // trailing edge, joins the group.
+            let in_group_start = ctx
+                .element_position_by_id(tab_position_id(first))
+                .map(|first_rect| {
+                    let first_start = if is_vertical {
+                        first_rect.min_y()
+                    } else {
+                        first_rect.min_x()
+                    };
+                    (group_start + first_start) / 2.
+                })
+                .unwrap_or(group_start);
+            if cursor_pos >= in_group_start && cursor_pos <= group_end {
+                return Some(*group_id);
+            }
+        }
+        None
     }
 
     /// Returns the group the dragged tab is over along the active axis so it can

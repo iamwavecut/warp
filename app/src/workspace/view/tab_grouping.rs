@@ -2,9 +2,10 @@ use std::collections::HashSet;
 
 use itertools::{Either, Itertools};
 use warp_core::features::FeatureFlag;
-use warpui::{EntityId, UpdateView, ViewContext};
+use warpui::{EntityId, SingletonEntity, UpdateView, ViewContext};
 
 use super::{group_member_index_range, group_member_indices, Workspace};
+use crate::appearance::Appearance;
 use crate::menu::{MenuItem, MenuItemFields};
 use crate::tab::{TabData, MOVE_TO_GROUP_LABEL};
 use crate::terminal::session_settings::NewSessionSource;
@@ -869,7 +870,9 @@ impl Workspace {
             return;
         }
 
-        let menu_items = self.tab_group_menu_items(group_id, uses_vertical_tabs(ctx));
+        let terminal_colors = Appearance::as_ref(ctx).theme().terminal_colors().normal;
+        let menu_items =
+            self.tab_group_menu_items(group_id, uses_vertical_tabs(ctx), terminal_colors);
         ctx.update_view(&self.tab_right_click_menu, |context_menu, view_ctx| {
             context_menu.set_items(menu_items, view_ctx);
         });
