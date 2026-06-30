@@ -95,15 +95,17 @@ impl OnboardingAgenticSuggestionsBlock {
             &BlocklistAIHistoryModel::handle(ctx),
             move |_, _, event, ctx| match event {
                 BlocklistAIHistoryEvent::StartedNewConversation {
-                    terminal_view_id, ..
+                    terminal_surface_id,
+                    ..
                 }
                 | BlocklistAIHistoryEvent::AppendedExchange {
-                    terminal_view_id, ..
-                }
-                | BlocklistAIHistoryEvent::ClearedConversationsInTerminalView {
-                    terminal_view_id,
+                    terminal_surface_id,
                     ..
-                } if *terminal_view_id == parent_view_id => {
+                }
+                | BlocklistAIHistoryEvent::ClearedConversationsForTerminalSurface {
+                    terminal_surface_id,
+                    ..
+                } if *terminal_surface_id == parent_view_id => {
                     ctx.notify();
                 }
                 _ => {}

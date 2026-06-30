@@ -130,7 +130,7 @@ impl TerminalView {
 
         let is_conversation_in_memory = history_model.conversation(&conversation_id).is_some();
         let is_live = history_model
-            .all_live_conversations_for_terminal_view(self.view_id)
+            .all_live_conversations_for_terminal_surface(self.view_id)
             .any(|conversation| conversation.id() == conversation_id);
 
         if is_conversation_in_memory && is_live {

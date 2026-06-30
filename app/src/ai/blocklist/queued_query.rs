@@ -162,7 +162,7 @@ impl QueuedQueryModel {
             } => {
                 self.drop_conversation(*conversation_id, ctx);
             }
-            BlocklistAIHistoryEvent::ClearedConversationsInTerminalView {
+            BlocklistAIHistoryEvent::ClearedConversationsForTerminalSurface {
                 cleared_conversation_ids,
                 ..
             } => {

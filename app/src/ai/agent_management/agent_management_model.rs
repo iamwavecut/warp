@@ -243,7 +243,7 @@ impl AgentNotificationsModel {
         }
 
         let BlocklistAIHistoryEvent::UpdatedConversationStatus {
-            terminal_view_id,
+            terminal_surface_id,
             conversation_id,
             // We shouldn't trigger toasts when restoring conversations on startup.
             update: ConversationStatusUpdate::Changed { .. },
@@ -269,7 +269,7 @@ impl AgentNotificationsModel {
                 &status,
                 *conversation_id,
                 latest_query,
-                *terminal_view_id,
+                *terminal_surface_id,
                 ctx,
             );
             // The new mailbox path handled the event — skip the legacy toast path below.
@@ -280,7 +280,7 @@ impl AgentNotificationsModel {
             return;
         }
 
-        if is_terminal_view_visible(*terminal_view_id, ctx) {
+        if is_terminal_view_visible(*terminal_surface_id, ctx) {
             return;
         }
 
@@ -293,7 +293,7 @@ impl AgentNotificationsModel {
         ctx.emit(AgentManagementEvent::ConversationNeedsAttention {
             window_id,
             tab_index,
-            terminal_view_id: *terminal_view_id,
+            terminal_view_id: *terminal_surface_id,
             conversation_id: *conversation_id,
         });
     }

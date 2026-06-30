@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use ratatui::style::{Color, Modifier, Style};
 
 use super::TuiText;
@@ -9,7 +7,7 @@ use crate::elements::tui::{
 
 fn render_to_lines(element: &dyn TuiElement, size: TuiSize) -> Vec<String> {
     let mut buffer = TuiBuffer::empty(TuiRect::new(0, 0, size.width, size.height));
-    let mut rendered_views = HashMap::new();
+    let mut rendered_views = EntityIdMap::default();
     let mut ctx = TuiLayoutContext {
         rendered_views: &mut rendered_views,
     };
@@ -91,7 +89,7 @@ fn applies_its_style_to_painted_cells() {
     let text = TuiText::new("a").with_style(style);
 
     let mut buffer = TuiBuffer::empty(TuiRect::new(0, 0, 1, 1));
-    let mut rendered_views = HashMap::new();
+    let mut rendered_views = EntityIdMap::default();
     let mut ctx = TuiLayoutContext {
         rendered_views: &mut rendered_views,
     };

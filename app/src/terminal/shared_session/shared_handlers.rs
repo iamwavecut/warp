@@ -62,11 +62,13 @@ fn build_selected_conversation_update_agent_view_enabled(
     history_model: &ModelHandle<BlocklistAIHistoryModel>,
     ctx: &mut AppContext,
 ) -> Option<UniversalDeveloperInputContextUpdate> {
-    let agent_view_state = agent_view_controller.as_ref(ctx).agent_view_state();
-
-    let selected_conversation = if !agent_view_state.is_active() {
+    let agent_view_controller = agent_view_controller.as_ref(ctx);
+    let selected_conversation = if !agent_view_controller.is_active() {
         SelectedConversation::NoConversation
-    } else if let Some(conversation_id) = agent_view_state.active_conversation_id() {
+    } else if let Some(conversation_id) = agent_view_controller
+        .agent_view_state()
+        .active_conversation_id()
+    {
         let conversation = history_model.as_ref(ctx).conversation(&conversation_id);
         let server_token_opt = conversation
             .and_then(|c| c.server_conversation_token().cloned())

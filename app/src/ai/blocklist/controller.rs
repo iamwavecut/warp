@@ -18,6 +18,7 @@ use super::{
     action_model::{BlocklistAIActionEvent, BlocklistAIActionModel},
     agent_view::{AgentViewController, AgentViewControllerEvent},
     context_model::BlocklistAIContextModel,
+    conversation_selection::{ConversationSelectionEvent, ConversationSelectionHandle},
     history_model::BlocklistAIHistoryModel,
     input_model::InputConfig,
     BlocklistAIInputModel, InputType,
@@ -193,14 +194,14 @@ impl RequestInput {
         active_session: &ModelHandle<ActiveSession>,
         shared_session_response_initiator: Option<ParticipantId>,
         conversation_id: AIConversationId,
-        terminal_view_id: EntityId,
+        terminal_surface_id: EntityId,
         app: &AppContext,
     ) -> Self {
         let mut me = Self::new_with_common_fields(
             conversation_id,
             active_session,
             shared_session_response_initiator,
-            terminal_view_id,
+            terminal_surface_id,
             app,
         );
         me.input_messages.insert(task_id, inputs);
@@ -213,14 +214,14 @@ impl RequestInput {
         active_session: &ModelHandle<ActiveSession>,
         shared_session_response_initiator: Option<ParticipantId>,
         conversation_id: AIConversationId,
-        terminal_view_id: EntityId,
+        terminal_surface_id: EntityId,
         app: &AppContext,
     ) -> Self {
         let mut me = Self::new_with_common_fields(
             conversation_id,
             active_session,
             shared_session_response_initiator,
-            terminal_view_id,
+            terminal_surface_id,
             app,
         );
         for result in action_results.into_iter() {
@@ -248,24 +249,24 @@ impl RequestInput {
         conversation_id: AIConversationId,
         active_session: &ModelHandle<ActiveSession>,
         shared_session_response_initiator: Option<ParticipantId>,
-        terminal_view_id: EntityId,
+        terminal_surface_id: EntityId,
         app: &AppContext,
     ) -> Self {
         let llm_prefs = LLMPreferences::as_ref(app);
         let model_id = llm_prefs
-            .get_active_base_model(app, Some(terminal_view_id))
+            .get_active_base_model(app, Some(terminal_surface_id))
             .id
             .clone();
         let coding_model_id = llm_prefs
-            .get_active_coding_model(app, Some(terminal_view_id))
+            .get_active_coding_model(app, Some(terminal_surface_id))
             .id
             .clone();
         let cli_agent_model_id = llm_prefs
-            .get_active_cli_agent_model(app, Some(terminal_view_id))
+            .get_active_cli_agent_model(app, Some(terminal_surface_id))
             .id
             .clone();
         let computer_use_model_id = llm_prefs
-            .get_active_computer_use_model(app, Some(terminal_view_id))
+            .get_active_computer_use_model(app, Some(terminal_surface_id))
             .id
             .clone();
         let working_directory = active_session
@@ -290,7 +291,7 @@ impl RequestInput {
 
 /// Controller for Blocklist AI.
 ///
-/// This is responsible for managing and updating blocklist AI state in a single terminal pane.
+/// This is responsible for managing and updating blocklist AI state for a single terminal surface.
 pub struct BlocklistAIController {
     active_session: ModelHandle<ActiveSession>,
     input_model: ModelHandle<BlocklistAIInputModel>,
@@ -300,8 +301,8 @@ pub struct BlocklistAIController {
 
     in_flight_response_streams: PendingResponseStreams,
 
-    /// The ID of the terminal view this controller is associated with.
-    terminal_view_id: EntityId,
+    /// The ID of the terminal surface this controller is associated with.
+    terminal_surface_id: EntityId,
 
     should_refresh_available_llms_on_stream_finish: bool,
 
@@ -383,11 +384,11 @@ impl BlocklistAIController {
     pub fn new(
         input_model: ModelHandle<BlocklistAIInputModel>,
         context_model: ModelHandle<BlocklistAIContextModel>,
+        conversation_selection: ConversationSelectionHandle,
         action_model: ModelHandle<BlocklistAIActionModel>,
         active_session: ModelHandle<ActiveSession>,
-        agent_view_controller: ModelHandle<AgentViewController>,
         terminal_model: Arc<FairMutex<TerminalModel>>,
-        terminal_view_id: EntityId,
+        terminal_surface_id: EntityId,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
         ctx.subscribe_to_model(&action_model, move |me, _, event, ctx| {
@@ -486,7 +487,7 @@ impl BlocklistAIController {
                     };
                     history_model.update(ctx, |history_model, ctx| {
                         history_model.update_conversation_status(
-                            me.terminal_view_id,
+                            me.terminal_surface_id,
                             *conversation_id,
                             updated_conversation_status,
                             ctx,
@@ -495,46 +496,28 @@ impl BlocklistAIController {
                 }
                 return;
             }
-            let trigger = if has_manual_follow_up {
-                FollowUpTrigger::UserRequested
-            } else {
-                FollowUpTrigger::Auto
-            };
-            me.send_follow_up_for_conversation(*conversation_id, trigger, ctx);
+            me.send_follow_up_for_conversation(*conversation_id, ctx);
         });
 
-        ctx.subscribe_to_model(&agent_view_controller, |me, _, event, ctx| {
-            let AgentViewControllerEvent::ExitedAgentView {
+        ctx.subscribe_to_model(&conversation_selection, |me, _, event, ctx| {
+            let ConversationSelectionEvent::Deactivated {
                 conversation_id,
                 final_exchange_count,
                 is_exit_before_new_entrance,
-                ..
             } = event
             else {
                 return;
             };
-
-            // Skip if this exit is part of an in-place switch — cancelling here
-            // would kill an in-flight stream every time the user navigates.
-            if *is_exit_before_new_entrance {
+            if *is_exit_before_new_entrance || *final_exchange_count == 0 {
                 return;
             }
-
-            // If we exited a brand-new empty conversation, there's nothing meaningful to cancel.
-            if *final_exchange_count == 0 {
-                return;
-            }
-
             let history = BlocklistAIHistoryModel::handle(ctx);
             let Some(conversation) = history.as_ref(ctx).conversation(conversation_id) else {
                 return;
             };
-
-            // Viewer sessions should not send cancellations.
             if conversation.is_viewing_shared_session() {
                 return;
             }
-
             if conversation.status().is_in_progress() {
                 me.cancel_conversation_progress(
                     *conversation_id,
@@ -543,7 +526,6 @@ impl BlocklistAIController {
                 );
             }
         });
-
         // Subscribe to the orchestration event service to inject events
         // (e.g. MessagesReceivedFromAgents) into conversations that receive inter-agent messages.
         if FeatureFlag::OrchestrationV2.is_enabled() {
@@ -560,7 +542,7 @@ impl BlocklistAIController {
             active_session,
             terminal_model,
             in_flight_response_streams: PendingResponseStreams::new(),
-            terminal_view_id,
+            terminal_surface_id,
             should_refresh_available_llms_on_stream_finish: false,
             shared_session_state: shared_session::SharedSessionState::default(),
             ambient_agent_task_id: None,
@@ -615,7 +597,8 @@ impl BlocklistAIController {
             .unwrap_or_default();
 
         let ai_history_model = BlocklistAIHistoryModel::as_ref(ctx);
-        let active_conversation_id = ai_history_model.active_conversation_id(self.terminal_view_id);
+        let active_conversation_id =
+            ai_history_model.active_conversation_id(self.terminal_surface_id);
         let cancellation_reason = CancellationReason::FollowUpSubmitted {
             is_for_same_conversation: active_conversation_id
                 .is_some_and(|id| id == conversation_id),
@@ -730,7 +713,7 @@ impl BlocklistAIController {
                 &self.active_session,
                 self.get_current_response_initiator(),
                 conversation_id,
-                self.terminal_view_id,
+                self.terminal_surface_id,
                 ctx,
             ),
             Some(RequestMetadata {
@@ -738,7 +721,6 @@ impl BlocklistAIController {
                 entrypoint: entrypoint_type,
                 is_auto_resume_after_error: false,
             }),
-            /*default_to_follow_up_on_success*/ true,
             /*can_attempt_resume_on_error*/ true,
             is_queued_prompt,
             ctx,
@@ -892,7 +874,7 @@ impl BlocklistAIController {
                 history_model.create_cli_subagent_task_for_conversation(
                     running_command.block_id.clone(),
                     conversation_id,
-                    self.terminal_view_id,
+                    self.terminal_surface_id,
                     ctx,
                 )
             }) {
@@ -1099,7 +1081,7 @@ impl BlocklistAIController {
                     history_model.create_cli_subagent_task_for_conversation(
                         running_command.block_id.clone(),
                         conversation_id,
-                        self.terminal_view_id,
+                        self.terminal_surface_id,
                         ctx,
                     )
                 }) {
@@ -1281,11 +1263,7 @@ impl BlocklistAIController {
             .as_ref(ctx)
             .get_finished_action_results(conversation_id);
         if finished_action_results.is_some_and(|results| !results.is_empty()) {
-            self.send_follow_up_for_conversation(
-                conversation_id,
-                FollowUpTrigger::UserRequested,
-                ctx,
-            );
+            self.send_follow_up_for_conversation(conversation_id, ctx);
         }
     }
 
@@ -1386,7 +1364,6 @@ impl BlocklistAIController {
     fn send_follow_up_for_conversation(
         &mut self,
         conversation_id: AIConversationId,
-        trigger: FollowUpTrigger,
         ctx: &mut ModelContext<Self>,
     ) {
         if self
@@ -1397,20 +1374,8 @@ impl BlocklistAIController {
         }
 
         BlocklistAIHistoryModel::handle(ctx).update(ctx, |history, ctx| {
-            history.mark_active_conversation_id(conversation_id, self.terminal_view_id, ctx);
+            history.mark_active_conversation_id(conversation_id, self.terminal_surface_id, ctx);
         });
-
-        if !FeatureFlag::AgentView.is_enabled() && trigger == FollowUpTrigger::Auto {
-            // If `AgentView` is enabled, the conversation is guaranteed to be active while the
-            // conversation is in-progress and thus while actions are executing/finishing.
-            self.context_model.update(ctx, |context_model, ctx| {
-                context_model.set_pending_query_state_for_existing_conversation(
-                    conversation_id,
-                    AgentViewEntryOrigin::AutoFollowUp,
-                    ctx,
-                );
-            });
-        }
 
         let finished_results = self.action_model.update(ctx, |action_model, _| {
             action_model.drain_finished_action_results(conversation_id)
@@ -1444,7 +1409,7 @@ impl BlocklistAIController {
             &self.active_session,
             self.get_current_response_initiator(),
             conversation_id,
-            self.terminal_view_id,
+            self.terminal_surface_id,
             ctx,
         );
 
@@ -1481,7 +1446,6 @@ impl BlocklistAIController {
         let result = self.send_request_input(
             request_input,
             None,
-            /*default_to_follow_up_on_success*/ false,
             /*can_attempt_resume_on_error*/ true,
             /*is_queued_prompt*/ false,
             ctx,
@@ -1502,7 +1466,7 @@ impl BlocklistAIController {
         ctx: &ModelContext<Self>,
     ) -> bool {
         let owns = BlocklistAIHistoryModel::as_ref(ctx)
-            .all_live_conversations_for_terminal_view(self.terminal_view_id)
+            .all_live_conversations_for_terminal_surface(self.terminal_surface_id)
             .any(|conversation| conversation.id() == conversation_id);
         let has_active_stream = self
             .in_flight_response_streams
@@ -1552,11 +1516,10 @@ impl BlocklistAIController {
                     &self.active_session,
                     self.get_current_response_initiator(),
                     conversation_id,
-                    self.terminal_view_id,
+                    self.terminal_surface_id,
                     ctx,
                 ),
                 None,
-                /*default_to_follow_up_on_success*/ true,
                 /*can_attempt_resume_on_error*/ true,
                 /*is_queued_prompt*/ false,
                 ctx,
@@ -1641,11 +1604,10 @@ impl BlocklistAIController {
                 &self.active_session,
                 self.get_current_response_initiator(),
                 conversation_id,
-                self.terminal_view_id,
+                self.terminal_surface_id,
                 ctx,
             ),
             metadata,
-            /*default_to_follow_up_on_success*/ true,
             can_attempt_resume_on_error,
             /*is_queued_prompt*/ false,
             ctx,
@@ -1682,7 +1644,7 @@ impl BlocklistAIController {
                 &self.active_session,
                 self.get_current_response_initiator(),
                 new_conversation.id(),
-                self.terminal_view_id,
+                self.terminal_surface_id,
                 ctx,
             ),
             Some(RequestMetadata {
@@ -1693,7 +1655,6 @@ impl BlocklistAIController {
                 },
                 is_auto_resume_after_error: false,
             }),
-            /*default_to_follow_up_on_success=*/ false,
             /*can_attempt_resume_on_error*/ true,
             /*is_queued_prompt*/ false,
             ctx,
@@ -1729,7 +1690,7 @@ impl BlocklistAIController {
                 &self.active_session,
                 self.get_current_response_initiator(),
                 new_conversation.id(),
-                self.terminal_view_id,
+                self.terminal_surface_id,
                 ctx,
             )
             .with_supported_tools(vec![ToolType::SuggestPrompt]),
@@ -1740,7 +1701,6 @@ impl BlocklistAIController {
                 },
                 is_auto_resume_after_error: false,
             }),
-            /*default_to_follow_up_on_success*/ false,
             /*can_attempt_resume_on_error*/ true,
             /*is_queued_prompt*/ false,
             ctx,
@@ -1782,7 +1742,7 @@ impl BlocklistAIController {
         let id = history_model.update(ctx, |history_model, ctx| {
             // We don't mark passive conversations as "the active conversation" (at least when they first appear).
             history_model.start_new_conversation(
-                self.terminal_view_id,
+                self.terminal_surface_id,
                 is_autoexecute_override,
                 false,
                 false,
@@ -1810,7 +1770,6 @@ impl BlocklistAIController {
         &mut self,
         request_input: RequestInput,
         query_metadata: Option<RequestMetadata>,
-        default_to_follow_up_on_success: bool,
         can_attempt_resume_on_error: bool,
         is_queued_prompt: bool,
         ctx: &mut ModelContext<Self>,
@@ -1873,7 +1832,7 @@ impl BlocklistAIController {
         );
 
         let mut request_params = api::RequestParams::new(
-            Some(self.terminal_view_id),
+            Some(self.terminal_surface_id),
             SessionContext::from_session(self.active_session.as_ref(ctx), ctx),
             &request_input,
             conversation_data.clone(),
@@ -1922,12 +1881,12 @@ impl BlocklistAIController {
             match history_model.update_conversation_for_new_request_input(
                 request_input,
                 response_stream_id.clone(),
-                self.terminal_view_id,
+                self.terminal_surface_id,
                 ctx,
             ) {
                 Ok(_) => {
                     history_model.update_conversation_status(
-                        self.terminal_view_id,
+                        self.terminal_surface_id,
                         conversation_data.id,
                         ConversationStatus::InProgress,
                         ctx,
@@ -1976,9 +1935,9 @@ impl BlocklistAIController {
             history_model.update(ctx, |history_model, ctx| {
                 history_model.mark_active_conversation_id(
                     conversation_data.id,
-                    self.terminal_view_id,
+                    self.terminal_surface_id,
                     ctx,
-                )
+                );
             });
         }
 
@@ -1986,29 +1945,6 @@ impl BlocklistAIController {
         // This ensures the agent view is restored if the app restarts.
         if input_contains_user_query {
             ctx.dispatch_global_action("workspace:save_app", ());
-        }
-
-        // If `AgentView` is enabled, the agent view is guaranteed to be active when the agent
-        // input is sent, so logic to ensure follow-ups is redundant.
-        if !FeatureFlag::AgentView.is_enabled() && default_to_follow_up_on_success {
-            // Set the input mode to AI but allow autodetection to run
-            self.input_model.update(ctx, |input_model, ctx| {
-                input_model.set_input_config_for_classic_mode(
-                    InputConfig {
-                        input_type: InputType::AI,
-                        is_locked: false,
-                    },
-                    ctx,
-                );
-            });
-            // After making an AI query, default to asking a follow up.
-            self.context_model.update(ctx, |context_model, ctx| {
-                context_model.set_pending_query_state_for_existing_conversation(
-                    conversation_data.id,
-                    AgentViewEntryOrigin::AutoFollowUp,
-                    ctx,
-                )
-            });
         }
 
         Ok((conversation_data.id, response_stream_id))
@@ -2177,7 +2113,7 @@ impl BlocklistAIController {
                                     history_model.initialize_output_for_response_stream(
                                         &stream_id,
                                         conversation_id,
-                                        self.terminal_view_id,
+                                        self.terminal_surface_id,
                                         init_event,
                                         ctx,
                                     );
@@ -2212,7 +2148,7 @@ impl BlocklistAIController {
                                             &stream_id,
                                             client_actions,
                                             conversation_id,
-                                            self.terminal_view_id,
+                                            self.terminal_surface_id,
                                             ctx,
                                         )
                                     });
@@ -2247,7 +2183,7 @@ impl BlocklistAIController {
                                 renderable_error,
                                 &stream_id,
                                 conversation_id,
-                                self.terminal_view_id,
+                                self.terminal_surface_id,
                                 ctx,
                             );
                         });
@@ -2315,7 +2251,7 @@ impl BlocklistAIController {
                         history_model.mark_response_stream_cancelled(
                             &stream_id,
                             conversation_id,
-                            self.terminal_view_id,
+                            self.terminal_surface_id,
                             stream_cancellation.reason,
                             ctx,
                         );
@@ -2339,7 +2275,7 @@ impl BlocklistAIController {
                             },
                             &stream_id,
                             conversation_id,
-                            self.terminal_view_id,
+                            self.terminal_surface_id,
                             ctx,
                         );
                     });
@@ -2460,7 +2396,7 @@ impl BlocklistAIController {
                     history_model.mark_response_stream_completed_successfully(
                         stream_id,
                         conversation_id,
-                        self.terminal_view_id,
+                        self.terminal_surface_id,
                         ctx,
                     );
                 });
@@ -2476,7 +2412,7 @@ impl BlocklistAIController {
                         },
                         stream_id,
                         conversation_id,
-                        self.terminal_view_id,
+                        self.terminal_surface_id,
                         ctx,
                     );
                 });
@@ -2488,7 +2424,7 @@ impl BlocklistAIController {
                         RenderableAIError::ContextWindowExceeded(error_message.to_owned()),
                         stream_id,
                         conversation_id,
-                        self.terminal_view_id,
+                        self.terminal_surface_id,
                         ctx,
                     );
                 });
@@ -2504,7 +2440,7 @@ impl BlocklistAIController {
                         },
                         stream_id,
                         conversation_id,
-                        self.terminal_view_id,
+                        self.terminal_surface_id,
                         ctx,
                     );
                 });
@@ -2520,7 +2456,7 @@ impl BlocklistAIController {
                         },
                         stream_id,
                         conversation_id,
-                        self.terminal_view_id,
+                        self.terminal_surface_id,
                         ctx,
                     );
                 });
@@ -2557,7 +2493,7 @@ impl BlocklistAIController {
                         error,
                         stream_id,
                         conversation_id,
-                        self.terminal_view_id,
+                        self.terminal_surface_id,
                         ctx,
                     );
                 });
@@ -2576,7 +2512,7 @@ impl BlocklistAIController {
                         },
                         stream_id,
                         conversation_id,
-                        self.terminal_view_id,
+                        self.terminal_surface_id,
                         ctx,
                     );
                 });
@@ -2588,7 +2524,7 @@ impl BlocklistAIController {
                         RenderableAIError::ContextWindowExceeded(error_message.to_owned()),
                         stream_id,
                         conversation_id,
-                        self.terminal_view_id,
+                        self.terminal_surface_id,
                         ctx,
                     );
                 });

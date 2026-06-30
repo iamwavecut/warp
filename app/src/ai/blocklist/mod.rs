@@ -5,6 +5,7 @@ pub mod block;
 pub mod code_block;
 mod context_model;
 mod controller;
+pub(crate) mod conversation_selection;
 
 pub(crate) mod orchestration_event_streamer;
 pub(crate) mod orchestration_events;
@@ -27,32 +28,37 @@ pub mod usage;
 pub(crate) mod codebase_index_speedbump_banner;
 pub(super) mod view_util;
 
+pub use action_model::BlocklistAIActionModel;
 #[cfg_attr(target_family = "wasm", allow(unused_imports))]
 pub(crate) use action_model::{
-    read_local_file_context, BlocklistAIActionEvent, BlocklistAIActionModel, ReadFileContextResult,
-    ShellCommandExecutor, ShellCommandExecutorEvent, StartAgentExecutor, StartAgentExecutorEvent,
-    StartAgentRequest, StartAgentRequestId,
+    read_local_file_context, BlocklistAIActionEvent, ReadFileContextResult, ShellCommandExecutor,
+    ShellCommandExecutorEvent, StartAgentExecutor, StartAgentExecutorEvent, StartAgentRequest,
+    StartAgentRequestId,
 };
 
 #[cfg(any(test, feature = "integration_tests"))]
 pub(crate) use block::model::testing::FakeAIBlockModel;
 pub(crate) use block::{init, model, AIBlock, AIBlockEvent};
 
+pub use context_model::BlocklistAIContextModel;
 pub(crate) use context_model::{
-    block_context_from_terminal_model, AttachmentType, BlocklistAIContextEvent,
-    BlocklistAIContextModel, PendingAttachment, PendingFile, PendingQueryState,
+    block_context_from_terminal_model, AttachmentType, BlocklistAIContextEvent, PendingAttachment,
+    PendingFile,
 };
 pub(crate) use controller::{
     response_stream::ResponseStreamId, BlocklistAIController, BlocklistAIControllerEvent,
     ClientIdentifiers, SessionContext, SlashCommandRequest,
 };
+pub(crate) use conversation_selection::{
+    ConversationSelection, ConversationSelectionEvent, ConversationSelectionHandle,
+    PendingQueryState,
+};
 pub(crate) use history_model::{
     AIQueryHistory, AIQueryHistoryOutputStatus, BlocklistAIHistoryEvent, BlocklistAIHistoryModel,
     ConversationStatusUpdate, FORK_PREFIX, PRE_REWIND_PREFIX,
 };
-pub(crate) use input_model::{
-    BlocklistAIInputEvent, BlocklistAIInputModel, InputConfig, InputType,
-};
+pub use input_model::BlocklistAIInputModel;
+pub(crate) use input_model::{BlocklistAIInputEvent, InputConfig, InputType};
 pub(crate) use passive_suggestions::{
     LegacyPassiveSuggestionsEvent, LegacyPassiveSuggestionsModel, PassiveSuggestionsModels,
 };

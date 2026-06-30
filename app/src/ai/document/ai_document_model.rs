@@ -355,13 +355,13 @@ impl AIDocumentModel {
         // Update the plan artifact's notebook_uid in the conversation
         let notebook_uid = NotebookId::from(server_id);
         BlocklistAIHistoryModel::handle(ctx).update(ctx, |history_model, ctx| {
-            let terminal_view_id =
-                history_model.terminal_view_id_for_conversation(&conversation_id);
+            let terminal_surface_id =
+                history_model.terminal_surface_id_for_conversation(&conversation_id);
             if let Some(conversation) = history_model.conversation_mut(&conversation_id) {
                 conversation.update_plan_notebook_uid(
                     ai_document_id,
                     notebook_uid,
-                    terminal_view_id,
+                    terminal_surface_id,
                     ctx,
                 );
             }

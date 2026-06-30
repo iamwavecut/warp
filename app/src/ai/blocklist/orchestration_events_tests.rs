@@ -607,7 +607,7 @@ fn test_restored_v1_child_reregisters_lifecycle_subscription() {
         service.update(&mut app, |service, ctx| {
             service.handle_history_event(
                 &BlocklistAIHistoryEvent::RestoredConversations {
-                    terminal_view_id,
+                    terminal_surface_id: terminal_view_id,
                     conversation_ids: vec![child_conversation_id],
                 },
                 ctx,

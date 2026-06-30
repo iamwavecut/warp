@@ -1,4 +1,5 @@
 use uuid::Uuid;
+use warp_multi_agent_api::response_event;
 use warpui::{App, SingletonEntity};
 
 use crate::ai::agent::PassiveSuggestionTrigger;

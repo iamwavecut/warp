@@ -17,7 +17,7 @@ use warp_terminal::model::escape_sequences::{BRACKETED_PASTE_END, BRACKETED_PAST
 use warpui::{
     notification::UserNotification, platform::WindowStyle, Presenter, WindowInvalidation,
 };
-use warpui::{App, ReadModel};
+use warpui::{App, EntityIdSet, ReadModel};
 
 use crate::ai::blocklist::agent_view::toolbar_item::AgentToolbarItemKind;
 use crate::ai::blocklist::agent_view::ExitAgentViewError;
@@ -154,7 +154,7 @@ fn append_exchange_with_inputs_and_handle_event(
         &BlocklistAIHistoryEvent::AppendedExchange {
             exchange_id,
             task_id: task_id.clone(),
-            terminal_view_id: view.view_id,
+            terminal_surface_id: view.view_id,
             conversation_id,
             is_hidden: false,
             response_stream_id: Some(response_stream_id.clone()),
@@ -190,7 +190,7 @@ fn update_exchange_input_and_handle_event(
         history_model,
         &BlocklistAIHistoryEvent::UpdatedStreamingExchange {
             exchange_id,
-            terminal_view_id: view.view_id,
+            terminal_surface_id: view.view_id,
             conversation_id,
             is_hidden: false,
         },
@@ -491,18 +491,18 @@ fn clear_buffer_action_in_fullscreen_agent_view_starts_new_conversation() {
 }
 
 #[test]
-fn appended_exchange_renders_in_current_owner_after_conversation_transfer() {
+fn appended_exchange_renders_in_current_terminal_surface_after_conversation_transfer() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
         let _agent_view = FeatureFlag::AgentView.override_enabled(true);
 
-        let original_owner = add_window_with_terminal(&mut app, None);
-        let transferred_owner = add_window_with_terminal(&mut app, None);
+        let original_view = add_window_with_terminal(&mut app, None);
+        let transferred_view = add_window_with_terminal(&mut app, None);
 
-        let original_owner_view_id = original_owner.read(&app, |view, _| view.view_id);
-        let transferred_owner_view_id = transferred_owner.read(&app, |view, _| view.view_id);
+        let original_view_id = original_view.read(&app, |view, _| view.view_id);
+        let transferred_view_id = transferred_view.read(&app, |view, _| view.view_id);
 
-        let conversation_id = original_owner.update(&mut app, |view, ctx| {
+        let conversation_id = original_view.update(&mut app, |view, ctx| {
             let (conversation_id, _, _, _) = append_exchange_with_inputs_and_handle_event(
                 view,
                 vec![AIAgentInput::UserQuery {
@@ -527,7 +527,7 @@ fn appended_exchange_renders_in_current_owner_after_conversation_transfer() {
                     .expect("conversation should exist")
             });
 
-        transferred_owner.update(&mut app, |view, ctx| {
+        transferred_view.update(&mut app, |view, ctx| {
             view.restore_conversation_after_view_creation(
                 RestoredAIConversation::new(restored_conversation),
                 true,
@@ -538,16 +538,16 @@ fn appended_exchange_renders_in_current_owner_after_conversation_transfer() {
 
         BlocklistAIHistoryModel::handle(&app).read(&app, |history, _| {
             assert_eq!(
-                history.terminal_view_id_for_conversation(&conversation_id),
-                Some(transferred_owner_view_id)
+                history.terminal_surface_id_for_conversation(&conversation_id),
+                Some(transferred_view_id)
             );
         });
 
-        let original_owner_block_count_after_restore =
-            original_owner.read(&app, |view, _| ai_block_count(view));
-        let transferred_owner_block_count_after_restore =
-            transferred_owner.read(&app, |view, _| ai_block_count(view));
-        assert_eq!(transferred_owner_block_count_after_restore, 1);
+        let original_view_block_count_after_restore =
+            original_view.read(&app, |view, _| ai_block_count(view));
+        let transferred_view_block_count_after_restore =
+            transferred_view.read(&app, |view, _| ai_block_count(view));
+        assert_eq!(transferred_view_block_count_after_restore, 1);
 
         let (task_id, exchange_id, response_stream_id) = BlocklistAIHistoryModel::handle(&app)
             .update(&mut app, |history, ctx| {
@@ -570,20 +570,20 @@ fn appended_exchange_renders_in_current_owner_after_conversation_transfer() {
                     .append_reassigned_exchange(
                         &response_stream_id,
                         exchange,
-                        original_owner_view_id,
+                        original_view_id,
                         ctx,
                     )
                     .expect("exchange should append");
                 (task_id, exchange_id, response_stream_id)
             });
 
-        original_owner.update(&mut app, |view, ctx| {
+        original_view.update(&mut app, |view, ctx| {
             view.handle_ai_history_model_event(
                 BlocklistAIHistoryModel::handle(ctx),
                 &BlocklistAIHistoryEvent::AppendedExchange {
                     exchange_id,
                     task_id: task_id.clone(),
-                    terminal_view_id: original_owner_view_id,
+                    terminal_surface_id: original_view_id,
                     conversation_id,
                     is_hidden: false,
                     response_stream_id: Some(response_stream_id.clone()),
@@ -592,13 +592,13 @@ fn appended_exchange_renders_in_current_owner_after_conversation_transfer() {
             );
         });
 
-        transferred_owner.update(&mut app, |view, ctx| {
+        transferred_view.update(&mut app, |view, ctx| {
             view.handle_ai_history_model_event(
                 BlocklistAIHistoryModel::handle(ctx),
                 &BlocklistAIHistoryEvent::AppendedExchange {
                     exchange_id,
                     task_id,
-                    terminal_view_id: original_owner_view_id,
+                    terminal_surface_id: original_view_id,
                     conversation_id,
                     is_hidden: false,
                     response_stream_id: Some(response_stream_id),
@@ -607,16 +607,16 @@ fn appended_exchange_renders_in_current_owner_after_conversation_transfer() {
             );
         });
 
-        original_owner.read(&app, |view, _| {
+        original_view.read(&app, |view, _| {
             assert_eq!(
                 ai_block_count(view),
-                original_owner_block_count_after_restore
+                original_view_block_count_after_restore
             );
         });
-        transferred_owner.read(&app, |view, _| {
+        transferred_view.read(&app, |view, _| {
             assert_eq!(
                 ai_block_count(view),
-                transferred_owner_block_count_after_restore + 1
+                transferred_view_block_count_after_restore + 1
             );
         });
     })
@@ -1438,7 +1438,7 @@ fn test_alt_screen_select_with_sgr_mouse() {
 
         let (window_id, terminal) = add_window_with_id_and_terminal(&mut app, None);
 
-        let mut updated = HashSet::new();
+        let mut updated = EntityIdSet::default();
         updated.insert(app.root_view_id(window_id).unwrap());
         let invalidation = WindowInvalidation {
             updated,

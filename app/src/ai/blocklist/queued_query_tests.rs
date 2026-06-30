@@ -457,7 +457,7 @@ fn clear_conversations_in_terminal_view_drops_every_listed_conversation() {
         append_user(&model, &mut app, conv_b, "b1");
 
         history.update(&mut app, |h, ctx| {
-            h.clear_conversations_in_terminal_view(terminal_view_id, ctx)
+            h.clear_conversations_for_terminal_surface(terminal_view_id, ctx)
         });
 
         model.read(&app, |m, _| {

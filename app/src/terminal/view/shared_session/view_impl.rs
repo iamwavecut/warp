@@ -476,7 +476,7 @@ impl TerminalView {
             && scrollback_type == SharedSessionScrollbackType::None
         {
             let has_conversations = BlocklistAIHistoryModel::as_ref(ctx)
-                .all_live_conversations_for_terminal_view(ctx.handle().id())
+                .all_live_conversations_for_terminal_surface(ctx.handle().id())
                 .any(|conv| conv.exchange_count() > 0);
 
             if has_conversations {
