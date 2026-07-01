@@ -15,7 +15,7 @@ use crate::workspace::active_terminal_in_window;
 use crate::workspace::{Workspace, WorkspaceAction, WorkspaceRegistry};
 use crate::{view_components::DismissibleToast, workspace::ToastStack};
 
-use crate::settings_view::SettingsSection;
+use crate::settings_view::{settings_widget_deeplink_target, SettingsSection};
 use crate::tab_configs::TabConfig;
 use crate::user_config::{load_launch_configs, load_tab_configs, tab_configs_dir};
 use crate::{quake_mode_window_id, quake_mode_window_is_open, safe_info, ChannelState, OpenPath};
@@ -39,6 +39,17 @@ const DESKTOP_REDIRECT_URI_PATH: &str = "/desktop_redirect";
 /// against gallery titles in `autoinstall_from_gallery`.
 pub struct OpenMCPSettingsArgs {
     pub autoinstall: Option<String>,
+}
+
+pub enum OpenSettingsArgs {
+    Default,
+    Search {
+        query: String,
+    },
+    Widget {
+        page: SettingsSection,
+        widget_id: &'static str,
+    },
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -162,62 +173,100 @@ impl UriHost {
             }
             UriHost::Settings => {
                 // We support opening different settings pages through URI:
-                // - warp://settings/teams?invite={email} - opens team settings with invite modal
+                // - warp://settings - opens a settings tab on the default page
+                // - warp://settings?q={query} - opens settings with the search bar pre-filled
+                // - warp://settings?widget={widget_id} - opens settings scrolled to a widget
                 // - warp://settings/mcp - opens MCP servers settings page
-                // - warp://settings/platform - opens platform settings page
                 // - warp://settings/appearance - opens appearance settings page (themes, fonts, etc.)
                 // - warp://settings/warp_agent - opens the Warp Agent settings page (inference / API keys)
+                let query_string: HashMap<_, _> = url.query_pairs().collect();
+                // A bare `warp://settings` (or a trailing slash) yields an empty path
+                // segment; treat that as "no sub-page" so the query-param routing below
+                // handles it.
                 let settings_sub_page: Option<String> = url
                     .path_segments()
                     .into_iter()
                     .flatten()
                     .last()
+                    .filter(|s| !s.is_empty())
                     .map(|s| s.to_string());
-                let query_string: HashMap<_, _> = url.query_pairs().collect();
 
-                if let Some(settings_sub_page) = settings_sub_page {
-                    match settings_sub_page.as_str() {
-                        "teams" => {
-                            log::info!("Ignoring hosted team settings URI in local-first build");
-                        }
-                        "mcp" => {
-                            // warp://settings/mcp?autoinstall=<name> auto-installs a gallery MCP server.
-                            // The value is matched case-insensitively against gallery titles.
-                            let autoinstall =
-                                query_string.get("autoinstall").map(|v| v.to_string());
-                            let args = OpenMCPSettingsArgs { autoinstall };
+                match settings_sub_page.as_deref() {
+                    Some("teams") => {
+                        log::info!("Ignoring hosted team settings URI in local-first build");
+                    }
+                    Some("mcp") => {
+                        // warp://settings/mcp?autoinstall=<name> auto-installs a gallery MCP server.
+                        // The value is matched case-insensitively against gallery titles.
+                        let autoinstall = query_string.get("autoinstall").map(|v| v.to_string());
+                        let args = OpenMCPSettingsArgs { autoinstall };
+                        dispatch_action_in_new_or_existing_window(
+                            primary_window_id,
+                            "root_view:open_mcp_settings_in_existing_window",
+                            "root_view:open_mcp_settings_in_new_window",
+                            &args,
+                            ctx,
+                        );
+                    }
+                    // No special sub-page: route the bare host, the `q` (search) and
+                    // `widget` (scroll-to) query params, and the simple section
+                    // sub-pages resolved via `settings_section_for_simple_subpage`.
+                    maybe_simple_subpage => {
+                        let simple_section =
+                            maybe_simple_subpage.and_then(settings_section_for_simple_subpage);
+                        // Pull the non-empty `q` search query out of the already
+                        // parsed pairs to pre-fill the settings search bar.
+                        let search_query = query_string
+                            .get("q")
+                            .map(|query| query.to_string())
+                            .filter(|query| !query.is_empty());
+                        let widget_target = query_string
+                            .get("widget")
+                            .and_then(|slug| settings_widget_deeplink_target(slug));
+
+                        if let Some((page, widget_id)) = widget_target {
+                            // `?widget=` scrolls to a specific widget; it takes
+                            // precedence over `?q=` since searching would filter the
+                            // target widget out of view.
+                            let args = OpenSettingsArgs::Widget { page, widget_id };
                             dispatch_action_in_new_or_existing_window(
                                 primary_window_id,
-                                "root_view:open_mcp_settings_in_existing_window",
-                                "root_view:open_mcp_settings_in_new_window",
+                                "root_view:open_settings_in_existing_window",
+                                "root_view:open_settings_in_new_window",
                                 &args,
                                 ctx,
                             );
-                        }
-                        "appearance" => {
+                        } else if let Some(query) = search_query {
+                            let args = OpenSettingsArgs::Search { query };
+                            dispatch_action_in_new_or_existing_window(
+                                primary_window_id,
+                                "root_view:open_settings_in_existing_window",
+                                "root_view:open_settings_in_new_window",
+                                &args,
+                                ctx,
+                            );
+                        } else if let Some(section) = simple_section {
                             dispatch_action_in_new_or_existing_window(
                                 primary_window_id,
                                 "root_view:open_settings_page_in_existing_window",
                                 "root_view:open_settings_page_in_new_window",
-                                &SettingsSection::Appearance,
+                                &section,
                                 ctx,
                             );
-                        }
-                        "warp_agent" => {
+                        } else if maybe_simple_subpage.is_none() {
+                            // Bare `warp://settings` opens the default settings page.
+                            let args = OpenSettingsArgs::Default;
                             dispatch_action_in_new_or_existing_window(
                                 primary_window_id,
-                                "root_view:open_settings_page_in_existing_window",
-                                "root_view:open_settings_page_in_new_window",
-                                &SettingsSection::WarpAgent,
+                                "root_view:open_settings_in_existing_window",
+                                "root_view:open_settings_in_new_window",
+                                &args,
                                 ctx,
                             );
-                        }
-                        _ => {
-                            log::warn!("Failed to open settings pane with uri={url}");
+                        } else {
+                            log::warn!("Failed to open settings pane: unrecognized sub-page");
                         }
                     }
-                } else {
-                    log::warn!("Failed to open settings pane with uri={url}");
                 }
             }
             UriHost::Home => {
@@ -918,6 +967,14 @@ fn dispatch_action_in_new_or_existing_window<T: 'static>(
         );
     } else {
         ctx.dispatch_global_action(new_window_action, args);
+    }
+}
+
+fn settings_section_for_simple_subpage(subpage: &str) -> Option<SettingsSection> {
+    match subpage {
+        "appearance" => Some(SettingsSection::Appearance),
+        "warp_agent" => Some(SettingsSection::WarpAgent),
+        _ => None,
     }
 }
 

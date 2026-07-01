@@ -12,6 +12,8 @@ use warpui::elements::{
 };
 use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
+use warpui::ui_components::components::UiComponent;
+use warpui::ui_components::switch::SwitchStateHandle;
 use warpui::{AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext};
 
 use crate::ai::agent::conversation::AIConversationId;
@@ -26,46 +28,6 @@ use crate::appearance::Appearance;
 use crate::ui_components::blended_colors;
 use crate::BlocklistAIHistoryModel;
 use warp_core::ui::theme::WarpTheme;
-
-/// Renders a pill-shaped toggle switch (36×18) matching the Figma mock.
-fn render_pill_toggle(is_on: bool, theme: &WarpTheme) -> Box<dyn Element> {
-    let thumb_size = 14.;
-    let thumb = ConstrainedBox::new(
-        Container::new(Empty::new().finish())
-            .with_corner_radius(CornerRadius::with_all(Radius::Percentage(50.)))
-            .with_background_color(ColorU::white())
-            .finish(),
-    )
-    .with_width(thumb_size)
-    .with_height(thumb_size)
-    .finish();
-
-    let track_bg = if is_on {
-        theme.accent().into_solid()
-    } else {
-        warp_core::ui::theme::color::internal_colors::fg_overlay_4(theme).into_solid()
-    };
-    let alignment = if is_on {
-        MainAxisAlignment::End
-    } else {
-        MainAxisAlignment::Start
-    };
-    let switch_inner = Flex::row()
-        .with_main_axis_alignment(alignment)
-        .with_main_axis_size(MainAxisSize::Max)
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_child(Container::new(thumb).with_uniform_padding(2.).finish())
-        .finish();
-    ConstrainedBox::new(
-        Container::new(switch_inner)
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(9.)))
-            .with_background_color(track_bg)
-            .finish(),
-    )
-    .with_width(36.)
-    .with_height(18.)
-    .finish()
-}
 
 const CONFIG_BLOCK_HEADER: &str = "Use orchestration";
 const CONFIG_BLOCK_DESCRIPTION: &str =
@@ -101,7 +63,7 @@ pub struct OrchestrationConfigBlockView {
     is_approved: bool,
     details_expanded: bool,
     pickers_initialized: bool,
-    toggle_mouse_state: MouseStateHandle,
+    toggle_switch_state: SwitchStateHandle,
     details_mouse_state: MouseStateHandle,
     /// UI-only per-harness model memory so switching harnesses preserves
     /// the user's previous model selection for each harness.
@@ -192,7 +154,7 @@ impl OrchestrationConfigBlockView {
             is_approved,
             details_expanded: false,
             pickers_initialized: false,
-            toggle_mouse_state: MouseStateHandle::default(),
+            toggle_switch_state: SwitchStateHandle::default(),
             details_mouse_state: MouseStateHandle::default(),
             saved_model_per_harness: HashMap::new(),
             suppress_refresh: false,
@@ -302,19 +264,20 @@ impl View for OrchestrationConfigBlockView {
         .finish();
 
         let is_on = self.is_approved;
+        let ui_builder = appearance.ui_builder();
 
         let header_row = Flex::row()
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_child(warpui::elements::Expanded::new(1.0, header_label).finish())
             .with_child(
-                Hoverable::new(self.toggle_mouse_state.clone(), move |_| {
-                    render_pill_toggle(is_on, theme)
-                })
-                .on_click(|ctx, _, _| {
-                    ctx.dispatch_typed_action(OrchestrationConfigBlockAction::ToggleApproval);
-                })
-                .with_cursor(Cursor::PointingHand)
-                .finish(),
+                ui_builder
+                    .switch(self.toggle_switch_state.clone())
+                    .check(is_on)
+                    .build()
+                    .on_click(|ctx, _, _| {
+                        ctx.dispatch_typed_action(OrchestrationConfigBlockAction::ToggleApproval);
+                    })
+                    .finish(),
             )
             .finish();
         column.add_child(header_row);

@@ -699,6 +699,7 @@ fn should_fork_from_last_known_good_state(
             will_attempt_resume,
             ..
         } => !will_attempt_resume,
+        RenderableAIError::AgentExitedShell => true,
     }
 }
 

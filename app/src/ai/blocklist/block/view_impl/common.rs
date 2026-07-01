@@ -3116,6 +3116,12 @@ pub fn render_failed_output(props: FailedOutputProps, app: &AppContext) -> Box<d
                  Please refresh your AWS credentials."
             )
         }
+        RenderableAIError::AgentExitedShell => {
+            format!(
+                "{ERROR_APOLOGY_TEXT}\n\n{}",
+                RenderableAIError::AGENT_EXITED_SHELL_MESSAGE
+            )
+        }
     };
 
     Flex::row()

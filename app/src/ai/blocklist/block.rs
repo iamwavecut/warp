@@ -1949,7 +1949,6 @@ impl AIBlock {
                 .entry(citation.clone())
                 .or_default();
         }
-
         // Register element state for reasoning messages and track summarization timing.
         for message in &output.messages {
             if let AIAgentOutputMessageType::Reasoning {

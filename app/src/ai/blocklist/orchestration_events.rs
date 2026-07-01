@@ -453,7 +453,7 @@ impl OrchestrationEventService {
             (
                 conversation.is_child_agent_conversation(),
                 conversation.status().clone(),
-                conversation.status_error_message().map(str::to_string),
+                conversation.status_error_message(),
             )
         };
 

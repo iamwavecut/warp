@@ -28,8 +28,8 @@ use crate::ai::agent::conversation::{AIConversation, ConversationStatus};
 use crate::ai::agent::extract_user_query_mode;
 use crate::ai::agent::task::TaskId;
 use crate::ai::agent::{
-    AIAgentActionResult, CancellationReason, PassiveSuggestionResultType, PassiveSuggestionTrigger,
-    PassiveSuggestionTriggerType, RunningCommand,
+    AIAgentActionResult, CancellationOutcome, CancellationReason, PassiveSuggestionResultType,
+    PassiveSuggestionTrigger, PassiveSuggestionTriggerType, RunningCommand,
 };
 use crate::ai::agent::{DocumentContentAttachmentSource, FileContext};
 use crate::ai::ambient_agents::AmbientAgentTaskId;
@@ -400,6 +400,16 @@ impl BlocklistAIController {
             else {
                 return;
             };
+            // `FinalizedExternally` (e.g. shell exit) means the conversation status and message
+            // is set elsewhere through a dedicated path, so we must not trigger a follow-up or update conversation status here.
+            let cancellation_outcome =
+                cancellation_reason.map(|reason| reason.conversation_outcome());
+            if matches!(
+                cancellation_outcome,
+                Some(CancellationOutcome::FinalizedExternally)
+            ) {
+                return;
+            }
             let action_model = me.action_model.as_ref(ctx);
             if action_model.has_unfinished_actions_for_conversation(*conversation_id) {
                 return;
@@ -436,10 +446,10 @@ impl BlocklistAIController {
                 });
             let has_manual_follow_up = me.pending_passive_follow_ups.contains(conversation_id);
 
-            let is_lrc_command_completed =
-                cancellation_reason.is_some_and(|reason| reason.is_lrc_command_completed());
+            let treat_as_success =
+                matches!(cancellation_outcome, Some(CancellationOutcome::Succeeded));
             let should_trigger_follow_up_request = (!is_passive_code_diff
-                && !is_lrc_command_completed
+                && !treat_as_success
                 && finished_action_results
                     .iter()
                     .any(|result| result.result.should_trigger_request_upon_completion()))
@@ -472,7 +482,7 @@ impl BlocklistAIController {
                     let updated_conversation_status = if finished_action_results
                         .iter()
                         .all(|result| result.result.is_successful())
-                        || is_lrc_command_completed
+                        || treat_as_success
                     {
                         ConversationStatus::Success
                     } else {
@@ -2022,6 +2032,90 @@ impl BlocklistAIController {
         }
     }
 
+    /// Finalizes a conversation as a terminal failure because an agent-issued
+    /// command caused the shell process to exit (e.g. it ran `exit`, or ran a
+    /// failing command after enabling `set -e`).
+    ///
+    /// Invoked from the terminal view's shell-exit handler before the pane is
+    /// torn down. The conversation is moved into a terminal `Error` state with a
+    /// shell-exit message so that the Oz run reports `FAILED` (with an
+    /// explanation) instead of "Cancelled by user", and so the subsequent
+    /// pane-close cancellation — which is guarded by `is_in_progress` — becomes a
+    /// no-op and cannot overwrite the failure.
+    pub fn fail_conversation_due_to_shell_exit(
+        &mut self,
+        conversation_id: AIConversationId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let terminal_surface_id = self.terminal_surface_id;
+        let history_model = BlocklistAIHistoryModel::handle(ctx);
+
+        // Only act on conversations that are still running. A finished
+        // conversation (e.g. the agent already completed) must not be
+        // retroactively marked as failed.
+        let is_in_progress = history_model
+            .as_ref(ctx)
+            .conversation(&conversation_id)
+            .is_some_and(|conversation| conversation.status().is_in_progress());
+        if !is_in_progress {
+            return;
+        }
+
+        // Finish any in-flight response stream(s) with the shell-exit error. This
+        // marks the streaming exchange(s) as errored, sets the conversation to
+        // `Error` (with a message), and renders the failure inline. We then cancel
+        // the underlying request so it stops streaming; the cancellation does not
+        // overwrite the status because `mark_request_cancelled` ignores the
+        // `AgentExitedShell` reason.
+        let stream_ids = self
+            .in_flight_response_streams
+            .stream_ids_for_conversation(conversation_id, ctx);
+        let had_in_flight_stream = !stream_ids.is_empty();
+        for stream_id in &stream_ids {
+            history_model.update(ctx, |history_model, ctx| {
+                history_model.mark_response_stream_completed_with_error(
+                    RenderableAIError::AgentExitedShell,
+                    stream_id,
+                    conversation_id,
+                    terminal_surface_id,
+                    ctx,
+                );
+            });
+            self.try_cancel_pending_response_stream(
+                stream_id,
+                CancellationReason::AgentExitedShell,
+                ctx,
+            );
+        }
+
+        // Stop any pending or mid-execution actions so a queued action result
+        // can't subsequently move the conversation back to Success/Cancelled.
+        self.action_model.update(ctx, |action_model, ctx| {
+            action_model.cancel_all_pending_actions(
+                conversation_id,
+                Some(CancellationReason::AgentExitedShell),
+                ctx,
+            );
+        });
+
+        // If there was no in-flight stream to attach the error to (e.g. the agent
+        // ran `exit` and no follow-up request was in flight), set the terminal
+        // `Error` status directly, recording the structured shell-exit error so
+        // status consumers (Oz task sync and the ambient SDK driver) classify it
+        // as FAILED rather than a generic ERROR.
+        if !had_in_flight_stream {
+            history_model.update(ctx, |history_model, ctx| {
+                history_model.update_conversation_status_with_error(
+                    terminal_surface_id,
+                    conversation_id,
+                    ConversationStatus::Error,
+                    Some(RenderableAIError::AgentExitedShell),
+                    ctx,
+                );
+            });
+        }
+    }
+
     /// Clears finished action results for a conversation. Used when reverting.
     pub fn clear_finished_action_results(
         &mut self,
@@ -2244,6 +2338,7 @@ impl BlocklistAIController {
                             .reason
                             .is_follow_up_for_same_conversation()
                     {
+                        // For any terminal status (not just canceled), we need to inform viewers the stream has stopped.
                         self.send_cancellation_to_viewers(ctx);
                     }
 

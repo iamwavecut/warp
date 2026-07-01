@@ -39,7 +39,7 @@ use warp_multi_agent_api::{self as api, response_event::stream_finished::TokenUs
 use warpui::color::ColorU;
 use warpui::{EntityId, ModelContext, SingletonEntity};
 
-use crate::ai::agent::{AIIdentifiers, CancellationReason};
+use crate::ai::agent::{AIIdentifiers, CancellationOutcome, CancellationReason};
 use crate::{
     ai::{
         agent::{
@@ -147,8 +147,12 @@ pub struct AIConversation {
     code_review: Option<CodeReview>,
 
     status: ConversationStatus,
-    /// Optional detail for the current error status.
-    status_error_message: Option<String>,
+    /// Structured error backing the current `Error`/`TransientError` status. The
+    /// single source of truth for both the human-readable message (via `Display`)
+    /// and the FAILED-vs-ERROR classification (via `classify_renderable_error`),
+    /// used by status consumers like the Oz task sync model and the ambient SDK
+    /// driver.
+    status_error: Option<RenderableAIError>,
 
     /// Tracks whether the code review has been opened at least once for this conversation.
     has_opened_code_review: bool,
@@ -284,7 +288,7 @@ impl AIConversation {
             is_cli_agent_transcript,
             todo_lists: vec![],
             status: ConversationStatus::InProgress,
-            status_error_message: None,
+            status_error: None,
             has_opened_code_review: false,
             conversation_usage_metadata: ConversationUsageMetadata::default(),
             server_conversation_token: None,
@@ -519,7 +523,7 @@ impl AIConversation {
             is_cli_agent_transcript: false,
             task_store,
             status,
-            status_error_message: None,
+            status_error: None,
             todo_lists,
             // TODO(alokedesai): Support session restoration for code review comments.
             code_review: None,
@@ -565,6 +569,7 @@ impl AIConversation {
                 task.reassign_exchange_ids();
             });
         }
+        self.task_store.rebuild_exchange_id_index();
     }
 
     pub fn is_viewing_shared_session(&self) -> bool {
@@ -738,8 +743,8 @@ impl AIConversation {
     pub fn status(&self) -> &ConversationStatus {
         &self.status
     }
-    pub fn status_error_message(&self) -> Option<&str> {
-        self.status_error_message.as_deref()
+    pub fn status_error_message(&self) -> Option<String> {
+        self.status_error.as_ref().map(ToString::to_string)
     }
 
     pub fn update_status(
@@ -748,18 +753,24 @@ impl AIConversation {
         terminal_surface_id: EntityId,
         ctx: &mut ModelContext<BlocklistAIHistoryModel>,
     ) {
-        self.update_status_with_error_message(status, None, terminal_surface_id, ctx);
+        self.update_status_with_error(status, None, terminal_surface_id, ctx);
     }
 
-    pub fn update_status_with_error_message(
+    /// Updates the conversation status, recording the structured `error` when the
+    /// status is `Error`/`TransientError` (and clearing it otherwise). The error is
+    /// the single source of truth for both the status message and the
+    /// FAILED-vs-ERROR classification used by status consumers (Oz task sync, the
+    /// ambient SDK driver), so callers should pass a structured error rather than a
+    /// bare string — wrap free-form text via [`RenderableAIError::other`].
+    pub fn update_status_with_error(
         &mut self,
         status: ConversationStatus,
-        error_message: Option<String>,
+        error: Option<RenderableAIError>,
         terminal_surface_id: EntityId,
         ctx: &mut ModelContext<BlocklistAIHistoryModel>,
     ) {
-        self.status_error_message = if matches!(&status, ConversationStatus::Error) {
-            error_message.filter(|message| !message.trim().is_empty())
+        self.status_error = if matches!(&status, ConversationStatus::Error) {
+            error
         } else {
             None
         };
@@ -1286,12 +1297,7 @@ impl AIConversation {
 
     #[cfg_attr(target_family = "wasm", allow(unused))]
     pub fn exchange_with_id(&self, exchange_id: AIAgentExchangeId) -> Option<&AIAgentExchange> {
-        for task in self.task_store.tasks() {
-            if let Some(exchange) = task.exchanges().find(|exchange| exchange.id == exchange_id) {
-                return Some(exchange);
-            }
-        }
-        None
+        self.task_store.exchange_by_id(exchange_id)
     }
 
     /// Returns the exchange that preceded the exchange with the given id, if there is one.
@@ -1998,12 +2004,22 @@ impl AIConversation {
 
         self.write_updated_conversation_state(ctx);
 
-        // Don't mark the conversation as Cancelled if we're just cancelling to send a follow-up
-        // on the same conversation (it will be immediately set back to InProgress), or if the
-        // user manually took over the long-running command (the conversation remains in progress
-        // and will resume once the command finishes or control is handed back).
-        if !reason.should_preserve_in_progress_status() {
-            self.update_status(ConversationStatus::Cancelled, terminal_surface_id, ctx);
+        // Finalize the conversation status from the single source of truth for
+        // this cancellation reason:
+        // * `KeepInProgress` leaves the status untouched — a follow-up request or a
+        //   resumed long-running command will continue the conversation.
+        // * `Succeeded` (e.g. an optimistic long-running-command completion or a
+        //   revert) is a successful completion, not a cancellation.
+        // * `Errored` (e.g. shell exit) is finalized as `Error` by a dedicated
+        //   path, so we must not stamp a status here.
+        match reason.conversation_outcome() {
+            CancellationOutcome::Succeeded => {
+                self.update_status(ConversationStatus::Success, terminal_surface_id, ctx);
+            }
+            CancellationOutcome::Cancelled => {
+                self.update_status(ConversationStatus::Cancelled, terminal_surface_id, ctx);
+            }
+            CancellationOutcome::KeepInProgress | CancellationOutcome::FinalizedExternally => {}
         }
         Ok(())
     }
@@ -2108,9 +2124,9 @@ impl AIConversation {
         }
 
         self.write_updated_conversation_state(ctx);
-        self.update_status_with_error_message(
+        self.update_status_with_error(
             ConversationStatus::Error,
-            Some(error.to_string()),
+            Some(error),
             terminal_surface_id,
             ctx,
         );
