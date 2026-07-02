@@ -484,7 +484,7 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                                             continue;
                                         }
                                         group_file_contexts_for_display(
-                                            file_contexts,
+                                            &file_contexts,
                                             props.shell_launch_data,
                                             props.current_working_directory,
                                         )
@@ -1373,7 +1373,7 @@ fn render_search_codebase(
                             app,
                             footer,
                             appearance,
-                            Some(status),
+                            Some(&status),
                         )
                         .render(app)
                         .finish()
@@ -1395,7 +1395,7 @@ fn render_search_codebase(
                     app,
                     footer,
                     appearance,
-                    Some(status),
+                    Some(&status),
                 )
                 .with_header(blocked_action_header(
                     id.clone(),
@@ -1423,7 +1423,7 @@ fn render_search_codebase(
                         app,
                         footer,
                         appearance,
-                        Some(status),
+                        Some(&status),
                     )
                     .render(app)
                     .finish()
@@ -1449,7 +1449,7 @@ fn render_search_codebase(
                                     app,
                                     footer,
                                     appearance,
-                                    Some(status),
+                                    Some(&status),
                                 )
                                 .render(app)
                                 .finish()
@@ -1490,7 +1490,7 @@ fn render_search_codebase(
                                 app,
                                 footer,
                                 appearance,
-                                Some(status),
+                                Some(&status),
                             )
                             .render(app)
                             .finish()
@@ -1505,7 +1505,7 @@ fn render_search_codebase(
                                 app,
                                 footer,
                                 appearance,
-                                Some(status),
+                                Some(&status),
                             )
                             .render(app)
                             .finish()

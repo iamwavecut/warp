@@ -8,6 +8,7 @@ use warpui::{Entity, EntityId, ModelContext, SingletonEntity};
 use super::{ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput};
 use crate::ai::agent::{AIAgentActionId, AIAgentActionType};
 use crate::ai::ambient_agents::AmbientAgentTaskId;
+use crate::features::FeatureFlag;
 
 pub struct RequestComputerUseExecutor {
     terminal_view_id: EntityId,
@@ -72,10 +73,20 @@ impl RequestComputerUseExecutor {
         let screenshot_params = request.screenshot_params;
         let mut actor = computer_use::create_actor();
         let platform = actor.platform();
+        // Gate per-window targeting behind the client feature flag. When off, the actor forces the
+        // legacy full-screen path so results are identical to the pre-existing implementation. The
+        // OS-capability check is folded into the request setting rather than reported in the result.
+        let background_enabled = FeatureFlag::BackgroundComputerUse.is_enabled();
         ActionExecution::Async {
             execute_future: Box::pin(async move {
                 let result = actor
-                    .perform_actions(&[], computer_use::Options { screenshot_params })
+                    .perform_actions(
+                        &[],
+                        computer_use::Options {
+                            screenshot_params,
+                            background_enabled,
+                        },
+                    )
                     .await;
                 (result, platform)
             }),
@@ -83,6 +94,7 @@ impl RequestComputerUseExecutor {
                 (
                     Ok(computer_use::ActionResult {
                         screenshot: Some(screenshot),
+                        windows,
                         ..
                     }),
                     Some(platform),
@@ -90,6 +102,7 @@ impl RequestComputerUseExecutor {
                     RequestComputerUseResult::Approved {
                         screenshot,
                         platform,
+                        windows,
                     },
                 ),
                 (

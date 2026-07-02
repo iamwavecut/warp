@@ -21,7 +21,7 @@ use super::{
     conversation_selection::{ConversationSelectionEvent, ConversationSelectionHandle},
     history_model::BlocklistAIHistoryModel,
     input_model::InputConfig,
-    BlocklistAIInputModel, InputType,
+    BlocklistAIInputModel, InputType, QueuedQueryModel,
 };
 use crate::ai::agent::api::{self, ServerConversationToken};
 use crate::ai::agent::conversation::{AIConversation, ConversationStatus};

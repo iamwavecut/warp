@@ -508,6 +508,10 @@ pub enum FeatureFlag {
     /// Enables computer use functionality in local clients.
     LocalComputerUse,
 
+    /// Enables background, per-window computer use: driving a specific window directly without
+    /// raising it or moving the cursor.  Currently only supported on macOS.
+    BackgroundComputerUse,
+
     /// Enables team API key creation in the API key management UI.
     TeamApiKeys,
 

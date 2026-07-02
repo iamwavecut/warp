@@ -28,12 +28,11 @@ pub mod usage;
 pub(crate) mod codebase_index_speedbump_banner;
 pub(super) mod view_util;
 
-pub use action_model::BlocklistAIActionModel;
 #[cfg_attr(target_family = "wasm", allow(unused_imports))]
 pub(crate) use action_model::{
-    read_local_file_context, BlocklistAIActionEvent, ReadFileContextResult, ShellCommandExecutor,
-    ShellCommandExecutorEvent, StartAgentExecutor, StartAgentExecutorEvent, StartAgentRequest,
-    StartAgentRequestId,
+    read_local_file_context, BlocklistAIActionEvent, BlocklistAIActionModel, ReadFileContextResult,
+    ShellCommandExecutor, ShellCommandExecutorEvent, StartAgentExecutor, StartAgentExecutorEvent,
+    StartAgentRequest, StartAgentRequestId,
 };
 
 #[cfg(any(test, feature = "integration_tests"))]

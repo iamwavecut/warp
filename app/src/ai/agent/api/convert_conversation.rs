@@ -1242,10 +1242,10 @@ pub(crate) fn convert_tool_call_result_to_input(
                         .cursor_position
                         .as_ref()
                         .map(|c| computer_use::Vector2I::new(c.x, c.y));
-                    UseComputerResult::Success(computer_use::ActionResult {
+                    UseComputerResult::Success(computer_use::ActionResult::legacy(
                         screenshot,
                         cursor_position,
-                    })
+                    ))
                 }
                 Some(api::use_computer_result::Result::Error(error)) => {
                     UseComputerResult::Error(error.message.clone())
@@ -1283,6 +1283,7 @@ pub(crate) fn convert_tool_call_result_to_input(
                                 mime_type: initial_screenshot.mime_type.clone().into(),
                             },
                             platform,
+                            windows: Vec::new(),
                         },
                         _ => RequestComputerUseResult::Error(
                             "Missing screen dimensions, initial screenshot, or valid platform"

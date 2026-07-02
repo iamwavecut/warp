@@ -39,7 +39,8 @@ pub struct RepoContents<'a> {
 use warp_util::standardized_path::StandardizedPath;
 
 use crate::entry::{
-    BudgetExceededBehavior, BuildTreeError, BuildTreeOptions, Entry, FileId, IgnoredPathStrategy,
+    matches_force_included_path, BudgetExceededBehavior, BuildTreeError, BuildTreeOptions, Entry,
+    FileId, IgnoredPathStrategy,
 };
 use crate::repository::Repository;
 use crate::standing_queries::{
@@ -928,6 +929,7 @@ impl LocalRepoMetadataModel {
                 force_included_paths: &self.force_included_paths,
                 budget_exceeded_behavior: BudgetExceededBehavior::StopAndLazyLoad,
             },
+            false,
             &mut standing_results,
             &self.standing_query_definitions,
         )
@@ -1186,6 +1188,14 @@ impl LocalRepoMetadataModel {
                     continue;
                 }
 
+                if is_ignored && !matches_force_included_path(path_to_add, force_included_paths) {
+                    mutations.push(FileTreeMutation::AddUnloadedDirectory {
+                        path: path_to_add.clone(),
+                        is_ignored,
+                    });
+                    continue;
+                }
+
                 let mut files = Vec::new();
                 let mut gitignores = gitignores.to_owned();
                 let mut file_limit = MAX_FILES_PER_REPO;
@@ -1201,6 +1211,7 @@ impl LocalRepoMetadataModel {
                         force_included_paths,
                         budget_exceeded_behavior: BudgetExceededBehavior::StopAndLazyLoad,
                     },
+                    is_ignored,
                     &mut standing_results,
                     standing_query_definitions,
                 ) {
@@ -1285,7 +1296,9 @@ impl LocalRepoMetadataModel {
                     let Some(std_path) = StandardizedPath::try_from_local(path).ok() else {
                         continue;
                     };
-                    if lazy_load && !Self::is_parent_loaded_in_entry(root_entry, &std_path) {
+                    if (lazy_load || is_ignored)
+                        && !Self::is_parent_loaded_in_entry(root_entry, &std_path)
+                    {
                         continue;
                     }
                     let Some(parent) = std_path.parent() else {
@@ -1362,7 +1375,17 @@ impl LocalRepoMetadataModel {
                     let Some(std_path) = StandardizedPath::try_from_local(path).ok() else {
                         continue;
                     };
-                    if lazy_load && !Self::is_parent_loaded_in_entry(root_entry, &std_path) {
+                    if matches!(
+                        root_entry.get(&std_path),
+                        Some(FileTreeEntryState::Directory(dir)) if dir.loaded
+                    ) {
+                        continue;
+                    }
+                    // Gitignored placeholders are lazy: like `lazy_load`, don't materialize one
+                    // beneath an unloaded (collapsed) ignored ancestor.
+                    if (lazy_load || is_ignored)
+                        && !Self::is_parent_loaded_in_entry(root_entry, &std_path)
+                    {
                         continue;
                     }
                     let Some(parent) = std_path.parent() else {
@@ -1544,6 +1567,7 @@ impl LocalRepoMetadataModel {
                         force_included_paths: &force_included_paths,
                         budget_exceeded_behavior: BudgetExceededBehavior::StopAndLazyLoad,
                     },
+                    false,
                     &mut standing_results,
                     &standing_query_definitions,
                 );

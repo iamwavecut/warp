@@ -936,6 +936,7 @@ impl TryFrom<RequestComputerUseResult> for api::request::input::tool_call_result
             RequestComputerUseResult::Approved {
                 screenshot,
                 platform,
+                windows: _,
             } => Ok(
                 api::request::input::tool_call_result::Result::RequestComputerUse(
                     api::RequestComputerUseResult {

@@ -1879,7 +1879,12 @@ impl AIBlock {
                     } else {
                         format!("MCP Tool: {name} ({display_input})")
                     };
-                    self.handle_mcp_tool_stream_update(action_id, &command_text, ctx);
+                    self.handle_mcp_tool_stream_update(
+                        action_id,
+                        &command_text,
+                        display_input,
+                        ctx,
+                    );
                 }
                 AIAgentAction {
                     id: action_id,
@@ -3178,12 +3183,14 @@ impl AIBlock {
         &mut self,
         action_id: &AIAgentActionId,
         command_text: &str,
+        mcp_args: serde_json::Value,
         ctx: &mut ViewContext<Self>,
     ) {
         match self.requested_mcp_tools.get_mut(action_id) {
             Some(requested_mcp_tool) => {
                 requested_mcp_tool.view.update(ctx, |view, ctx| {
                     view.apply_streamed_update(command_text, ctx);
+                    view.update_mcp_request(mcp_args);
                     ctx.notify();
                 });
             }
@@ -3204,6 +3211,7 @@ impl AIBlock {
                         ctx,
                     );
                     view.apply_streamed_update(command_text, ctx);
+                    view.update_mcp_request(mcp_args);
                     view
                 });
                 let action_id_clone = action_id.clone();
@@ -4051,76 +4059,7 @@ impl AIBlock {
             }
 
             match event {
-                BlocklistAIActionEvent::ExecutingAction(..) => {
-                    match &me.autonomy_setting_speedbump {
-                        AutonomySettingSpeedbump::ShouldShowForAutoexecutingReadonlyCommands {
-                            action_id: speedbump_action_id,
-                            shown,
-                            checked,
-                            ..
-                        } if speedbump_action_id == action_id && *shown.lock() => {
-                            BlocklistAIPermissions::handle(ctx).update(ctx, |permissions, ctx| {
-                                report_if_error!(permissions
-                                    .set_should_autoexecute_readonly_commands(*checked, ctx));
-                            });
-                        }
-                        AutonomySettingSpeedbump::ShouldShowForFileAccess {
-                            action_id: speedbump_action_id,
-                            shown,
-                            checked,
-                            ..
-                        } if speedbump_action_id == action_id && *shown.lock() => {
-                            let permission = if *checked {
-                                AgentModeCodingPermissionsType::AlwaysAllowReading
-                            } else {
-                                AgentModeCodingPermissionsType::AlwaysAskBeforeReading
-                            };
-                            BlocklistAIPermissions::handle(ctx).update(ctx, |permissions, ctx| {
-                                report_if_error!(
-                                    permissions.set_coding_permissions(permission, ctx)
-                                );
-                            });
-                        }
-                        AutonomySettingSpeedbump::ShouldShowForCodebaseSearchFileAccess {
-                            action_id: speedbump_action_id,
-                            shown,
-                            selected_option,
-                            ..
-                        } if speedbump_action_id == action_id && *shown.lock() => {
-                            let Some(root_repo_path) = me
-                                .action_model
-                                .as_ref(ctx)
-                                .search_codebase_executor(ctx)
-                                .as_ref(ctx)
-                                .root_repo_for_action(action_id)
-                                .map(Path::to_owned)
-                            else {
-                                return;
-                            };
-
-                            let permission = match selected_option {
-                                Some(0) => AgentModeCodingPermissionsType::AlwaysAllowReading,
-                                Some(1) => {
-                                    AgentModeCodingPermissionsType::AllowReadingSpecificFiles
-                                }
-                                _ => AgentModeCodingPermissionsType::AlwaysAskBeforeReading,
-                            };
-                            BlocklistAIPermissions::handle(ctx).update(ctx, |permissions, ctx| {
-                                report_if_error!(
-                                    permissions.set_coding_permissions(permission, ctx)
-                                );
-                                if matches!(
-                                    permission,
-                                    AgentModeCodingPermissionsType::AllowReadingSpecificFiles
-                                ) {
-                                    report_if_error!(permissions
-                                        .add_filepath_to_code_read_allowlist(root_repo_path, ctx));
-                                }
-                            });
-                        }
-                        _ => {}
-                    }
-                }
+                BlocklistAIActionEvent::ExecutingAction(..) => {}
                 BlocklistAIActionEvent::ActionBlockedOnUserConfirmation(..) => {
                     ctx.emit(AIBlockEvent::ActionBlockedOnUserConfirmation);
                 }
@@ -4357,6 +4296,10 @@ impl AIBlock {
 
         if !cards.is_empty() {
             self.has_imported_comments = true;
+            let conversation_id = self.client_ids.conversation_id;
+            BlocklistAIHistoryModel::handle(ctx).update(ctx, |model, _| {
+                model.mark_conversation_has_imported_comments(conversation_id);
+            });
         }
 
         self.imported_comments.insert(
@@ -5356,15 +5299,18 @@ impl AIBlock {
     /// bulk "Open all in code review" button based on whether the current working
     /// directory is still within the imported comments' repository.
     fn update_imported_comments_disabled_state(&mut self, ctx: &mut ViewContext<Self>) {
-        let cwd_location = self.current_working_directory_location(ctx);
-
         if self.has_imported_comments {
+            let cwd_location = self.current_working_directory_location(ctx);
             self.update_own_imported_comments_disabled_state(cwd_location.as_ref(), ctx);
-        } else if self.model.is_latest_visible_exchange_in_root_task(ctx) {
+        } else if BlocklistAIHistoryModel::as_ref(ctx)
+            .conversation_has_imported_comments(&self.client_ids.conversation_id)
+            && self.model.is_latest_visible_exchange_in_root_task(ctx)
+        {
             // The "Open all" button is rendered by the latest visible exchange when the
             // current thread has imported comments but this block does not own them directly.
             // Update that block's button state from its CWD so the button disables when the
             // user navigates outside the imported comments' repository.
+            let cwd_location = self.current_working_directory_location(ctx);
             self.update_open_all_button_disabled_state(cwd_location.as_ref(), ctx);
         } else {
             return;

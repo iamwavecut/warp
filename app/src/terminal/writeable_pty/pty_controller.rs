@@ -15,11 +15,11 @@ use crate::terminal::input::CommandExecutionSource;
 use crate::terminal::line_editor_status::{LineEditorStatus, LineEditorStatusEvent};
 use crate::terminal::model::ansi::Handler;
 use crate::terminal::model::completions::ShellCompletion;
-use crate::terminal::model::escape_sequences;
 use crate::terminal::model::session::{
     ExecutorCommandEvent, InBandCommandCancelledEvent, SessionInfo, Sessions,
 };
 use crate::terminal::model::tmux::commands::TmuxCommand;
+use crate::terminal::model::{escape_sequences, StartCommandOutcome};
 use crate::terminal::model_events::{AnsiHandlerEvent, ModelEvent, ModelEventDispatcher};
 use crate::terminal::shell::ShellType;
 use crate::terminal::view::LINEFEED_REGEX;
@@ -46,7 +46,7 @@ enum PtyWrite {
         /// command.
         in_band_command_id: Option<String>,
         /// If 'some', the given callback is called right before the bytes are written to the PTY.
-        before_write_fn: Option<Box<dyn Fn() + Send + 'static>>,
+        before_write_fn: Option<Box<dyn Fn() -> StartCommandOutcome + Send + 'static>>,
     },
     Bytes {
         /// The bytes to be written.
@@ -345,15 +345,24 @@ impl<T: EventLoopSender> PtyController<T> {
         }
 
         let terminal_model = self.terminal_model.clone();
+        let callback_command_id = command_id.clone();
         self.pending_writes.push_back(PtyWrite::Command {
             command: command.to_owned(),
             shell_type,
             in_band_command_id: Some(command_id),
             before_write_fn: Some(Box::new(move || {
                 let mut terminal_model = terminal_model.lock();
-                terminal_model
-                    .block_list_mut()
-                    .start_active_block_for_in_band_command();
+                let outcome = terminal_model.start_in_band_command_execution();
+                if !outcome.is_accepted() {
+                    if let Err(err) = block_on(cancel_tx.send(InBandCommandCancelledEvent {
+                        command_id: callback_command_id.clone(),
+                    })) {
+                        log::warn!(
+                            "Pty Controller failed to cancel rejected in band command: {err:?}"
+                        );
+                    }
+                }
+                outcome
             })),
         });
 
@@ -381,8 +390,8 @@ impl<T: EventLoopSender> PtyController<T> {
 
         if let Some(write) = self.pending_writes.pop_front() {
             let is_command = matches!(write, PtyWrite::Command { .. });
-            self.send_write_to_event_loop(write, ctx);
-            if !is_command {
+            let did_write = self.send_write_to_event_loop(write, ctx);
+            if !is_command || !did_write {
                 self.execute_next_queued_write(ctx);
             }
         }
@@ -552,12 +561,12 @@ impl<T: EventLoopSender> PtyController<T> {
         shell_type: ShellType,
         source: CommandExecutionSource,
         ctx: &mut ModelContext<Self>,
-    ) {
+    ) -> StartCommandOutcome {
         {
             let mut model = self.terminal_model.lock();
 
             // Explicitly start the block now that the command is executed.
-            match source {
+            let outcome = match source {
                 CommandExecutionSource::AI { metadata } => {
                     model.start_command_execution_with_ai_metadata(metadata)
                 }
@@ -570,6 +579,9 @@ impl<T: EventLoopSender> PtyController<T> {
                 CommandExecutionSource::EnvVarCollection { metadata } => {
                     model.start_command_execution_from_env_var_collection(metadata)
                 }
+            };
+            if !outcome.is_accepted() {
+                return outcome;
             }
 
             // Ensure that the `TerminalModel` doesn't interpret any of the PTY output from the
@@ -595,6 +607,7 @@ impl<T: EventLoopSender> PtyController<T> {
         } else {
             self.pending_writes.push_back(write);
         }
+        StartCommandOutcome::Accepted
     }
 
     /// Synchronously writes the EOT (End-of-Transmission) char to the PTY.
@@ -665,7 +678,7 @@ impl<T: EventLoopSender> PtyController<T> {
     ///
     /// If the write corresponds to a command, this also calls
     /// [`LineEditorStatus::did_execute_command()`].
-    fn send_write_to_event_loop(&mut self, write: PtyWrite, ctx: &mut ModelContext<Self>) {
+    fn send_write_to_event_loop(&mut self, write: PtyWrite, ctx: &mut ModelContext<Self>) -> bool {
         let (bytes_to_write, is_for_command, on_write_fn, raw_tmux_command) = match write {
             PtyWrite::Command {
                 command,
@@ -713,7 +726,13 @@ impl<T: EventLoopSender> PtyController<T> {
 
         // The terminal hangs if we send 0 bytes through.
         if bytes_to_write.is_empty() {
-            return;
+            return false;
+        }
+
+        if let Some(on_write_fn) = on_write_fn {
+            if !on_write_fn().is_accepted() {
+                return false;
+            }
         }
 
         let bytes_to_write = match &mut self.tmux_control_mode {
@@ -721,7 +740,7 @@ impl<T: EventLoopSender> PtyController<T> {
             Some(_) if raw_tmux_command => bytes_to_write,
             Some(TmuxControlMode::Pending { buffer }) => {
                 buffer.extend_from_slice(&bytes_to_write);
-                return;
+                return true;
             }
             Some(TmuxControlMode::Active { primary_pane }) => {
                 crate::terminal::model::tmux::format_input(*primary_pane, &bytes_to_write)
@@ -738,11 +757,8 @@ impl<T: EventLoopSender> PtyController<T> {
                 });
         }
 
-        if let Some(on_write_fn) = on_write_fn {
-            on_write_fn();
-        }
-
         self.send_message_to_event_loop(Message::Input(bytes_to_write), ctx);
+        true
     }
 
     /// Sends a message to the event loop. If the send fails with `SendError::Disconnected`, emits
@@ -857,6 +873,9 @@ fn wrap_bytes_in_bracketed_paste(bytes: impl IntoIterator<Item = u8>) -> impl It
 #[cfg(test)]
 #[path = "pty_controller_command_bytes_tests.rs"]
 mod command_bytes_tests;
+#[cfg(test)]
+#[path = "pty_controller_lifecycle_tests.rs"]
+mod lifecycle_tests;
 
 #[derive(Error, Debug)]
 pub enum EventLoopSendError {
