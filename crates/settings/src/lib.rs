@@ -174,6 +174,21 @@ pub enum RespectUserSyncSetting {
     No,
 }
 
+/// The set of local settings surfaces a setting applies to.
+///
+/// Declared per-setting via the required `surface:` attribute in
+/// `define_settings_group!` and used like `feature_flag` by schema/default-file
+/// generation code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettingSurfaces(u8);
+
+impl SettingSurfaces {
+    /// The desktop GUI application only.
+    pub const GUI: Self = Self(1 << 0);
+    /// Every local settings surface currently supported by this fork.
+    pub const ALL: Self = Self::GUI;
+}
+
 impl SupportedPlatforms {
     pub fn matches_current_platform(&self) -> bool {
         match self {

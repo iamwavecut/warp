@@ -106,7 +106,7 @@ impl View for ExecutionProfileView {
             .map(|info| info.display_name.clone())
             .unwrap_or_else(|| {
                 llm_preferences
-                    .get_default_base_model()
+                    .get_default_base_model(app)
                     .display_name
                     .clone()
             });
@@ -116,14 +116,24 @@ impl View for ExecutionProfileView {
             .as_ref()
             .and_then(|id| llm_preferences.get_llm_info(id))
             .map(|info| info.display_name.clone())
-            .unwrap_or_else(|| "Auto".to_string());
+            .unwrap_or_else(|| {
+                llm_preferences
+                    .get_default_cli_agent_model(app)
+                    .display_name
+                    .clone()
+            });
 
         let computer_use_model = profile
             .computer_use_model
             .as_ref()
             .and_then(|id| llm_preferences.get_llm_info(id))
             .map(|info| info.display_name.clone())
-            .unwrap_or_else(|| "Auto".to_string());
+            .unwrap_or_else(|| {
+                llm_preferences
+                    .get_default_computer_use_model(app)
+                    .display_name
+                    .clone()
+            });
 
         Container::new(
             Flex::column()

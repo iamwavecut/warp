@@ -116,5 +116,5 @@ required-features = ["tui"]
 
 # Interactive manual smoke test for the TUI backend; tui-only API.
 [[example]]
-name = "tui_demo"
+name = "tui_viewport_demo"
 required-features = ["tui"]

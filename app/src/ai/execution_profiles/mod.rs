@@ -463,7 +463,7 @@ impl AIExecutionProfile {
         self.base_model
             .as_ref()
             .and_then(|id| prefs.get_llm_info(id))
-            .unwrap_or_else(|| prefs.get_default_base_model())
+            .unwrap_or_else(|| prefs.get_default_base_model(app))
     }
 
     pub fn configurable_context_window(&self, app: &AppContext) -> Option<LLMContextWindow> {

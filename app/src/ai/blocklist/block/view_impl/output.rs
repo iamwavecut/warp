@@ -26,6 +26,7 @@ use crate::ai::skills::{
 
 use crate::code::editor_management::CodeSource;
 use crate::terminal::shared_session::SharedSessionStatus;
+use crate::util::time_format::format_elapsed_seconds;
 use crate::view_components::compactible_action_button::{
     CompactibleActionButton, RenderCompactibleActionButton, SMALL_SIZE_SWITCH_THRESHOLD,
 };
@@ -111,7 +112,7 @@ use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use warp_core::channel::ChannelState;
 
 use super::common::{
-    format_elapsed_seconds, render_debug_footer, render_failed_output, render_informational_footer,
+    render_debug_footer, render_failed_output, render_informational_footer,
     render_output_status_text, render_scrollable_collapsible_content, render_text_sections,
     DebugFooterProps, FailedOutputProps, FindContext, TextSectionsProps,
     STATUS_FOOTER_VERTICAL_PADDING, STATUS_ICON_SIZE_DELTA,

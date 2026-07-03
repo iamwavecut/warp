@@ -13,6 +13,7 @@ define_settings_group!(CloudAgentSettings, settings: [
         default: None,
         supported_platforms: SupportedPlatforms::ALL,
         sync_to_cloud: SyncToCloud::Never,
+        surface: settings::SettingSurfaces::GUI,
         private: true,
     }
 ]);

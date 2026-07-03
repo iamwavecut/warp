@@ -675,7 +675,7 @@ impl ExecutionProfileEditorView {
                         current_permissions.base_model.clone(),
                         |prefs| prefs.get_base_llm_choices_for_agent_mode().collect_vec(),
                         |id| ExecutionProfileEditorViewAction::SetBaseModel { id },
-                        |prefs| prefs.get_default_base_model().id.clone(),
+                        |prefs, app| prefs.get_default_base_model(app).id.clone(),
                         ctx,
                     );
                     Self::refresh_coding_model_dropdown(
@@ -688,7 +688,7 @@ impl ExecutionProfileEditorView {
                         current_permissions.cli_agent_model.clone(),
                         |prefs| prefs.get_cli_agent_llm_choices().collect_vec(),
                         |id| ExecutionProfileEditorViewAction::SetFullTerminalUseModel { id },
-                        |prefs| prefs.get_default_cli_agent_model().id.clone(),
+                        |prefs, app| prefs.get_default_cli_agent_model(app).id.clone(),
                         ctx,
                     );
                     Self::refresh_filterable_model_dropdown(
@@ -696,7 +696,7 @@ impl ExecutionProfileEditorView {
                         current_permissions.computer_use_model.clone(),
                         |prefs| prefs.get_computer_use_llm_choices().collect_vec(),
                         |id| ExecutionProfileEditorViewAction::SetComputerUseModel { id },
-                        |prefs| prefs.get_default_computer_use_model().id.clone(),
+                        |prefs, app| prefs.get_default_computer_use_model(app).id.clone(),
                         ctx,
                     );
                     me.sync_context_window_editor(ctx, false);
@@ -707,7 +707,7 @@ impl ExecutionProfileEditorView {
                         current_permissions.base_model.clone(),
                         |prefs| prefs.get_base_llm_choices_for_agent_mode().collect_vec(),
                         |id| ExecutionProfileEditorViewAction::SetBaseModel { id },
-                        |prefs| prefs.get_default_base_model().id.clone(),
+                        |prefs, app| prefs.get_default_base_model(app).id.clone(),
                         ctx,
                     );
                     me.sync_context_window_editor(ctx, false);
@@ -734,7 +734,7 @@ impl ExecutionProfileEditorView {
                     current_permissions.base_model.clone(),
                     |prefs| prefs.get_base_llm_choices_for_agent_mode().collect_vec(),
                     |id| ExecutionProfileEditorViewAction::SetBaseModel { id },
-                    |prefs| prefs.get_default_base_model().id.clone(),
+                    |prefs, app| prefs.get_default_base_model(app).id.clone(),
                     ctx,
                 );
                 Self::refresh_coding_model_dropdown(
@@ -849,7 +849,7 @@ impl ExecutionProfileEditorView {
             current_permissions.base_model.clone(),
             |prefs| prefs.get_base_llm_choices_for_agent_mode().collect_vec(),
             |id| ExecutionProfileEditorViewAction::SetBaseModel { id },
-            |prefs| prefs.get_default_base_model().id.clone(),
+            |prefs, app| prefs.get_default_base_model(app).id.clone(),
             ctx,
         );
         Self::refresh_coding_model_dropdown(
@@ -862,7 +862,7 @@ impl ExecutionProfileEditorView {
             current_permissions.cli_agent_model.clone(),
             |prefs| prefs.get_cli_agent_llm_choices().collect_vec(),
             |id| ExecutionProfileEditorViewAction::SetFullTerminalUseModel { id },
-            |prefs| prefs.get_default_cli_agent_model().id.clone(),
+            |prefs, app| prefs.get_default_cli_agent_model(app).id.clone(),
             ctx,
         );
         Self::refresh_filterable_model_dropdown(
@@ -870,7 +870,7 @@ impl ExecutionProfileEditorView {
             current_permissions.computer_use_model.clone(),
             |prefs| prefs.get_computer_use_llm_choices().collect_vec(),
             |id| ExecutionProfileEditorViewAction::SetComputerUseModel { id },
-            |prefs| prefs.get_default_computer_use_model().id.clone(),
+            |prefs, app| prefs.get_default_computer_use_model(app).id.clone(),
             ctx,
         );
 
@@ -1077,7 +1077,7 @@ impl ExecutionProfileEditorView {
     ) where
         G: FnOnce(&LLMPreferences) -> Vec<&LLMInfo>,
         A: Fn(LLMId) -> ExecutionProfileEditorViewAction,
-        D: FnOnce(&LLMPreferences) -> LLMId,
+        D: FnOnce(&LLMPreferences, &AppContext) -> LLMId,
     {
         menu.update(ctx, |dropdown, ctx| {
             let disabled_by_ai_toggle = !AISettings::as_ref(ctx).is_any_ai_enabled(ctx);
@@ -1106,7 +1106,7 @@ impl ExecutionProfileEditorView {
 
             let llm_prefs = LLMPreferences::handle(ctx);
             let llm_prefs = llm_prefs.as_ref(ctx);
-            let model_to_select = profile_model.unwrap_or_else(|| get_default_id(llm_prefs));
+            let model_to_select = profile_model.unwrap_or_else(|| get_default_id(llm_prefs, ctx));
             dropdown.set_selected_by_action(create_action(model_to_select), ctx);
             ctx.notify();
         });
@@ -1148,7 +1148,7 @@ impl ExecutionProfileEditorView {
 
             let model_to_select = profile_coding_model.unwrap_or_else(|| {
                 LLMPreferences::as_ref(ctx)
-                    .get_default_coding_model()
+                    .get_default_coding_model(ctx)
                     .id
                     .clone()
             });
@@ -1383,7 +1383,7 @@ fn initial_context_window_display_value(
         .context_window_display_value(app)
         .unwrap_or_else(|| {
             LLMPreferences::as_ref(app)
-                .get_default_base_model()
+                .get_default_base_model(app)
                 .context_window
                 .default_max
         })

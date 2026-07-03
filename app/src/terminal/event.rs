@@ -12,6 +12,7 @@ use crate::server::ids::SyncId;
 use crate::terminal::model::block::BlockMetadata;
 use crate::terminal::model::block::SerializedBlock;
 use crate::terminal::model::completions::ShellCompletion;
+use crate::terminal::model::lifecycle::LifecycleRecoveryRecord;
 use crate::terminal::model::terminal_model::HandlerEvent;
 use crate::terminal::shell::ShellType;
 use crate::terminal::ClipboardType;
@@ -46,6 +47,8 @@ pub enum Event {
     },
     /// Sent when a new block is created.
     BlockMetadataReceived(BlockMetadataReceivedEvent),
+    /// Sent when the active block's working directory was updated without full prompt metadata.
+    BlockWorkingDirectoryUpdated(BlockWorkingDirectoryUpdatedEvent),
     /// Sent after a background block is started and added to the block list.
     BackgroundBlockStarted,
     ClipboardStore(ClipboardType, String),
@@ -113,6 +116,8 @@ pub enum Event {
         is_tagged_in: bool,
     },
     Handler(HandlerEvent),
+    /// Carries local lifecycle diagnostics to the model dispatcher.
+    LifecycleRecovery(LifecycleRecoveryRecord),
     /// Emitted when the remote server binary has been successfully checked or
     /// installed and is ready. The session is initialized independently on
     /// `Bootstrapped`; when the remote server later connects, the client is
@@ -281,6 +286,15 @@ pub struct BlockMetadataReceivedEvent {
 }
 
 #[derive(Clone, Debug)]
+/// A notification that the working directory for a block changed without full prompt metadata.
+pub struct BlockWorkingDirectoryUpdatedEvent {
+    pub block_metadata: BlockMetadata,
+    pub block_index: BlockIndex,
+    pub is_for_in_band_command: bool,
+    pub is_done_bootstrapping: bool,
+}
+
+#[derive(Clone, Debug)]
 /// Contents of a normal block that a user executed.
 pub struct UserBlockCompleted {
     pub index: BlockIndex,
@@ -409,6 +423,11 @@ impl Debug for Event {
                 "BlockStarted({:?}, Done bootstrapping: {:?})",
                 event.block_metadata, event.is_done_bootstrapping
             ),
+            Event::BlockWorkingDirectoryUpdated(event) => write!(
+                f,
+                "BlockWorkingDirectoryUpdated({:?}, Done bootstrapping: {:?})",
+                event.block_metadata, event.is_done_bootstrapping
+            ),
             Event::AfterBlockStarted { .. } => write!(f, "BlockExecutionStarted"),
             Event::BackgroundBlockStarted => write!(f, "BackgroundBlockStarted"),
             Event::VisibleBootstrapBlock => write!(f, "VisibleBootstrapBlock"),
@@ -465,6 +484,7 @@ impl Debug for Event {
                 )
             }
             Event::Handler(handler_event) => write!(f, "Handler({handler_event:?}))"),
+            Event::LifecycleRecovery(record) => write!(f, "LifecycleRecovery({record:?})"),
             Event::RemoteServerReady { session_id } => {
                 write!(f, "RemoteServerReady(session: {session_id:?})")
             }

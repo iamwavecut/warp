@@ -47,6 +47,7 @@ use crate::terminal::model_events::ModelEvent;
 use crate::terminal::model_events::ModelEventDispatcher;
 use crate::terminal::view::ambient_agent::{AmbientAgentViewModel, AmbientAgentViewModelEvent};
 use crate::terminal::TerminalModel;
+use crate::util::link_detection::RICH_CONTENT_LINK_FIRST_CHAR_POSITION_ID;
 use crate::view_components::action_button::{
     ActionButtonTheme, NakedTheme, PrimaryTheme, SecondaryTheme,
 };
@@ -230,6 +231,13 @@ use super::{
     BlocklistAIActionModel, BlocklistAIController, BlocklistAIHistoryEvent,
     BlocklistAIHistoryModel, BlocklistAIPermissions,
 };
+
+/// Builds a per-view-unique save-position id for a rich-content link tooltip, so tooltips in
+/// different AI blocks do not collide on a single shared anchor id.
+fn rich_content_link_tooltip_position_id(view_id: &EntityId) -> String {
+    let base = RICH_CONTENT_LINK_FIRST_CHAR_POSITION_ID;
+    format!("{base}_{view_id}")
+}
 
 /// The default display name used for the user if they have no associated display name.
 const DEFAULT_USER_DISPLAY_NAME: &str = "User";
@@ -4683,13 +4691,15 @@ impl AIBlock {
                 target_override: self.detected_file_path_target_override(absolute_path),
             },
         };
+        let position_id = rich_content_link_tooltip_position_id(&ctx.view_id());
+        self.detected_links_state.tooltip_position_id = position_id.clone();
         self.detected_links_state.link_location_open_tooltip = Some(LinkLocation {
             link_range: link_range.clone(),
             location: *location,
         });
         ctx.emit(AIBlockEvent::ShowLinkTooltip(RichContentLinkTooltipInfo {
             link: rich_content_link,
-            position_id: RICH_CONTENT_LINK_FIRST_CHAR_POSITION_ID.to_owned(),
+            position_id,
         }));
     }
 
@@ -5801,12 +5811,21 @@ impl TypedActionView for AIBlock {
                 ctx.notify();
             }
             AIBlockAction::SelectText => {
-                // If there's an ongoing text selection, clear all other selections within the
-                // `AIBlock`'s view sub-hierarchy to ensure only one component has a selection at a time.
+                // A plain click (no drag) produces an empty selection, but the enclosing
+                // `SelectableArea` still dispatches `SelectText` for it. Only treat it as a real
+                // selection — and, crucially, only dismiss any open link/secret tooltip — when there
+                // is actually a non-empty selection. Otherwise a plain click on a link would
+                // immediately dismiss the very tooltip that same click just opened, so the tooltip
+                // never becomes visible.
+                let has_selection = self.selected_text.read().is_some();
+                // Clear all other selections within the `AIBlock`'s view sub-hierarchy to ensure
+                // only one component has a selection at a time.
                 self.clear_other_selections(None, ctx.window_id(), ctx);
                 // If we have a selection, we should use the default cursor, even if it's over a link.
                 ctx.reset_cursor();
-                self.dismiss_ai_tooltips(ctx);
+                if has_selection {
+                    self.dismiss_ai_tooltips(ctx);
+                }
                 // Notify the terminal view so it can keep the model's record of which rich
                 // content block has an active selection in sync (rich content selections are
                 // not tied to the point-based model selection used for regular blocks).
