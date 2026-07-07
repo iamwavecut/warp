@@ -656,6 +656,7 @@ local_fs = [
     "repo_metadata/local_fs",
     "warp_core/local_fs",
 ]
+jupyter_notebook_rendering = []
 markdown_tables = []
 markdown_mermaid = []
 mcp_server = []

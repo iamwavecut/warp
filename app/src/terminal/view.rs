@@ -321,7 +321,9 @@ use crate::util::bindings::{
 };
 use crate::util::clipboard::clipboard_content_with_escaped_paths;
 #[cfg(feature = "local_fs")]
-use crate::util::openable_file_type::{is_markdown_file, resolve_file_target, FileTarget};
+use crate::util::openable_file_type::{
+    renders_in_warp_notebook_viewer, resolve_file_target, FileTarget,
+};
 use crate::view_components::{DismissibleToast, ToastFlavor};
 use crate::workflows::workflow::Workflow;
 use crate::workspace::sync_inputs::SyncedInputState;
@@ -7350,7 +7352,7 @@ impl TerminalView {
                 || active_block.is_active_and_long_running();
 
             if active_block_matches && command_is_running {
-                active_block.set_user_control_with_stop_reason();
+                active_block.set_user_control_for_teardown();
                 true
             } else {
                 false
@@ -7545,7 +7547,12 @@ impl TerminalView {
     ) {
         if active_block_state.is_agent_in_control_of_command {
             self.cli_subagent_controller.update(ctx, |controller, ctx| {
-                controller.switch_control_to_user(UserTakeOverReason::Stop, ctx);
+                controller.switch_control_to_user(
+                    UserTakeOverReason::Stop {
+                        should_auto_resume: true,
+                    },
+                    ctx,
+                );
             });
         } else if active_block_state.is_long_running {
             // A second Ctrl+C after Stop takeover should cancel both the command and conversation.
@@ -9919,11 +9926,7 @@ impl TerminalView {
                     if ai_metadata.requested_command_action_id().is_some()
                         && ai_metadata
                             .long_running_control_state()
-                            .is_some_and(|state| {
-                                state
-                                    .user_take_over_reason()
-                                    .is_some_and(|reason| !reason.is_stop())
-                            }) =>
+                            .is_some_and(|state| state.should_auto_resume()) =>
                 {
                     Some(*ai_metadata.conversation_id())
                 }
@@ -14469,7 +14472,7 @@ impl TerminalView {
                                     .into_item(),
                             ];
 
-                            if is_markdown_file(&path) {
+                            if renders_in_warp_notebook_viewer(&path) {
                                 items.push(
                                     MenuItemFields::new("Open in Warp")
                                         .with_on_select_action(TerminalAction::OpenFileInWarp(path))
@@ -22600,7 +22603,7 @@ impl TerminalView {
         });
 
         // If the active block is a running command from this conversation, stop it and
-        // set the take-over reason to Stop to prevent automatic conversation resume.
+        // suppress automatic conversation resume when the command completes.
         let should_stop_running_command = {
             let mut model = self.model.lock();
             let active_block = model.block_list_mut().active_block_mut();
@@ -22609,7 +22612,7 @@ impl TerminalView {
                 && active_block.ai_conversation_id() == Some(conversation_id);
 
             if is_from_this_conversation {
-                active_block.set_user_control_with_stop_reason();
+                active_block.set_user_control_for_teardown();
             }
 
             is_from_this_conversation

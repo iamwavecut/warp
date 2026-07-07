@@ -58,9 +58,10 @@ use warpui::{
     ViewHandle, WindowId,
 };
 
+use crate::util::openable_file_type::renders_in_warp_notebook_viewer;
 use crate::{
     menu::{MenuItem, MenuItemFields},
-    notebooks::file::{is_markdown_file, MarkdownDisplayMode},
+    notebooks::file::MarkdownDisplayMode,
     search::{files::icon::icon_from_file_path, ItemHighlightState},
     tab::TAB_BAR_BORDER_HEIGHT,
     ui_components::{blended_colors, buttons::icon_button},
@@ -288,9 +289,12 @@ impl CodeView {
             })
             .or_else(|| self.source.path());
 
-        let is_markdown = path.as_ref().map(is_markdown_file).unwrap_or(false);
+        let renders_in_notebook_viewer = path
+            .as_ref()
+            .map(renders_in_warp_notebook_viewer)
+            .unwrap_or(false);
 
-        if !is_markdown {
+        if !renders_in_notebook_viewer {
             self.markdown_mode_segmented_control = None;
             ctx.notify();
             return;
@@ -2047,7 +2051,7 @@ impl CodeView {
                     .into_item(),
             ]);
 
-            if is_markdown_file(&path) {
+            if renders_in_warp_notebook_viewer(&path) {
                 items.push(
                     MenuItemFields::new("View Markdown preview")
                         .with_on_select_action(CodeViewAction::RenderMarkdown)
