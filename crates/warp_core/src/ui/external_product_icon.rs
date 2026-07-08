@@ -7,6 +7,7 @@ pub enum ExternalProductIcon {
     Notion,
     Figma,
     Github,
+    Composio,
 }
 
 impl ExternalProductIcon {
@@ -17,6 +18,7 @@ impl ExternalProductIcon {
             "notion" => Some(ExternalProductIcon::Notion),
             "figma" => Some(ExternalProductIcon::Figma),
             "github" => Some(ExternalProductIcon::Github),
+            "composio" => Some(ExternalProductIcon::Composio),
             _other => None,
         }
     }
@@ -27,6 +29,7 @@ impl ExternalProductIcon {
             ExternalProductIcon::Notion => "bundled/svg/notion.svg",
             ExternalProductIcon::Figma => "bundled/svg/figma.svg",
             ExternalProductIcon::Github => "bundled/svg/github.svg",
+            ExternalProductIcon::Composio => "bundled/svg/composio.svg",
         }
     }
 
