@@ -422,7 +422,7 @@ impl SearchCodebaseExecutor {
             ..
         } = input.action
         else {
-            log::error!("Expected a SearchCodebase action when preprocessing action");
+            report_error!("Expected a SearchCodebase action when preprocessing action");
             return futures::future::ready(()).boxed();
         };
 

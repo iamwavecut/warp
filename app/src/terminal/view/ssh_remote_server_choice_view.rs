@@ -265,7 +265,9 @@ impl TypedActionView for SshRemoteServerChoiceView {
                     let mode = SshExtensionInstallMode::AlwaysInstall;
                     WarpifySettings::handle(ctx).update(ctx, |settings, ctx| {
                         if let Err(e) = settings.ssh_extension_install_mode.set_value(mode, ctx) {
-                            log::error!("Failed to persist ssh_extension_install_mode: {e}");
+                            report_error!(
+                                e.context("Failed to persist ssh_extension_install_mode")
+                            );
                         }
                     });
                 }
@@ -276,7 +278,9 @@ impl TypedActionView for SshRemoteServerChoiceView {
                     let mode = SshExtensionInstallMode::NeverInstall;
                     WarpifySettings::handle(ctx).update(ctx, |settings, ctx| {
                         if let Err(e) = settings.ssh_extension_install_mode.set_value(mode, ctx) {
-                            log::error!("Failed to persist ssh_extension_install_mode: {e}");
+                            report_error!(
+                                e.context("Failed to persist ssh_extension_install_mode")
+                            );
                         }
                     });
                 }

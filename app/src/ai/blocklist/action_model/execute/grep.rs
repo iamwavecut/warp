@@ -267,7 +267,7 @@ async fn run_grep(
     let is_grep_in_git_repo = is_git_repository(&execute_directory, &session)
         .await
         .unwrap_or_else(|e| {
-            log::error!("Failed to run command to check if in git repository: {e:?}");
+            report_error!(e.context("Failed to run command to check if in git repository"));
             false
         });
     let shell_type = session.shell().shell_type();

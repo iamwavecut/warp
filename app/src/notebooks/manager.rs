@@ -124,7 +124,7 @@ impl NotebookManager {
                     manager
                         .raw_text_by_hashed_id
                         .insert(hashed_id, NotebookRawTextStatus::ParseError);
-                    log::error!("Cached Notebook raw text failed to parse: {err}.");
+                    report_error!(err.context("Cached Notebook raw text failed to parse"));
                 }
             },
         )

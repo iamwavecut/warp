@@ -351,9 +351,9 @@ impl UndoCloseStack {
                 }
                 // Log errors if the expired item was not found or multiple items were found
                 if me.stack.len() == initial_len {
-                    log::error!("Undo close expiry task did not find item in stack!");
+                    report_error!("Undo close expiry task did not find item in stack!");
                 } else if me.stack.len() < initial_len - 1 {
-                    log::error!("Undo close expiry task found multiple matching items in stack!");
+                    report_error!("Undo close expiry task found multiple matching items in stack!");
                 } else {
                     log::debug!("Removed expired item from undo stack");
                 }

@@ -339,7 +339,7 @@ impl SettingsWidget for VersionInfoWidget {
                 .with_margin_top(VERTICAL_MARGIN)
                 .finish()
         } else {
-            log::error!("Shouldn't render VersionInfoWidget without GIT_RELEASE_TAG");
+            report_error!("Shouldn't render VersionInfoWidget without GIT_RELEASE_TAG");
             Empty::new().finish()
         }
     }

@@ -2407,6 +2407,25 @@ impl PaneGroup {
         text.filter(|text: &String| !text.is_empty())
     }
 
+    /// Returns the path to copy for the currently focused pane.
+    pub fn path_from_focused_pane(&self, ctx: &AppContext) -> Option<String> {
+        let focused_pane_id = self.focused_pane_id(ctx);
+
+        if let Some(file_pane) = self.downcast_pane_by_id::<FilePane>(focused_pane_id) {
+            return file_pane
+                .file_view(ctx)
+                .as_ref(ctx)
+                .local_path()
+                .map(|path| path.display().to_string());
+        }
+
+        let terminal_view = self.focused_session_view(ctx)?;
+        let terminal_view = terminal_view.as_ref(ctx);
+        terminal_view
+            .pwd()
+            .or_else(|| terminal_view.display_working_directory(ctx))
+    }
+
     /// Iterate over the terminal sessions in this pane group.
     pub fn pane_sessions<'a>(
         &'a self,

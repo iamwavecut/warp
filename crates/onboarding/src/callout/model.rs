@@ -1,4 +1,5 @@
 use crate::OnboardingIntention;
+use warp_core::report_error;
 use warpui::{Entity, ModelContext};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,9 +241,9 @@ impl OnboardingCalloutModel {
                     ctx,
                 );
             }
-            _ => log::error!(
-                "Skip action called in an unskippable state: {:?}",
-                self.state
+            _ => report_error!(
+                "Skip action called in an unskippable state",
+                extra: { "state" => ?self.state }
             ),
         }
     }
@@ -277,7 +278,10 @@ impl OnboardingCalloutModel {
                     ctx,
                 );
             }
-            _ => log::error!("Finish action called in an invalid state: {:?}", self.state),
+            _ => report_error!(
+                "Finish action called in an invalid state",
+                extra: { "state" => ?self.state }
+            ),
         }
     }
 
@@ -292,9 +296,9 @@ impl OnboardingCalloutModel {
                     ctx,
                 );
             }
-            _ => log::error!(
-                "BackToTerminal action called in an invalid state: {:?}",
-                self.state
+            _ => report_error!(
+                "BackToTerminal action called in an invalid state",
+                extra: { "state" => ?self.state }
             ),
         }
     }

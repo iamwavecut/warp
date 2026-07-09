@@ -777,8 +777,9 @@ impl LocalDiffStateModel {
                         if let Err(e) =
                             run_git_command(&repo_path, &["checkout", branch, "--", old_path]).await
                         {
-                            log::error!(
-                                "Failed to restore old file '{old_path}' from branch '{branch}': {e}"
+                            report_error!(
+                                e.context("Failed to restore old file from branch"),
+                                extra: { "old_path" => %old_path, "branch" => %branch }
                             );
                         }
                     }
@@ -838,7 +839,7 @@ impl LocalDiffStateModel {
                     me.refresh_diff_metadata_for_current_repo(false, ctx);
                 }
                 Err(err) => {
-                    log::error!("Failed to restore files: {err}");
+                    report_error!(err.context("Failed to restore files"));
                 }
             },
         );
@@ -1172,10 +1173,13 @@ impl LocalDiffStateModel {
                 async move { Self::compute_merge_base(&repo_path, &diff_mode).await },
                 |me, result, ctx| {
                     me.file_invalidation.merge_base_handle = None;
-                    if let Ok(merge_base) = &result {
-                        me.file_invalidation.merge_base = Some(merge_base.clone());
-                    } else if let Err(e) = &result {
-                        log::error!("Failed to compute merge base: {e}");
+                    match result {
+                        Ok(merge_base) => {
+                            me.file_invalidation.merge_base = Some(merge_base);
+                        }
+                        Err(e) => {
+                            report_error!(e.context("Failed to compute merge base"));
+                        }
                     }
                     me.flush_pending_invalidations(ctx);
                 },

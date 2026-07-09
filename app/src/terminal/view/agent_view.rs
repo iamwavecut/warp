@@ -107,10 +107,9 @@ impl TerminalView {
                 Some(conversation_id)
             }
             Err(e) => {
-                log::error!(
-                    "Failed to enter agent view for restored CLI agent from origin {:?}: {:?}",
-                    origin,
-                    e
+                report_error!(
+                    anyhow::Error::new(e).context("Failed to enter agent view for restored CLI agent"),
+                    extra: { "origin" => ?origin }
                 );
                 self.show_error_toast(e.to_string(), ctx);
                 self.redetermine_global_focus(ctx);
@@ -140,11 +139,9 @@ impl TerminalView {
                 Some(conversation_id),
                 ctx,
             ) {
-                log::error!(
-                    "Failed to enter agent view for existing conversation ({:?}) from origin {:?}: {:?}",
-                    conversation_id,
-                    origin,
-                    e
+                report_error!(
+                    anyhow::Error::new(e).context("Failed to enter agent view for existing conversation"),
+                    extra: { "conversation_id" => ?conversation_id, "origin" => ?origin }
                 );
                 self.show_error_toast(e.to_string(), ctx);
             }
@@ -243,7 +240,8 @@ impl TerminalView {
                         block_id: block_id.to_string(),
                         agent_view_visibility: agent_view_visibility.into(),
                     }) {
-                        log::error!("Error sending UpdateBlockAgentViewVisibility event: {e:?}");
+                        report_error!(anyhow::Error::new(e)
+                            .context("Error sending UpdateBlockAgentViewVisibility event"));
                     }
                 }
             }

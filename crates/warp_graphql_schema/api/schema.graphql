@@ -509,7 +509,6 @@ type BundledActions {
   latestTimestamp: Time!
   oldestTimestamp: Time!
 }
-
 type ByoApiKeyPolicy {
   enabled: Boolean!
 }
@@ -2379,7 +2378,6 @@ type TeamSizePolicy {
   isUnlimited: Boolean!
   limit: Int!
 }
-
 type Tier {
   agentIdentitiesPolicy: AgentIdentitiesPolicy
   aiAutonomyPolicy: AiAutonomyPolicy

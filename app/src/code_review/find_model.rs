@@ -210,7 +210,7 @@ impl CodeReviewFindModel {
         let view = self.weak_view_handle.upgrade(ctx);
         if view.is_none() {
             if ChannelState::enable_debug_features() {
-                log::error!(
+                report_error!(
                     "Failed to upgrade WeakViewHandle<CodeReviewView> in get_editor_searcher"
                 );
             }
@@ -225,8 +225,9 @@ impl CodeReviewFindModel {
 
         if editor_handle.is_none() {
             if ChannelState::enable_debug_features() {
-                log::error!(
-                    "Failed to find editor with id {editor_id:?} in CodeReviewView editor handles"
+                report_error!(
+                    "Failed to find editor in CodeReviewView editor handles",
+                    extra: { "editor_id" => ?editor_id }
                 );
             }
             return None;

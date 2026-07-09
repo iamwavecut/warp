@@ -22,6 +22,7 @@ dirs.workspace = true
 directories.workspace = true
 enum-iterator.workspace = true
 futures-lite.workspace = true
+warp_errors = { workspace = true, features = ["reqwest-errors"] }
 warp_features.workspace = true
 itertools.workspace = true
 getset.workspace = true
@@ -58,6 +59,7 @@ inventory = "0.3.20"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 tokio.workspace = true
+warp_errors = { workspace = true, features = ["tokio-errors", "websocket-errors"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-foundation = { workspace = true, features = [

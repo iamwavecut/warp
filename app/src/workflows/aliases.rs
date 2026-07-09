@@ -56,7 +56,7 @@ impl WorkflowAliases {
             };
 
             if let Err(e) = result {
-                log::error!("Error removing aliases for workflow: {e:?}");
+                report_error!(e.context("Error removing aliases for workflow"));
             }
         });
     }

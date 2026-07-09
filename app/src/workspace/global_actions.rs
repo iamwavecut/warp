@@ -154,7 +154,7 @@ fn save_app(_: &(), ctx: &mut AppContext) {
     let event = ModelEvent::Snapshot(app_state);
 
     if let Err(err) = model_event_sender.send(event) {
-        log::error!("Error trying to send model event {err:?}");
+        report_error!(anyhow::Error::new(err).context("Error trying to send model event"));
     }
 }
 

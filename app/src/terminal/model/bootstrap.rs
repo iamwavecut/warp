@@ -20,12 +20,12 @@ impl BootstrapStage {
             BootstrapStage::RestoreBlocks => BootstrapStage::WarpInput,
             BootstrapStage::WarpInput => BootstrapStage::ScriptExecution,
             BootstrapStage::ScriptExecution => {
-                log::error!("calling next_stage on a block that should be bootstrapped");
+                report_error!("calling next_stage on a block that should be bootstrapped");
                 BootstrapStage::ScriptExecution
             }
             BootstrapStage::Bootstrapped => BootstrapStage::PostBootstrapPrecmd,
             BootstrapStage::PostBootstrapPrecmd => {
-                log::error!(
+                report_error!(
                     "calling next_stage on an already bootstrapped block that has seen precmd"
                 );
                 BootstrapStage::PostBootstrapPrecmd

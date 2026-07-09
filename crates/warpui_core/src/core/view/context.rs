@@ -6,6 +6,7 @@ use std::{any::Any, marker::PhantomData, rc::Rc, sync::Arc};
 use futures::future::{AbortHandle, Abortable};
 use futures::{Future, FutureExt};
 use thiserror::Error;
+use warp_errors::report_error;
 
 use crate::modals::{AlertDialogWithCallbacks, ModalButton, ViewModalCallback};
 use crate::platform::{
@@ -535,7 +536,7 @@ impl<'a, T: Entity> ViewContext<'a, T> {
 
         async move {
             if rx.await.is_err() {
-                log::error!("sender unexpectedly dropped before receiver");
+                report_error!("sender unexpectedly dropped before receiver");
             }
         }
     }
@@ -610,7 +611,7 @@ impl<'a, T: Entity> ViewContext<'a, T> {
             .spawn_boxed(Box::pin(async move {
                 let abortable = Abortable::new(future, abort_registration);
                 if tx.send(abortable.await).is_err() {
-                    log::error!("Error sending background task result to main thread",);
+                    report_error!("Error sending background task result to main thread");
                 }
             }))
             .detach();
@@ -619,7 +620,7 @@ impl<'a, T: Entity> ViewContext<'a, T> {
             let output = match rx_result {
                 Ok(output) => output,
                 Err(_) => {
-                    log::error!("sender unexpectedly dropped before receiver");
+                    report_error!("sender unexpectedly dropped before receiver");
                     on_abort(view, ctx);
                     return;
                 }
@@ -685,7 +686,7 @@ impl<'a, T: Entity> ViewContext<'a, T> {
         SpawnedLocalStream::new(
             async move {
                 if rx.await.is_err() {
-                    log::error!("sender unexpectedly dropped before receiver");
+                    report_error!("sender unexpectedly dropped before receiver");
                 }
             }
             .boxed_local(),

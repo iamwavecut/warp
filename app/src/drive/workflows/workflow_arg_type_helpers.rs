@@ -317,7 +317,7 @@ where
             true
         }
         _ => {
-            log::error!("Attempting to select an enum that cannot be found");
+            report_error!("Attempting to select an enum that cannot be found");
             false
         }
     }

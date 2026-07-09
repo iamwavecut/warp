@@ -186,10 +186,9 @@ impl TerminalPane {
         if let Some(sender) = &self.model_event_sender {
             let model_event = ModelEvent::DeleteBlocks(self.uuid.clone());
             if let Err(err) = sender.send(model_event) {
-                log::error!(
-                    "Error sending blocks deleted event for terminal id {} {:?}",
-                    self.terminal_view(ctx).id(),
-                    err
+                report_error!(
+                    anyhow::Error::new(err).context("Error sending blocks deleted event"),
+                    extra: { "terminal_id" => ?self.terminal_view(ctx).id() }
                 );
             }
         }
@@ -958,20 +957,30 @@ fn handle_terminal_view_event(
                                 });
 
                                 let sender_clone = sender.clone();
-                                let _ = ctx.spawn(async move {
-                                // Sending over a sync sender can block the current thread, so we do this async.
-                                sender_clone.send(block_completed_event)
-                            }, move |_, res, _| {
-                                if let Err(err) = res {
-                                    log::error!("Error sending block completed event for terminal id {terminal_pane_id:?} {err:?}");
-                                }
-                            });
+                                let _ = ctx.spawn(
+                                    async move {
+                                        // Sending over a sync sender can block the current thread, so we do this async.
+                                        sender_clone.send(block_completed_event)
+                                    },
+                                    move |_, res, _| {
+                                        if let Err(err) = res {
+                                            report_error!(
+                                                anyhow::Error::new(err)
+                                                    .context("Error sending block completed event"),
+                                                extra: { "terminal_pane_id" => ?terminal_pane_id }
+                                            );
+                                        }
+                                    },
+                                );
                             }
                         }
                         ctx.emit(pane_group::Event::ActiveSessionChanged);
                     }
                     None => {
-                        log::error!("Could not find uuid for terminal id: {terminal_pane_id:?}");
+                        report_error!(
+                            "Could not find uuid for terminal id",
+                            extra: { "terminal_pane_id" => ?terminal_pane_id }
+                        );
                     }
                 };
             }
@@ -1730,8 +1739,9 @@ fn handle_ai_history_event(
                 async move { model_event_sender.send(upsert_ai_query_event) },
                 move |_, res, _| {
                     if let Err(err) = res {
-                        log::error!(
-                            "Error sending upsert AI query event for terminal id {terminal_pane_id:?} {err:?}"
+                        report_error!(
+                            anyhow::Error::new(err).context("Error sending upsert AI query event"),
+                            extra: { "terminal_pane_id" => ?terminal_pane_id }
                         );
                     }
                 },
@@ -1757,7 +1767,8 @@ fn handle_ai_history_event(
                 },
                 |_, res, _| {
                     if let Err(err) = res {
-                        log::error!("Error sending delete events for conversation: {err:?}");
+                        report_error!(anyhow::Error::new(err)
+                            .context("Error sending delete events for conversation"));
                     }
                 },
             );

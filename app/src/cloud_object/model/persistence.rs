@@ -13,6 +13,7 @@ use crate::drive::{
 use crate::env_vars::{CloudEnvVarCollection, CloudEnvVarCollectionModel, EnvVarCollection};
 use crate::notebooks::CloudNotebook;
 use crate::persistence::ModelEvent;
+use crate::report_error;
 use crate::server::ids::{ClientId, HashableId, ObjectUid, ServerId, SyncId, ToServerId};
 use crate::settings::cloud_preferences::{CloudPreference, CloudPreferenceModel};
 use crate::workflows::workflow::Workflow;
@@ -754,7 +755,7 @@ impl CloudModel {
                     id: object.hashed_sqlite_id(),
                     metadata: object.metadata().clone(),
                 }) {
-                    log::error!("Error saving to cache: {e:?}");
+                    report_error!(anyhow::Error::new(e).context("Error saving to cache"));
                 }
             }
             ctx.notify();
@@ -870,7 +871,7 @@ impl CloudModel {
             let folder_clone = folder.clone();
             if let Some(model_event_sender) = &self.model_event_sender {
                 if let Err(e) = model_event_sender.send(folder_clone.upsert_event()) {
-                    log::error!("Error persisting folder: {e:?}");
+                    report_error!(anyhow::Error::new(e).context("Error persisting folder"));
                 }
             }
 
@@ -1026,7 +1027,9 @@ impl CloudModel {
                 {
                     self.force_expand_object_and_ancestors(id, ctx)
                 } else {
-                    log::error!("Attempted to force expand an unsupported GenericStringObject type")
+                    report_error!(
+                        "Attempted to force expand an unsupported GenericStringObject type"
+                    )
                 }
             }
         }
@@ -1741,7 +1744,7 @@ impl CloudModel {
             if let Err(e) = model_event_sender.send(M::bulk_upsert_event(
                 objects_without_pending_changes.as_slice(),
             )) {
-                log::error!("Error saving team objects to cache: {e:?}");
+                report_error!(anyhow::Error::new(e).context("Error saving team objects to cache"));
             }
         }
     }

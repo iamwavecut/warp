@@ -1777,7 +1777,7 @@ impl CodeReviewView {
 
     fn handle_edit_comment(&mut self, comment_id: &CommentId, ctx: &mut ViewContext<Self>) {
         let Some(comment) = self.get_comment_by_id(*comment_id, ctx) else {
-            log::error!("Couldn't find code review comment by ID");
+            report_error!("Couldn't find code review comment by ID");
             return;
         };
 
@@ -1800,9 +1800,9 @@ impl CodeReviewView {
                 };
 
                 let Some(editor_state) = &file_state.editor_state.as_ref() else {
-                    log::error!(
-                        "CodeReviewView could not fetch editor for file {:?}",
-                        file_state.file_diff.file_path
+                    report_error!(
+                        "CodeReviewView could not fetch editor for file",
+                        extra: { "file_path" => ?file_state.file_diff.file_path }
                     );
                     return;
                 };
@@ -1825,7 +1825,7 @@ impl CodeReviewView {
                 self.open_review_comment_composer(Some(comment), ctx);
             }
             AttachedReviewCommentTarget::File { .. } => {
-                log::error!(
+                report_error!(
                     "Attempted to edit a file-level comment; file-level comments are not editable"
                 );
             }
@@ -3153,7 +3153,7 @@ impl CodeReviewView {
                 // the host on the comment target keeps later helpers
                 // honest.
                 let Some(file_location) = editor.as_ref(ctx).file_location().cloned() else {
-                    log::error!(
+                    report_error!(
                         "Attempted to attach code review comment to a LocalCodeEditorView without a file path"
                     );
                     return;
@@ -3195,7 +3195,7 @@ impl CodeReviewView {
                     }
                     AttachedReviewCommentTarget::File { .. }
                     | AttachedReviewCommentTarget::General => {
-                        log::error!("Tried to reopen a non-line review comment.");
+                        report_error!("Tried to reopen a non-line review comment.");
                     }
                 }
             }
@@ -3499,12 +3499,14 @@ impl CodeReviewView {
 
     fn reposition_comments_in_file(&mut self, diff_mode: &DiffMode, ctx: &mut ViewContext<Self>) {
         let Some(model) = &self.active_comment_model else {
-            log::error!("Failed to relocate PR comments: CodeReviewView diff state not loaded",);
+            report_error!(anyhow::anyhow!(
+                "Failed to relocate PR comments: CodeReviewView diff state not loaded",
+            ));
             return;
         };
 
         let Some(repo_path) = self.repo_path().cloned() else {
-            log::error!("Failed to relocate PR comments: CodeReviewView has no repo path");
+            report_error!("Failed to relocate PR comments: CodeReviewView has no repo path");
             return;
         };
 
@@ -4175,7 +4177,7 @@ impl CodeReviewView {
                 ctx.notify();
             }
             ReviewSubmissionResult::Error => {
-                log::error!("Failed to submit review comments");
+                report_error!("Failed to submit review comments");
                 let error_message = "Could not submit comments to the agent".to_string();
                 ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
                     let toast = DismissibleToast::error(error_message);
@@ -5726,9 +5728,9 @@ impl CodeReviewView {
                 let base = match self.get_diff_base(ctx) {
                     Ok(base) => base,
                     Err(err) => {
-                        log::error!(
-                            "CodeReviewView could not find diff base when attaching diff as context: {err:?}"
-                        );
+                        report_error!(err.context(
+                            "CodeReviewView could not find diff base when attaching diff as context"
+                        ));
                         return;
                     }
                 };
@@ -5781,7 +5783,7 @@ impl CodeReviewView {
 
     #[cfg(not(feature = "local_fs"))]
     fn insert_diff_as_context(&mut self, _scope: DiffSetScope, _ctx: &mut ViewContext<Self>) {
-        log::error!("insert_diff_as_context is not supported without the local_fs feature");
+        report_error!("insert_diff_as_context is not supported without the local_fs feature");
     }
 
     fn get_current_head(&self, ctx: &ViewContext<Self>) -> Option<CurrentHead> {
@@ -7372,6 +7374,8 @@ mod code_review_view_integration;
 
 #[cfg(feature = "integration_tests")]
 pub use code_review_view_integration::CodeReviewVisibleAnchorForTest;
+
+use crate::report_error;
 
 #[cfg(test)]
 #[path = "code_review_view_tests.rs"]

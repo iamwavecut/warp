@@ -915,7 +915,7 @@ impl BlockList {
         let gap_height = if let Some(height) = self.next_gap_height() {
             height
         } else {
-            log::error!("Expected gap height to be set before clear");
+            report_error!("Expected gap height to be set before clear");
             // Since the gap was removed from the block_heights tree, clear active_gap.
             // We do not expect to be in this state, but if we are, we shouldn't
             // leave the model inconsistent.
@@ -1843,8 +1843,9 @@ impl BlockList {
         let block_height = if let Some(block) = self.block_at(block_index) {
             block.height(&self.agent_view_state).into()
         } else {
-            log::error!(
-                "Tried to update height of block at {block_index:?}, but no such block exists"
+            report_error!(
+                "Tried to update height of block, but no such block exists",
+                extra: { "block_index" => ?block_index }
             );
             return;
         };
@@ -1902,7 +1903,7 @@ impl BlockList {
 
                 Some(tree_before_gap)
             } else {
-                log::error!("a gap is not contained at the active gap index");
+                report_error!("a gap is not contained at the active gap index");
                 None
             }
         });
@@ -2203,7 +2204,7 @@ impl BlockList {
                                 block.height(agent_view_state).into(),
                             ));
                         } else {
-                            log::error!("invalid block index in block heights");
+                            report_error!("invalid block index in block heights");
                         }
                     }
                     BlockHeightItem::Gap(_) => {
@@ -3542,7 +3543,7 @@ impl BlockList {
 
 impl ansi::Handler for BlockList {
     fn set_title(&mut self, _: Option<String>) {
-        log::error!("Handler method BlockList::set_title should never be called. This should be handled by TerminalModel.");
+        report_error!("Handler method BlockList::set_title should never be called. This should be handled by TerminalModel.");
     }
 
     fn set_cursor_style(&mut self, style: Option<CursorStyle>) {
@@ -3820,11 +3821,11 @@ impl ansi::Handler for BlockList {
     }
 
     fn push_title(&mut self) {
-        log::error!("Handler method BlockList::push_title should never be called. This should be handled by TerminalModel.");
+        report_error!("Handler method BlockList::push_title should never be called. This should be handled by TerminalModel.");
     }
 
     fn pop_title(&mut self) {
-        log::error!("Handler method BlockList::pop_title should never be called. This should be handled by TerminalModel.");
+        report_error!("Handler method BlockList::pop_title should never be called. This should be handled by TerminalModel.");
     }
 
     fn text_area_size_pixels<W: io::Write>(&mut self, writer: &mut W) {
@@ -4050,3 +4051,4 @@ impl ToTotalIndex for BlockIndex {
 mod tests;
 #[cfg(test)]
 pub use self::tests::insert_block;
+use crate::report_error;

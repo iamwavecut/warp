@@ -7,7 +7,7 @@ use ignore::gitignore::Gitignore;
 use repo_metadata::entry::{BudgetExceededBehavior, IgnoredPathStrategy};
 use repo_metadata::Repository;
 use std::{path::Path, sync::Arc};
-use warp_core::safe_error;
+use warp_core::{report_error, safe_error};
 use warpui_core::{Entity, ModelContext, ModelHandle};
 
 #[cfg(feature = "local_fs")]
@@ -1393,9 +1393,9 @@ impl CodebaseIndex {
     ) {
         match relevant_fragments_result {
             Err(err) => {
-                log::error!(
-                    "Failed to retrieve relevant fragment on root {:?}",
-                    self.last_server_synced_root_node()
+                report_error!(
+                    "Failed to retrieve relevant fragment",
+                    extra: { "root" => ?self.last_server_synced_root_node() }
                 );
                 ctx.emit(CodebaseIndexEvent::RetrievalRequestFailed {
                     retrieval_id,
@@ -1770,7 +1770,7 @@ impl CodebaseIndex {
                         );
                     }
                     Err(SnapshotLoadError::ParseFailed(e)) => {
-                        log::error!("Failed to parse snapshot: {e:?}");
+                        report_error!(e.context("Failed to parse snapshot"));
                         me.update_tree_sync_state(
                             TreeSourceSyncState::InitializeTreeFailure(
                                 Error::SnapshotParsingFailed,

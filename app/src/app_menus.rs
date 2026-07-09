@@ -587,7 +587,9 @@ fn block_menu_debug_items() -> Vec<MenuItem> {
                     .should_show_in_band_command_blocks
                     .set_value(new_value, ctx)
                 {
-                    log::error!("Failed to persist 'Show in-band command blocks' setting: {e}");
+                    report_error!(
+                        e.context("Failed to persist 'Show in-band command blocks' setting")
+                    );
                 }
             });
         },
@@ -618,7 +620,7 @@ fn block_menu_debug_items() -> Vec<MenuItem> {
                     .should_show_ssh_block
                     .set_value(new_value, ctx)
                 {
-                    log::error!("Failed to persist 'Show ssh command blocks' setting: {e}");
+                    report_error!(e.context("Failed to persist 'Show ssh command blocks' setting"));
                 }
             });
         },
@@ -654,7 +656,7 @@ fn toggle_bootstrap_block_menu_item() -> MenuItem {
                     .should_show_bootstrap_block
                     .set_value(new_value, ctx)
                 {
-                    log::error!("Failed to persist 'Show bootstrap block' setting: {e}");
+                    report_error!(e.context("Failed to persist 'Show bootstrap block' setting"));
                 }
             });
         },
@@ -702,7 +704,7 @@ fn debug_menu_items() -> Vec<MenuItem> {
                         .is_shell_debug_mode_enabled
                         .set_value(new_value, ctx)
                     {
-                        log::error!("Failed to persist 'Debug mode' setting: {e}");
+                        report_error!(e.context("Failed to persist 'Debug mode' setting"));
                     }
                 });
             },
@@ -759,7 +761,9 @@ fn debug_menu_items() -> Vec<MenuItem> {
                         .are_in_band_generators_for_all_sessions_enabled
                         .set_value(new_value, ctx)
                     {
-                        log::error!("Failed to persist 'Enable in-band generators' setting: {e}");
+                        report_error!(
+                            e.context("Failed to persist 'Enable in-band generators' setting")
+                        );
                     }
                 });
             },

@@ -993,7 +993,9 @@ impl TerminalView {
                 );
             }
             Err(e) => {
-                log::error!("Failed to load conversation from tasks: {e:?}");
+                report_error!(
+                    anyhow::Error::new(e).context("Failed to load conversation from tasks")
+                );
             }
         }
     }
@@ -1133,7 +1135,7 @@ impl TerminalView {
                 .not()
                 .then_some(content.plain_text))
         else {
-            log::error!("Clipboard contents are not a conversation debug link");
+            report_error!("Clipboard contents are not a conversation debug link");
             return;
         };
 
@@ -1154,7 +1156,7 @@ impl TerminalView {
 
             url
         } else {
-            log::error!(
+            report_error!(
                 "Invalid debug link format. Expected format: http://host/debug/maa/conversation-id"
             );
             return;

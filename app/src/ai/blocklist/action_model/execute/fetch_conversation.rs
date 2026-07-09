@@ -98,7 +98,9 @@ fn materialize_conversation(
             })
         }
         Err(e) => {
-            log::error!("FetchConversation: failed to materialize YAML: {e}");
+            report_error!(
+                anyhow::anyhow!("{e}").context("FetchConversation: failed to materialize YAML")
+            );
             AIAgentActionResultType::FetchConversation(FetchConversationResult::Error(format!(
                 "Failed to materialize conversation: {e}"
             )))

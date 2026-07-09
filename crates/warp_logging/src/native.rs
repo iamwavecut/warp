@@ -9,6 +9,7 @@ use anyhow::Result;
 use chrono::Local;
 use log::LevelFilter;
 use std::sync::OnceLock;
+use warp_core::report_error;
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 use crate::{LogConfig, LogDestination};
@@ -140,7 +141,7 @@ pub async fn rotate_log_files() {
     let max_rotation = config.max_rotation;
 
     if let Err(err) = rotate_files(&ChannelState::logfile_name(), max_rotation).await {
-        log::error!("Failed to rotate log files: {err:?}");
+        report_error!(err.context("Failed to rotate log files"));
     }
 }
 

@@ -9,8 +9,8 @@ use crate::interaction_sources::LaunchConfigUiLocation;
 use crate::launch_configs::launch_config::LaunchConfig;
 use crate::root_view::{open_new_window_get_handles, OpenLaunchConfigArg};
 use crate::util::openable_file_type::{
-    is_file_openable_in_warp, is_runnable_shell_script, renders_in_warp_notebook_viewer,
-    starts_with_shebang,
+    is_file_openable_in_warp, is_markdown_file, is_runnable_shell_script,
+    renders_in_warp_notebook_viewer, starts_with_shebang,
 };
 use crate::workspace::active_terminal_in_window;
 use crate::workspace::{Workspace, WorkspaceAction, WorkspaceRegistry};
@@ -279,7 +279,7 @@ impl UriHost {
                     let result = crate::ai::mcp::TemplatableMCPServerManager::handle(ctx)
                         .update(ctx, |manager, _ctx| manager.handle_oauth_callback(url));
                     if let Err(e) = result {
-                        log::error!("Failed to handle MCP OAuth callback: {e:?}");
+                        report_error!(e.context("Failed to handle MCP OAuth callback"));
                     }
                 }
             }
@@ -833,7 +833,8 @@ fn classify_open_file_action(path: &Path) -> OpenFileAction {
 }
 
 /// Handle an incoming `file://` URL.
-/// * Markdown and Jupyter notebook files are opened as notebook panes.
+/// * Markdown files are opened as notebook panes when the viewer preference is enabled.
+/// * Jupyter notebook files are opened as notebook panes when their feature flag is enabled.
 /// * For directories, open a new session at the directory path.
 /// * For other files, open a new session at the parent directory path, then possibly execute the
 ///   file.

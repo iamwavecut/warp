@@ -219,9 +219,8 @@ impl From<GqlAdminEnablementSetting> for AdminEnablementSetting {
             }
             GqlAdminEnablementSetting::Other(value) => {
                 report_error!(
-                    anyhow!(
-                        "Invalid AdminEnablementSetting '{value}'. Make sure to update client GraphQL types!"
-                    ),
+                    "Invalid AdminEnablementSetting. Make sure to update client GraphQL types!",
+                    extra: { "value" => %value },
                     warp_core::errors::ReportErrorLogMode::OncePerRun
                 );
                 AdminEnablementSetting::RespectUserSetting
@@ -239,9 +238,8 @@ impl From<GqlHostEnablementSetting> for HostEnablementSetting {
             }
             GqlHostEnablementSetting::Other(value) => {
                 report_error!(
-                    anyhow!(
-                        "Invalid HostEnablementSetting '{value}'. Make sure to update client GraphQL types!"
-                    ),
+                    "Invalid HostEnablementSetting. Make sure to update client GraphQL types!",
+                    extra: { "value" => %value },
                     warp_core::errors::ReportErrorLogMode::OncePerRun
                 );
                 HostEnablementSetting::RespectUserSetting
@@ -261,7 +259,10 @@ impl From<&GqlAiPermissionsSettings> for AiPermissionsSettings {
                     match regex {
                         Ok(regex) => Some(regex),
                         Err(_) => {
-                            log::error!("Invalid regex pattern for remote session detection: {r}");
+                            report_error!(
+                                "Invalid regex pattern for remote session detection",
+                                extra: { "pattern" => %r }
+                            );
                             None
                         }
                     }
@@ -456,9 +457,8 @@ fn convert_gql_ai_autonomy_value_to_action_permission(
         GqlAiAutonomyValue::RespectUserSetting => None,
         GqlAiAutonomyValue::Other(value) => {
             report_error!(
-                anyhow!(
-                    "Invalid AiAutonomyValue '{value}'. Make sure to update client GraphQL types!"
-                ),
+                "Invalid AiAutonomyValue. Make sure to update client GraphQL types!",
+                extra: { "value" => %value },
                 warp_core::errors::ReportErrorLogMode::OncePerRun
             );
             None
@@ -476,9 +476,8 @@ fn convert_gql_write_to_pty_autonomy_value_to_write_to_pty_permission(
         GqlWriteToPtyAutonomyValue::RespectUserSetting => None,
         GqlWriteToPtyAutonomyValue::Other(value) => {
             report_error!(
-                anyhow!(
-                    "Invalid WriteToPtyAutonomyValue '{value}'. Make sure to update client GraphQL types!"
-                ),
+                "Invalid WriteToPtyAutonomyValue. Make sure to update client GraphQL types!",
+                extra: { "value" => %value },
                 warp_core::errors::ReportErrorLogMode::OncePerRun
             );
             None
@@ -496,9 +495,8 @@ fn convert_gql_computer_use_autonomy_value_to_computer_use_permission(
         GqlComputerUseAutonomyValue::RespectUserSetting => None,
         GqlComputerUseAutonomyValue::Other(value) => {
             report_error!(
-                anyhow!(
-                    "Invalid ComputerUseAutonomyValue '{value}'. Make sure to update client GraphQL types!"
-                ),
+                "Invalid ComputerUseAutonomyValue. Make sure to update client GraphQL types!",
+                extra: { "value" => %value },
                 warp_core::errors::ReportErrorLogMode::OncePerRun
             );
             None
@@ -605,8 +603,9 @@ impl From<GqlWorkspaceSettings> for WorkspaceSettings {
                         match regex {
                             Ok(regex) => Some(regex),
                             Err(_) => {
-                                log::error!(
-                                    "Invalid regex pattern for remote session detection: {r}"
+                                report_error!(
+                                    "Invalid regex pattern for remote session detection",
+                                    extra: { "pattern" => %r }
                                 );
                                 None
                             }

@@ -510,7 +510,7 @@ impl CodeDiffView {
     fn open_accept_split_button_menu(&mut self, ctx: &mut ViewContext<Self>) {
         // Don't allow menu toggling in view-only mode.
         if matches!(self.state, CodeDiffState::ViewOnly { .. }) {
-            log::error!("Attempted to toggle accept menu in view-only mode");
+            report_error!("Attempted to toggle accept menu in view-only mode");
             return;
         }
         self.is_accept_split_button_menu_open = true;
@@ -723,8 +723,9 @@ impl CodeDiffView {
                             ctx.notify();
                         }
                         None => {
-                            log::error!(
-                                "Action {action_id} finished but status not found in action model",
+                            report_error!(
+                                "Action finished but status not found in action model",
+                                extra: { "action_id" => %action_id }
                             );
                         }
                     }
@@ -1023,7 +1024,7 @@ impl CodeDiffView {
         ctx: &mut ViewContext<Self>,
     ) -> Result<()> {
         if matches!(self.state, CodeDiffState::ViewOnly { .. }) {
-            log::error!("Attempted to accept diff in view-only mode");
+            report_error!("Attempted to accept diff in view-only mode");
             return Err(anyhow::anyhow!(
                 "Attempted to accept diff in view-only mode"
             ));
@@ -1047,7 +1048,7 @@ impl CodeDiffView {
     pub fn reject(&mut self, ctx: &mut ViewContext<Self>) {
         // Don't let users reject an old diff while in view-only mode.
         if matches!(self.state, CodeDiffState::ViewOnly { .. }) {
-            log::error!("Attempted to reject diff in view-only mode");
+            report_error!("Attempted to reject diff in view-only mode");
             return;
         }
 
@@ -1087,7 +1088,7 @@ impl CodeDiffView {
                 .diff_view
                 .update(ctx, |v, ctx| v.restore_diff_base(ctx))
             {
-                log::error!("Failed to restore diff base: {err:?}");
+                report_error!(anyhow::anyhow!("{err}").context("Failed to restore diff base"));
                 let file_name = diff
                     .diff_view
                     .as_ref(ctx)
@@ -1146,7 +1147,7 @@ impl CodeDiffView {
     pub fn expand_and_edit(&mut self, ctx: &mut ViewContext<Self>) {
         // Don't let users edit an old diff while in view-only mode.
         if matches!(self.state, CodeDiffState::ViewOnly { .. }) {
-            log::error!("Attempted to edit/expand diff in view-only mode");
+            report_error!("Attempted to edit/expand diff in view-only mode");
             return;
         }
 

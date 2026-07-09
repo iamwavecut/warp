@@ -538,18 +538,19 @@ impl DriveIndex {
 
         self.workspace_dropdown.update(ctx, |dropdown, ctx| {
             let workspaces = user_workspaces.as_ref(ctx).workspaces();
-            let selected_index =
-                if let Some(current_workspace) = user_workspaces.as_ref(ctx).current_workspace() {
-                    workspaces
-                        .iter()
-                        .position(|workspace| workspace.uid == current_workspace.uid)
-                        .unwrap_or_else(|| {
-                            log::error!("Could not find current workspace in dropdown option list");
-                            0
-                        })
-                } else {
-                    0
-                };
+            let selected_index = if let Some(current_workspace) =
+                user_workspaces.as_ref(ctx).current_workspace()
+            {
+                workspaces
+                    .iter()
+                    .position(|workspace| workspace.uid == current_workspace.uid)
+                    .unwrap_or_else(|| {
+                        report_error!("Could not find current workspace in dropdown option list");
+                        0
+                    })
+            } else {
+                0
+            };
             dropdown.set_items(
                 workspaces
                     .iter()
@@ -875,18 +876,19 @@ impl DriveIndex {
 
             let workspaces = user_workspaces.as_ref(ctx).workspaces();
 
-            let selected_index =
-                if let Some(current_workspace) = user_workspaces.as_ref(ctx).current_workspace() {
-                    workspaces
-                        .iter()
-                        .position(|workspace| workspace.uid == current_workspace.uid)
-                        .unwrap_or_else(|| {
-                            log::error!("Could not find current workspace in dropdown option list");
-                            0
-                        })
-                } else {
-                    0
-                };
+            let selected_index = if let Some(current_workspace) =
+                user_workspaces.as_ref(ctx).current_workspace()
+            {
+                workspaces
+                    .iter()
+                    .position(|workspace| workspace.uid == current_workspace.uid)
+                    .unwrap_or_else(|| {
+                        report_error!("Could not find current workspace in dropdown option list");
+                        0
+                    })
+            } else {
+                0
+            };
 
             dropdown.add_items(
                 workspaces
@@ -4373,18 +4375,18 @@ impl TypedActionView for DriveIndex {
                         ctx.focus(&self.cloud_object_naming_dialog.title_editor);
                     }
                     DriveObjectType::Workflow | DriveObjectType::AgentModeWorkflow => {
-                        log::error!(
+                        report_error!(
                             "Use DriveIndexAction::OpenWorkflowModal to open the modal instead"
                         )
                     }
                     DriveObjectType::EnvVarCollection => {
-                        log::error!("Creation of EnvVarCollections is not yet supported")
+                        report_error!("Creation of EnvVarCollections is not yet supported")
                     }
                     DriveObjectType::AIFact | DriveObjectType::AIFactCollection => {
-                        log::error!("Use DriveIndexAction::OpenAIFactCollection to open the pane view instead");
+                        report_error!("Use DriveIndexAction::OpenAIFactCollection to open the pane view instead");
                     }
                     DriveObjectType::MCPServer | DriveObjectType::MCPServerCollection => {
-                        log::error!(
+                        report_error!(
                             "Use DriveIndexAction::OpenMCPServerCollection to open the pane view instead"
                         );
                     }

@@ -926,7 +926,7 @@ impl TypedActionView for ServerCardView {
                         new_state,
                     ));
                 } else {
-                    log::error!("Server card: Tried to toggle a switch that does not exist.")
+                    report_error!("Server card: Tried to toggle a switch that does not exist.")
                 }
                 ctx.notify();
             }

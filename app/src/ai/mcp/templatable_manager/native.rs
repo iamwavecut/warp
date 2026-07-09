@@ -351,9 +351,9 @@ impl TemplatableMCPServerManager {
             running,
         };
         if let Err(err) = sender.send(event) {
-            log::error!(
-                "Failed to save TemplatableMCPServerInstallation running status to database: {err}"
-            );
+            report_error!(anyhow::Error::new(err).context(
+                "Failed to save TemplatableMCPServerInstallation running status to database"
+            ));
         }
     }
 
@@ -408,8 +408,9 @@ impl TemplatableMCPServerManager {
             .get(&installation_uuid)
             .cloned()
         else {
-            log::error!(
-                "No templatable MCP installation found for installation_uuid {installation_uuid}; cannot resolve template variables"
+            report_error!(
+                "No templatable MCP installation found; cannot resolve template variables",
+                extra: { "installation_uuid" => %installation_uuid }
             );
 
             self.change_server_state(installation_uuid, MCPServerState::FailedToStart, ctx);
@@ -446,8 +447,9 @@ impl TemplatableMCPServerManager {
                     s
                 }
                 None => {
-                    log::error!(
-                        "Templatable MCP server template contains no servers: {template_uuid}",
+                    report_error!(
+                        "Templatable MCP server template contains no servers",
+                        extra: { "template_uuid" => %template_uuid }
                     );
                     self.change_server_state(installation_uuid, MCPServerState::FailedToStart, ctx);
                     if mode.is_reconnect() {
@@ -460,15 +462,14 @@ impl TemplatableMCPServerManager {
                 }
             },
             Err(err) => {
-                log::error!(
-                    "Failed to parse resolved MCP server JSON for '{template_uuid}': {err:#}",
+                let detail = format!("Failed to parse MCP server: {err:#}");
+                report_error!(
+                    anyhow::Error::new(err).context("Failed to parse resolved MCP server JSON"),
+                    extra: { "template_uuid" => %template_uuid }
                 );
                 self.change_server_state(installation_uuid, MCPServerState::FailedToStart, ctx);
                 if mode.is_reconnect() {
-                    self.notify_reconnect_waiters(
-                        installation_uuid,
-                        Err(format!("Failed to parse MCP server: {err:#}")),
-                    );
+                    self.notify_reconnect_waiters(installation_uuid, Err(detail));
                 }
                 return;
             }
@@ -744,7 +745,8 @@ impl TemplatableMCPServerManager {
                 mcp_server_installation: mcp_server_installation.clone(),
             };
             if let Err(err) = sender.send(event) {
-                log::error!("Failed to save TemplatableMCPServerInstallation to database: {err}");
+                report_error!(anyhow::Error::new(err)
+                    .context("Failed to save TemplatableMCPServerInstallation to database"));
             }
         }
 
@@ -839,7 +841,8 @@ impl TemplatableMCPServerManager {
                 installation_uuids: installation_uuids.clone(),
             };
             if let Err(err) = sender.send(event) {
-                log::error!("Failed to delete installations from local database: {err}");
+                report_error!(anyhow::Error::new(err)
+                    .context("Failed to delete installations from local database"));
             }
         }
 
@@ -886,7 +889,10 @@ impl TemplatableMCPServerManager {
         updates: Vec<MCPServerUpdate>,
     ) -> Vec<MCPServerUpdate> {
         let Some(installation) = self.get_installed_server(&installation_uuid) else {
-            log::error!("Could not find installed server {installation_uuid}");
+            report_error!(
+                "Could not find installed server",
+                extra: { "installation_uuid" => %installation_uuid }
+            );
             return updates.to_vec();
         };
 

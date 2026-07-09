@@ -117,7 +117,7 @@ impl TerminalView {
             let sbx_future = resolve_sbx_path_from_user_shell(ctx);
             ctx.spawn(sbx_future, move |me, sbx_path, ctx| {
                 let Some(sbx_path) = sbx_path else {
-                    log::error!("sbx binary not found; cannot create Docker sandbox");
+                    report_error!("sbx binary not found; cannot create Docker sandbox");
                     return;
                 };
                 me.create_and_push_docker_sandbox_with_sbx(sbx_path, ctx);

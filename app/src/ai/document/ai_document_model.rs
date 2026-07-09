@@ -1004,7 +1004,10 @@ impl AIDocumentModel {
         if let Err(e) = self.save_tx.try_send(AIDocumentSaveRequest {
             document_id: *document_id,
         }) {
-            log::error!("Error enqueueing content save for {}: {}", document_id, e);
+            report_error!(
+                anyhow::Error::new(e).context("Error enqueueing content save"),
+                extra: { "document_id" => %document_id }
+            );
         }
     }
 
@@ -1046,7 +1049,10 @@ impl AIDocumentModel {
             title: doc.title.clone(),
         };
         if let Err(err) = sender.try_send(event) {
-            log::error!("Error persisting AI document content for {id}: {err}");
+            report_error!(
+                anyhow::Error::new(err).context("Error persisting AI document content"),
+                extra: { "id" => %id }
+            );
         }
     }
 

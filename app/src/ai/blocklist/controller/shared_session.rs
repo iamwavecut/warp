@@ -180,8 +180,9 @@ impl BlocklistAIController {
         }
 
         let Some(conversation) = history.as_ref(ctx).conversation(&conversation_id) else {
-            log::error!(
-                "Tried to initialize shared session stream for non-existent conversation  {conversation_id:?}"
+            report_error!(
+                "Tried to initialize shared session stream for non-existent conversation",
+                extra: { "conversation_id" => ?conversation_id }
             );
             return;
         };
@@ -321,13 +322,15 @@ impl BlocklistAIController {
                 self.terminal_surface_id,
                 ctx,
             ) {
-                log::error!(
-                    "Failed to apply client actions to conversation for shared session: {e:?}"
-                );
+                report_error!(anyhow::Error::new(e)
+                    .context("Failed to apply client actions to conversation for shared session"));
             }
         });
         let Some(conversation) = history_model.as_ref(ctx).conversation(&conversation_id) else {
-            log::error!("Failed to find conversation with id: {conversation_id:?}");
+            report_error!(
+                "Failed to find conversation with id",
+                extra: { "conversation_id" => ?conversation_id }
+            );
             return;
         };
 
@@ -428,7 +431,10 @@ impl BlocklistAIController {
 
         let history_model = BlocklistAIHistoryModel::handle(ctx);
         let Some(conversation) = history_model.as_ref(ctx).conversation(&conversation_id) else {
-            log::error!("Failed to find conversation with id: {conversation_id:?}");
+            report_error!(
+                "Failed to find conversation with id",
+                extra: { "conversation_id" => ?conversation_id }
+            );
             return;
         };
 
@@ -646,8 +652,9 @@ impl BlocklistAIController {
                 |id| match BlocklistAIHistoryModel::as_ref(ctx).conversation(&id) {
                     Some(c) => Some(c),
                     None => {
-                        log::error!(
-                            "Tried to execute prompt for non-existent conversation: {id:?}",
+                        report_error!(
+                            "Tried to execute prompt for non-existent conversation",
+                            extra: { "id" => ?id }
                         );
                         None
                     }
@@ -758,7 +765,7 @@ impl BlocklistAIController {
                         })
                     })
                 else {
-                    log::error!("Failed to get conversation id for shared session prompt");
+                    report_error!("Failed to get conversation id for shared session prompt");
                     return;
                 };
 

@@ -968,8 +968,9 @@ impl<P: BackingView> TypedActionView for PaneHeader<P> {
                             });
                         }
                     } else {
-                        log::error!(
-                            "Attempting to move to pane that does not exist with id: {target_id:?}"
+                        report_error!(
+                            "Attempting to move to pane that does not exist",
+                            extra: { "target_id" => ?target_id }
                         );
                     }
                 }

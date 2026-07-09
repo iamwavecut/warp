@@ -1879,7 +1879,10 @@ impl RootView {
             );
             ctx.windows().show_window_and_focus_app(window_id);
         } else {
-            log::error!("Auth not complete before trying to open settings page {section:?}");
+            report_error!(
+                "Auth not complete before trying to open settings page",
+                extra: { "section" => ?section }
+            );
         }
         true
     }
@@ -1895,7 +1898,7 @@ impl RootView {
             ctx.dispatch_typed_action_for_view(window_id, handle.id(), &action);
             ctx.windows().show_window_and_focus_app(window_id);
         } else {
-            log::error!("Auth not complete before trying to open settings");
+            report_error!("Auth not complete before trying to open settings");
         }
         true
     }
@@ -1918,7 +1921,7 @@ impl RootView {
             let window_id = ctx.window_id();
             ctx.windows().show_window_and_focus_app(window_id);
         } else {
-            log::error!("Auth not complete before trying to open MCP settings page");
+            report_error!("Auth not complete before trying to open MCP settings page");
         }
         true
     }
@@ -1932,7 +1935,7 @@ impl RootView {
             });
             ctx.windows().show_window_and_focus_app(window_id);
         } else {
-            log::error!("Auth not complete before trying to open Codex modal");
+            report_error!("Auth not complete before trying to open Codex modal");
         }
         true
     }
@@ -1983,7 +1986,9 @@ impl RootView {
                         // Stop listening and proceed to transcription (don't abort).
                         voice_input.update(ctx, |voice_input, ctx| {
                             if let Err(e) = voice_input.stop_listening(ctx) {
-                                log::error!("Failed to stop voice input on key release: {e:?}");
+                                report_error!(
+                                    e.context("Failed to stop voice input on key release")
+                                );
                             }
                         });
                     }

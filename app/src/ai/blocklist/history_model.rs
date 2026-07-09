@@ -59,6 +59,8 @@ pub use conversation_loader::{
     CloudConversationData,
 };
 
+use crate::report_error;
+
 /// Mirrors [`crate::persistence::agent::MAX_PERSISTED_CONVERSATION_COUNT`].
 /// Moot at steady state because the disk-side prune already keeps the
 /// persisted set within this window; kept as defense-in-depth if rows ever
@@ -853,7 +855,7 @@ impl BlocklistAIHistoryModel {
             .get(&terminal_surface_id)
             .is_some_and(|conversation_ids| conversation_ids.contains(&conversation_id))
         {
-            log::error!(
+            report_error!(
                 "Attempted to set active conversation ID for a terminal surface that does not contain that conversation."
             );
             return;
@@ -1714,12 +1716,14 @@ impl BlocklistAIHistoryModel {
                     if let Err(e) = sender.send(ModelEvent::DeleteAIConversation {
                         conversation_id: conversation_id_string.clone(),
                     }) {
-                        log::error!("Error sending DeleteAIConversation event: {e:?}");
+                        report_error!(anyhow::Error::new(e)
+                            .context("Error sending DeleteAIConversation event"));
                     }
                     if let Err(e) = sender.send(ModelEvent::DeleteMultiAgentConversations {
                         conversation_ids: vec![conversation_id_string],
                     }) {
-                        log::error!("Error sending DeleteMultiAgentConversations event: {e:?}");
+                        report_error!(anyhow::Error::new(e)
+                            .context("Error sending DeleteMultiAgentConversations event"));
                     }
                 }
             },

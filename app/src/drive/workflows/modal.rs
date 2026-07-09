@@ -763,7 +763,7 @@ impl WorkflowModal {
                     );
                 });
             }
-            _ => log::error!("Only one of a workflow ID or space can be specified for saving workflows, but both or neither were specified instead")
+            _ => report_error!("Only one of a workflow ID or space can be specified for saving workflows, but both or neither were specified instead")
         }
 
         self.close(true, ctx);
@@ -810,7 +810,7 @@ impl WorkflowModal {
                 .map(|workflow| workflow.permissions.owner),
             (None, Some(owner)) => Some(owner),
             _ => {
-                log::error!("Only one of a workflow ID or space can be specified");
+                report_error!("Only one of a workflow ID or space can be specified");
                 None
             }
         };

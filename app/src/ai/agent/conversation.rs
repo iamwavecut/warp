@@ -569,7 +569,7 @@ impl AIConversation {
                 task.reassign_exchange_ids();
             });
         }
-        self.task_store.rebuild_exchange_id_index();
+        self.task_store.rebuild_exchange_index();
     }
 
     pub fn is_viewing_shared_session(&self) -> bool {

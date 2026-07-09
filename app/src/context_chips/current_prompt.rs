@@ -30,6 +30,7 @@ use crate::context_chips::display_chip::GitLineChanges;
 use crate::editor::EditorView;
 use crate::features::FeatureFlag;
 use crate::menu::{MenuItem, MenuItemFields};
+use crate::report_error;
 use crate::settings::{InputSettings, WarpPromptSeparator};
 use crate::terminal::event::{BlockType, UserBlockCompleted};
 use crate::terminal::model::block::{Block, BlockMetadata};
@@ -629,7 +630,7 @@ impl CurrentPrompt {
         ctx: &mut ModelContext<Self>,
     ) {
         let Some(chip) = chip_kind.to_chip() else {
-            log::error!("Undefined chip: {chip_kind:?}");
+            report_error!("Undefined chip", extra: { "chip_kind" => ?chip_kind });
             return;
         };
 
@@ -919,7 +920,7 @@ impl CurrentPrompt {
         }
 
         let Some(chip) = chip_kind.to_chip() else {
-            log::error!("Undefined chip: {chip_kind:?}");
+            report_error!("Undefined chip", extra: { "chip_kind" => ?chip_kind });
             return;
         };
         if let RefreshConfig::Periodically { interval } = chip.refresh_config() {
@@ -959,7 +960,7 @@ impl CurrentPrompt {
 
         chips.iter().for_each(|chip_kind| {
             let Some(chip) = chip_kind.to_chip() else {
-                log::error!("Undefined chip: {chip_kind:?}");
+                report_error!("Undefined chip", extra: { "chip_kind" => ?chip_kind });
                 return;
             };
             // Add states of new chips
@@ -1313,7 +1314,7 @@ impl CurrentPrompt {
                                 .into_item(),
                         )
                     } else {
-                        log::error!("Missing definition for chip: {chip_kind:?}");
+                        report_error!("Missing definition for chip", extra: { "chip_kind" => ?chip_kind });
                         None
                     }
                 } else {

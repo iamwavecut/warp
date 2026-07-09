@@ -689,7 +689,7 @@ impl SharingDialog {
         };
 
         let Some(handle) = handle.upgrade(ctx) else {
-            log::error!(
+            report_error!(
                 "Unable to upgrade handle to TerminalView when removing guest from session"
             );
             return;
@@ -786,7 +786,7 @@ impl SharingDialog {
         };
 
         let Some(handle) = handle.upgrade(ctx) else {
-            log::error!(
+            report_error!(
                 "Unable to upgrade handle to TerminalView when setting guest ACL for session"
             );
             return;
@@ -1084,7 +1084,7 @@ impl SharingDialog {
             }
             Some(ShareableObject::Session { handle, .. }) => {
                 let Some(handle) = handle.upgrade(ctx) else {
-                    log::error!("Unable to upgrade handle to TerminalView when sending email invitations for session");
+                    report_error!("Unable to upgrade handle to TerminalView when sending email invitations for session");
                     return;
                 };
 

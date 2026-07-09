@@ -11,7 +11,7 @@ use repo_metadata::RepoMetadataUpdate;
 use serde::Serialize;
 #[cfg(not(target_family = "wasm"))]
 use warp_core::channel::ChannelState;
-use warp_core::SessionId;
+use warp_core::{report_error, SessionId};
 use warp_util::remote_path::{RemoteNavigationResult, RemotePath};
 use warp_util::standardized_path::StandardizedPath;
 #[cfg(not(target_family = "wasm"))]
@@ -832,6 +832,7 @@ impl HostRequestHandle {
             Some(crate::proto::server_message::Message::ReadFileContextResponse(resp)) => Ok(resp),
             other => {
                 log::error!("Unexpected response variant for ReadFileContext: {other:?}");
+                report_error!("Unexpected response variant for ReadFileContext");
                 Err(HostRequestError::UnexpectedResponse)
             }
         }
@@ -872,6 +873,7 @@ impl HostRequestHandle {
                 log::error!(
                     "Unexpected response variant for GetFragmentMetadataFromHash: {other:?}"
                 );
+                report_error!("Unexpected response variant for GetFragmentMetadataFromHash");
                 Err(HostRequestError::UnexpectedResponse)
             }
         }

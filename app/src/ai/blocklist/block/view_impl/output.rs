@@ -2207,9 +2207,9 @@ fn render_suggest_new_conversation(
     let theme = appearance.theme();
     if let AIActionStatus::Finished(result) = status {
         let AIAgentActionResultType::SuggestNewConversation(result) = &result.result else {
-            log::error!(
-                "Unexpected action result type for suggest new conversation action: {:?}",
-                result.result
+            report_error!(
+                "Unexpected action result type for suggest new conversation action",
+                extra: { "result_type" => ?result.result }
             );
             return None;
         };

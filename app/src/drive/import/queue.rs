@@ -77,7 +77,7 @@ impl FileCompletionCounter {
                     *counter == 0
                 }
                 None => {
-                    log::error!("File completion counter should exist but it doesn't");
+                    report_error!("File completion counter should exist but it doesn't");
                     false
                 }
             };

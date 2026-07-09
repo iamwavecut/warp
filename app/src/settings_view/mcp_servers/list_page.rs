@@ -482,7 +482,7 @@ impl MCPServersListPageView {
             .views_of_type::<Workspace>(window_id)
             .and_then(|views| views.first().cloned())
         else {
-            log::error!("Could not find workspace when attempting to open MCP logs.");
+            report_error!("Could not find workspace when attempting to open MCP logs.");
             return;
         };
 
@@ -496,7 +496,9 @@ impl MCPServersListPageView {
             });
             let Some(terminal_view_handle) = active_pane_group.as_ref(ctx).active_session_view(ctx)
             else {
-                log::error!("Could not get terminal view handle when attempting to open MCP logs.");
+                report_error!(
+                    "Could not get terminal view handle when attempting to open MCP logs."
+                );
                 return;
             };
 
@@ -515,7 +517,7 @@ impl MCPServersListPageView {
             }
             ServerCardEvent::ViewLogs(item_id) => match item_id {
                 ServerCardItemId::TemplatableMCP(_) => {
-                    log::error!("Viewing logs is not implemented for templatable MCP.");
+                    report_error!("Viewing logs is not implemented for templatable MCP.");
                 }
                 ServerCardItemId::TemplatableMCPInstallation(installation_uuid) => {
                     if let Some(template_uuid) = TemplatableMCPServerManager::as_ref(ctx)
@@ -524,8 +526,9 @@ impl MCPServersListPageView {
                         let log_path = logs::log_file_path_from_uuid(&template_uuid);
                         self.open_logs_for_server(&log_path, ctx);
                     } else {
-                        log::error!(
-                            "Could not find template_uuid for installation {installation_uuid}"
+                        report_error!(
+                            "Could not find template_uuid for installation",
+                            extra: { "installation_uuid" => %installation_uuid }
                         );
                     }
                 }
@@ -536,16 +539,19 @@ impl MCPServersListPageView {
                         let log_path = logs::log_file_path_from_uuid(&installation.template_uuid());
                         self.open_logs_for_server(&log_path, ctx);
                     } else {
-                        log::error!("Could not find installation for file-based server {uuid}");
+                        report_error!(
+                            "Could not find installation for file-based server",
+                            extra: { "uuid" => %uuid }
+                        );
                     }
                 }
                 ServerCardItemId::GalleryMCP(_) => {
-                    log::error!("Viewing logs is not implemented for gallery MCP items.")
+                    report_error!("Viewing logs is not implemented for gallery MCP items.")
                 }
             },
             ServerCardEvent::ToggleRunningSwitch(item_id, switch_state) => match item_id {
                 ServerCardItemId::TemplatableMCP(_) => {
-                    log::error!("Running a server is not implemented for templatable MCP.");
+                    report_error!("Running a server is not implemented for templatable MCP.");
                 }
                 ServerCardItemId::TemplatableMCPInstallation(uuid) => {
                     self.toggle_server_running_templatable(*uuid, *switch_state, ctx);
@@ -554,7 +560,7 @@ impl MCPServersListPageView {
                     self.toggle_server_running_file_based(*uuid, *switch_state, ctx);
                 }
                 ServerCardItemId::GalleryMCP(_) => {
-                    log::error!("Running a server is not implemented for gallery MCP items.")
+                    report_error!("Running a server is not implemented for gallery MCP items.")
                 }
             },
             ServerCardEvent::Install(item_id) => match item_id {
@@ -584,7 +590,7 @@ impl MCPServersListPageView {
             ServerCardEvent::InstallServerUpdate(item_id) => {
                 let ServerCardItemId::TemplatableMCPInstallation(installation_uuid) = item_id
                 else {
-                    log::error!(
+                    report_error!(
                         "Install server update is only supported for templatable MCP installations"
                     );
                     return;

@@ -614,7 +614,7 @@ impl History {
             }
             Some(ReadHistoryFileState::Done) => {
                 let Some(history_file_commands) = self.history_file_commands.get(&host) else {
-                    log::error!(
+                    report_error!(
                         "History file commands should exist if history file has been read."
                     );
                     return;

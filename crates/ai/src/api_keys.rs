@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use warp_core::report_error;
 use warp_multi_agent_api as api;
 use warpui_core::{Entity, ModelContext, SingletonEntity};
 use warpui_extras::secure_storage::{self, AppContextExt};
@@ -192,7 +193,8 @@ impl ApiKeyManager {
             Ok(json) => json,
             Err(e) => {
                 if !matches!(e, secure_storage::Error::NotFound) {
-                    log::error!("Failed to read API keys from secure storage: {e:#}");
+                    report_error!(anyhow::Error::new(e)
+                        .context("Failed to read API keys from secure storage"));
                 }
                 return ApiKeys::default();
             }
@@ -218,7 +220,7 @@ impl ApiKeyManager {
         match serde_json::from_str(&key_json) {
             Ok(keys) => keys,
             Err(e) => {
-                log::error!("Failed to deserialize API keys: {e:#}");
+                report_error!(anyhow::Error::new(e).context("Failed to deserialize API keys"));
                 ApiKeys::default()
             }
         }
@@ -238,7 +240,7 @@ impl ApiKeyManager {
         let json = match serde_json::to_string(&keys) {
             Ok(json) => json,
             Err(e) => {
-                log::error!("Failed to serialize API keys: {e:#}");
+                report_error!(anyhow::Error::new(e).context("Failed to serialize API keys"));
                 return;
             }
         };

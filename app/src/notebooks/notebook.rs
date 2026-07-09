@@ -838,7 +838,9 @@ impl NotebookView {
                     });
                 }
             }
-            ActiveNotebook::None => log::error!("Tried to save notebook, but none were active"),
+            ActiveNotebook::None => {
+                report_error!("Tried to save notebook, but none were active")
+            }
         }
     }
 
@@ -1631,7 +1633,9 @@ impl NotebookView {
                     });
                 }
             }
-            ActiveNotebook::None => log::error!("Tried to save notebook, but none were active"),
+            ActiveNotebook::None => {
+                report_error!("Tried to save notebook, but none were active")
+            }
         }
     }
 

@@ -860,6 +860,36 @@ impl LLMPreferences {
         }
     }
 
+    /// Copies the raw per-pane Agent Mode override from one terminal view to
+    /// another, preserving the source pane's local model selection exactly.
+    pub(crate) fn copy_agent_mode_selection(
+        &mut self,
+        source_terminal_view_id: EntityId,
+        new_terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let changed = match self
+            .base_llm_for_terminal_view
+            .get(&source_terminal_view_id)
+            .cloned()
+        {
+            Some(id) => {
+                self.base_llm_for_terminal_view
+                    .insert(new_terminal_view_id, id.clone())
+                    != Some(id)
+            }
+            None => self
+                .base_llm_for_terminal_view
+                .remove(&new_terminal_view_id)
+                .is_some(),
+        };
+
+        if changed {
+            self.trigger_snapshot_save(ctx);
+            ctx.emit(LLMPreferencesEvent::UpdatedActiveAgentModeLLM);
+        }
+    }
+
     /// Triggers a snapshot save to persist LLM override changes.
     fn trigger_snapshot_save(&self, ctx: &mut ModelContext<Self>) {
         ctx.dispatch_global_action("workspace:save_app", ());

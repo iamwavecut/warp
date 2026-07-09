@@ -1,5 +1,6 @@
 use std::{fmt, path::PathBuf};
 
+use clap::builder::PossibleValue;
 use clap::{Args, Subcommand, ValueEnum};
 
 use crate::{config_file::ConfigFileArgs, mcp::MCPSpec, model::ModelArgs, skill::SkillSpec};
@@ -107,32 +108,61 @@ impl HiddenComputerUseArgs {
         }
     }
 }
+const HARNESS_VALUE_VARIANTS: [Harness; 5] = [
+    Harness::Oz,
+    Harness::Claude,
+    Harness::OpenCode,
+    Harness::Gemini,
+    Harness::Codex,
+];
+
 /// The execution harness for an agent run.
 #[derive(
-    Debug, Copy, Clone, ValueEnum, Eq, PartialEq, Default, serde::Serialize, serde::Deserialize,
+    Debug, Copy, Clone, Eq, PartialEq, Hash, Default, serde::Serialize, serde::Deserialize,
 )]
+#[serde(rename_all = "lowercase")]
 pub enum Harness {
     /// Use the local Oz harness (default).
     #[default]
-    #[value(name = "oz")]
     Oz,
     /// Delegate to the `claude` CLI.
-    #[value(name = "claude", alias = "claude-code")]
     Claude,
     /// Delegate to the `opencode` CLI.
-    #[value(name = "opencode", alias = "open-code")]
     OpenCode,
     /// Delegate to the `gemini` CLI.
-    #[value(name = "gemini")]
     Gemini,
     /// Delegate to the `codex` CLI.
-    #[value(name = "codex")]
     Codex,
     /// A harness produced by newer persisted state that this client doesn't
     /// recognize. Surfaced via deserialization fallbacks; never selectable from
     /// the CLI or harness dropdown.
-    #[value(skip)]
+    #[serde(other)]
     Unknown,
+}
+
+impl ValueEnum for Harness {
+    fn value_variants<'a>() -> &'a [Self] {
+        &HARNESS_VALUE_VARIANTS
+    }
+
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        let mut pv = match self {
+            Harness::Oz => PossibleValue::new("oz").help("Use the local Oz harness (default)"),
+            Harness::Claude => PossibleValue::new("claude")
+                .alias("claude-code")
+                .help("Delegate to the `claude` CLI"),
+            Harness::OpenCode => PossibleValue::new("opencode")
+                .alias("open-code")
+                .help("Delegate to the `opencode` CLI"),
+            Harness::Gemini => PossibleValue::new("gemini").help("Delegate to the `gemini` CLI"),
+            Harness::Codex => PossibleValue::new("codex").help("Delegate to the `codex` CLI"),
+            Harness::Unknown => return None,
+        };
+        if !self.should_display_in_help_text() {
+            pv = pv.hide(true);
+        }
+        Some(pv)
+    }
 }
 
 impl Harness {
@@ -145,6 +175,14 @@ impl Harness {
         match Self::parse_orchestration_harness(value) {
             Some(harness @ (Self::Claude | Self::OpenCode | Self::Codex)) => Some(harness),
             Some(Self::Oz) | Some(Self::Gemini) | Some(Self::Unknown) | None => None,
+        }
+    }
+
+    /// Whether this harness is surfaced to users in CLI `--help`.
+    pub fn should_display_in_help_text(self) -> bool {
+        match self {
+            Self::Oz | Self::Claude | Self::OpenCode | Self::Gemini | Self::Codex => true,
+            Self::Unknown => false,
         }
     }
 

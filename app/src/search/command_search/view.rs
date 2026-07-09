@@ -184,7 +184,7 @@ impl CommandSearchView {
             .as_ref(ctx)
             .get_handle(ctx.window_id(), ModalType::UniversalSearchWidth)
             .unwrap_or_else(|| {
-                log::error!("Couldn't retrieve universal search resizable state handle.");
+                report_error!("Couldn't retrieve universal search resizable state handle.");
                 resizable_state_handle(DEFAULT_UNIVERSAL_SEARCH_WIDTH)
             });
 

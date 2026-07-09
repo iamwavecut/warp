@@ -1,15 +1,14 @@
 use http::StatusCode;
 
-use super::{register_error, ErrorExt};
+use crate::{register_error, ErrorExt};
 
 impl ErrorExt for reqwest::Error {
     fn is_actionable(&self) -> bool {
-        // Outside of timeouts, there's nothing we can do about errors
-        // that occur prior to the successful receipt of an HTTP
-        // response.
+        // Outside of timeouts, there's nothing we can do about errors that occur prior to the
+        // successful receipt of an HTTP response.
 
-        // There's no way to check for connection errors via web APIs, so
-        // `is_connect` can only be called on native platforms.
+        // There's no way to check for connection errors via web APIs, so `is_connect` can only be
+        // called on native platforms.
         #[cfg(not(target_family = "wasm"))]
         if self.is_connect() {
             return false;
@@ -25,7 +24,8 @@ impl ErrorExt for reqwest::Error {
             return false;
         }
 
-        // Internal server errors (5xx) are server-side issues that we can't act upon from the client.
+        // Internal server errors (5xx) are server-side issues that we can't act upon from the
+        // client.
         if self.status().is_some_and(|status| status.is_server_error()) {
             return false;
         }

@@ -410,7 +410,7 @@ impl RightPanelView {
         {
             Some(handle) => handle,
             None => {
-                log::error!("Couldn't retrieve Right panel resizable state handle.");
+                report_error!("Couldn't retrieve Right panel resizable state handle.");
                 resizable_state_handle(600.0)
             }
         };
@@ -1319,7 +1319,7 @@ impl RightPanelView {
         };
 
         if let Err(err) = &result {
-            log::error!("Failed to submit review comments to terminal: {err}");
+            report_error!(err);
         }
 
         let submission_result = if result.is_ok() {

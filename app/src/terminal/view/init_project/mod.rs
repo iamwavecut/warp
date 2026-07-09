@@ -1021,7 +1021,8 @@ impl TypedActionView for InitStepBlock {
                         async move { Self::create_symlink_to_agents_md(&path_clone, &root_path).await },
                         |_me, result, _ctx| {
                             if let Err(e) = result {
-                                log::error!("Failed to create symlink to AGENTS.md: {e}");
+                                report_error!(anyhow::Error::new(e)
+                                    .context("Failed to create symlink to AGENTS.md"));
                             }
                         },
                     );

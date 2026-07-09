@@ -164,7 +164,10 @@ impl Layer {
     /// the experiment group for that range, or None if no satisfying range was found.
     fn get_group_for_bucket(&self, bucket: u16) -> Option<GroupId> {
         if bucket >= NUM_BUCKETS {
-            log::error!("User assigned a bucket greater than the max: {bucket}");
+            report_error!(
+                "User assigned a bucket greater than the max",
+                extra: { "bucket" => %bucket }
+            );
             return None;
         }
         for BucketRange { group, range } in self.bucket_ranges.iter() {
@@ -218,7 +221,10 @@ pub trait Experiment<T: Experiment<T>>: FromStr {
                 if cfg!(debug_assertions) {
                     panic!("{}: {}", NO_LAYER_FOUND_ERR, Self::name());
                 } else {
-                    log::error!("{}: {}", NO_LAYER_FOUND_ERR, Self::name());
+                    report_error!(
+                        anyhow::anyhow!("{NO_LAYER_FOUND_ERR}"),
+                        extra: { "experiment" => %Self::name() }
+                    );
                 }
                 &EMPTY_LAYER
             }
@@ -281,7 +287,10 @@ pub trait Experiment<T: Experiment<T>>: FromStr {
                     if cfg!(debug_assertions) {
                         panic!("{INVALID_GROUP_ASSIGNMENT_ERR}: {e:?}");
                     } else {
-                        log::error!("{INVALID_GROUP_ASSIGNMENT_ERR}: {e:?}");
+                        report_error!(
+                            anyhow::anyhow!("{INVALID_GROUP_ASSIGNMENT_ERR}"),
+                            extra: { "error" => ?e }
+                        );
                     }
                 }
             };
@@ -296,7 +305,10 @@ pub trait Experiment<T: Experiment<T>>: FromStr {
                 match T::from_str(&variant) {
                     Ok(group) => assigned_group = Some(group),
                     Err(e) => {
-                        log::error!("{INVALID_USER_OVERRIDE_ERR}: {e:?}");
+                        report_error!(
+                            anyhow::anyhow!("{INVALID_USER_OVERRIDE_ERR}"),
+                            extra: { "error" => ?e }
+                        );
                     }
                 };
             }

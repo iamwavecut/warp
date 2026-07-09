@@ -515,7 +515,7 @@ impl AgentDriver {
                 let result = Self::run_internal(task, foreground.clone()).await;
 
                 if tx.send(result).is_err() {
-                    log::error!("Caller did not wait for agent driver to finish");
+                    report_error!("Caller did not wait for agent driver to finish");
                 }
             },
             |_, _, _| {},

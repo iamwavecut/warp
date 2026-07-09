@@ -67,16 +67,19 @@ impl WslInfo {
             .flat_map(|uuid| {
                 let distribution_key = key
                     .open(&uuid)
-                    .inspect_err(|err| {
-                        log::error!("Could not open distribution registry key: {err:#}")
+                    .map_err(|err| {
+                        report_error!(anyhow::Error::new(err)
+                            .context("Could not open distribution registry key"))
                     })
                     .ok()?;
                 let name = distribution_key
                     .get_string("DistributionName")
-                    .inspect_err(|err| {
+                    .map_err(|err| {
                         // Some entries don't have names, that's not an error state we need to monitor.
                         if err.code() != KEY_NOT_FOUND_ERR {
-                            log::error!("Unable to read distribution name: {err:#}");
+                            report_error!(
+                                anyhow::Error::new(err).context("Unable to read distribution name")
+                            );
                         }
                     })
                     .ok()?;

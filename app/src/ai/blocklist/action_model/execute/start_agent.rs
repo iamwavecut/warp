@@ -142,8 +142,9 @@ impl StartAgentExecutor {
                 }
             }
             None => {
-                log::error!(
-                    "No agent identifier found for child conversation {child_conversation_id:?}"
+                report_error!(
+                    "No agent identifier found for child conversation",
+                    extra: { "child_conversation_id" => ?child_conversation_id }
                 );
                 let _ = pending.sender.try_send(StartAgentOutcome::Error(
                     "Server did not assign an agent identifier".to_string(),

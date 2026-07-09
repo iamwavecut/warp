@@ -1435,7 +1435,10 @@ impl NotebooksEditorModel {
                 });
             }
             None => {
-                log::error!("Child model at {block_start} has end offset with value None");
+                report_error!(
+                    "Child model has end offset with value None",
+                    extra: { "block_start" => %block_start }
+                );
             }
         };
 

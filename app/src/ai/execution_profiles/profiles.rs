@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use warp_core::user_preferences::GetUserPreferences;
@@ -309,8 +310,9 @@ impl AIExecutionProfilesModel {
             if let Err(e) = ctx
                 .private_user_preferences()
                 .remove_value("PreferredAgentModeLLMId")
+                .context("Failed to remove old PreferredAgentModeLLMId user pref")
             {
-                log::error!("Failed to remove old PreferredAgentModeLLMId user pref: {e}");
+                report_error!(e);
             }
             self.set_base_model(default_profile_id, Some(base_llm_id.clone()), ctx);
             log::info!("Overwrote default profile with legacy setting for base llm: {base_llm_id}");
