@@ -221,7 +221,7 @@ impl From<GqlAdminEnablementSetting> for AdminEnablementSetting {
                 report_error!(
                     "Invalid AdminEnablementSetting. Make sure to update client GraphQL types!",
                     extra: { "value" => %value },
-                    warp_core::errors::ReportErrorLogMode::OncePerRun
+                    warp_errors::ReportErrorLogMode::OncePerRun
                 );
                 AdminEnablementSetting::RespectUserSetting
             }
@@ -240,7 +240,7 @@ impl From<GqlHostEnablementSetting> for HostEnablementSetting {
                 report_error!(
                     "Invalid HostEnablementSetting. Make sure to update client GraphQL types!",
                     extra: { "value" => %value },
-                    warp_core::errors::ReportErrorLogMode::OncePerRun
+                    warp_errors::ReportErrorLogMode::OncePerRun
                 );
                 HostEnablementSetting::RespectUserSetting
             }
@@ -459,7 +459,7 @@ fn convert_gql_ai_autonomy_value_to_action_permission(
             report_error!(
                 "Invalid AiAutonomyValue. Make sure to update client GraphQL types!",
                 extra: { "value" => %value },
-                warp_core::errors::ReportErrorLogMode::OncePerRun
+                warp_errors::ReportErrorLogMode::OncePerRun
             );
             None
         }
@@ -478,7 +478,7 @@ fn convert_gql_write_to_pty_autonomy_value_to_write_to_pty_permission(
             report_error!(
                 "Invalid WriteToPtyAutonomyValue. Make sure to update client GraphQL types!",
                 extra: { "value" => %value },
-                warp_core::errors::ReportErrorLogMode::OncePerRun
+                warp_errors::ReportErrorLogMode::OncePerRun
             );
             None
         }
@@ -497,7 +497,7 @@ fn convert_gql_computer_use_autonomy_value_to_computer_use_permission(
             report_error!(
                 "Invalid ComputerUseAutonomyValue. Make sure to update client GraphQL types!",
                 extra: { "value" => %value },
-                warp_core::errors::ReportErrorLogMode::OncePerRun
+                warp_errors::ReportErrorLogMode::OncePerRun
             );
             None
         }

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use mockall::automock;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use warp_core::report_error;
+use warp_errors::report_error;
 
 use super::ServerApi;
 use crate::ai::agent::conversation::{AIAgentHarness, ServerAIConversationMetadata};

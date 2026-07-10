@@ -1,5 +1,6 @@
 mod cloud_mode_v2_view;
 mod data_source;
+mod mixer;
 mod search_item;
 mod view;
 
@@ -14,6 +15,7 @@ use ai::skills::SkillReference;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_errors::report_error;
 #[cfg(feature = "local_fs")]
 use warp_util::path::{CleanPathResult, LineAndColumnArg};
 use warpui::clipboard::ClipboardContent;

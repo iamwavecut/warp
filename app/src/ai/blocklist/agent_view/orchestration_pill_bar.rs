@@ -1555,12 +1555,14 @@ fn render_pill(
     let is_remote_child = spec.is_remote_child;
 
     // Per Figma: fg_overlay_2 at rest, fg_overlay_3 on hover, composed over
-    // the agent-view surface. Pre-blend to a solid so the avatar cutout ring
+    // the theme background. Pre-blend to a solid so the avatar cutout ring
     // matches the painted pill exactly.
-    let pill_rest_bg = Fill::from(agent_view_bg_color(app))
+    let pill_rest_bg = theme
+        .background()
         .blend(&internal_colors::fg_overlay_2(theme))
         .into_solid();
-    let pill_hover_bg = Fill::from(agent_view_bg_color(app))
+    let pill_hover_bg = theme
+        .background()
         .blend(&internal_colors::fg_overlay_3(theme))
         .into_solid();
     let pill_text_color = internal_colors::fg_overlay_6(theme).into_solid();

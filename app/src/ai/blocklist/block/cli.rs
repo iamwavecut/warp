@@ -6,8 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{cmp::Ordering, rc::Rc};
 use warp_core::features::FeatureFlag;
-use warp_core::report_error;
 use warp_core::ui::theme::color::internal_colors;
+use warp_errors::report_error;
 use warpui::elements::new_scrollable::SingleAxisConfig;
 use warpui::elements::{
     ClippedScrollStateHandle, ConstrainedBox, Empty, Fill, FormattedTextElement, Highlight,

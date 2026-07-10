@@ -48,6 +48,7 @@ pathfinder_color = "0.5.0"
 vec1.workspace = true
 warpui_core.workspace = true
 warp_core.workspace = true
+warp_errors.workspace = true
 warp_util.workspace = true
 rayon.workspace = true
 line-ending.workspace = true

@@ -1,5 +1,5 @@
 use crate::OnboardingIntention;
-use warp_core::report_error;
+use warp_errors::report_error;
 use warpui::{Entity, ModelContext};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

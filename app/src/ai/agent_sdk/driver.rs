@@ -28,7 +28,8 @@ use ai::skills::SKILL_PROVIDER_DEFINITIONS;
 use warp_cli::agent::{Harness, OutputFormat};
 use warp_cli::mcp::MCPSpec;
 use warp_cli::skill::SkillSpec;
-use warp_core::{features::FeatureFlag, report_error, report_if_error, safe_debug, safe_info};
+use warp_core::{features::FeatureFlag, safe_debug, safe_info};
+use warp_errors::{report_error, report_if_error};
 use warp_managed_secrets::ManagedSecretValue;
 use warpui::{
     r#async::{FutureExt, TimeoutError},

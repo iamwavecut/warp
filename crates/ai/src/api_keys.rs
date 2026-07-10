@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use warp_core::report_error;
+use warp_errors::report_error;
 use warp_multi_agent_api as api;
 use warpui_core::{Entity, ModelContext, SingletonEntity};
 use warpui_extras::secure_storage::{self, AppContextExt};

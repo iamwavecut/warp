@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use derivative::Derivative;
 use std::sync::Arc;
 use uuid::Uuid;
+use warp_errors::report_error;
 use warp_graphql::scalars::time::ServerTimestamp;
 use warpui::{r#async::FutureId, Entity, ModelContext, SingletonEntity};
 

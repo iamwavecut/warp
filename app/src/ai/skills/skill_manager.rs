@@ -9,8 +9,9 @@ pub use file_watchers::{
 };
 use warp_core::channel::ChannelState;
 use warp_core::features::FeatureFlag;
+use warp_core::safe_warn;
 use warp_core::ui::icons::Icon;
-use warp_core::{report_error, safe_warn};
+use warp_errors::report_error;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::{AppContext, Entity, ModelContext, ModelHandle, SingletonEntity};
 

@@ -5,6 +5,7 @@ use chrono::Local;
 
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use warp_editor::editor::NavigationKey;
+use warp_errors::report_error;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::{
     resizable_state_handle, Align, Border, ChildAnchor, ConstrainedBox, Container, CornerRadius,

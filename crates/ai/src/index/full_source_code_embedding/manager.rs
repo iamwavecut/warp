@@ -17,12 +17,13 @@ cfg_if::cfg_if! {
         use warp_core::features::FeatureFlag;
         use watcher::{BulkFilesystemWatcher, BulkFilesystemWatcherEvent};
         use warpui_core::r#async::Timer;
-        use warp_core::{report_if_error};
         use warp_core::channel::ChannelState;
         use warp_core::safe_warn;
+        use warp_errors::report_if_error;
     }
 }
-use warp_core::{report_error, safe_anyhow};
+use warp_core::safe_anyhow;
+use warp_errors::report_error;
 use warpui_core::{AppContext, Entity, ModelContext, ModelHandle, SingletonEntity};
 
 use super::codebase_index::{CodebaseIndexEvent, RetrievalID, SyncProgress};

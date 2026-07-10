@@ -31,7 +31,6 @@ use parking_lot::FairMutex;
 use pathfinder_color::ColorU;
 use warp_core::{
     features::FeatureFlag,
-    report_error,
     settings::Setting,
     ui::{
         appearance::Appearance,
@@ -1313,8 +1312,6 @@ impl View for UseAgentToolbar {
             if let Some(bg_color) = terminal_model.alt_screen().inferred_bg_color() {
                 container = container.with_background(bg_color);
             }
-        } else if terminal_model.block_list().agent_view_state().is_inline() {
-            container = container.with_background(agent_view_bg_fill(app));
         }
 
         container.finish()

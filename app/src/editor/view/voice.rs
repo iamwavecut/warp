@@ -79,7 +79,7 @@ impl EditorView {
                 crate::view_components::NewFeaturePopupEvent::Dismissed
             ) {
                 AISettings::handle(ctx).update(ctx, |settings, ctx| {
-                    warp_core::report_if_error!(settings
+                    warp_errors::report_if_error!(settings
                         .dismissed_voice_input_new_feature_popup
                         .set_value(true, ctx));
                 });

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use warp_core::features::FeatureFlag;
+use warp_errors::report_error;
 use warpui::{AppContext, ModelContext, SingletonEntity};
 
 use super::{
@@ -15,7 +16,7 @@ use crate::ai::agent::{
 use crate::ai::blocklist::agent_view::AgentViewEntryOrigin;
 use crate::search::slash_command_menu::static_commands::commands;
 use crate::terminal::input::slash_commands::SlashCommandTrigger;
-use crate::{report_error, BlocklistAIHistoryModel};
+use crate::BlocklistAIHistoryModel;
 
 pub enum SlashCommandRequest {
     CreateNewProject {

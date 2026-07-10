@@ -70,8 +70,7 @@ pub enum ReadHistoryContentsError {
 
 // SessionId is defined in warp_core and re-exported here for backward compatibility.
 pub use warp_core::SessionId;
-
-use crate::report_error;
+use warp_errors::report_error;
 
 /// Information about the sessions within a given terminal pane/top-level
 /// shell.
@@ -655,7 +654,7 @@ impl SessionInfo {
                 }
             }
             Err(e) => {
-                crate::report_error!(e);
+                warp_errors::report_error!(e);
                 BootstrapSessionType::Local
             }
         }

@@ -12,6 +12,7 @@ use itertools::Itertools;
 use prost_types::FieldMask;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use warp_errors::report_error;
 use warp_multi_agent_api::message::tool_call::subagent::Metadata;
 use warp_multi_agent_api::message::Message;
 use warp_multi_agent_api::{self as api};

@@ -159,6 +159,7 @@ dependencies = [
  "uuid",
  "virtual-fs",
  "warp_core",
+ "warp_errors",
  "warp_graphql",
  "warp_multi_agent_api",
  "warp_terminal",
@@ -5883,6 +5884,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "warp_core",
+ "warp_errors",
 ]
 
 [[package]]
@@ -5894,6 +5896,7 @@ dependencies = [
  "tokio",
  "tower-http",
  "warp_core",
+ "warp_errors",
  "warpui_core",
 ]
 
@@ -7277,6 +7280,7 @@ dependencies = [
  "tokio",
  "url",
  "warp_core",
+ "warp_errors",
  "warp_util",
  "warpui_core",
 ]
@@ -8667,6 +8671,7 @@ dependencies = [
  "rust-embed 8.7.2",
  "ui_components",
  "warp_core",
+ "warp_errors",
  "warp_logging",
  "warpui",
  "warpui_core",
@@ -10463,6 +10468,7 @@ dependencies = [
  "tokio-util",
  "uuid",
  "warp_core",
+ "warp_errors",
  "warp_util",
  "warpui_core",
 ]
@@ -10501,6 +10507,7 @@ dependencies = [
  "thiserror 2.0.17",
  "virtual-fs",
  "warp_core",
+ "warp_errors",
  "warp_util",
  "warpui",
  "warpui_core",
@@ -13976,6 +13983,7 @@ dependencies = [
  "warp_completer",
  "warp_core",
  "warp_editor",
+ "warp_errors",
  "warp_files",
  "warp_graphql",
  "warp_isolation_platform",
@@ -14230,6 +14238,7 @@ dependencies = [
  "vec1",
  "vim",
  "warp_core",
+ "warp_errors",
  "warp_util",
  "warpui",
  "warpui_core",
@@ -14339,6 +14348,7 @@ dependencies = [
  "log-panics",
  "tempfile",
  "warp_core",
+ "warp_errors",
  "warp_web_event_bus",
  "wasm-bindgen",
  "web-sys",
@@ -14410,6 +14420,7 @@ dependencies = [
  "strum_macros 0.27.1",
  "tantivy",
  "warp_core",
+ "warp_errors",
  "warpui_core",
 ]
 
@@ -14436,6 +14447,7 @@ dependencies = [
  "thiserror 2.0.17",
  "uuid",
  "warp_core",
+ "warp_errors",
  "warp_graphql",
  "warpui_core",
 ]
@@ -14470,6 +14482,7 @@ dependencies = [
  "vte",
  "warp_completer",
  "warp_core",
+ "warp_errors",
  "warp_util",
  "warpui_core",
 ]
@@ -14648,6 +14661,7 @@ dependencies = [
  "instant",
  "itertools 0.14.0",
  "lazy_static",
+ "libc",
  "log",
  "markdown_parser",
  "minimp4",

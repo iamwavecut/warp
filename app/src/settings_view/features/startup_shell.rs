@@ -1,3 +1,4 @@
+use warp_errors::report_if_error;
 use warpui::elements::{CrossAxisAlignment, Fill, Flex, ParentElement, Shrinkable};
 use warpui::presenter::ChildView;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};

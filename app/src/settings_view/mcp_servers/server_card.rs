@@ -5,6 +5,7 @@ use warp_core::ui::external_product_icon::ExternalProductIcon;
 use warp_core::ui::icons::{Icon, ICON_DIMENSIONS};
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_errors::report_error;
 use warpui::accessibility::ActionAccessibilityContent;
 use warpui::elements::{
     Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Expanded, Fill, Flex,

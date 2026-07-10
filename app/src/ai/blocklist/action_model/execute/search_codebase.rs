@@ -5,6 +5,7 @@ use std::{
 
 use futures::{channel::oneshot, future::BoxFuture, FutureExt};
 use itertools::Itertools;
+use warp_errors::report_error;
 use warpui::{AppContext, Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
 use crate::{

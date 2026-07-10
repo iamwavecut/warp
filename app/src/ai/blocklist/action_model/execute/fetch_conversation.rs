@@ -5,6 +5,7 @@ use crate::ai::blocklist::history_model::CloudConversationData;
 use ai::agent::action_result::FetchConversationResult;
 use futures::future::BoxFuture;
 use futures::FutureExt;
+use warp_errors::report_error;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::ai::agent::api::ServerConversationToken;

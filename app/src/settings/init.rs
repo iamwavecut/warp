@@ -266,7 +266,7 @@ fn init_platform_native_preferences() -> user_preferences::Model {
             match user_preferences::file_backed::FileBackedUserPreferences::new(super::user_preferences_file_path()) {
                 Ok(prefs) => Box::new(prefs) as user_preferences::Model,
                 Err(err) => {
-                    crate::report_error!(anyhow::anyhow!(err));
+                    warp_errors::report_error!(anyhow::anyhow!(err));
                     Box::<user_preferences::in_memory::InMemoryPreferences>::default()
                 }
             }

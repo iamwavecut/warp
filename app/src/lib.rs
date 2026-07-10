@@ -3,6 +3,8 @@
 
 #[macro_use]
 extern crate warp_core;
+#[macro_use]
+extern crate warp_errors;
 
 mod ai;
 mod alloc;
@@ -158,8 +160,8 @@ use server::network_logging::NetworkLogModel;
 use settings::import::model::ImportedConfigModel;
 use warp_cli::GlobalOptions;
 use warp_cli::{agent::AgentCommand, CliCommand};
-pub use warp_core::errors::{report_error, report_if_error};
 pub use warp_core::{safe_debug, safe_error, safe_info, safe_warn};
+pub use warp_errors::{report_error, report_if_error};
 
 #[cfg(feature = "local_fs")]
 use repo_metadata::{

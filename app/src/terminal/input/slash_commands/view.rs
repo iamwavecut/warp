@@ -1,7 +1,4 @@
-use std::collections::HashSet;
-
 use ai::skills::SkillReference;
-use lazy_static::lazy_static;
 use warpui::elements::ChildView;
 use warpui::{AppContext, Element, ViewContext};
 use warpui::{Entity, ModelHandle, View, ViewHandle};
@@ -16,17 +13,14 @@ use crate::terminal::input::slash_command_model::SlashCommandEntryState;
 use crate::terminal::input::slash_command_model::SlashCommandModel;
 use crate::terminal::input::slash_commands::UpdatedActiveCommands;
 use crate::terminal::input::slash_commands::{
-    AcceptSlashCommandOrLocalPrompt, SlashCommandDataSource, ZeroStateDataSource,
+    AcceptSlashCommandOrLocalPrompt, GuiSlashCommandDataSource, GuiZeroStateDataSource,
 };
 use crate::terminal::input::suggestions_mode_model::{
     InputSuggestionsModeEvent, InputSuggestionsModeModel,
 };
 use crate::workflows::workflow::Workflow;
 
-lazy_static! {
-    static ref SLASH_COMMAND_FILTERS: HashSet<QueryFilter> =
-        HashSet::from([QueryFilter::StaticSlashCommands]);
-}
+use super::mixer::slash_command_query;
 
 #[derive(Debug, Clone, Copy)]
 pub enum CloseReason {
@@ -83,7 +77,7 @@ impl InlineSlashCommandView {
     pub fn new(
         slash_command_model: &ModelHandle<SlashCommandModel>,
         positioner: &ModelHandle<InlineMenuPositioner>,
-        slash_commands_source: ModelHandle<SlashCommandDataSource>,
+        slash_commands_source: ModelHandle<GuiSlashCommandDataSource>,
         suggestions_mode_model: ModelHandle<InputSuggestionsModeModel>,
         agent_view_controller: ModelHandle<AgentViewController>,
         input_buffer_model: ModelHandle<InputBufferModel>,
@@ -101,7 +95,7 @@ impl InlineSlashCommandView {
             },
         );
         let zero_state_source =
-            ctx.add_model(|_| ZeroStateDataSource::new(&slash_commands_source, false));
+            ctx.add_model(|_| GuiZeroStateDataSource::new(&slash_commands_source));
 
         let mixer = ctx.add_model(|ctx| {
             let mut mixer = SearchMixer::<AcceptSlashCommandOrLocalPrompt>::new();
@@ -259,13 +253,6 @@ impl View for InlineSlashCommandView {
 
     fn render(&self, _app: &warpui::AppContext) -> Box<dyn Element> {
         ChildView::new(&self.menu_view).finish()
-    }
-}
-
-pub(super) fn slash_command_query(text: &str) -> Query {
-    Query {
-        text: text.to_owned(),
-        filters: SLASH_COMMAND_FILTERS.clone(),
     }
 }
 

@@ -13,6 +13,7 @@ use regex::Regex;
 use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
 use warp_core::ui::theme::WarpTheme;
+use warp_errors::report_error;
 use warpui::elements::{
     Align, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Empty, Expanded,
     Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius,

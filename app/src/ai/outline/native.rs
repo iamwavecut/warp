@@ -16,6 +16,7 @@ use repo_metadata::{
     DirectoryWatcher, Repository, RepositoryUpdate,
 };
 use settings::Setting as _;
+use warp_errors::report_error;
 use warpui::{Entity, ModelContext, ModelHandle, SingletonEntity};
 
 use crate::{

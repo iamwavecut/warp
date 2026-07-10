@@ -27,11 +27,12 @@ use warp_core::features::FeatureFlag;
 
 const FILE_GLOB_TIMEOUT: Duration = Duration::from_secs(10);
 
+use warp_errors::report_error;
+
 use super::{
     get_server_output_id, is_git_repository, ActionExecution, AnyActionExecution,
     ExecuteActionInput, PreprocessActionInput,
 };
-use crate::report_error;
 
 pub struct FileGlobExecutor {
     active_session: ModelHandle<ActiveSession>,

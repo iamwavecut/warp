@@ -18,7 +18,7 @@ use auth::AuthClient;
 use object::ObjectClient;
 use team::TeamClient;
 use warp_core::context_flag::ContextFlag;
-use warp_core::errors::{register_error, AnyhowErrorExt, ErrorExt};
+use warp_errors::{register_error, AnyhowErrorExt, ErrorExt};
 use warpui::ModelContext;
 use workspace::WorkspaceClient;
 

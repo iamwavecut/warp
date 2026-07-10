@@ -7,7 +7,8 @@ use ignore::gitignore::Gitignore;
 use repo_metadata::entry::{BudgetExceededBehavior, IgnoredPathStrategy};
 use repo_metadata::Repository;
 use std::{path::Path, sync::Arc};
-use warp_core::{report_error, safe_error};
+use warp_core::safe_error;
+use warp_errors::report_error;
 use warpui_core::{Entity, ModelContext, ModelHandle};
 
 #[cfg(feature = "local_fs")]

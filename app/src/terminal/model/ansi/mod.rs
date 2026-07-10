@@ -29,6 +29,7 @@ use itertools::Itertools;
 use lazy_static::lazy_static;
 use log::debug;
 use vte::{Params, Parser as VteParser, Perform as VtePerform};
+use warp_errors::report_error;
 pub use warp_terminal::model::ansi::control_sequence_parameters::*;
 use warp_terminal::model::{KeyboardModes, KeyboardModesApplyBehavior};
 use warpui::color::ColorU;

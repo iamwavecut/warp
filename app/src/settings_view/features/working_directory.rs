@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use warp_errors::report_if_error;
 use warpui::elements::{Container, CrossAxisAlignment, Flex, ParentElement, Shrinkable};
 use warpui::presenter::ChildView;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};

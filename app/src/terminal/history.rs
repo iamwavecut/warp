@@ -7,6 +7,7 @@ use std::{
 };
 
 use warp_core::command::ExitCode;
+use warp_errors::report_error;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
 
 use super::{

@@ -1,4 +1,6 @@
 use anyhow::Result;
+#[cfg(unix)]
+use warp_errors::report_error;
 use warpui::{AppContext, Entity, SingletonEntity};
 
 use crate::terminal::local_tty::{self};
@@ -8,8 +10,8 @@ use super::PseudoConsoleChild;
 use super::{PtyOptions, PtySpawnResult};
 #[cfg(unix)]
 use {
-    crate::report_error, crate::terminal::local_tty::server::TerminalServer, anyhow::bail,
-    std::cmp::Reverse, std::collections::HashMap, std::ffi::OsString, std::process::Child,
+    crate::terminal::local_tty::server::TerminalServer, anyhow::bail, std::cmp::Reverse,
+    std::collections::HashMap, std::ffi::OsString, std::process::Child,
 };
 /// A handle that can be used to interact with a pty process.
 pub trait PtyHandle: Send + Sync {

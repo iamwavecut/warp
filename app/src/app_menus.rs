@@ -24,6 +24,7 @@ use itertools::Itertools;
 use settings::manager::SettingsManager;
 use settings::Setting as _;
 use warp_core::context_flag::ContextFlag;
+use warp_errors::report_error;
 use warp_util::path::user_friendly_path;
 use warpui::actions::StandardAction;
 use warpui::keymap::{Keystroke, Trigger};

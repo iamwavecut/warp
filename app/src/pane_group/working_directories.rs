@@ -12,6 +12,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use warp_core::SessionId;
 #[cfg(feature = "local_fs")]
+use warp_errors::report_error;
+#[cfg(feature = "local_fs")]
 use warp_util::remote_path::RemotePath;
 #[cfg(feature = "local_fs")]
 use warpui::{AppContext, SingletonEntity as _};
@@ -26,8 +28,6 @@ use crate::code_review::comments::{
     AttachedReviewComment, PendingImportedReviewComment, ReviewCommentBatch,
 };
 use crate::code_review::diff_state::{DiffMode, DiffStateModel};
-#[cfg(feature = "local_fs")]
-use crate::report_error;
 use crate::workspace::view::global_search::view::GlobalSearchView;
 
 /// Type-safe wrapper around the map of `LocalOrRemotePath` → `DiffStateModel`.

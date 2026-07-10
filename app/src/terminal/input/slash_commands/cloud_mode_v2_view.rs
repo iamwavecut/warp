@@ -25,14 +25,16 @@ use crate::terminal::input::buffer_model::{InputBufferModel, InputBufferUpdateEv
 use crate::terminal::input::inline_menu::styles as inline_styles;
 use crate::terminal::input::inline_menu::QueryResultRendererExt as _;
 use crate::terminal::input::slash_command_model::{SlashCommandEntryState, SlashCommandModel};
-use crate::terminal::input::slash_commands::view::{slash_command_query, CloseReason};
+use crate::terminal::input::slash_commands::view::CloseReason;
 use crate::terminal::input::slash_commands::{
-    AcceptSlashCommandOrLocalPrompt, SlashCommandDataSource, SlashCommandsEvent,
-    UpdatedActiveCommands, ZeroStateDataSource,
+    AcceptSlashCommandOrLocalPrompt, GuiSlashCommandDataSource, GuiZeroStateDataSource,
+    SlashCommandsEvent, UpdatedActiveCommands,
 };
 use crate::terminal::input::suggestions_mode_model::{
     InputSuggestionsModeEvent, InputSuggestionsModeModel,
 };
+
+use super::mixer::slash_command_query;
 
 const MENU_WIDTH: f32 = 320.;
 
@@ -202,7 +204,7 @@ pub struct CloudModeV2SlashCommandView {
 impl CloudModeV2SlashCommandView {
     pub fn new(
         slash_command_model: &ModelHandle<SlashCommandModel>,
-        slash_commands_source: ModelHandle<SlashCommandDataSource>,
+        slash_commands_source: ModelHandle<GuiSlashCommandDataSource>,
         suggestions_mode_model: ModelHandle<InputSuggestionsModeModel>,
         input_buffer_model: ModelHandle<InputBufferModel>,
         ctx: &mut ViewContext<Self>,
@@ -219,7 +221,7 @@ impl CloudModeV2SlashCommandView {
         );
 
         let zero_state_source =
-            ctx.add_model(|_| ZeroStateDataSource::new(&slash_commands_source, true));
+            ctx.add_model(|_| GuiZeroStateDataSource::new(&slash_commands_source));
 
         let mixer = ctx.add_model(|ctx| {
             let mut mixer = SearchMixer::<AcceptSlashCommandOrLocalPrompt>::new();

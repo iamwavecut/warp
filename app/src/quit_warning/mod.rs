@@ -2,6 +2,7 @@ use std::fmt::Write;
 
 use itertools::Itertools;
 use settings::ToggleableSetting as _;
+use warp_errors::report_if_error;
 use warpui::modals::{AlertDialogWithCallbacks, AppModalCallback, ModalButton};
 use warpui::{AppContext, EntityId, SingletonEntity, ViewContext, WeakViewHandle, WindowId};
 

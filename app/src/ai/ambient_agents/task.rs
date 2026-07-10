@@ -5,7 +5,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use iso8601_duration::Duration as Iso8601Duration;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use warp_cli::agent::Harness;
-use warp_core::report_error;
+use warp_errors::report_error;
 
 use crate::ai::artifacts::{deserialize_artifacts, Artifact};
 use crate::view_components::DismissibleToast;

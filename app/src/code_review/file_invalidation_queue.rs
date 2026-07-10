@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use warp_core::errors::{AnyhowErrorExt as _, ErrorExt};
 use warp_core::sync_queue::{IsTransientError, SyncQueueTaskTrait};
+use warp_errors::{AnyhowErrorExt as _, ErrorExt};
 
 use super::diff_state::{DiffMode, FileDiffAndContent, LocalDiffStateModel};
 #[derive(Debug, Clone, Copy, thiserror::Error)]
@@ -118,7 +118,7 @@ impl ErrorExt for FileInvalidationError {
         }
     }
 }
-warp_core::errors::register_error!(FileInvalidationError);
+warp_errors::register_error!(FileInvalidationError);
 
 impl IsTransientError for FileInvalidationError {
     fn is_transient(&self) -> bool {

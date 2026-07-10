@@ -1,4 +1,5 @@
 use itertools::Itertools as _;
+use warp_errors::report_error;
 use warpui::{Entity, ModelContext, SingletonEntity};
 use warpui_extras::user_preferences::registry_backed::KEY_NOT_FOUND_ERR;
 use windows_registry::CURRENT_USER;
