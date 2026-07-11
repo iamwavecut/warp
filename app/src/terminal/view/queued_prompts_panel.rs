@@ -21,7 +21,7 @@ use warpui::elements::{
 use warpui::fonts::{Properties, Style, Weight};
 use warpui::platform::Cursor;
 use warpui::{
-    AppContext, BlurContext, Element, Entity, EntityId, FocusContext, SingletonEntity,
+    AppContext, BlurContext, Element, Entity, EntityId, FocusContext, ModelHandle, SingletonEntity,
     TypedActionView, View, ViewContext, ViewHandle,
 };
 
@@ -35,6 +35,7 @@ use crate::editor::{
     EditorOptions, EditorView, Event as EditorEvent, PropagateAndNoOpEscapeKey,
     PropagateAndNoOpNavigationKeys, PropagateHorizontalNavigationKeys, TextOptions,
 };
+use crate::terminal::input::suggestions_mode_model::InputSuggestionsModeModel;
 use crate::ui_components::icons::Icon as TerminalIcon;
 use crate::util::truncation::truncate_from_end;
 use crate::view_components::action_button::{ActionButton, ButtonSize, NakedTheme};
@@ -92,6 +93,7 @@ pub struct QueuedPromptsPanelView {
     /// Terminal view this panel belongs to. Used to resolve the active conversation via
     /// [`BlocklistAIHistoryModel`].
     terminal_view_id: EntityId,
+    suggestions_mode_model: ModelHandle<InputSuggestionsModeModel>,
     /// Cached active conversation for this panel. `None` means there is no active conversation in
     /// the parent terminal view; the panel renders nothing in that case.
     active_conversation_id: Option<AIConversationId>,
@@ -135,7 +137,11 @@ impl Entity for QueuedPromptsPanelView {
 }
 
 impl QueuedPromptsPanelView {
-    pub fn new(terminal_view_id: EntityId, ctx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        terminal_view_id: EntityId,
+        suggestions_mode_model: ModelHandle<InputSuggestionsModeModel>,
+        ctx: &mut ViewContext<Self>,
+    ) -> Self {
         let edit_editor = build_edit_editor(ctx);
 
         ctx.subscribe_to_view(&edit_editor, |me, _, event, ctx| {
@@ -156,9 +162,14 @@ impl QueuedPromptsPanelView {
             Self::handle_queued_query_event,
         );
 
+        ctx.subscribe_to_model(&suggestions_mode_model, |_, _, _, ctx| {
+            ctx.notify();
+        });
+
         let mut me = Self {
             view_id: ctx.view_id(),
             terminal_view_id,
+            suggestions_mode_model,
             active_conversation_id,
             edit_editor,
             edit_editor_is_single_logical_line: true,
@@ -363,6 +374,13 @@ impl QueuedPromptsPanelView {
     /// Visibility predicate used by the host to decide whether to render the panel.
     pub fn should_render(&self, ctx: &AppContext) -> bool {
         if !FeatureFlag::QueueSlashCommand.is_enabled() {
+            return false;
+        }
+        if self
+            .suggestions_mode_model
+            .as_ref(ctx)
+            .is_inline_menu_open()
+        {
             return false;
         }
         let Some(conv_id) = self.active_conversation_id else {

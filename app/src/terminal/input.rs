@@ -3184,8 +3184,10 @@ impl Input {
         });
 
         let queued_prompts_panel = FeatureFlag::QueueSlashCommand.is_enabled().then(|| {
-            let panel =
-                ctx.add_typed_action_view(|ctx| QueuedPromptsPanelView::new(terminal_view_id, ctx));
+            let suggestions_mode_model = suggestions_mode_model.clone();
+            let panel = ctx.add_typed_action_view(|ctx| {
+                QueuedPromptsPanelView::new(terminal_view_id, suggestions_mode_model, ctx)
+            });
             ctx.subscribe_to_view(&panel, |me, _, event, ctx| {
                 me.handle_queued_prompts_panel_event(event, ctx);
             });

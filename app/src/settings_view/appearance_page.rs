@@ -27,10 +27,11 @@ use crate::prompt::editor_modal::OpenSource as PromptEditorOpenSource;
 use crate::settings::{
     active_theme_kind,
     app_icon::{AppIcon, AppIconSettings, ShowDockIconState},
-    respect_system_theme, AIFontName, AppEditorSettings, CursorBlink, CursorBlinkEnabled,
-    EnforceMinimumContrast, FocusPaneOnHover, FontSettings, FontSettingsChangedEvent, InputBoxType,
-    InputModeSettings, InputModeState, MonospaceFontName, PaneSettings, ShouldDimInactivePanes,
-    ThemeSettings, UseSystemTheme, DEFAULT_MONOSPACE_FONT_NAME,
+    respect_system_theme, AIFontName, AISettings, AppEditorSettings, CodeSettings, CursorBlink,
+    CursorBlinkEnabled, EnforceMinimumContrast, FocusPaneOnHover, FontSettings,
+    FontSettingsChangedEvent, InputBoxType, InputModeSettings, InputModeState, MonospaceFontName,
+    PaneSettings, ShouldDimInactivePanes, ThemeSettings, UseSystemTheme,
+    DEFAULT_MONOSPACE_FONT_NAME,
 };
 use crate::settings::{CursorDisplayType, GPUSettings, InputSettings, InputSettingsChangedEvent};
 use crate::terminal::block_list_viewport::InputMode;
@@ -536,6 +537,9 @@ pub enum AppearancePageAction {
     ToggleLigatureRendering,
     ToggleBlurTexture,
     ToggleLeftPanelVisibility,
+    ToggleToolsPanelProjectExplorer,
+    ToggleToolsPanelGlobalSearch,
+    ToggleToolsPanelConversationHistory,
     SetEnforceMinimumContrast(EnforceMinimumContrast),
     OpenUrl(String),
     ToggleFocusPaneOnHover,
@@ -655,6 +659,28 @@ impl TypedActionView for AppearanceSettingsPageView {
             ToggleDimInactivePanes => self.toggle_dim_inactive_panes(ctx),
             ToggleBlurTexture => self.toggle_blur_texture(ctx),
             ToggleLeftPanelVisibility => self.toggle_left_panel_visibility(ctx),
+            ToggleToolsPanelProjectExplorer => {
+                CodeSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings.show_project_explorer.toggle_and_save_value(ctx));
+                });
+                // The Appearance page does not subscribe to these settings
+                // groups, so notify explicitly to refresh the switch state.
+                ctx.notify();
+            }
+            ToggleToolsPanelGlobalSearch => {
+                CodeSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings.show_global_search.toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
+            ToggleToolsPanelConversationHistory => {
+                AISettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(settings
+                        .show_conversation_history
+                        .toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
             SetInputMode {
                 new_mode,
                 from_binding,
@@ -1377,6 +1403,28 @@ impl AppearanceSettingsPageView {
 
         if !window_settings_widgets.is_empty() {
             categories.push(Category::new("Window", window_settings_widgets));
+        }
+
+        // Tools panel tab visibility toggles. These mirror the onboarding "Customize
+        // your UI" tools-panel selection (see `crates/onboarding`); each toggle
+        // points at the same backing setting as onboarding so the two surfaces
+        // stay in sync, and the tools panel already recomputes its available
+        // views live when these settings change (see `Workspace::new`).
+        // Each toggle is gated only on compile-time / feature-flag availability
+        // of the corresponding local tab, so the section stays stable regardless
+        // of when the page is built.
+        let mut tools_panel_widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![];
+        if cfg!(feature = "local_fs") {
+            tools_panel_widgets.push(Box::new(ToolsPanelProjectExplorerWidget::default()));
+        }
+        if FeatureFlag::AgentViewConversationListView.is_enabled() {
+            tools_panel_widgets.push(Box::new(ToolsPanelConversationHistoryWidget::default()));
+        }
+        if cfg!(feature = "local_fs") && FeatureFlag::GlobalSearch.is_enabled() {
+            tools_panel_widgets.push(Box::new(ToolsPanelGlobalSearchWidget::default()));
+        }
+        if !tools_panel_widgets.is_empty() {
+            categories.push(Category::new("Tools panel", tools_panel_widgets));
         }
 
         // Create the Input category with all widgets
@@ -3303,7 +3351,7 @@ impl SettingsWidget for ToolsPanelStateScopeWidget {
     type View = AppearanceSettingsPageView;
 
     fn search_terms(&self) -> &str {
-        "left tools panel open closed across tabs file tree project explorer global search warp drive conversation list"
+        "left tools panel open closed across tabs file tree project explorer global search conversation list"
     }
 
     fn render(
@@ -3336,6 +3384,129 @@ impl SettingsWidget for ToolsPanelStateScopeWidget {
                 })
                 .finish(),
             None,
+        )
+    }
+}
+
+/// Tools panel tab-visibility toggles. Each mirrors an onboarding tools-panel
+/// chip and points at the same backing setting so Settings and onboarding stay
+/// in sync; toggling live-updates the tools panel via `Workspace`'s settings
+/// subscriptions.
+#[derive(Default)]
+struct ToolsPanelProjectExplorerWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for ToolsPanelProjectExplorerWidget {
+    type View = AppearanceSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "tools panel tabs file explorer project explorer file tree left panel visibility"
+    }
+
+    fn render(
+        &self,
+        _view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        render_body_item::<AppearancePageAction>(
+            "Project explorer".to_string(),
+            None,
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(*CodeSettings::as_ref(app).show_project_explorer)
+                .build()
+                .on_click(|evt_ctx, _app, _v2f| {
+                    evt_ctx.dispatch_typed_action(
+                        AppearancePageAction::ToggleToolsPanelProjectExplorer,
+                    );
+                })
+                .finish(),
+            Some("Show the project explorer / file tree tab in the tools panel.".to_string()),
+        )
+    }
+}
+
+#[derive(Default)]
+struct ToolsPanelConversationHistoryWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for ToolsPanelConversationHistoryWidget {
+    type View = AppearanceSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "tools panel tabs conversation history agent conversations left panel visibility"
+    }
+
+    fn render(
+        &self,
+        _view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        render_body_item::<AppearancePageAction>(
+            "Agent conversations".to_string(),
+            None,
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(*AISettings::as_ref(app).show_conversation_history)
+                .build()
+                .on_click(|evt_ctx, _app, _v2f| {
+                    evt_ctx.dispatch_typed_action(
+                        AppearancePageAction::ToggleToolsPanelConversationHistory,
+                    );
+                })
+                .finish(),
+            Some("Show the agent conversation history tab in the tools panel.".to_string()),
+        )
+    }
+}
+
+#[derive(Default)]
+struct ToolsPanelGlobalSearchWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for ToolsPanelGlobalSearchWidget {
+    type View = AppearanceSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "tools panel tabs global file search left panel visibility"
+    }
+
+    fn render(
+        &self,
+        _view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        render_body_item::<AppearancePageAction>(
+            "Global search".to_string(),
+            None,
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(*CodeSettings::as_ref(app).show_global_search)
+                .build()
+                .on_click(|evt_ctx, _app, _v2f| {
+                    evt_ctx
+                        .dispatch_typed_action(AppearancePageAction::ToggleToolsPanelGlobalSearch);
+                })
+                .finish(),
+            Some("Show the global file search tab in the tools panel.".to_string()),
         )
     }
 }
