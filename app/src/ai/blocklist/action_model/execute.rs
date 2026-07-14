@@ -59,7 +59,6 @@ use suggest_new_conversation::SuggestNewConversationExecutor;
 pub use suggest_prompt::PromptSuggestionExecutor;
 use use_computer::UseComputerExecutor;
 use warp_core::execution_mode::AppExecutionMode;
-use warp_core::features::FeatureFlag;
 #[cfg(feature = "local_fs")]
 use warp_files::{FileModel, TextFileReadResult};
 #[cfg(feature = "local_fs")]
@@ -611,14 +610,12 @@ impl BlocklistAIActionExecutor {
                 comments,
                 base_branch,
             } => {
-                if FeatureFlag::PRCommentsSlashCommand.is_enabled() {
-                    ctx.emit(BlocklistAIActionExecutorEvent::InsertCodeReviewComments {
-                        action_id: action.id,
-                        repo_path: repo_path.clone(),
-                        comments: comments.clone(),
-                        base_branch: base_branch.clone(),
-                    });
-                }
+                ctx.emit(BlocklistAIActionExecutorEvent::InsertCodeReviewComments {
+                    action_id: action.id,
+                    repo_path: repo_path.clone(),
+                    comments: comments.clone(),
+                    base_branch: base_branch.clone(),
+                });
                 ActionExecution::<()>::Sync(AIAgentActionResultType::InsertReviewComments(
                     InsertReviewCommentsResult::Success {
                         repo_path: repo_path.to_string_lossy().to_string(),

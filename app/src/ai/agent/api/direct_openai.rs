@@ -854,9 +854,6 @@ fn openai_messages_from_api_message(message: &api::Message) -> Vec<ChatMessage> 
                 Some(api::message::system_query::Type::CloneRepository(query)) => {
                     format!("Clone {}", query.url)
                 }
-                Some(api::message::system_query::Type::FetchReviewComments(query)) => {
-                    format!("Fetch review comments for {}", query.repo_path)
-                }
                 Some(api::message::system_query::Type::SummarizeConversation(query)) => {
                     query.prompt.clone()
                 }
@@ -999,7 +996,6 @@ fn openai_messages_from_inputs(input: &[AIAgentInput]) -> Vec<ChatMessage> {
             | AIAgentInput::CreateEnvironment { .. }
             | AIAgentInput::TriggerPassiveSuggestion { .. }
             | AIAgentInput::CodeReview { .. }
-            | AIAgentInput::FetchReviewComments { .. }
             | AIAgentInput::StartFromAmbientRunPrompt { .. } => {
                 if let Some(query) = item.user_query() {
                     messages.push(ChatMessage::user(query));

@@ -28,17 +28,6 @@ pub const ADD_MCP: StaticCommand = StaticCommand {
     argument: None,
 };
 
-pub const PR_COMMENTS: StaticCommand = StaticCommand {
-    name: "/pr-comments",
-    description: "Pull GitHub PR review comments",
-    icon_path: "bundled/svg/github.svg",
-    availability: Availability::REPOSITORY
-        .union(Availability::AI_ENABLED)
-        .union(Availability::LOCAL),
-    auto_enter_ai_mode: true,
-    argument: None,
-};
-
 pub const CREATE_DOCKER_SANDBOX: StaticCommand = StaticCommand {
     name: "/docker-sandbox",
     description: "Create a new docker sandbox terminal session",
@@ -567,12 +556,6 @@ fn all_commands() -> Vec<StaticCommand> {
     if FeatureFlag::ListSkills.is_enabled() && !cfg!(target_family = "wasm") {
         commands.push(EDIT_SKILL.clone());
         commands.push(INVOKE_SKILL.clone());
-    }
-
-    if FeatureFlag::PRCommentsSlashCommand.is_enabled()
-        && !FeatureFlag::PRCommentsSkill.is_enabled()
-    {
-        commands.push(PR_COMMENTS);
     }
 
     if FeatureFlag::InlineProfileSelector.is_enabled() {
