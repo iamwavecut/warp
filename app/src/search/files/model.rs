@@ -200,13 +200,26 @@ impl FileSearchModel {
             return cached.clone();
         }
 
-        let contents = self.get_contents_from_repo(&repo_root, app);
+        let contents = self.get_contents_from_repo(&repo_root, true, app);
 
         let arc = Arc::new(contents);
         self.repo_contents_cache
             .borrow_mut()
             .insert(repo_root, arc.clone());
         arc
+    }
+
+    /// Gets repository files (no directories) for the current working directory.
+    ///
+    /// Command Palette results can only open files, so excluding directories
+    /// prevents them from consuming the repo-metadata result cap.
+    #[cfg(feature = "local_fs")]
+    pub fn get_repo_file_contents(&self, app: &AppContext) -> Arc<Vec<FileSearchResult>> {
+        let Some(repo_root) = self.repo_root_location(app) else {
+            return Arc::new(Vec::new());
+        };
+
+        Arc::new(self.get_contents_from_repo(&repo_root, false, app))
     }
 
     /// Gets repository contents with git status information for prioritization.
@@ -230,6 +243,12 @@ impl FileSearchModel {
         Arc::new(Vec::new())
     }
 
+    /// Gets repository files for the current working directory (WASM stub).
+    #[cfg(not(feature = "local_fs"))]
+    pub fn get_repo_file_contents(&self, _app: &AppContext) -> Arc<Vec<FileSearchResult>> {
+        Arc::new(Vec::new())
+    }
+
     /// Gets repository contents with git status information for prioritization (WASM stub)
     #[cfg(not(feature = "local_fs"))]
     pub fn get_repo_contents_with_git_status(
@@ -239,15 +258,26 @@ impl FileSearchModel {
         (Arc::new(Vec::new()), HashSet::new())
     }
 
+    #[cfg(feature = "local_fs")]
+    fn contents_args(include_folders: bool) -> GetContentsArgs {
+        if include_folders {
+            GetContentsArgs::default()
+        } else {
+            GetContentsArgs::default().exclude_folders()
+        }
+    }
+
     /// Gets repository contents for a local or remote repo root, converting
     /// absolute paths to repo-relative `FileSearchResult`s.
     #[cfg(feature = "local_fs")]
     fn get_contents_from_repo(
         &self,
         repo_root: &LocalOrRemotePath,
+        include_folders: bool,
         app: &AppContext,
     ) -> Vec<FileSearchResult> {
         let repo_metadata = RepoMetadataModel::as_ref(app);
+        let args = Self::contents_args(include_folders);
 
         match repo_root {
             LocalOrRemotePath::Local(local_path) => {
@@ -260,11 +290,10 @@ impl FileSearchModel {
                 // Truncated results (capped at the repo metadata budget) are
                 // intentionally used as-is to return partial matches rather
                 // than nothing.
-                let contents =
-                    match repo_metadata.get_repo_contents(&id, GetContentsArgs::default(), app) {
-                        Ok(repo_contents) => repo_contents.contents,
-                        Err(_) => return Vec::new(),
-                    };
+                let contents = match repo_metadata.get_repo_contents(&id, args, app) {
+                    Ok(repo_contents) => repo_contents.contents,
+                    Err(_) => return Vec::new(),
+                };
                 contents
                     .iter()
                     .filter_map(|content| match content {
@@ -304,11 +333,10 @@ impl FileSearchModel {
                 // Truncated results (capped at the repo metadata budget) are
                 // intentionally used as-is to return partial matches rather
                 // than nothing.
-                let contents =
-                    match repo_metadata.get_repo_contents(&id, GetContentsArgs::default(), app) {
-                        Ok(repo_contents) => repo_contents.contents,
-                        Err(_) => return Vec::new(),
-                    };
+                let contents = match repo_metadata.get_repo_contents(&id, args, app) {
+                    Ok(repo_contents) => repo_contents.contents,
+                    Err(_) => return Vec::new(),
+                };
                 let root_std_path = &remote_path.path;
                 contents
                     .iter()

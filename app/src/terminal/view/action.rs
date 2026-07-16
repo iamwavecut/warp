@@ -114,6 +114,7 @@ pub enum TerminalAction {
     },
     AltScroll {
         delta: i32,
+        point: Point,
     },
     SharedSessionViewerAltScroll {
         new_scroll_top: Lines,
@@ -468,7 +469,7 @@ impl fmt::Debug for TerminalAction {
 
         match self {
             Scroll { delta } => write!(f, "Scroll {{ delta: {delta} }}"),
-            AltScroll { delta } => write!(f, "AltScroll {{ delta: {delta} }}"),
+            AltScroll { delta, .. } => write!(f, "AltScroll {{ delta: {delta} }}"),
             SharedSessionViewerAltScroll { new_scroll_top } => write!(
                 f,
                 "SharedSessionViewerAltScroll {{ new_scroll_top: {new_scroll_top} }}"

@@ -442,6 +442,7 @@ use crate::resource_center::{
 };
 use crate::session_management::{CommandContext, SessionNavigationPromptElements};
 use crate::terminal::alt_screen::alt_screen_element::AltScreenElement;
+use crate::terminal::alt_screen::should_intercept_scroll;
 use crate::terminal::block_list_element::{
     render_hoverable_block_button, BlockListElement, BlockListMouseStates, BlockSelectAction,
     BlockTextSelectAction, SnackbarHeaderState, ToolbeltButtonTooltip,
@@ -458,7 +459,9 @@ use crate::terminal::model::block::{AgentInteractionMetadata, BlockMetadata};
 use crate::terminal::model::block::{Block, BlockId};
 use crate::terminal::model::blocks::{BlockFilter, BlockList};
 use crate::terminal::model::blocks::{BlockHeight, BlockHeightItem, BlockHeightSummary, Gap};
-use crate::terminal::model::escape_sequences::{self, EscCodes, ToEscapeSequence, C1};
+use crate::terminal::model::escape_sequences::{
+    self, alt_screen_scroll_to_pty_bytes, EscCodes, ToEscapeSequence, C1,
+};
 use crate::terminal::model::grid::grid_handler::{FragmentBoundary, TermMode};
 use crate::terminal::model::index::{Point, Side};
 use crate::terminal::model::mouse::MouseState;
@@ -8097,34 +8100,24 @@ impl TerminalView {
         true
     }
 
-    fn alt_scroll_cmd_sequence(&self, lines_to_scroll: i32) -> Vec<u8> {
-        let cmd = if lines_to_scroll > 0 {
-            EscCodes::ARROW_UP
-        } else {
-            EscCodes::ARROW_DOWN
-        };
-        EscCodes::build_escape_sequence_with_c1(C1::SS3, &[cmd])
-    }
-
-    fn alt_scroll_sequences(&mut self, lines_to_scroll: i32) -> Vec<u8> {
-        let cmd = self.alt_scroll_cmd_sequence(lines_to_scroll);
-        let lines = lines_to_scroll.unsigned_abs();
-        let mut content = Vec::with_capacity(lines as usize * 3);
-
-        for _ in 0..lines {
-            content.extend_from_slice(&cmd);
+    /// Forwards wheel movement on the alt screen to the PTY, as SGR mouse
+    /// reports when the app requested them and arrow keys otherwise.
+    fn alt_scroll(&mut self, lines_to_scroll: i32, point: Point, ctx: &mut ViewContext<Self>) {
+        let report_mouse = !should_intercept_scroll(&self.model.lock(), ctx);
+        if !report_mouse {
+            // Arrow-key scrolling can change the alt-screen grid content, so
+            // any link highlights are no longer valid.
+            self.highlighted_link.invalidate();
         }
-        content
-    }
 
-    fn alt_scroll(&mut self, lines_to_scroll: i32, ctx: &mut ViewContext<Self>) {
-        // Scrolling on the alt screen can cause the grid content to change, so any link highlights are
-        // no longer valid.
-        self.highlighted_link.invalidate();
-
-        let content = self.alt_scroll_sequences(lines_to_scroll);
-        self.write_user_bytes_to_pty(content, ctx);
-        ctx.notify();
+        let bytes = {
+            let model = self.model.lock();
+            alt_screen_scroll_to_pty_bytes(lines_to_scroll, point, report_mouse, model.deref())
+        };
+        if let Some(bytes) = bytes {
+            self.write_user_bytes_to_pty(bytes, ctx);
+            ctx.notify();
+        }
     }
 
     pub fn input_size_at_last_frame(&self, app: &AppContext) -> Option<Vector2F> {
@@ -11923,7 +11916,9 @@ impl TerminalView {
                             ctx,
                         );
                     }
-                    CLIAgentSessionStatus::InProgress | CLIAgentSessionStatus::Success => {
+                    CLIAgentSessionStatus::InProgress
+                    | CLIAgentSessionStatus::Success
+                    | CLIAgentSessionStatus::Failed { .. } => {
                         // Auto-open rich input when the agent resumes or completes.
                         if !self.has_active_cli_agent_input_session(ctx) {
                             self.open_cli_agent_rich_input(CLIAgentInputEntrypoint::AutoShow, ctx);
@@ -11955,6 +11950,8 @@ impl TerminalView {
 
         let trigger = if matches!(status, CLIAgentSessionStatus::Blocked { .. }) {
             NotificationsTrigger::NeedsAttention
+        } else if matches!(status, CLIAgentSessionStatus::Failed { .. }) {
+            NotificationsTrigger::AgentTaskCompleted(false)
         } else {
             NotificationsTrigger::AgentTaskCompleted(true)
         };
@@ -23985,7 +23982,7 @@ impl TypedActionView for TerminalView {
 
         match action {
             Scroll { delta } => self.scroll(*delta, ctx),
-            AltScroll { delta } => self.alt_scroll(*delta, ctx),
+            AltScroll { delta, point } => self.alt_scroll(*delta, *point, ctx),
             SharedSessionViewerAltScroll { new_scroll_top } => {
                 self.alt_screen_scroll_top = *new_scroll_top;
                 ctx.notify()

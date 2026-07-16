@@ -152,6 +152,22 @@ mod file_search_model_tests {
         assert!(!FileSearchModel::should_skip_overly_broad_query("a*b"));
     }
 
+    #[cfg(feature = "local_fs")]
+    #[test]
+    fn test_contents_args_keeps_folders_by_default() {
+        // The default (directory-inclusive) path is used by callers like the
+        // AI context menu and must keep folders in the traversal.
+        let args = FileSearchModel::contents_args(true);
+        assert!(args.include_folders);
+    }
+
+    #[cfg(feature = "local_fs")]
+    #[test]
+    fn test_contents_args_excludes_folders_for_file_only_search() {
+        let args = FileSearchModel::contents_args(false);
+        assert!(!args.include_folders);
+    }
+
     #[test]
     fn test_filename_prioritization() {
         // Filename matches should score higher than path matches

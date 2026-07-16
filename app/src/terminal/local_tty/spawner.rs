@@ -72,9 +72,7 @@ impl PtyHandle for DirectPtyHandle {
     }
 
     fn kill(&mut self) -> Result<()> {
-        // The logic to kill the process and file handles are fully contained in
-        // EventedPty::kill().
-        Ok(())
+        self.child.kill()
     }
 }
 pub(super) struct PtySpawnInfo {
