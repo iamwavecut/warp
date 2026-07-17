@@ -145,7 +145,7 @@ use warpui::{
 };
 
 use crate::code::footer::{CodeFooterView, CodeFooterViewEvent};
-use crate::settings::AISettings;
+use crate::settings::{AISettings, CodeSettings};
 use crate::settings_view::SettingsSection;
 use crate::ui_components::{
     blended_colors::{neutral_2, neutral_3},
@@ -3117,7 +3117,9 @@ impl CodeReviewView {
         ctx: &mut ViewContext<Self>,
     ) {
         match event {
-            LocalCodeEditorEvent::FileSaved => {}
+            LocalCodeEditorEvent::FileSaved { .. } => {
+                ctx.notify();
+            }
             LocalCodeEditorEvent::FailedToSave { .. } => {}
             LocalCodeEditorEvent::DelayedRenderingFlushed
             | LocalCodeEditorEvent::FailedToLoad { .. } => {
@@ -4843,8 +4845,17 @@ impl CodeReviewView {
             );
         }
 
-        left_section.add_child(if let Some(editor_state) = &file.editor_state {
-            if editor_state.has_unsaved_changes(app) {
+        // When auto-save is enabled, edits are persisted automatically, so the
+        // per-file unsaved dot would just flicker on and off as the user
+        // types. Changes auto-save can't persist (e.g. a disconnected remote
+        // repo) still show the dot.
+        let auto_save_enabled = *CodeSettings::as_ref(app).auto_save;
+        left_section.add_child(match file.editor_state.as_ref() {
+            Some(editor_state)
+                if editor_state.has_unsaved_changes(app)
+                    && (!auto_save_enabled
+                        || !editor_state.editor().as_ref(app).can_auto_save(app)) =>
+            {
                 let save_keystroke = Keystroke::parse("cmdorctrl-s").unwrap_or_default();
                 let save_shortcut = save_keystroke.displayed();
                 let tooltip_text =
@@ -4856,11 +4867,8 @@ impl CodeReviewView {
                     8.,
                     appearance,
                 )
-            } else {
-                Empty::new().finish()
             }
-        } else {
-            Empty::new().finish()
+            _ => Empty::new().finish(),
         });
         left_section.add_child(
             EventHandler::new(
@@ -6073,6 +6081,28 @@ impl CodeReviewView {
         }
     }
 
+    /// Flush-saves every unsaved file in the review, marking each save as an
+    /// auto-save so it stays silent (no "File saved." toast). Used when
+    /// auto-save is enabled so closing the review doesn't prompt.
+    pub fn auto_save_all_unsaved_files(&mut self, ctx: &mut ViewContext<Self>) {
+        let paths = self.get_unsaved_file_paths(ctx);
+        let editors: Vec<_> = if let CodeReviewViewState::Loaded(state) = self.state() {
+            paths
+                .iter()
+                .filter_map(|path| state.file_states.get(path))
+                .filter_map(|file_state| {
+                    file_state.editor_state.as_ref().map(|s| s.editor().clone())
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for editor in editors {
+            editor.update(ctx, |editor, _| editor.mark_next_save_as_auto_save());
+        }
+        self.save_files(&paths, ctx);
+    }
+
     fn save_file(&mut self, repo_relative_path: &str, ctx: &mut ViewContext<CodeReviewView>) {
         if let CodeReviewViewState::Loaded(state) = self.state() {
             if let Some(file_state) = state.file_states.get(repo_relative_path) {
@@ -7251,6 +7281,12 @@ impl BackingView for CodeReviewView {
         let unsaved_file_paths = self.get_unsaved_file_paths(ctx);
 
         if !unsaved_file_paths.is_empty() && ChannelState::channel() != Channel::Integration {
+            // With auto-save on, flush the edits silently and close without prompting.
+            if *CodeSettings::as_ref(ctx).auto_save {
+                self.auto_save_all_unsaved_files(ctx);
+                ctx.emit(CodeReviewViewEvent::Pane(PaneEvent::Close));
+                return;
+            }
             let file_names = unsaved_file_paths
                 .iter()
                 .filter_map(|path| {
