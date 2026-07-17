@@ -884,7 +884,8 @@ impl CodebaseIndex {
             0,
             &IgnoredPathStrategy::Exclude, // override_ignore_for_files
             BudgetExceededBehavior::FailFast,
-        )?;
+        )
+        .await?;
 
         Ok(BuildFileTreeResult {
             file_tree: entry,

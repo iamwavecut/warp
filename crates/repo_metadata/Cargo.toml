@@ -25,13 +25,13 @@ warp_util.workspace = true
 ignore = "0.4.23"
 log.workspace = true
 futures.workspace = true
+async-fs.workspace = true
 cfg-if = "1.0"
 dirs.workspace = true
 futures-lite.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 notify-debouncer-full.workspace = true
-async-fs.workspace = true
 watcher.workspace = true
 
 [build-dependencies]
@@ -40,5 +40,6 @@ anyhow.workspace = true
 [dev-dependencies]
 env_logger.workspace = true
 futures = "0.3"
+tempfile.workspace = true
 virtual-fs.workspace = true
 warpui = { workspace = true, features = ["test-util"] }
