@@ -2608,6 +2608,20 @@ fn test_pointer_opened_tab_configs_menu_does_not_select_top_item() {
 }
 
 #[test]
+fn test_new_session_menu_is_capped_to_window_height() {
+    let available_height = new_session_menu_available_height(600., 100.);
+    assert_eq!(
+        available_height,
+        600. - 100. - NEW_SESSION_MENU_WINDOW_MARGIN - NEW_SESSION_MENU_CHROME_HEIGHT
+    );
+
+    assert_eq!(
+        new_session_menu_available_height(100., 90.),
+        NEW_SESSION_MENU_MIN_HEIGHT
+    );
+}
+
+#[test]
 fn test_open_tab_config_with_params_does_not_use_worktree_branch_as_implicit_title() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

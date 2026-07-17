@@ -2711,6 +2711,8 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::TabConfigs,
         #[cfg(feature = "pinned_tabs")]
         FeatureFlag::PinnedTabs,
+        #[cfg(feature = "osc_hyperlinks")]
+        FeatureFlag::OscHyperlinks,
         #[cfg(feature = "agent_harness")]
         FeatureFlag::AgentHarness,
         #[cfg(feature = "hoa_notifications")]

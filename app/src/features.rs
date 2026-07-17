@@ -443,6 +443,8 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::GitCredentialRefresh,
         #[cfg(feature = "remote_code_review")]
         FeatureFlag::RemoteCodeReview,
+        #[cfg(feature = "osc_hyperlinks")]
+        FeatureFlag::OscHyperlinks,
     ]);
 
     flags
