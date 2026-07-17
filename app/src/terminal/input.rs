@@ -77,6 +77,7 @@ use crate::terminal::input::slash_command_model::{SlashCommandEntryState, SlashC
 use crate::terminal::input::slash_commands::{
     slash_command_is_submitted_as_prompt, CloudModeV2SlashCommandView, GuiSlashCommandDataSource,
     InlineSlashCommandView, SlashCommandDataSource as _, SlashCommandTrigger,
+    UpdatedActiveCommands,
 };
 use crate::terminal::input::suggestions_mode_model::{
     InputSuggestionsModeEvent, InputSuggestionsModeModel,
@@ -2944,6 +2945,13 @@ impl Input {
             };
             GuiSlashCommandDataSource::new(args, ctx)
         });
+        ctx.subscribe_to_model(
+            &slash_command_data_source,
+            |me, _, _: &UpdatedActiveCommands, ctx| {
+                me.set_zero_state_hint_text(ctx);
+                ctx.notify();
+            },
+        );
 
         let v2_slash_command_data_source = if FeatureFlag::CloudModeInputV2.is_enabled() {
             let args = slash_commands::GuiDataSourceArgs {
@@ -5590,6 +5598,24 @@ impl Input {
     }
 
     pub fn set_zero_state_hint_text(&mut self, ctx: &mut ViewContext<Self>) {
+        let slash_command_hint_prefixes = COMMAND_REGISTRY
+            .all_commands()
+            .filter(|command| {
+                command
+                    .argument
+                    .as_ref()
+                    .and_then(|argument| argument.hint_text)
+                    .is_some()
+            })
+            .map(|command| format!("{} ", command.name))
+            .collect_vec();
+
+        self.editor.update(ctx, |editor, ctx| {
+            for prefix in slash_command_hint_prefixes {
+                editor.clear_placeholder_text_with_prefix(&prefix, ctx);
+            }
+        });
+
         if CLIAgentSessionsModel::as_ref(ctx).is_input_open(self.terminal_view_id) {
             let hint = self.cli_agent_rich_input_hint_text(ctx);
             self.editor.update(ctx, |editor, ctx| {
@@ -5625,20 +5651,23 @@ impl Input {
 
         let toggled_on = *InputSettings::as_ref(ctx).show_hint_text;
 
-        // Loop through all static commands and set placeholders for those with hint text
-        self.editor.update(ctx, |editor, ctx| {
-            for command in COMMAND_REGISTRY.all_commands() {
-                if let Some(hint_text) = command
+        let slash_command_placeholders = self
+            .slash_command_data_source
+            .as_ref(ctx)
+            .active_commands()
+            .filter_map(|(_, command)| {
+                command
                     .argument
                     .as_ref()
                     .and_then(|argument| argument.hint_text)
-                {
-                    editor.set_placeholder_text_with_prefix(
-                        format!("{} ", command.name),
-                        hint_text,
-                        ctx,
-                    );
-                }
+                    .map(|hint_text| (command.name, hint_text))
+            })
+            .collect_vec();
+
+        // Loop through active static commands and set placeholders for those with hint text
+        self.editor.update(ctx, |editor, ctx| {
+            for (command_name, hint_text) in slash_command_placeholders {
+                editor.set_placeholder_text_with_prefix(format!("{command_name} "), hint_text, ctx);
             }
         });
 
