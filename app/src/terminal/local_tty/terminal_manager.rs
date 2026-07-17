@@ -193,7 +193,7 @@ impl TerminalManager {
                 log::error!("Failed to join event loop handle {e:?}");
             }
         } else {
-            log::error!("No event loop handle to join when dropping terminal manager.")
+            log::warn!("No event loop handle to join when dropping terminal manager.")
         }
 
         self.inactive_pty_reads_rx.close();
