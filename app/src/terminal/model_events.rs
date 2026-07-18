@@ -2,9 +2,9 @@ use crate::interaction_sources::ImageProtocol;
 use crate::terminal::model::session::Sessions;
 
 use crate::terminal::event::{
-    AfterBlockCompletedEvent, BlockCompletedEvent, BlockMetadataReceivedEvent, Event,
-    ExecutedExecutorCommandEvent, InitSshEvent, InitSubshellEvent, SourcedRcFileInSubshellEvent,
-    TerminalMode,
+    AfterBlockCompletedEvent, BlockCompletedEvent, BlockMetadataReceivedEvent,
+    BlockWorkingDirectoryUpdatedEvent, Event, ExecutedExecutorCommandEvent, InitSshEvent,
+    InitSubshellEvent, SourcedRcFileInSubshellEvent, TerminalMode,
 };
 
 use crate::terminal::ClipboardType;
@@ -225,6 +225,9 @@ impl ModelEventDispatcher {
             Event::BlockMetadataReceived(block_metadata_received_event) => {
                 ModelEvent::BlockMetadataReceived(block_metadata_received_event)
             }
+            Event::BlockWorkingDirectoryUpdated(block_working_directory_updated_event) => {
+                ModelEvent::BlockWorkingDirectoryUpdated(block_working_directory_updated_event)
+            }
             Event::BackgroundBlockStarted => ModelEvent::BackgroundBlockStarted,
             Event::ClipboardStore(clipboard_type, text) => {
                 ModelEvent::ClipboardStore(clipboard_type, text)
@@ -398,6 +401,8 @@ pub enum ModelEvent {
     },
     /// Sent when a new block is created.
     BlockMetadataReceived(BlockMetadataReceivedEvent),
+    /// Sent when OSC 7 changes the active block's working directory mid-command.
+    BlockWorkingDirectoryUpdated(BlockWorkingDirectoryUpdatedEvent),
     /// Sent after a background block is started and added to the block list.
     BackgroundBlockStarted,
     ClipboardStore(ClipboardType, String),

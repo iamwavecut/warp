@@ -612,14 +612,10 @@ fn zero_state_hint_text_only_registers_active_slash_command_placeholders() {
 
         let editor = input.read(&app, |input, _| input.editor().clone());
         let rename_tab_prefix = format!("{} ", commands::RENAME_TAB.name);
-        let continue_locally_prefix = format!("{} ", commands::CONTINUE_LOCALLY.name);
+        let fork_prefix = format!("{} ", commands::FORK.name);
 
         editor.update(&mut app, |editor, ctx| {
-            editor.set_placeholder_text_with_prefix(
-                continue_locally_prefix.clone(),
-                "stale hint",
-                ctx,
-            );
+            editor.set_placeholder_text_with_prefix(fork_prefix.clone(), "stale hint", ctx);
         });
         input.update(&mut app, |input, ctx| {
             input.set_zero_state_hint_text(ctx);
@@ -633,17 +629,13 @@ fn zero_state_hint_text_only_registers_active_slash_command_placeholders() {
         );
         assert!(
             editor.read(&app, |editor, _| editor
-                .placeholder_text(&continue_locally_prefix)
+                .placeholder_text(&fork_prefix)
                 .is_none()),
-            "/continue-locally should not be registered outside cloud conversation context"
+            "/fork should not be registered outside an active conversation"
         );
 
         editor.update(&mut app, |editor, ctx| {
-            editor.set_placeholder_text_with_prefix(
-                continue_locally_prefix.clone(),
-                "stale hint",
-                ctx,
-            );
+            editor.set_placeholder_text_with_prefix(fork_prefix.clone(), "stale hint", ctx);
         });
 
         let repo_dir = tempfile::TempDir::new().expect("repo temp dir");
@@ -665,7 +657,7 @@ fn zero_state_hint_text_only_registers_active_slash_command_placeholders() {
 
         assert!(
             editor.read(&app, |editor, _| editor
-                .placeholder_text(&continue_locally_prefix)
+                .placeholder_text(&fork_prefix)
                 .is_none()),
             "active slash-command data source updates should refresh stale placeholders"
         );

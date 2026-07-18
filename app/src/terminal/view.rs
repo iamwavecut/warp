@@ -10186,11 +10186,7 @@ impl TerminalView {
                 && is_done_bootstrapping
             {
                 let shell_launch_data = self.shell_launch_data_if_local(ctx);
-                <Self as TerminalSurface>::on_active_shell_launch_data_updated(
-                    self,
-                    shell_launch_data,
-                    ctx,
-                );
+                self.on_active_shell_launch_data_updated(shell_launch_data, ctx);
             }
 
             // Check if the block is done bootstrapping and the directory is set.
