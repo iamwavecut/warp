@@ -1536,6 +1536,14 @@ impl Session {
             ShellFamily::PowerShell => TypedPathBuf::from_windows(pwd),
         }
     }
+
+    /// Returns whether `cwd` (a working directory reported for this session)
+    /// can be resolved to a usable native path.
+    pub fn can_resolve_cwd_to_native_path(&self, cwd: &str) -> bool {
+        let typed_path = self.convert_directory_to_typed_path_buf(cwd.to_string());
+        self.maybe_convert_to_native_path(&typed_path.to_path())
+            .is_ok()
+    }
 }
 
 impl Display for Session {
