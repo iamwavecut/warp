@@ -163,7 +163,7 @@ impl TryFrom<ReadFilesResult> for api::request::input::tool_call_result::Result 
 
     fn try_from(result: ReadFilesResult) -> Result<Self, Self::Error> {
         match result {
-            ReadFilesResult::Success { files } => Ok(
+            ReadFilesResult::Success { files, .. } => Ok(
                 api::request::input::tool_call_result::Result::ReadFiles(api::ReadFilesResult {
                     result: Some(api::read_files_result::Result::AnyFilesSuccess(
                         api::read_files_result::AnyFilesSuccess {

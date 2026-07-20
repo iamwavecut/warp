@@ -575,7 +575,10 @@ pub(crate) fn convert_tool_call_result_to_input(
                         .map(|file| FileContext::from(file.clone()))
                         .collect();
 
-                    ReadFilesResult::Success { files }
+                    ReadFilesResult::Success {
+                        files,
+                        failed_files: Vec::new(),
+                    }
                 }
                 Some(api::read_files_result::Result::TextFilesSuccess(success)) => {
                     let files = success
@@ -583,7 +586,10 @@ pub(crate) fn convert_tool_call_result_to_input(
                         .iter()
                         .map(|file| FileContext::from(file.clone()))
                         .collect();
-                    ReadFilesResult::Success { files }
+                    ReadFilesResult::Success {
+                        files,
+                        failed_files: Vec::new(),
+                    }
                 }
                 Some(api::read_files_result::Result::Error(error)) => {
                     ReadFilesResult::Error(error.message.clone())

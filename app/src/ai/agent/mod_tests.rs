@@ -5,9 +5,10 @@ use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use warp_multi_agent_api::{FileContent, FileContentLineRange};
 
 use crate::ai::agent::{
-    AIAgentOutput, AIAgentOutputMessage, AIAgentOutputMessageType, AIAgentText, AIAgentTextSection,
-    AgentOutputImage, AgentOutputImageLayout, AgentOutputMermaidDiagram, AnyFileContent,
-    FileContext, FormattedTextWrapper, MessageId, ProgrammingLanguage,
+    AIAgentActionResultType, AIAgentOutput, AIAgentOutputMessage, AIAgentOutputMessageType,
+    AIAgentText, AIAgentTextSection, AgentOutputImage, AgentOutputImageLayout,
+    AgentOutputMermaidDiagram, AnyFileContent, FileContext, FormattedTextWrapper,
+    MarkdownActionResult, MessageId, ProgrammingLanguage, ReadFilesFailedFile, ReadFilesResult,
 };
 use crate::terminal::shell::ShellType;
 
@@ -103,6 +104,28 @@ fn test_convert_files_range_out_of_bounds() {
             line_range: to_range(10..20),
         }]
     );
+}
+
+#[test]
+fn markdown_read_files_result_preserves_partial_failures() {
+    let result = AIAgentActionResultType::ReadFiles(ReadFilesResult::Success {
+        files: vec![FileContext::new(
+            "/tmp/read.txt".to_string(),
+            AnyFileContent::StringContent("contents".to_string()),
+            None,
+            None,
+        )],
+        failed_files: vec![ReadFilesFailedFile {
+            path: "/tmp/missing.txt".to_string(),
+            message: "File not found or could not be read".to_string(),
+        }],
+    });
+
+    let rendered = MarkdownActionResult(&result).to_string();
+
+    assert!(rendered.contains("**/tmp/read.txt**"));
+    assert!(rendered.contains("**Files Failed:**"));
+    assert!(rendered.contains("/tmp/missing.txt"));
 }
 
 #[test]

@@ -536,9 +536,9 @@ pub mod json {
         ai::agent::{
             AIAgentActionType, AIAgentInput, AIAgentOutput, AIAgentOutputMessage,
             AIAgentOutputMessageType, AIAgentTodo, ArtifactCreatedData, CallMCPToolResult,
-            FileContext, FileGlobResult, FileGlobV2Result, GrepResult, ReadFilesResult,
-            ReadMCPResourceResult, RequestCommandOutputResult, RequestFileEditsResult,
-            SearchCodebaseResult, SubagentCall, TodoOperation,
+            FileContext, FileGlobResult, FileGlobV2Result, GrepResult, ReadFilesFailedFile,
+            ReadFilesResult, ReadMCPResourceResult, RequestCommandOutputResult,
+            RequestFileEditsResult, SearchCodebaseResult, SubagentCall, TodoOperation,
             WriteToLongRunningShellCommandResult,
         },
         AIAgentActionResultType,
@@ -647,7 +647,7 @@ pub mod json {
     enum JsonToolResult<'a> {
         RunCommand(JsonRunCommandResult<'a>),
         EditFiles(JsonEditFilesResult<'a>),
-        ReadFiles(JsonFileCollectionResult<'a>),
+        ReadFiles(JsonReadFilesResult<'a>),
         SearchCodebase(JsonFileCollectionResult<'a>),
         Grep(JsonFileCollectionResult<'a>),
         FileGlob(JsonFileCollectionResult<'a>),
@@ -665,6 +665,28 @@ pub mod json {
     #[derive(Serialize)]
     struct JsonEditFilesResult<'a> {
         diff: &'a str,
+    }
+
+    #[derive(Serialize)]
+    struct JsonReadFilesResult<'a> {
+        files: Vec<JsonFile<'a>>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        failed_files: Vec<JsonFailedFile<'a>>,
+    }
+
+    #[derive(Serialize)]
+    struct JsonFailedFile<'a> {
+        path: &'a str,
+        message: &'a str,
+    }
+
+    impl<'a> From<&'a ReadFilesFailedFile> for JsonFailedFile<'a> {
+        fn from(f: &'a ReadFilesFailedFile) -> Self {
+            Self {
+                path: f.path.as_str(),
+                message: f.message.as_str(),
+            }
+        }
     }
 
     #[derive(Serialize)]
@@ -818,11 +840,15 @@ pub mod json {
                     RequestFileEditsResult::Cancelled => Some(JsonMessage::ToolCanceled),
                 },
                 AIAgentActionResultType::ReadFiles(result) => match result {
-                    ReadFilesResult::Success { files } => Some(JsonMessage::ToolResult(
-                        JsonToolResult::ReadFiles(JsonFileCollectionResult {
+                    ReadFilesResult::Success {
+                        files,
+                        failed_files,
+                    } => Some(JsonMessage::ToolResult(JsonToolResult::ReadFiles(
+                        JsonReadFilesResult {
                             files: JsonFile::from_file_contexts(files),
-                        }),
-                    )),
+                            failed_files: failed_files.iter().map(JsonFailedFile::from).collect(),
+                        },
+                    ))),
                     ReadFilesResult::Error(error) => Some(JsonMessage::ToolError {
                         error: Cow::Borrowed(error.as_str()),
                     }),

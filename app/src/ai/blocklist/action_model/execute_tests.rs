@@ -98,6 +98,48 @@ mod binary_detection {
     }
 }
 
+mod read_file_context {
+    use std::io::Write as _;
+
+    use async_io::block_on;
+    use tempfile::TempDir;
+
+    use super::super::read_local_file_context;
+    use crate::ai::agent::FileLocations;
+
+    #[test]
+    fn preserves_successful_files_when_another_file_is_missing() {
+        let dir = TempDir::new().expect("create tempdir");
+        let readable_path = dir.path().join("readable.txt");
+        let mut readable = std::fs::File::create(&readable_path).expect("create readable file");
+        readable
+            .write_all(b"local contents\n")
+            .expect("write readable file");
+        let missing_path = dir.path().join("missing.txt");
+        let files = [
+            FileLocations {
+                name: readable_path.to_string_lossy().into_owned(),
+                lines: Vec::new(),
+            },
+            FileLocations {
+                name: missing_path.to_string_lossy().into_owned(),
+                lines: Vec::new(),
+            },
+        ];
+
+        let result = block_on(read_local_file_context(&files, None, None, None, None))
+            .expect("read file context");
+
+        assert_eq!(result.file_contexts.len(), 1);
+        assert_eq!(
+            result.file_contexts[0].file_name,
+            readable_path.to_string_lossy()
+        );
+        assert_eq!(result.failed_files.len(), 1);
+        assert_eq!(result.failed_files[0].path, missing_path.to_string_lossy());
+    }
+}
+
 mod path_shell_quoting {
     use super::super::{build_is_file_path_command, build_is_git_repository_command};
     use crate::terminal::shell::ShellType;
