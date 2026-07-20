@@ -30,28 +30,25 @@ pub(super) mod view_util;
 
 #[cfg_attr(target_family = "wasm", allow(unused_imports))]
 pub(crate) use action_model::{
-    read_local_file_context, BlocklistAIActionEvent, BlocklistAIActionModel, ReadFileContextResult,
-    ShellCommandExecutor, ShellCommandExecutorEvent, StartAgentExecutor, StartAgentExecutorEvent,
-    StartAgentRequest, StartAgentRequestId,
+    BlocklistAIActionEvent, BlocklistAIActionModel, ReadFileContextResult, ShellCommandExecutor,
+    ShellCommandExecutorEvent, StartAgentExecutor, StartAgentExecutorEvent, StartAgentRequest,
+    StartAgentRequestId, read_local_file_context,
 };
 
 #[cfg(any(test, feature = "integration_tests"))]
 pub(crate) use block::model::testing::FakeAIBlockModel;
-pub(crate) use block::{init, model, AIBlock, AIBlockEvent};
+pub(crate) use block::{AIBlock, AIBlockEvent, init, model};
 
 pub use context_model::BlocklistAIContextModel;
 pub(crate) use context_model::{
-    block_context_from_terminal_model, AttachmentType, BlocklistAIContextEvent, PendingAttachment,
-    PendingFile,
+    AttachmentType, BlocklistAIContextEvent, PendingAttachment, PendingFile,
+    block_context_from_terminal_model,
 };
 pub(crate) use controller::{
-    response_stream::ResponseStreamId, BlocklistAIController, BlocklistAIControllerEvent,
-    ClientIdentifiers, SessionContext, SlashCommandRequest,
+    BlocklistAIController, BlocklistAIControllerEvent, ClientIdentifiers, SessionContext,
+    SlashCommandRequest, response_stream::ResponseStreamId,
 };
-pub(crate) use conversation_selection::{
-    ConversationSelection, ConversationSelectionEvent, ConversationSelectionHandle,
-    PendingQueryState,
-};
+pub(crate) use conversation_selection::{ConversationSelection, PendingQueryState};
 pub(crate) use history_model::{
     AIQueryHistory, AIQueryHistoryOutputStatus, BlocklistAIHistoryEvent, BlocklistAIHistoryModel,
     ConversationStatusUpdate, FORK_PREFIX, PRE_REWIND_PREFIX,
@@ -69,15 +66,15 @@ pub(crate) use queued_query::{
     QueuedQueryOrigin,
 };
 pub(crate) use view_util::{
-    ai_brand_color, ai_indicator_height, get_ai_block_overflow_menu_element_position_id,
+    ATTACH_AS_AGENT_MODE_CONTEXT_TEXT, CLAUDE_ORANGE, NEW_AGENT_PANE_LABEL, ai_brand_color,
+    ai_indicator_height, get_ai_block_overflow_menu_element_position_id,
     get_attached_blocks_chip_element_position_id, render_ai_agent_mode_icon,
-    render_ai_follow_up_icon, ATTACH_AS_AGENT_MODE_CONTEXT_TEXT, CLAUDE_ORANGE,
-    NEW_AGENT_PANE_LABEL,
+    render_ai_follow_up_icon,
 };
 
 pub(crate) use view_util::format_credits;
 
-pub use crate::ai::blocklist::block::{secret_redaction, AIBlockResponseRating, TextLocation};
+pub use crate::ai::blocklist::block::{AIBlockResponseRating, TextLocation, secret_redaction};
 pub use block::keyboard_navigable_buttons;
 pub use block::toggleable_items;
 pub use controller::input_context::{

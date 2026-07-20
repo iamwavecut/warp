@@ -21,8 +21,8 @@ use crate::ui_components::icons;
 use crate::view_components::action_button::{ActionButton, SecondaryTheme};
 use crate::view_components::{DropdownItem, FilterableDropdown};
 use crate::workspace::tab_settings::{
-    canonical_directory_key, DirectoryTabColor, DirectoryTabColors, TabSettings,
-    TabSettingsChangedEvent,
+    DirectoryTabColor, DirectoryTabColors, TabSettings, TabSettingsChangedEvent,
+    canonical_directory_key,
 };
 
 const ADD_DIRECTORY_LABEL: &str = "+ Add directory…";
@@ -306,17 +306,17 @@ fn compute_candidate_paths(
     let mut seen_keys = HashSet::new();
     let mut candidates: Vec<(String, PathBuf)> = Vec::new();
 
-    for path in indexed_paths.into_iter().chain(persisted_paths.into_iter()) {
+    for path in indexed_paths.into_iter().chain(persisted_paths) {
         if !path_exists(&path) {
             continue;
         }
 
         let key = canonical_directory_key(&path);
 
-        if let Some(existing_color) = existing.0.get(&key) {
-            if !matches!(existing_color, DirectoryTabColor::Suppressed) {
-                continue;
-            }
+        if let Some(existing_color) = existing.0.get(&key)
+            && !matches!(existing_color, DirectoryTabColor::Suppressed)
+        {
+            continue;
         }
 
         if seen_keys.insert(key.clone()) {

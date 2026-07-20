@@ -1,19 +1,19 @@
 use super::{
+    Input, InputAction, InputDropTargetData,
     common::{
         add_command_xray_overlay, add_input_suggestions_overlays, add_voltron_overlay,
         add_workflow_info_overlay, wrap_input_with_terminal_padding_and_focus_handler,
     },
-    Input, InputAction, InputDropTargetData,
 };
 use crate::{
+    BlocklistAIHistoryModel,
     ai::{
         blocklist::{
-            agent_view::{
-                agent_view_bg_fill,
-                shortcuts::{render_agent_shortcuts_view, AgentShortcutsViewContext},
-                AgentViewState,
-            },
             InputType,
+            agent_view::{
+                AgentViewState,
+                shortcuts::{AgentShortcutsViewContext, render_agent_shortcuts_view},
+            },
         },
         harness_availability::HarnessAvailabilityModel,
     },
@@ -23,12 +23,12 @@ use crate::{
     features::FeatureFlag,
     settings::InputModeSettings,
     terminal::{settings::TerminalSettings, view::TerminalAction},
-    BlocklistAIHistoryModel,
 };
 use warp_core::settings::Setting;
 use warp_core::ui::theme::color::internal_colors;
 use warpui::elements::Expanded;
 use warpui::{
+    AppContext, SingletonEntity as _,
     elements::{
         Align, AnchorPair, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
         DispatchEventResult, DropTarget, Element, Empty, EventHandler, Flex, Hoverable,
@@ -36,7 +36,6 @@ use warpui::{
         PositioningAxis, Radius, SavePosition, Stack, XAxisAnchor, YAxisAnchor,
     },
     presenter::ChildView,
-    AppContext, SingletonEntity as _,
 };
 
 pub(super) const CLOUD_MODE_V2_MAX_WIDTH: f32 = 720.;
@@ -109,14 +108,13 @@ impl Input {
 
         if FeatureFlag::ImageAsContext.is_enabled()
             && matches!(ai_input_model.input_type(), InputType::AI)
+            && let Some(images) = self.render_attachment_chips(appearance)
         {
-            if let Some(images) = self.render_attachment_chips(appearance) {
-                column.add_child(
-                    Container::new(images)
-                        .with_margin_top(spacing::UDI_CHIP_MARGIN)
-                        .finish(),
-                );
-            }
+            column.add_child(
+                Container::new(images)
+                    .with_margin_top(spacing::UDI_CHIP_MARGIN)
+                    .finish(),
+            );
         }
 
         let show_harness_row = FeatureFlag::AgentView.is_enabled()
@@ -128,21 +126,19 @@ impl Input {
                         .as_ref(app)
                         .is_configuring_ambient_agent()
                 });
-        if show_harness_row {
-            if let Some(harness_selector) = self.harness_selector() {
-                // Temporarily render the harness selector in the cloud mode UDI until we fully
-                // implement the new designs.
-                let harness_row = Flex::row()
-                    .with_main_axis_size(MainAxisSize::Min)
-                    .with_child(ChildView::new(harness_selector).finish())
-                    .finish();
-                column.add_child(
-                    Container::new(harness_row)
-                        .with_padding_top(spacing::UDI_CHIP_MARGIN)
-                        .with_padding_bottom(4.)
-                        .finish(),
-                );
-            }
+        if show_harness_row && let Some(harness_selector) = self.harness_selector() {
+            // Temporarily render the harness selector in the cloud mode UDI until we fully
+            // implement the new designs.
+            let harness_row = Flex::row()
+                .with_main_axis_size(MainAxisSize::Min)
+                .with_child(ChildView::new(harness_selector).finish())
+                .finish();
+            column.add_child(
+                Container::new(harness_row)
+                    .with_padding_top(spacing::UDI_CHIP_MARGIN)
+                    .with_padding_bottom(4.)
+                    .finish(),
+            );
         }
 
         let terminal_spacing = TerminalSettings::as_ref(app)
@@ -170,15 +166,14 @@ impl Input {
         ));
 
         if let Some(selected_workflow_state) = self.workflows_state.selected_workflow_state.as_ref()
+            && selected_workflow_state.should_show_more_info_view
         {
-            if selected_workflow_state.should_show_more_info_view {
-                add_workflow_info_overlay(
-                    &mut stack,
-                    selected_workflow_state,
-                    self.size_info(app).pane_height_px().as_f32(),
-                    menu_positioning,
-                );
-            }
+            add_workflow_info_overlay(
+                &mut stack,
+                selected_workflow_state,
+                self.size_info(app).pane_height_px().as_f32(),
+                menu_positioning,
+            );
         }
 
         if self.is_voltron_open && self.is_pane_focused(app) {
@@ -317,10 +312,10 @@ impl Input {
             ));
         }
         column.add_child(ChildView::new(&self.agent_status_view).finish());
-        if let Some(panel) = self.queued_prompts_panel.as_ref() {
-            if panel.as_ref(app).should_render(app) {
-                column.add_child(ChildView::new(panel).finish());
-            }
+        if let Some(panel) = self.queued_prompts_panel.as_ref()
+            && panel.as_ref(app).should_render(app)
+        {
+            column.add_child(ChildView::new(panel).finish());
         }
         column.add_child(input);
 
@@ -392,58 +387,56 @@ impl Input {
             );
         }
 
-        if self.suggestions_mode_model.as_ref(app).is_slash_commands() {
-            if let Some(view) = self.ambient_agent_v2_slash_commands_view.as_ref() {
-                let cursor_position = position_id_for_cursor(self.editor.id());
-                stack.add_positioned_overlay_child(
-                    ChildView::new(view).finish(),
-                    OffsetPositioning::from_axes(
-                        PositioningAxis::relative_to_stack_child(
-                            &cursor_position,
-                            PositionedElementOffsetBounds::WindowByPosition,
-                            OffsetType::Pixel(0.),
-                            AnchorPair::new(XAxisAnchor::Left, XAxisAnchor::Left),
-                        ),
-                        PositioningAxis::relative_to_stack_child(
-                            &cursor_position,
-                            PositionedElementOffsetBounds::Unbounded,
-                            OffsetType::Pixel(4.),
-                            AnchorPair::new(YAxisAnchor::Bottom, YAxisAnchor::Top),
-                        ),
+        if self.suggestions_mode_model.as_ref(app).is_slash_commands()
+            && let Some(view) = self.ambient_agent_v2_slash_commands_view.as_ref()
+        {
+            let cursor_position = position_id_for_cursor(self.editor.id());
+            stack.add_positioned_overlay_child(
+                ChildView::new(view).finish(),
+                OffsetPositioning::from_axes(
+                    PositioningAxis::relative_to_stack_child(
+                        &cursor_position,
+                        PositionedElementOffsetBounds::WindowByPosition,
+                        OffsetType::Pixel(0.),
+                        AnchorPair::new(XAxisAnchor::Left, XAxisAnchor::Left),
                     ),
-                );
-            }
+                    PositioningAxis::relative_to_stack_child(
+                        &cursor_position,
+                        PositionedElementOffsetBounds::Unbounded,
+                        OffsetType::Pixel(4.),
+                        AnchorPair::new(YAxisAnchor::Bottom, YAxisAnchor::Top),
+                    ),
+                ),
+            );
         }
 
         if let Some(selected_workflow_state) = self.workflows_state.selected_workflow_state.as_ref()
+            && selected_workflow_state.should_show_more_info_view
         {
-            if selected_workflow_state.should_show_more_info_view {
-                let prompt_position = self.prompt_save_position_id();
-                let workflows_info_view = Container::new(
-                    ChildView::new(&selected_workflow_state.more_info_view).finish(),
-                )
-                .finish();
-                stack.add_positioned_overlay_child(
-                    ConstrainedBox::new(workflows_info_view)
-                        .with_max_width(CLOUD_MODE_V2_MAX_WIDTH)
-                        .with_max_height(self.size_info(app).pane_height_px().as_f32() * 0.35)
-                        .finish(),
-                    OffsetPositioning::from_axes(
-                        PositioningAxis::relative_to_stack_child(
-                            &prompt_position,
-                            PositionedElementOffsetBounds::WindowByPosition,
-                            OffsetType::Pixel(0.),
-                            AnchorPair::new(XAxisAnchor::Left, XAxisAnchor::Left),
-                        ),
-                        PositioningAxis::relative_to_stack_child(
-                            &prompt_position,
-                            PositionedElementOffsetBounds::Unbounded,
-                            OffsetType::Pixel(0.),
-                            AnchorPair::new(YAxisAnchor::Top, YAxisAnchor::Bottom),
-                        ),
+            let prompt_position = self.prompt_save_position_id();
+            let workflows_info_view =
+                Container::new(ChildView::new(&selected_workflow_state.more_info_view).finish())
+                    .finish();
+            stack.add_positioned_overlay_child(
+                ConstrainedBox::new(workflows_info_view)
+                    .with_max_width(CLOUD_MODE_V2_MAX_WIDTH)
+                    .with_max_height(self.size_info(app).pane_height_px().as_f32() * 0.35)
+                    .finish(),
+                OffsetPositioning::from_axes(
+                    PositioningAxis::relative_to_stack_child(
+                        &prompt_position,
+                        PositionedElementOffsetBounds::WindowByPosition,
+                        OffsetType::Pixel(0.),
+                        AnchorPair::new(XAxisAnchor::Left, XAxisAnchor::Left),
                     ),
-                );
-            }
+                    PositioningAxis::relative_to_stack_child(
+                        &prompt_position,
+                        PositionedElementOffsetBounds::Unbounded,
+                        OffsetType::Pixel(0.),
+                        AnchorPair::new(YAxisAnchor::Top, YAxisAnchor::Bottom),
+                    ),
+                ),
+            );
         }
         if self.is_voltron_open && self.is_pane_focused(app) {
             add_voltron_overlay(&mut stack, &self.voltron_view, menu_positioning);
@@ -549,16 +542,14 @@ impl Input {
         let ai_input_model = self.ai_input_model.as_ref(app);
         let show_chips = FeatureFlag::ImageAsContext.is_enabled()
             && matches!(ai_input_model.input_type(), InputType::AI);
-        if show_chips {
-            if let Some(chips) = self.render_attachment_chips(appearance) {
-                editor_column.add_child(
-                    Container::new(chips)
-                        .with_padding_top(CLOUD_MODE_V2_CHIPS_ROW_TOP_PADDING)
-                        .with_padding_left(CLOUD_MODE_V2_INPUT_HORIZONTAL_PADDING)
-                        .with_padding_right(CLOUD_MODE_V2_INPUT_HORIZONTAL_PADDING)
-                        .finish(),
-                );
-            }
+        if show_chips && let Some(chips) = self.render_attachment_chips(appearance) {
+            editor_column.add_child(
+                Container::new(chips)
+                    .with_padding_top(CLOUD_MODE_V2_CHIPS_ROW_TOP_PADDING)
+                    .with_padding_left(CLOUD_MODE_V2_INPUT_HORIZONTAL_PADDING)
+                    .with_padding_right(CLOUD_MODE_V2_INPUT_HORIZONTAL_PADDING)
+                    .finish(),
+            );
         }
 
         editor_column.add_child(

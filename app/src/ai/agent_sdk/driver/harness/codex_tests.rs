@@ -96,13 +96,13 @@ fn resolve_openai_api_key_returns_value_from_resolved_map() {
 #[serial_test::serial]
 fn resolve_openai_api_key_falls_back_to_env_var() {
     let prev = std::env::var(OPENAI_API_KEY_ENV).ok();
-    std::env::set_var(OPENAI_API_KEY_ENV, "sk-from-env");
+    unsafe { std::env::set_var(OPENAI_API_KEY_ENV, "sk-from-env") };
 
     let result = resolve_openai_api_key(&HashMap::new());
 
     match prev {
-        Some(v) => std::env::set_var(OPENAI_API_KEY_ENV, v),
-        None => std::env::remove_var(OPENAI_API_KEY_ENV),
+        Some(v) => unsafe { std::env::set_var(OPENAI_API_KEY_ENV, v) },
+        None => unsafe { std::env::remove_var(OPENAI_API_KEY_ENV) },
     }
     assert_eq!(result.as_deref(), Some("sk-from-env"));
 }
@@ -111,12 +111,12 @@ fn resolve_openai_api_key_falls_back_to_env_var() {
 #[serial_test::serial]
 fn resolve_openai_api_key_returns_none_when_map_and_env_empty() {
     let prev = std::env::var(OPENAI_API_KEY_ENV).ok();
-    std::env::remove_var(OPENAI_API_KEY_ENV);
+    unsafe { std::env::remove_var(OPENAI_API_KEY_ENV) };
 
     let result = resolve_openai_api_key(&HashMap::new());
 
     if let Some(v) = prev {
-        std::env::set_var(OPENAI_API_KEY_ENV, v);
+        unsafe { std::env::set_var(OPENAI_API_KEY_ENV, v) };
     }
     assert_eq!(result, None);
 }
@@ -127,7 +127,7 @@ fn resolve_openai_api_key_prefers_env_over_resolved_map() {
     // Worker-injected env var wins over the resolved secret map because
     // build_secret_env_vars skips secrets that collide with process env.
     let prev = std::env::var(OPENAI_API_KEY_ENV).ok();
-    std::env::set_var(OPENAI_API_KEY_ENV, "sk-from-env");
+    unsafe { std::env::set_var(OPENAI_API_KEY_ENV, "sk-from-env") };
     let resolved = HashMap::from([(
         OsString::from("OPENAI_API_KEY"),
         OsString::from("sk-from-secret"),
@@ -136,8 +136,8 @@ fn resolve_openai_api_key_prefers_env_over_resolved_map() {
     let result = resolve_openai_api_key(&resolved);
 
     match prev {
-        Some(v) => std::env::set_var(OPENAI_API_KEY_ENV, v),
-        None => std::env::remove_var(OPENAI_API_KEY_ENV),
+        Some(v) => unsafe { std::env::set_var(OPENAI_API_KEY_ENV, v) },
+        None => unsafe { std::env::remove_var(OPENAI_API_KEY_ENV) },
     }
     assert_eq!(result.as_deref(), Some("sk-from-env"));
 }
@@ -146,7 +146,7 @@ fn resolve_openai_api_key_prefers_env_over_resolved_map() {
 #[serial_test::serial]
 fn resolve_openai_api_key_uses_resolved_map_when_env_empty() {
     let prev = std::env::var(OPENAI_API_KEY_ENV).ok();
-    std::env::set_var(OPENAI_API_KEY_ENV, "   ");
+    unsafe { std::env::set_var(OPENAI_API_KEY_ENV, "   ") };
     let resolved = HashMap::from([(
         OsString::from("OPENAI_API_KEY"),
         OsString::from("sk-from-secret"),
@@ -155,8 +155,8 @@ fn resolve_openai_api_key_uses_resolved_map_when_env_empty() {
     let result = resolve_openai_api_key(&resolved);
 
     match prev {
-        Some(v) => std::env::set_var(OPENAI_API_KEY_ENV, v),
-        None => std::env::remove_var(OPENAI_API_KEY_ENV),
+        Some(v) => unsafe { std::env::set_var(OPENAI_API_KEY_ENV, v) },
+        None => unsafe { std::env::remove_var(OPENAI_API_KEY_ENV) },
     }
     assert_eq!(result.as_deref(), Some("sk-from-secret"));
 }
@@ -170,8 +170,8 @@ fn prepare_codex_environment_config_honors_codex_home() {
     fs::create_dir_all(&working_dir).unwrap();
     let prev_codex_home = std::env::var(CODEX_HOME_ENV).ok();
     let prev_openai_api_key = std::env::var(OPENAI_API_KEY_ENV).ok();
-    std::env::set_var(CODEX_HOME_ENV, &codex_home);
-    std::env::remove_var(OPENAI_API_KEY_ENV);
+    unsafe { std::env::set_var(CODEX_HOME_ENV, &codex_home) };
+    unsafe { std::env::remove_var(OPENAI_API_KEY_ENV) };
     let resolved = HashMap::from([(
         OsString::from(OPENAI_API_KEY_ENV),
         OsString::from("sk-from-secret"),
@@ -188,12 +188,12 @@ fn prepare_codex_environment_config_honors_codex_home() {
     );
 
     match prev_codex_home {
-        Some(v) => std::env::set_var(CODEX_HOME_ENV, v),
-        None => std::env::remove_var(CODEX_HOME_ENV),
+        Some(v) => unsafe { std::env::set_var(CODEX_HOME_ENV, v) },
+        None => unsafe { std::env::remove_var(CODEX_HOME_ENV) },
     }
     match prev_openai_api_key {
-        Some(v) => std::env::set_var(OPENAI_API_KEY_ENV, v),
-        None => std::env::remove_var(OPENAI_API_KEY_ENV),
+        Some(v) => unsafe { std::env::set_var(OPENAI_API_KEY_ENV, v) },
+        None => unsafe { std::env::remove_var(OPENAI_API_KEY_ENV) },
     }
 
     result.unwrap();
@@ -648,7 +648,7 @@ fn resolve_openai_base_url_from_secret_returns_base_url_when_typed_secret_active
     // When the typed OpenAI secret is the active API key source, the base URL
     // should be extracted from the structured secret.
     let prev = std::env::var(OPENAI_API_KEY_ENV).ok();
-    std::env::remove_var(OPENAI_API_KEY_ENV);
+    unsafe { std::env::remove_var(OPENAI_API_KEY_ENV) };
 
     let secrets = HashMap::from([(
         "openai-key".to_string(),
@@ -663,7 +663,7 @@ fn resolve_openai_base_url_from_secret_returns_base_url_when_typed_secret_active
     let result = resolve_openai_base_url_from_secret(&secrets, &resolved_env);
 
     if let Some(v) = prev {
-        std::env::set_var(OPENAI_API_KEY_ENV, v);
+        unsafe { std::env::set_var(OPENAI_API_KEY_ENV, v) };
     }
     assert_eq!(result.as_deref(), Some("https://us.api.openai.com/v1"));
 }
@@ -674,7 +674,7 @@ fn resolve_openai_base_url_from_secret_returns_none_when_worker_env_wins() {
     // When a worker-injected OPENAI_API_KEY already exists in process env,
     // the typed-secret base_url should NOT be applied.
     let prev = std::env::var(OPENAI_API_KEY_ENV).ok();
-    std::env::set_var(OPENAI_API_KEY_ENV, "sk-worker-key");
+    unsafe { std::env::set_var(OPENAI_API_KEY_ENV, "sk-worker-key") };
 
     let secrets = HashMap::from([(
         "openai-key".to_string(),
@@ -688,8 +688,8 @@ fn resolve_openai_base_url_from_secret_returns_none_when_worker_env_wins() {
     let result = resolve_openai_base_url_from_secret(&secrets, &resolved_env);
 
     match prev {
-        Some(v) => std::env::set_var(OPENAI_API_KEY_ENV, v),
-        None => std::env::remove_var(OPENAI_API_KEY_ENV),
+        Some(v) => unsafe { std::env::set_var(OPENAI_API_KEY_ENV, v) },
+        None => unsafe { std::env::remove_var(OPENAI_API_KEY_ENV) },
     }
     assert_eq!(result, None);
 }
@@ -699,7 +699,7 @@ fn resolve_openai_base_url_from_secret_returns_none_when_worker_env_wins() {
 fn resolve_openai_base_url_from_secret_returns_none_when_no_base_url() {
     // When the typed OpenAI secret has no base_url, None is returned.
     let prev = std::env::var(OPENAI_API_KEY_ENV).ok();
-    std::env::remove_var(OPENAI_API_KEY_ENV);
+    unsafe { std::env::remove_var(OPENAI_API_KEY_ENV) };
 
     let secrets = HashMap::from([(
         "openai-key".to_string(),
@@ -711,7 +711,7 @@ fn resolve_openai_base_url_from_secret_returns_none_when_no_base_url() {
     let result = resolve_openai_base_url_from_secret(&secrets, &resolved_env);
 
     if let Some(v) = prev {
-        std::env::set_var(OPENAI_API_KEY_ENV, v);
+        unsafe { std::env::set_var(OPENAI_API_KEY_ENV, v) };
     }
     assert_eq!(result, None);
 }
@@ -722,7 +722,7 @@ fn resolve_openai_base_url_from_secret_returns_none_when_api_key_not_in_resolved
     // When OPENAI_API_KEY is not in the resolved env vars (e.g. the secret was
     // skipped due to collision), the base URL should not be applied.
     let prev = std::env::var(OPENAI_API_KEY_ENV).ok();
-    std::env::remove_var(OPENAI_API_KEY_ENV);
+    unsafe { std::env::remove_var(OPENAI_API_KEY_ENV) };
 
     let secrets = HashMap::from([(
         "openai-key".to_string(),
@@ -736,7 +736,7 @@ fn resolve_openai_base_url_from_secret_returns_none_when_api_key_not_in_resolved
     let result = resolve_openai_base_url_from_secret(&secrets, &resolved_env);
 
     if let Some(v) = prev {
-        std::env::set_var(OPENAI_API_KEY_ENV, v);
+        unsafe { std::env::set_var(OPENAI_API_KEY_ENV, v) };
     }
     assert_eq!(result, None);
 }

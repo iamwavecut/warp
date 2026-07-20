@@ -1,4 +1,4 @@
-use super::{decode_scrollback, SharedSessionScrollbackType};
+use super::{SharedSessionScrollbackType, decode_scrollback};
 
 use crate::ai::blocklist::agent_view::AgentViewState;
 use crate::assert_lines_approx_eq;
@@ -8,9 +8,9 @@ use crate::terminal::model::block::{BlockId, BlockState, SerializedBlock};
 use crate::terminal::model::test_utils::block_size;
 use crate::uri::web_intent_parser::maybe_rewrite_web_url_to_intent;
 
+use crate::terminal::TerminalModel;
 use crate::terminal::event_listener::ChannelEventListener;
 use crate::terminal::model::ObfuscateSecrets;
-use crate::terminal::TerminalModel;
 use crate::themes::default_themes::dark_theme;
 use serde_json::Value;
 use session_sharing_protocol::common::{Scrollback, ScrollbackBlock};

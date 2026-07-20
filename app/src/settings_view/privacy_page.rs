@@ -27,14 +27,14 @@ use warpui::ui_components::{
     switch::SwitchStateHandle,
 };
 use warpui::{
-    id, Action, AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView,
+    Action, AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView,
     UpdateModel, View, ViewContext, ViewHandle,
 };
 
 use crate::settings::{CustomSecretRegex, RegexDisplayInfo};
 use crate::settings_view::privacy::AddRegexModalViewState;
 use crate::terminal::safe_mode_settings::{
-    get_effective_secret_display_mode, SecretDisplayMode, SecretDisplayModeSetting,
+    SecretDisplayMode, SecretDisplayModeSetting, get_effective_secret_display_mode,
 };
 use crate::ui_components::buttons::icon_button;
 use crate::view_components::{Dropdown, DropdownItem};
@@ -48,14 +48,13 @@ use crate::{
 };
 
 use super::{
-    flags,
+    SettingsAction, SettingsSection, ToggleSettingActionPair, flags,
     privacy::{AddRegexModal, AddRegexModalEvent},
     settings_page::{
-        render_body_item, render_sub_header, SettingsPageMeta, SettingsPageViewHandle, ToggleState,
-        HEADER_PADDING, TOGGLE_BUTTON_RIGHT_PADDING,
+        HEADER_PADDING, SettingsPageMeta, SettingsPageViewHandle, TOGGLE_BUTTON_RIGHT_PADDING,
+        ToggleState, render_body_item, render_sub_header,
     },
-    settings_page::{LocalOnlyIconState, MatchData, PageType, SettingsWidget, PAGE_PADDING},
-    SettingsAction, SettingsSection, ToggleSettingActionPair,
+    settings_page::{LocalOnlyIconState, MatchData, PAGE_PADDING, PageType, SettingsWidget},
 };
 
 use crate::modal::{Modal, ModalEvent, ModalViewState};
@@ -69,8 +68,7 @@ static SAFE_MODE_DESCRIPTION: LazyLock<&'static str> = LazyLock::new(|| {
     information before using local features. You can customize this list via regexes."
 });
 const USER_SECRET_REGEX_TITLE: &str = "Custom secret redaction";
-const USER_SECRET_REGEX_DESCRIPTION: &str =
-    "Use regex to define additional secrets or data you'd like to redact. This will take effect \
+const USER_SECRET_REGEX_DESCRIPTION: &str = "Use regex to define additional secrets or data you'd like to redact. This will take effect \
     when the next command runs. You can use the inline (?i) flag as a prefix to your regex \
     to make it case-insensitive.";
 
@@ -220,9 +218,11 @@ impl PrivacyPageView {
         let new_value = { !*safe_mode_settings.as_ref(ctx).safe_mode_enabled.value() };
 
         ctx.update_model(&safe_mode_settings, move |safe_mode_settings, ctx| {
-            report_if_error!(safe_mode_settings
-                .safe_mode_enabled
-                .set_value(new_value, ctx));
+            report_if_error!(
+                safe_mode_settings
+                    .safe_mode_enabled
+                    .set_value(new_value, ctx)
+            );
         });
         ctx.notify();
     }
@@ -237,9 +237,11 @@ impl PrivacyPageView {
         };
 
         ctx.update_model(&safe_mode_settings, move |safe_mode_settings, ctx| {
-            report_if_error!(safe_mode_settings
-                .hide_secrets_in_block_list
-                .set_value(new_value, ctx));
+            report_if_error!(
+                safe_mode_settings
+                    .hide_secrets_in_block_list
+                    .set_value(new_value, ctx)
+            );
         });
         ctx.notify();
     }
@@ -361,34 +363,38 @@ impl PrivacyPageView {
         }
 
         let privacy_settings_handle = PrivacySettings::handle(ctx);
-        ctx.update_model(&privacy_settings_handle, |privacy_settings, ctx| {
-            if let Ok(regex) = Regex::new(&pattern) {
-                let mut new_user_secret_regex_list =
-                    privacy_settings.user_secret_regex_list.to_vec();
-                new_user_secret_regex_list.push(CustomSecretRegex {
-                    pattern: regex,
-                    name: if name.trim().is_empty() {
-                        None
-                    } else {
-                        Some(name.trim().to_string())
-                    },
-                });
+        ctx.update_model(
+            &privacy_settings_handle,
+            |privacy_settings, ctx| match Regex::new(&pattern) {
+                Ok(regex) => {
+                    let mut new_user_secret_regex_list =
+                        privacy_settings.user_secret_regex_list.to_vec();
+                    new_user_secret_regex_list.push(CustomSecretRegex {
+                        pattern: regex,
+                        name: if name.trim().is_empty() {
+                            None
+                        } else {
+                            Some(name.trim().to_string())
+                        },
+                    });
 
-                if privacy_settings
-                    .user_secret_regex_list
-                    .set_value(new_user_secret_regex_list, ctx)
-                    .is_err()
-                {
-                    report_error!("Failed to add custom regex to secret regex list");
+                    if privacy_settings
+                        .user_secret_regex_list
+                        .set_value(new_user_secret_regex_list, ctx)
+                        .is_err()
+                    {
+                        report_error!("Failed to add custom regex to secret regex list");
+                    }
+                    ctx.notify();
                 }
-                ctx.notify();
-            } else {
-                report_error!(
-                    "Invalid regex pattern",
-                    extra: { "pattern" => %pattern }
-                );
-            }
-        });
+                _ => {
+                    report_error!(
+                        "Invalid regex pattern",
+                        extra: { "pattern" => %pattern }
+                    );
+                }
+            },
+        );
     }
 
     pub fn get_modal_content(&self) -> Option<Box<dyn Element>> {
@@ -466,26 +472,26 @@ impl TypedActionView for PrivacyPageView {
                             .filter(|r| !current_patterns.contains(&r.pattern))
                             .collect();
 
-                    if let Some(regex) = recommended_regexes.get(*idx) {
-                        if let Ok(pattern) = Regex::new(regex.pattern) {
-                            let mut new_user_secret_regex_list =
-                                privacy_settings.user_secret_regex_list.to_vec();
-                            new_user_secret_regex_list.push(CustomSecretRegex {
-                                pattern,
-                                name: Some(regex.name.to_string()),
-                            });
+                    if let Some(regex) = recommended_regexes.get(*idx)
+                        && let Ok(pattern) = Regex::new(regex.pattern)
+                    {
+                        let mut new_user_secret_regex_list =
+                            privacy_settings.user_secret_regex_list.to_vec();
+                        new_user_secret_regex_list.push(CustomSecretRegex {
+                            pattern,
+                            name: Some(regex.name.to_string()),
+                        });
 
-                            if privacy_settings
-                                .user_secret_regex_list
-                                .set_value(new_user_secret_regex_list, ctx)
-                                .is_err()
-                            {
-                                report_error!(
-                                    "Failed to add recommended regex to custom secret regex list"
-                                );
-                            }
-                            ctx.notify();
+                        if privacy_settings
+                            .user_secret_regex_list
+                            .set_value(new_user_secret_regex_list, ctx)
+                            .is_err()
+                        {
+                            report_error!(
+                                "Failed to add recommended regex to custom secret regex list"
+                            );
                         }
+                        ctx.notify();
                     }
                 });
             }

@@ -9,22 +9,22 @@ pub mod manager;
 pub mod view;
 
 use crate::{
+    Appearance,
     cloud_object::{
+        GenericCloudObject, GenericStringObjectFormat, GenericStringObjectUniqueKey,
+        JsonObjectType, Revision,
         model::{
             generic_string_model::{GenericStringModel, GenericStringObjectId, StringModel},
             json_model::{JsonModel, JsonSerializer},
         },
-        GenericCloudObject, GenericStringObjectFormat, GenericStringObjectUniqueKey,
-        JsonObjectType, Revision,
     },
     drive::{
-        items::{env_var_collection::WarpDriveEnvVarCollection, WarpDriveItem},
         CloudObjectTypeAndId,
+        items::{WarpDriveItem, env_var_collection::WarpDriveEnvVarCollection},
     },
     external_secrets::ExternalSecret,
     server::{ids::SyncId, sync_queue::QueueItem},
     terminal::shell::ShellType,
-    Appearance,
 };
 
 #[derive(Clone, Debug, PartialEq)]

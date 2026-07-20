@@ -16,8 +16,8 @@ use futures::channel::oneshot;
 use futures::future::{self, BoxFuture, FutureExt as _};
 use warp_core::safe_warn;
 use warp_util::sync::Condition;
-use warpui_core::r#async::{FutureId, SpawnedFutureHandle};
 use warpui_core::ModelHandle;
+use warpui_core::r#async::{FutureId, SpawnedFutureHandle};
 
 /// Represents either a file or directory in a repository.
 #[derive(Debug, Clone)]
@@ -45,14 +45,14 @@ use warp_util::standardized_path::StandardizedPath;
 #[cfg(feature = "local_fs")]
 use crate::entry::LAZY_LOAD_FILE_LIMIT;
 use crate::entry::{
-    matches_force_included_path, BudgetExceededBehavior, BuildTreeError, BuildTreeOptions, Entry,
-    FileId, IgnoredPathStrategy,
+    BudgetExceededBehavior, BuildTreeError, BuildTreeOptions, Entry, FileId, IgnoredPathStrategy,
+    matches_force_included_path,
 };
 use crate::repository::Repository;
 use crate::standing_queries::{
     StandingQueryDefinitions, StandingQueryResults, StandingQueryResultsDelta,
 };
-use crate::{gitignores_for_directory, matches_gitignores, RepoMetadataError};
+use crate::{RepoMetadataError, gitignores_for_directory, matches_gitignores};
 cfg_if::cfg_if! {
     if #[cfg(feature = "local_fs")] {
         use notify_debouncer_full::notify::RecursiveMode;
@@ -75,8 +75,8 @@ use crate::file_tree_store::{
     FileTreeState,
 };
 use crate::file_tree_update::{
-    flatten_entry_metadata, DirectoryNodeMetadata, FileNodeMetadata, FileTreeEntryUpdate,
-    MetadataUpdateType, RepoMetadataUpdate, RepoNodeMetadata,
+    DirectoryNodeMetadata, FileNodeMetadata, FileTreeEntryUpdate, MetadataUpdateType,
+    RepoMetadataUpdate, RepoNodeMetadata, flatten_entry_metadata,
 };
 
 /// Maximum depth to traverse when building file trees
@@ -1292,10 +1292,10 @@ impl LocalRepoMetadataModel {
                 (repo_root_for_build, dir_path_for_completion, result)
             },
             move |model, (repo_root, dir_path, build_result), ctx| {
-                let completion = if let Some(task) = model.finish_build_task(
+                let completion = match model.finish_build_task(
                     &task_key_for_completion,
                     task_future_id_for_completion.get(),
-                ) {
+                ) { Some(task) => {
                     let completion = match build_result {
                         Ok(entry) => {
                             if let Some(IndexedRepoState::Indexed(state)) =
@@ -1348,9 +1348,9 @@ impl LocalRepoMetadataModel {
                         completion.as_ref().map(|_| ()).map_err(ToString::to_string);
                     Self::notify_completion_waiters(task.completion_waiters, waiter_completion);
                     completion
-                } else {
+                } _ => {
                     Err(RepoMetadataError::RepositoryNotIndexed)
-                };
+                }};
                 let _ = completion_tx.send(completion);
             },
         );
@@ -2004,16 +2004,16 @@ impl LocalRepoMetadataModel {
                         let state =
                             FileTreeState::new(root_entry, gitignores_for_build, Some(repository_handle));
 
-                        if let Err(e) = model.add_repository_internal(
+                        match model.add_repository_internal(
                             std_repo_path.clone(),
                             state,
                             RootWatchMode::Recursive,
                             ctx,
-                        ) {
+                        ) { Err(e) => {
                             log::warn!("Failed to add repository {repo_path_str}: {e:?}");
                             // On failure, mark the repository as failed so waiters are notified.
                             model.mark_repository_failed(std_repo_path, e, ctx);
-                        } else if indexed_with_limit {
+                        } _ => if indexed_with_limit {
                             safe_warn!(
                                 safe: ("Repository exceeded max file budget; indexed with partial coverage"),
                                 full: ("Repository {repo_path_str} exceeded the max file budget ({MAX_FILES_PER_REPO}); indexed breadth-first up to the budget — remaining directories load on expand")
@@ -2024,7 +2024,7 @@ impl LocalRepoMetadataModel {
                                 repo_path_str,
                                 files.len()
                             );
-                        }
+                        }}
                     }
                     Err(e) => {
                         safe_warn!(

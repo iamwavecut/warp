@@ -1,21 +1,21 @@
 use super::history_model::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel};
 #[cfg(test)]
 use super::orchestration_events::{
-    build_lifecycle_event, LifecycleEventDetailPayload, LifecycleEventDetailStage,
-    OrchestrationEventService, PendingEvent, PendingEventDetail,
+    LifecycleEventDetailPayload, LifecycleEventDetailStage, OrchestrationEventService,
+    PendingEvent, PendingEventDetail, build_lifecycle_event,
 };
 #[cfg(test)]
 use crate::ai::agent::ReceivedMessageInput;
 use crate::ai::agent::{
-    conversation::{AIAgentHarness, AIConversationId, ConversationStatus},
     AIAgentExchangeId, AIAgentOutputMessageType,
+    conversation::{AIAgentHarness, AIConversationId, ConversationStatus},
 };
+#[cfg(test)]
+use crate::server::server_api::ServerApi;
 #[cfg(test)]
 use crate::server::server_api::ai::AIClient;
 #[cfg(test)]
 use crate::server::server_api::ai::AgentRunEvent;
-#[cfg(test)]
-use crate::server::server_api::ServerApi;
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(test)]
 use std::sync::Arc;

@@ -26,8 +26,8 @@ use crate::{
         UpdateCloudObjectResult,
     },
     drive::{
-        items::{notebook::WarpDriveNotebook, WarpDriveItem},
         CloudObjectTypeAndId,
+        items::{WarpDriveItem, notebook::WarpDriveNotebook},
     },
     persistence::ModelEvent,
     server::{

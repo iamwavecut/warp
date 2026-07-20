@@ -2,7 +2,7 @@ use pathfinder_geometry::vector::vec2f;
 use string_offset::ByteOffset;
 use warp_core::ui::appearance::Appearance;
 use warp_editor::model::CoreEditorModel;
-use warpui::{platform::WindowStyle, App};
+use warpui::{App, platform::WindowStyle};
 
 use crate::search::files::model::FileSearchModel;
 
@@ -12,6 +12,7 @@ use crate::pane_group::focus_state::{PaneFocusHandle, PaneGroupFocusState};
 use crate::pane_group::{BackingView as _, PaneId};
 use crate::terminal::keys::TerminalKeybindings;
 use crate::{
+    GlobalResourceHandles, GlobalResourceHandlesProvider,
     cloud_object::model::{persistence::CloudModel, view::CloudViewModel},
     editor::InteractionState,
     network::NetworkStatus,
@@ -26,7 +27,6 @@ use crate::{
     workspaces::{
         team_tester::TeamTesterStatus, user_profiles::UserProfiles, user_workspaces::UserWorkspaces,
     },
-    GlobalResourceHandles, GlobalResourceHandlesProvider,
 };
 
 fn initialize_app(app: &mut App) {

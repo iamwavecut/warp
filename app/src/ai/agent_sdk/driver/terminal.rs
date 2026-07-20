@@ -12,21 +12,21 @@ use futures::channel::oneshot;
 use warp_completer::completer::CommandOutput;
 use warp_core::command::ExitCode;
 use warp_util::{path::ShellFamily, sync::Condition};
-use warpui::{r#async::FutureExt, AppContext, Entity, ModelContext, ModelHandle, ViewHandle};
+use warpui::{AppContext, Entity, ModelContext, ModelHandle, ViewHandle, r#async::FutureExt};
 
 use crate::terminal::model::{
-    block::BlockId, find::RegexDFAs, grid::RespectDisplayedOutput, index::Point,
-    session::ExecuteCommandOptions, RespectObfuscatedSecrets,
+    RespectObfuscatedSecrets, block::BlockId, find::RegexDFAs, grid::RespectDisplayedOutput,
+    index::Point, session::ExecuteCommandOptions,
 };
 use warp_terminal::model::grid::Dimensions;
 
 use crate::{
     ai::ambient_agents::AmbientAgentTaskId,
     pane_group::NewTerminalOptions,
-    root_view::{open_new_with_workspace_source, NewWorkspaceSource},
+    root_view::{NewWorkspaceSource, open_new_with_workspace_source},
     terminal::{
-        shared_session::IsSharedSessionCreator, shell::ShellType,
-        view::ConversationRestorationInNewPaneType, TerminalView,
+        TerminalView, shared_session::IsSharedSessionCreator, shell::ShellType,
+        view::ConversationRestorationInNewPaneType,
     },
 };
 
@@ -250,8 +250,10 @@ impl TerminalDriver {
         &mut self,
         command: &str,
         ctx: &mut ModelContext<Self>,
-    ) -> Result<impl Future<Output = Result<CommandHandle, AgentDriverError>>, AgentDriverError>
-    {
+    ) -> Result<
+        impl Future<Output = Result<CommandHandle, AgentDriverError>> + use<>,
+        AgentDriverError,
+    > {
         let (exit_tx, exit_rx) = oneshot::channel::<ExitCode>();
         let (start_tx, start_rx) = oneshot::channel::<BlockId>();
 
@@ -290,7 +292,7 @@ impl TerminalDriver {
         &self,
         command: String,
         ctx: &ModelContext<Self>,
-    ) -> impl Future<Output = Result<CommandOutput, AgentDriverError>> {
+    ) -> impl Future<Output = Result<CommandOutput, AgentDriverError>> + use<> {
         let session = self.terminal_view.read(ctx, |terminal, app| {
             terminal
                 .active_block_session_id()
@@ -335,8 +337,10 @@ impl TerminalDriver {
         &mut self,
         target: &str,
         ctx: &mut ModelContext<Self>,
-    ) -> Result<impl Future<Output = Result<CommandHandle, AgentDriverError>>, AgentDriverError>
-    {
+    ) -> Result<
+        impl Future<Output = Result<CommandHandle, AgentDriverError>> + use<>,
+        AgentDriverError,
+    > {
         let cd_command = self.build_cd_command(target, ctx);
         self.execute_command(&cd_command, ctx)
     }
@@ -353,7 +357,7 @@ impl TerminalDriver {
         &self,
         target: &str,
         ctx: &ModelContext<Self>,
-    ) -> impl Future<Output = Result<CommandOutput, AgentDriverError>> {
+    ) -> impl Future<Output = Result<CommandOutput, AgentDriverError>> + use<> {
         let cd_command = self.build_cd_command(target, ctx);
         self.execute_silent_command(cd_command, ctx)
     }
@@ -372,7 +376,7 @@ impl TerminalDriver {
     /// This only waits for the `SessionBootstrapped` terminal view event.
     pub fn wait_for_session_bootstrapped(
         &self,
-    ) -> impl Future<Output = Result<(), AgentDriverError>> {
+    ) -> impl Future<Output = Result<(), AgentDriverError>> + use<> {
         let session_bootstrapped = self.session_bootstrapped.clone();
 
         async move {

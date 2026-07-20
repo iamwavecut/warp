@@ -155,31 +155,39 @@ fn state_is_ready() {
 
 #[test]
 fn state_is_failed() {
-    assert!(RemoteServerSetupState::Failed {
-        error: "test".into()
-    }
-    .is_failed());
+    assert!(
+        RemoteServerSetupState::Failed {
+            error: "test".into()
+        }
+        .is_failed()
+    );
     assert!(!RemoteServerSetupState::Ready.is_failed());
 }
 
 #[test]
 fn state_is_terminal() {
     assert!(RemoteServerSetupState::Ready.is_terminal());
-    assert!(RemoteServerSetupState::Failed {
-        error: "test".into()
-    }
-    .is_terminal());
-    assert!(RemoteServerSetupState::Unsupported {
-        reason: UnsupportedReason::NonGlibc {
-            name: "musl".into()
+    assert!(
+        RemoteServerSetupState::Failed {
+            error: "test".into()
         }
-    }
-    .is_terminal());
+        .is_terminal()
+    );
+    assert!(
+        RemoteServerSetupState::Unsupported {
+            reason: UnsupportedReason::NonGlibc {
+                name: "musl".into()
+            }
+        }
+        .is_terminal()
+    );
     assert!(!RemoteServerSetupState::Checking.is_terminal());
-    assert!(!RemoteServerSetupState::Installing {
-        progress_percent: None,
-    }
-    .is_terminal());
+    assert!(
+        !RemoteServerSetupState::Installing {
+            progress_percent: None,
+        }
+        .is_terminal()
+    );
     assert!(!RemoteServerSetupState::Updating.is_terminal());
     assert!(!RemoteServerSetupState::Initializing.is_terminal());
 }

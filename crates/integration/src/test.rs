@@ -47,7 +47,7 @@ use std::time::Duration;
 pub use agent_mode::*;
 pub use ai_assistant::*;
 pub use ai_document::*;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 pub use block_filtering::*;
 pub use bootstrapping::*;
 pub use code_review::*;
@@ -93,19 +93,18 @@ pub use workspace::*;
 
 use std::{borrow::Cow, collections::HashMap, path::PathBuf, rc::Rc, time::Duration};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use parking_lot::Mutex;
 use pathfinder_geometry::{rect::RectF, vector::Vector2F};
 use rust_embed::RustEmbed;
 use settings::Setting as _;
 use shell::ShellType;
 use warpui::{
-    async_assert, async_assert_eq,
+    AssetProvider, Event, SingletonEntity, UpdateView, ViewHandle, async_assert, async_assert_eq,
     integration::{AssertionOutcome, StepData, TestStep},
     keymap::{Keystroke, Trigger},
     platform::{OperatingSystem, TerminationMode},
     windowing::WindowManager,
-    AssetProvider, Event, SingletonEntity, UpdateView, ViewHandle,
 };
 
 use warp::{
@@ -117,11 +116,11 @@ use sysinfo::{Pid, ProcessesToUpdate, System};
 use version_compare::Cmp;
 use warpui::units::Lines;
 
-use crate::util::{skip_if_powershell_core_2303, ShellRcType};
+use crate::util::{ShellRcType, skip_if_powershell_core_2303};
 
+use crate::Builder;
 use crate::builder::cargo_target_tmpdir;
 use crate::user_defaults;
-use crate::Builder;
 use sum_tree::SeekBias;
 use warp::integration_testing::terminal::assert_focused_editor_in_tab;
 use warp::integration_testing::{
@@ -141,15 +140,15 @@ use warp::{
     integration_testing::{
         assertions::{assert_binding_display_string, go_offline, go_online},
         block::{
-            assert_block_visible, assert_bottom_of_block_approx_at, assert_num_blocks_in_model,
-            BlockPosition, LinePosition,
+            BlockPosition, LinePosition, assert_block_visible, assert_bottom_of_block_approx_at,
+            assert_num_blocks_in_model,
         },
         clipboard::assert_clipboard_contains_string,
         context_chips::assert_working_dir_is_present,
         input::open_input_context_menu,
         navigation_palette::{
-            check_recency, navigate_to_other_session_step, open_navigation_palette_step,
-            RecentSession,
+            RecentSession, check_recency, navigate_to_other_session_step,
+            open_navigation_palette_step,
         },
         settings::toggle_setting,
         step::{
@@ -172,7 +171,7 @@ use warp::{
             assert_waterfall_gap_empty_background_rendered,
             execute_command_for_single_terminal_in_tab, execute_echo, execute_long_running_command,
             execute_python_interpreter_in_tab, performance_test, run_alt_grid_program,
-            run_completer, util::current_shell_starter_and_version, util::ExpectedExitStatus,
+            run_completer, util::ExpectedExitStatus, util::current_shell_starter_and_version,
             validate_git_branch, wait_until_bootstrapped_pane,
             wait_until_bootstrapped_single_pane_for_tab,
         },
@@ -183,7 +182,7 @@ use warp::{
         view_of_type,
         window::{add_window, add_window_and_check_bounds, close_window, save_active_window_id},
     },
-    settings::{TabBehavior, INPUT_MODE},
+    settings::{INPUT_MODE, TabBehavior},
     settings_view::FeaturesPageAction,
     terminal::{
         alt_screen_reporting::MouseReportingEnabled,
@@ -229,8 +228,8 @@ use warp::{
 use warp::{
     integration_testing::{
         command_palette::{
-            close_command_palette, open_command_palette, open_command_palette_and_run_action,
-            TestStepsExt,
+            TestStepsExt, close_command_palette, open_command_palette,
+            open_command_palette_and_run_action,
         },
         view_getters::single_terminal_pane_view_for_tab,
     },
@@ -253,17 +252,18 @@ use warp::{
 };
 use warp::{settings_view::SettingsAction, terminal::block_list_viewport::ScrollLines};
 use warp::{
-    settings_view::{keybindings::KeybindingsView, SettingsSection, SettingsView},
+    settings_view::{SettingsSection, SettingsView, keybindings::KeybindingsView},
     terminal::{
+        TerminalView,
         input::{Input, InputSuggestionsMode},
         model::{
             ansi::{Handler, InitShellValue},
             blocks::{BlockHeightItem, TotalIndex},
             grid::Dimensions,
         },
-        shell, TerminalView,
+        shell,
     },
-    workspace::{Workspace, NEW_SESSION_MENU_BUTTON_POSITION_ID, NEW_TAB_BUTTON_POSITION_ID},
+    workspace::{NEW_SESSION_MENU_BUTTON_POSITION_ID, NEW_TAB_BUTTON_POSITION_ID, Workspace},
 };
 use warpui::event::KeyState;
 use warpui::keymap::PerPlatformKeystroke;
@@ -904,8 +904,10 @@ pub fn test_waterfall_input_alt_grid() -> Builder {
         TestStep::new("Close vim")
             .with_typed_characters(&[":q"])
             .with_keystrokes(&["enter"]),
-        vec![TestStep::new("waterfall background should not be rendered")
-            .add_assertion(assert_waterfall_gap_empty_background_rendered(false))],
+        vec![
+            TestStep::new("waterfall background should not be rendered")
+                .add_assertion(assert_waterfall_gap_empty_background_rendered(false)),
+        ],
     );
     builder = builder.with_steps(steps);
 

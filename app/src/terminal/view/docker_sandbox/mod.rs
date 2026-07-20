@@ -2,10 +2,10 @@
 use std::sync::mpsc::SyncSender;
 
 #[cfg(feature = "local_tty")]
-use warpui::geometry::vector::Vector2F;
-#[cfg(feature = "local_tty")]
 use warpui::ModelHandle;
 use warpui::ViewContext;
+#[cfg(feature = "local_tty")]
+use warpui::geometry::vector::Vector2F;
 #[cfg(not(target_family = "wasm"))]
 use warpui::{SingletonEntity, View, ViewHandle};
 
@@ -16,9 +16,9 @@ use crate::persistence::ModelEvent;
 #[cfg(feature = "local_tty")]
 use crate::server::server_api::ServerApiProvider;
 #[cfg(feature = "local_tty")]
-use crate::terminal::local_tty::docker_sandbox::resolve_sbx_path_from_user_shell;
-#[cfg(feature = "local_tty")]
 use crate::terminal::TerminalManager;
+#[cfg(feature = "local_tty")]
+use crate::terminal::local_tty::docker_sandbox::resolve_sbx_path_from_user_shell;
 
 #[cfg(feature = "remote_tty")]
 use crate::terminal::remote_tty::TerminalManager as RemoteTtyTerminalManager;

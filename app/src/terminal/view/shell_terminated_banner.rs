@@ -3,8 +3,8 @@ use std::cell::RefCell;
 
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::builder::UiBuilder;
-use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::WarpTheme;
+use warp_core::ui::theme::color::internal_colors;
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::*;
 use warpui::text_layout::ClipConfig;
@@ -204,14 +204,18 @@ impl TerminationType {
 
                 handles.resize_with(1, MouseStateHandle::default);
                 let error_str = format!("{pty_spawn_error:#}");
-                vec![ui_builder
-                    .button(ButtonVariant::Text, handles[0].clone())
-                    .with_text_label("Copy error".to_string())
-                    .build()
-                    .on_click(move |evt_ctx, _ctx, _position| {
-                        evt_ctx.dispatch_typed_action(Action::CopyPtySpawnError(error_str.clone()));
-                    })
-                    .finish()]
+                vec![
+                    ui_builder
+                        .button(ButtonVariant::Text, handles[0].clone())
+                        .with_text_label("Copy error".to_string())
+                        .build()
+                        .on_click(move |evt_ctx, _ctx, _position| {
+                            evt_ctx.dispatch_typed_action(Action::CopyPtySpawnError(
+                                error_str.clone(),
+                            ));
+                        })
+                        .finish(),
+                ]
             }
         }
     }

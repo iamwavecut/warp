@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use futures::{channel::oneshot, future::BoxFuture, FutureExt};
+use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use itertools::Itertools;
 use warp_errors::report_error;
 use warpui::{AppContext, Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
@@ -25,8 +25,8 @@ use crate::{
 };
 
 use super::{
-    read_local_file_context, ActionExecution, AnyActionExecution, ExecuteActionInput,
-    PreprocessActionInput,
+    ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput,
+    read_local_file_context,
 };
 
 pub struct SearchCodebaseExecutor {
@@ -187,7 +187,7 @@ impl SearchCodebaseExecutor {
         &mut self,
         input: ExecuteActionInput,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Into<AnyActionExecution> {
+    ) -> impl Into<AnyActionExecution> + use<> {
         let ExecuteActionInput {
             action,
             conversation_id,

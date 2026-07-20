@@ -1,28 +1,28 @@
+use crate::ToastStack;
 use crate::appearance::Appearance;
 use crate::drive::CloudObjectTypeAndId;
 use crate::interaction_sources::LaunchConfigUiLocation;
+use crate::search::QueryFilter;
 use crate::search::binding_source::{BindingFilterFn, BindingSource};
-use crate::search::command_palette::mixer::CommandPaletteItemAction;
 use crate::search::command_palette::SelectedItems;
+use crate::search::command_palette::mixer::CommandPaletteItemAction;
 use crate::search::result_renderer::QueryResultRenderer;
 use crate::search::search_bar::SelectionUpdate;
 use crate::search::search_bar::{SearchBar, SearchBarEvent, SearchBarState, SearchResultOrdering};
-use crate::search::QueryFilter;
 use crate::settings::CtrlTabBehavior;
 use crate::terminal::keys_settings::KeysSettings;
 use crate::themes::theme::WarpTheme;
 use crate::view_components::DismissibleToast;
-use crate::ToastStack;
 use lazy_static::lazy_static;
 use warp_util::path::LineAndColumnArg;
 
 use crate::search::action::search_item::MatchedBinding;
 use itertools::Itertools;
+use warpui::FocusContext;
 use warpui::elements::DispatchEventResult;
 use warpui::elements::EventHandler;
 use warpui::event::KeyState;
 use warpui::platform::keyboard::KeyCode;
-use warpui::FocusContext;
 
 use crate::search::command_palette::zero_state::{self, Event as ZeroStateEvent, ZeroState};
 use crate::search::data_source::QueryResult;
@@ -37,7 +37,7 @@ use crate::root_view::OpenLaunchConfigArg;
 use crate::search::command_palette::data_sources::DataSourceStore;
 use crate::server::ids::SyncId;
 use crate::session_management::SessionSource;
-use crate::workspace::{active_terminal_in_window, ForkedConversationDestination, WorkspaceAction};
+use crate::workspace::{ForkedConversationDestination, WorkspaceAction, active_terminal_in_window};
 use warpui::elements::{
     Align, Border, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
     Container, CornerRadius, Dismiss, Empty, Fill, Flex, ParentElement, Radius, SavePosition,
@@ -720,50 +720,50 @@ impl View {
             });
         }
 
-        if let CommandPaletteItemAction::AcceptBinding { binding } = &result_action {
-            if let Some(action) = &binding.action {
-                match action.as_any().downcast_ref::<WorkspaceAction>() {
-                    Some(WorkspaceAction::TogglePalette {
-                        mode: PaletteMode::LaunchConfig,
-                        source: _,
-                    }) => {
-                        self.reset(ctx);
-                        self.set_active_query_filter(QueryFilter::LaunchConfigurations, ctx);
-                        return;
-                    }
-                    Some(WorkspaceAction::TogglePalette {
-                        mode: PaletteMode::Navigation,
-                        source: _,
-                    }) => {
-                        self.reset(ctx);
-                        self.set_active_query_filter(QueryFilter::Sessions, ctx);
-                        return;
-                    }
-                    Some(WorkspaceAction::TogglePalette {
-                        mode: PaletteMode::Files,
-                        source: _,
-                    }) => {
-                        self.reset(ctx);
-                        self.set_active_query_filter(QueryFilter::Files, ctx);
-                        return;
-                    }
-                    Some(WorkspaceAction::TogglePalette {
-                        mode: PaletteMode::Conversations,
-                        source: _,
-                    }) => {
-                        self.reset(ctx);
-                        self.set_active_query_filter(QueryFilter::Conversations, ctx);
-                        return;
-                    }
-                    Some(WorkspaceAction::TogglePalette {
-                        mode: PaletteMode::Command,
-                        source: _,
-                    }) => {
-                        self.close(ctx, Some(result_action.result_type()));
-                        return;
-                    }
-                    _ => {}
+        if let CommandPaletteItemAction::AcceptBinding { binding } = &result_action
+            && let Some(action) = &binding.action
+        {
+            match action.as_any().downcast_ref::<WorkspaceAction>() {
+                Some(WorkspaceAction::TogglePalette {
+                    mode: PaletteMode::LaunchConfig,
+                    source: _,
+                }) => {
+                    self.reset(ctx);
+                    self.set_active_query_filter(QueryFilter::LaunchConfigurations, ctx);
+                    return;
                 }
+                Some(WorkspaceAction::TogglePalette {
+                    mode: PaletteMode::Navigation,
+                    source: _,
+                }) => {
+                    self.reset(ctx);
+                    self.set_active_query_filter(QueryFilter::Sessions, ctx);
+                    return;
+                }
+                Some(WorkspaceAction::TogglePalette {
+                    mode: PaletteMode::Files,
+                    source: _,
+                }) => {
+                    self.reset(ctx);
+                    self.set_active_query_filter(QueryFilter::Files, ctx);
+                    return;
+                }
+                Some(WorkspaceAction::TogglePalette {
+                    mode: PaletteMode::Conversations,
+                    source: _,
+                }) => {
+                    self.reset(ctx);
+                    self.set_active_query_filter(QueryFilter::Conversations, ctx);
+                    return;
+                }
+                Some(WorkspaceAction::TogglePalette {
+                    mode: PaletteMode::Command,
+                    source: _,
+                }) => {
+                    self.close(ctx, Some(result_action.result_type()));
+                    return;
+                }
+                _ => {}
             }
         }
 
@@ -912,11 +912,11 @@ impl View {
             } => {
                 let file_path = std::path::Path::new(&current_directory).join(&file_name);
 
-                if let Err(e) = std::fs::File::create_new(&file_path) {
-                    if e.kind() != std::io::ErrorKind::AlreadyExists {
-                        log::warn!("Failed to create file {}: {e}", file_path.display());
-                        return;
-                    }
+                if let Err(e) = std::fs::File::create_new(&file_path)
+                    && e.kind() != std::io::ErrorKind::AlreadyExists
+                {
+                    log::warn!("Failed to create file {}: {e}", file_path.display());
+                    return;
                 }
 
                 ctx.emit(Event::OpenFile {

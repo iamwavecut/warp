@@ -22,15 +22,15 @@ use crate::search::ItemHighlightState as SearchHighlightState;
 use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon as UiIcon;
 use crate::ui_components::item_highlight::{ImageOrIcon, ItemHighlightState};
-use crate::ui_components::render_file_search_row::{render_file_search_row, FileSearchRowOptions};
+use crate::ui_components::render_file_search_row::{FileSearchRowOptions, render_file_search_row};
 use crate::view_components::action_button::{ActionButton, ButtonSize, NakedTheme};
-use crate::workspace::view::global_search::model::GlobalSearch;
 use crate::workspace::view::global_search::SearchConfig;
+use crate::workspace::view::global_search::model::GlobalSearch;
 use warp_core::r#async::debounce;
+use warp_core::ui::Icon;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{AnsiColorIdentifier, Fill as ThemeFill};
-use warp_core::ui::Icon;
 use warpui::elements::{
     Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, DispatchEventResult, Empty, EventHandler, Fill, Flex, FormattedTextElement,
@@ -395,23 +395,22 @@ impl TypedActionView for GlobalSearchView {
                 match &selected.index_type {
                     RowIndexType::DirectoryHeader => {
                         let is_collapsed = self.is_directory_collapsed(&selected);
-                        if !is_collapsed {
-                            if let Some(dir_path) =
+                        if !is_collapsed
+                            && let Some(dir_path) =
                                 self.directory_path_for_row_index(&selected).cloned()
-                            {
-                                self.toggle_directory_collapsed(&dir_path, ctx);
-                            }
+                        {
+                            self.toggle_directory_collapsed(&dir_path, ctx);
                         }
                     }
                     RowIndexType::FileHeader { .. } => {
                         let is_collapsed = self.is_file_collapsed(&selected);
-                        if !is_collapsed {
-                            if let (Some(dir_path), Some(file_path)) = (
+                        if !is_collapsed
+                            && let (Some(dir_path), Some(file_path)) = (
                                 self.directory_path_for_row_index(&selected).cloned(),
                                 self.file_path_for_row_index(&selected).cloned(),
-                            ) {
-                                self.toggle_file_collapsed(&dir_path, &file_path, ctx);
-                            }
+                            )
+                        {
+                            self.toggle_file_collapsed(&dir_path, &file_path, ctx);
                         }
                     }
                     RowIndexType::Match { .. } => {}
@@ -428,23 +427,22 @@ impl TypedActionView for GlobalSearchView {
                 match &selected.index_type {
                     RowIndexType::DirectoryHeader => {
                         let is_collapsed = self.is_directory_collapsed(&selected);
-                        if is_collapsed {
-                            if let Some(dir_path) =
+                        if is_collapsed
+                            && let Some(dir_path) =
                                 self.directory_path_for_row_index(&selected).cloned()
-                            {
-                                self.toggle_directory_collapsed(&dir_path, ctx);
-                            }
+                        {
+                            self.toggle_directory_collapsed(&dir_path, ctx);
                         }
                     }
                     RowIndexType::FileHeader { .. } => {
                         let is_collapsed = self.is_file_collapsed(&selected);
-                        if is_collapsed {
-                            if let (Some(dir_path), Some(file_path)) = (
+                        if is_collapsed
+                            && let (Some(dir_path), Some(file_path)) = (
                                 self.directory_path_for_row_index(&selected).cloned(),
                                 self.file_path_for_row_index(&selected).cloned(),
-                            ) {
-                                self.toggle_file_collapsed(&dir_path, &file_path, ctx);
-                            }
+                            )
+                        {
+                            self.toggle_file_collapsed(&dir_path, &file_path, ctx);
                         }
                     }
                     RowIndexType::Match { .. } => {}
@@ -1751,17 +1749,15 @@ impl GlobalSearchView {
         dir_entry.is_collapsed = !was_collapsed;
 
         // If collapsing and selection was inside this directory, move to directory header
-        if !was_collapsed {
-            if let Some(selected_row) = self.selected_row.as_ref() {
-                if selected_row.directory_index == dir_idx
-                    && !matches!(selected_row.index_type, RowIndexType::DirectoryHeader)
-                {
-                    self.selected_row = Some(RowIndex {
-                        directory_index: dir_idx,
-                        index_type: RowIndexType::DirectoryHeader,
-                    });
-                }
-            }
+        if !was_collapsed
+            && let Some(selected_row) = self.selected_row.as_ref()
+            && selected_row.directory_index == dir_idx
+            && !matches!(selected_row.index_type, RowIndexType::DirectoryHeader)
+        {
+            self.selected_row = Some(RowIndex {
+                directory_index: dir_idx,
+                index_type: RowIndexType::DirectoryHeader,
+            });
         }
 
         self.ensure_selection(ctx);
@@ -1792,23 +1788,22 @@ impl GlobalSearchView {
         matched_path.is_collapsed = !was_collapsed;
 
         // If collapsing and selection was on a match in this file, move to file header
-        if !was_collapsed {
-            if let Some(selected_row) = self.selected_row.as_ref() {
-                if let RowIndexType::Match { path_index, .. } = &selected_row.index_type {
-                    // Check if the selection is in this file
-                    if let Some(dir_path) = self.directory_path_for_row_index(selected_row) {
-                        if let Some(sel_file_path) = self.file_path_for_row_index(selected_row) {
-                            if dir_path == directory_path && sel_file_path == file_path {
-                                self.selected_row = Some(RowIndex {
-                                    directory_index: selected_row.directory_index,
-                                    index_type: RowIndexType::FileHeader {
-                                        path_index: *path_index,
-                                    },
-                                });
-                            }
-                        }
-                    }
-                }
+        if !was_collapsed
+            && let Some(selected_row) = self.selected_row.as_ref()
+            && let RowIndexType::Match { path_index, .. } = &selected_row.index_type
+        {
+            // Check if the selection is in this file
+            if let Some(dir_path) = self.directory_path_for_row_index(selected_row)
+                && let Some(sel_file_path) = self.file_path_for_row_index(selected_row)
+                && dir_path == directory_path
+                && sel_file_path == file_path
+            {
+                self.selected_row = Some(RowIndex {
+                    directory_index: selected_row.directory_index,
+                    index_type: RowIndexType::FileHeader {
+                        path_index: *path_index,
+                    },
+                });
             }
         }
 
@@ -2141,11 +2136,13 @@ impl View for GlobalSearchView {
         if should_render_pre_search_zero_state {
             body =
                 body.with_child(Shrinkable::new(1.0, self.render_pre_search_state(app)).finish());
-        } else if let Some(results) = self.render_results(app) {
-            let results_section = Container::new(results)
-                .with_horizontal_padding(12.)
-                .finish();
-            body = body.with_child(Shrinkable::new(1.0, results_section).finish());
+        } else {
+            if let Some(results) = self.render_results(app) {
+                let results_section = Container::new(results)
+                    .with_horizontal_padding(12.)
+                    .finish();
+                body = body.with_child(Shrinkable::new(1.0, results_section).finish());
+            }
         }
 
         let has_results = !self.directory_entries.is_empty();

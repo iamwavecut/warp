@@ -1,7 +1,9 @@
-use pathfinder_geometry::vector::{vec2f, Vector2F};
+use pathfinder_geometry::vector::{Vector2F, vec2f};
 
 use warp_core::features::FeatureFlag;
 use warpui::{
+    AppContext, BlurContext, Element, Entity, FocusContext, ModelAsRef, ModelHandle,
+    SingletonEntity, TypedActionView, View, ViewContext, ViewHandle, WindowId,
     clipboard::ClipboardContent,
     elements::{
         Align, AnchorPair, ChildAnchor, Clipped, ClippedScrollStateHandle, ClippedScrollable,
@@ -15,37 +17,35 @@ use warpui::{
     platform::Cursor,
     presenter::ChildView,
     ui_components::components::UiComponent,
-    AppContext, BlurContext, Element, Entity, FocusContext, ModelAsRef, ModelHandle,
-    SingletonEntity, TypedActionView, View, ViewContext, ViewHandle, WindowId,
 };
 
 use crate::{
     ai::blocklist::block::secret_redaction::find_secrets_in_text_with_levels,
     appearance::Appearance,
     cloud_object::{
+        CloudObjectEventEntrypoint, Owner,
         breadcrumbs::ContainingObject,
         model::persistence::{CloudModel, CloudModelEvent},
-        CloudObjectEventEntrypoint, Owner,
     },
     drive::{
+        CloudObjectTypeAndId,
         items::WarpDriveItemId,
         sharing::{ContentEditability, ShareableObject},
-        CloudObjectTypeAndId,
     },
     editor::EditorView,
     env_vars::{
+        CloudEnvVarCollection, CloudEnvVarCollectionModel, EnvVar, EnvVarCollection,
+        EnvVarCollectionType, EnvVarValue,
         active_env_var_collection_data::{
             ActiveEnvVarCollection, ActiveEnvVarCollectionData, ActiveEnvVarCollectionDataEvent,
             SavingStatus, TrashStatus,
         },
-        CloudEnvVarCollection, CloudEnvVarCollectionModel, EnvVar, EnvVarCollection,
-        EnvVarCollectionType, EnvVarValue,
     },
     external_secrets::SecretManager,
     menu::MenuItem,
     network::{NetworkStatus, NetworkStatusEvent},
     pane_group::{
-        focus_state::PaneFocusHandle, pane::view, BackingView, PaneConfiguration, PaneEvent,
+        BackingView, PaneConfiguration, PaneEvent, focus_state::PaneFocusHandle, pane::view,
     },
     search::external_secrets::view::ExternalSecretsMenu,
     server::{
@@ -54,15 +54,15 @@ use crate::{
     },
     terminal::{model::secrets::SecretLevel, safe_mode_settings::get_secret_obfuscation_mode},
     ui_components::{
-        breadcrumb::{render_breadcrumbs, BreadcrumbState},
+        breadcrumb::{BreadcrumbState, render_breadcrumbs},
         buttons::icon_button,
         icons::Icon,
         menu_button::{
-            highlight_icon_button_with_context_menu, icon_button_with_context_menu, MenuDirection,
+            MenuDirection, highlight_icon_button_with_context_menu, icon_button_with_context_menu,
         },
     },
     util::bindings::CustomAction,
-    view_components::{alert::AlertConfig, Alert, DismissibleToast, ToastType},
+    view_components::{Alert, DismissibleToast, ToastType, alert::AlertConfig},
     workspace::ToastStack,
 };
 

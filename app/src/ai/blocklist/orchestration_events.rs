@@ -2,10 +2,10 @@ use super::history_model::{
     BlocklistAIHistoryEvent, BlocklistAIHistoryModel, ConversationStatusUpdate,
 };
 use crate::ai::agent::{
-    conversation::{AIConversationId, ConversationStatus},
-    task::TaskId,
     AIAgentExchangeId, AIAgentInput, AIAgentOutputMessageType, LifecycleEventType,
     ReceivedMessageInput,
+    conversation::{AIConversationId, ConversationStatus},
+    task::TaskId,
 };
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;

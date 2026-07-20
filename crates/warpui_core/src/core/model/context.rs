@@ -1,24 +1,24 @@
 use std::{any::Any, future::Future, marker::PhantomData, sync::Arc};
 
 use crate::{
+    ReadModel, ReadView, UpdateView, View, ViewAsRef, ViewContext, ViewHandle, WeakModelHandle,
     r#async::{SpawnableOutput, Timer},
     windowing::WindowManager,
-    ReadModel, ReadView, UpdateView, View, ViewAsRef, ViewContext, ViewHandle, WeakModelHandle,
 };
 use anyhow::Result;
 use futures::{
-    stream::{AbortHandle, Abortable},
     FutureExt,
+    stream::{AbortHandle, Abortable},
 };
 use thiserror::Error;
 use warp_errors::report_error;
 
 use crate::{
-    accessibility::AccessibilityContent,
-    core::{Observation, Subscription, SubscriptionKey, TaskCallback},
-    r#async::{executor, SpawnedFutureHandle, SpawnedLocalStream},
     AppContext, Effect, Entity, EntityId, GetSingletonModelHandle, ModelAsRef, ModelHandle,
     RequestState, RetryOption, UpdateModel,
+    accessibility::AccessibilityContent,
+    r#async::{SpawnedFutureHandle, SpawnedLocalStream, executor},
+    core::{Observation, Subscription, SubscriptionKey, TaskCallback},
 };
 
 /// Error returned when a model has been dropped, and so references to it are invalid.
@@ -278,7 +278,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         &mut self,
         future: S,
         callback: F,
-    ) -> impl Future<Output = ()>
+    ) -> impl Future<Output = ()> + use<S, F, U, T>
     where
         S: 'static + Future,
         F: 'static + FnOnce(&mut T, S::Output, &mut ModelContext<T>) -> U,

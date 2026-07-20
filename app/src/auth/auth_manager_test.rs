@@ -1,6 +1,6 @@
 use super::AuthManager;
-use crate::auth::{credentials::Credentials, AuthStateProvider};
 use crate::ServerApiProvider;
+use crate::auth::{AuthStateProvider, credentials::Credentials};
 use warpui::{App, SingletonEntity};
 
 fn initialize_app(app: &mut App) {

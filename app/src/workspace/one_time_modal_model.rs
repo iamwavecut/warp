@@ -169,9 +169,7 @@ impl OneTimeModalModel {
             return;
         }
 
-        if self.check_and_trigger_hoa_onboarding(ctx) {
-            return;
-        }
+        if self.check_and_trigger_hoa_onboarding(ctx) {}
     }
 
     fn set_hoa_onboarding_open(&mut self, is_open: bool, ctx: &mut ModelContext<Self>) -> bool {

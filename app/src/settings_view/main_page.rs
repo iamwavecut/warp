@@ -1,15 +1,23 @@
 use super::{
-    settings_page::{
-        MatchData, PageType, SettingsPageMeta, SettingsPageViewHandle, SettingsWidget,
-        HEADER_PADDING,
-    },
     SettingsAction, SettingsSection, ToggleSettingActionPair,
+    settings_page::{
+        HEADER_PADDING, MatchData, PageType, SettingsPageMeta, SettingsPageViewHandle,
+        SettingsWidget,
+    },
 };
-use crate::auth::{auth_state::AuthState, AuthStateProvider};
+use crate::auth::{AuthStateProvider, auth_state::AuthState};
 use crate::{appearance::Appearance, workspace::WorkspaceAction};
 use std::sync::Arc;
 use warp_core::channel::ChannelState;
 use warpui::keymap::ContextPredicate;
+use warpui::{
+    Action, AppContext,
+    elements::{
+        Align, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Flex,
+        MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
+    },
+};
+use warpui::{Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle};
 use warpui::{
     assets::asset_cache::AssetSource,
     elements::{Empty, MainAxisAlignment},
@@ -17,17 +25,9 @@ use warpui::{
     platform::Cursor,
 };
 use warpui::{
-    elements::{
-        Align, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Flex,
-        MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
-    },
-    Action, AppContext,
-};
-use warpui::{
     elements::{CacheOption, Image},
     ui_components::components::{UiComponent, UiComponentStyles},
 };
-use warpui::{Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle};
 
 const PHOTO_SIZE: f32 = 40.;
 const REGULAR_TEXT_FONT_SIZE: f32 = 12.;
@@ -96,8 +96,7 @@ impl MainSettingsPageView {
     pub fn new(ctx: &mut ViewContext<MainSettingsPageView>) -> Self {
         let auth_state = AuthStateProvider::as_ref(ctx).get().clone();
 
-        let mut widgets: Vec<Box<dyn SettingsWidget<View = Self>>> =
-            vec![Box::new(AccountWidget::default())];
+        let mut widgets: Vec<Box<dyn SettingsWidget<View = Self>>> = vec![Box::new(AccountWidget)];
 
         if ChannelState::app_version().is_some() {
             widgets.push(Box::new(VersionInfoWidget::default()));
@@ -122,7 +121,7 @@ impl AccountWidget {
         let mut user_info = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
         if let Some(profile_image_source) = profile_image_source {
             // Only continue if profile_image_source is a source with a non empty url/path
-            if matches!(profile_image_source, AssetSource::Async { ref id, .. } if !id.key().is_empty())
+            if matches!(profile_image_source, AssetSource::Async { id, .. } if !id.key().is_empty())
                 || matches!(profile_image_source, AssetSource::Bundled { path, .. } if !path.is_empty())
                 || matches!(profile_image_source, AssetSource::LocalFile { path, .. } if !path.is_empty())
             {

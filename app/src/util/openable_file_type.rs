@@ -9,7 +9,7 @@ pub use warp_util::file_type::{
 };
 
 #[cfg(feature = "local_fs")]
-use crate::util::file::external_editor::{settings::EditorChoice, Editor, EditorSettings};
+use crate::util::file::external_editor::{Editor, EditorSettings, settings::EditorChoice};
 
 #[derive(
     Debug,
@@ -110,7 +110,7 @@ pub(crate) fn starts_with_shebang(path: &Path) -> bool {
     use std::io::Read;
     let mut prefix = [0u8; 2];
     match std::fs::File::open(path) {
-        Ok(mut file) => file.read_exact(&mut prefix).is_ok() && prefix == [b'#', b'!'],
+        Ok(mut file) => file.read_exact(&mut prefix).is_ok() && prefix == *b"#!",
         Err(_) => false,
     }
 }

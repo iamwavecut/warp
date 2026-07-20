@@ -13,18 +13,18 @@ use warpui::{AddSingletonModel, App, SingletonEntity, WindowId};
 
 use crate::{
     cloud_object::{
-        model::persistence::CloudModel, CloudObjectMetadata, CloudObjectPermissions, ObjectIdType,
-        ObjectType, Space,
+        CloudObjectMetadata, CloudObjectPermissions, ObjectIdType, ObjectType, Space,
+        model::persistence::CloudModel,
     },
     drive::CloudObjectTypeAndId,
     notebooks::{CloudNotebook, CloudNotebookModel, NotebookId},
     server::ids::SyncId,
-    workflows::{workflow::Workflow, CloudWorkflow, CloudWorkflowModel, WorkflowId},
+    workflows::{CloudWorkflow, CloudWorkflowModel, WorkflowId, workflow::Workflow},
     workspace::ToastStack,
     workspaces::user_workspaces::UserWorkspaces,
 };
 
-use super::{safe_filename, ExportEvent, ExportId, ExportManager};
+use super::{ExportEvent, ExportId, ExportManager, safe_filename};
 
 struct ExportTest {
     target_dir: TempDir,
@@ -75,12 +75,13 @@ impl ExportTest {
             export_manager.export(window_id, &[export_ids], ctx);
             export_manager.handle_files_picked(
                 vec![id],
-                Ok(vec![self
-                    .target_dir
-                    .path()
-                    .to_str()
-                    .expect("Path must be UTF-8")
-                    .to_owned()]),
+                Ok(vec![
+                    self.target_dir
+                        .path()
+                        .to_str()
+                        .expect("Path must be UTF-8")
+                        .to_owned(),
+                ]),
                 ShellFamily::Posix,
                 ctx,
             );
@@ -471,12 +472,14 @@ fn test_export_multiple_objects() {
                 .collect::<Vec<_>>();
             export_manager.handle_files_picked(
                 all_export_ids,
-                Ok(vec![exporter
-                    .target_dir
-                    .path()
-                    .to_str()
-                    .expect("Path must be UTF-8")
-                    .to_owned()]),
+                Ok(vec![
+                    exporter
+                        .target_dir
+                        .path()
+                        .to_str()
+                        .expect("Path must be UTF-8")
+                        .to_owned(),
+                ]),
                 ShellFamily::Posix,
                 ctx,
             );

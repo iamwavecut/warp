@@ -1,7 +1,7 @@
 use crate::coding_entrypoints::glowing_editor::{GlowingEditor, GlowingEditorEvent};
 use warpui::{
-    elements::{ChildView, Flex, ParentElement as _},
     AppContext, Element, Entity, FocusContext, TypedActionView, View, ViewContext, ViewHandle,
+    elements::{ChildView, Flex, ParentElement as _},
 };
 
 pub struct CloneRepoView {

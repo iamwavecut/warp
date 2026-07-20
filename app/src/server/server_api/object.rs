@@ -1,15 +1,15 @@
 use crate::{
     cloud_object::{
-        model::{
-            actions::{ObjectActionHistory, ObjectActionType},
-            generic_string_model::GenericStringObjectId,
-        },
         BulkCreateCloudObjectResult, BulkCreateGenericStringObjectsRequest,
         CreateCloudObjectResult, CreateObjectRequest, GenericStringObjectFormat,
         GenericStringObjectUniqueKey, ObjectDeleteResult, ObjectMetadataUpdateResult,
         ObjectPermissionUpdateResult, ObjectPermissionsUpdateData, ObjectType, Owner, Revision,
         ServerFolder, ServerMetadata, ServerNotebook, ServerObject, ServerPermissions,
         ServerWorkflow, UpdateCloudObjectResult,
+        model::{
+            actions::{ObjectActionHistory, ObjectActionType},
+            generic_string_model::GenericStringObjectId,
+        },
     },
     drive::{folders::FolderId, sharing::SharingAccessLevel},
     notebooks::NotebookId,
@@ -106,7 +106,7 @@ pub trait ObjectClient: 'static + Send + Sync {
     async fn grab_notebook_edit_access(&self, notebook_id: NotebookId) -> Result<ServerMetadata>;
     /// Sets the current editor of the notebook to be null
     async fn give_up_notebook_edit_access(&self, notebook_id: NotebookId)
-        -> Result<ServerMetadata>;
+    -> Result<ServerMetadata>;
 
     async fn fetch_single_cloud_object(&self, id: ServerId) -> Result<GetCloudObjectResponse>;
 

@@ -1,5 +1,5 @@
 use crate::notebooks::file::MarkdownDisplayMode;
-use base64::{prelude::BASE64_STANDARD, Engine as _};
+use base64::{Engine as _, prelude::BASE64_STANDARD};
 use std::{
     any::Any,
     borrow::Cow,
@@ -15,26 +15,26 @@ use mermaid_to_svg::MermaidTheme;
 use num_traits::SaturatingSub;
 use regex::Regex;
 use url::Url;
-use vec1::{vec1, Vec1};
+use vec1::{Vec1, vec1};
 use warpui::{
+    AppContext, Entity, ModelAsRef, ModelContext, ModelHandle, SingletonEntity, WindowId,
     accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole},
     clipboard::ClipboardContent,
-    AppContext, Entity, ModelAsRef, ModelContext, ModelHandle, SingletonEntity, WindowId,
 };
 
 use crate::{
     cloud_object::model::persistence::{CloudModel, CloudModelEvent},
     editor::InteractionState,
-    notebooks::editor::embedding_model::NotebookEmbed,
     notebooks::BlockInfo,
+    notebooks::editor::embedding_model::NotebookEmbed,
 };
 use crate::{
     notebooks::editor::interaction_state_model::InteractionStateModelEvent,
     terminal::ShellLaunchData,
 };
 use string_offset::CharOffset;
-use warp_core::features::FeatureFlag;
 use warp_core::r#async::debounce;
+use warp_core::features::FeatureFlag;
 use warp_core::semantic_selection::SemanticSelection;
 use warp_editor::{
     content::{buffer::ShouldAutoscroll, selection_model::BufferSelectionModel},
@@ -60,8 +60,8 @@ use warp_editor::{
 use warpui::elements::ListIndentLevel;
 
 use super::{
-    interaction_state_model::InteractionStateModel, notebook_command::NotebookCommand,
-    NotebookWorkflow,
+    NotebookWorkflow, interaction_state_model::InteractionStateModel,
+    notebook_command::NotebookCommand,
 };
 
 const DEBOUNCED_RESIZE_PERIOD: Duration = Duration::from_millis(5);
@@ -429,11 +429,11 @@ impl NotebooksEditorModel {
     }
 
     fn handle_content_model_event(&mut self, event: &BufferEvent, ctx: &mut ModelContext<Self>) {
-        if let Some(window_id) = self.rte_window_id {
-            if !ctx.is_window_open(window_id) {
-                log::debug!("Ignoring content event for closed window");
-                return;
-            }
+        if let Some(window_id) = self.rte_window_id
+            && !ctx.is_window_open(window_id)
+        {
+            log::debug!("Ignoring content event for closed window");
+            return;
         }
 
         let can_edit = matches!(self.interaction_state(ctx), InteractionState::Editable);

@@ -1,8 +1,8 @@
 //! Tips for the local agent loading screen.
 
 use crate::ai::agent_tips::AITip;
-use warpui::keymap::Keystroke;
 use warpui::AppContext;
+use warpui::keymap::Keystroke;
 
 /// A local agent loading tip.
 #[derive(Clone, Debug)]

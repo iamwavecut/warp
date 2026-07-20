@@ -7,14 +7,14 @@ use warpui::text_layout::ClipConfig;
 use warpui::{AppContext, Element, Entity, ModelContext, SingletonEntity as _};
 
 use crate::appearance::Appearance;
+use crate::search::FuzzyMatchWorkflowResult;
 use crate::search::data_source::{Query, QueryResult};
 use crate::search::mixer::DataSourceRunErrorWrapper;
 use crate::search::result_renderer::ItemHighlightState;
-use crate::search::FuzzyMatchWorkflowResult;
 use crate::search::{SearchItem, SyncDataSource};
 use crate::terminal::input::inline_menu::styles as inline_styles;
 use crate::terminal::input::inline_menu::{
-    default_navigation_message_items, InlineMenuAction, InlineMenuMessageArgs, InlineMenuType,
+    InlineMenuAction, InlineMenuMessageArgs, InlineMenuType, default_navigation_message_items,
 };
 use crate::terminal::input::message_bar::Message;
 use crate::user_config::WarpConfig;
@@ -167,13 +167,13 @@ impl SearchItem for PromptSearchItem {
                 .with_color(primary_text_color.into())
                 .with_clip(ClipConfig::ellipsis());
 
-        if let Some(name_match) = &self.name_match_result {
-            if !name_match.matched_indices.is_empty() {
-                name_text = name_text.with_single_highlight(
-                    Highlight::new().with_properties(Properties::default().weight(Weight::Bold)),
-                    name_match.matched_indices.clone(),
-                );
-            }
+        if let Some(name_match) = &self.name_match_result
+            && !name_match.matched_indices.is_empty()
+        {
+            name_text = name_text.with_single_highlight(
+                Highlight::new().with_properties(Properties::default().weight(Weight::Bold)),
+                name_match.matched_indices.clone(),
+            );
         }
 
         name_text.finish()

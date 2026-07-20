@@ -15,17 +15,17 @@ use crate::editor::{
     PropagateHorizontalNavigationKeys, SingleLineEditorOptions, TextOptions,
 };
 use crate::menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields};
-use crate::view_components::action_button::{ActionButton, ButtonSize, SecondaryTheme};
 use crate::view_components::DismissibleToast;
+use crate::view_components::action_button::{ActionButton, ButtonSize, SecondaryTheme};
+use crate::workspace::ToastStack;
+use crate::workspace::WorkspaceAction;
 use crate::workspace::global_actions::ForkedConversationDestination;
 use crate::workspace::header_toolbar_item::HeaderToolbarItemKind;
 use crate::workspace::tab_settings::TabSettings;
 use crate::workspace::view::conversation_list::item::{
-    render_item, render_static_item, ItemProps, ItemState, OverflowMenuDisplay, StaticItemProps,
-    STATIC_ITEM_MIN_HEIGHT,
+    ItemProps, ItemState, OverflowMenuDisplay, STATIC_ITEM_MIN_HEIGHT, StaticItemProps,
+    render_item, render_static_item,
 };
-use crate::workspace::ToastStack;
-use crate::workspace::WorkspaceAction;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::Icon;
 
@@ -39,8 +39,8 @@ use warpui::elements::{
     ScrollbarWidth, Shrinkable, Stack, Text, UniformList, UniformListState,
 };
 use warpui::fonts::{Properties, Weight};
-use warpui::keymap::macros::*;
 use warpui::keymap::FixedBinding;
+use warpui::keymap::macros::*;
 use warpui::platform::Cursor;
 use warpui::text_layout::TextAlignment;
 use warpui::{
@@ -950,21 +950,21 @@ impl TypedActionView for ConversationListView {
                 let conversation =
                     BlocklistAIHistoryModel::as_ref(ctx).conversation(&ai_conversation_id);
 
-                if let Some(conversation) = conversation {
-                    if !conversation.status().is_done() && !conversation.is_empty() {
-                        let window_id = ctx.window_id();
-                        ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                            toast_stack.add_ephemeral_toast(
-                                DismissibleToast::error(
-                                    "Conversations cannot be deleted while in progress."
-                                        .to_string(),
-                                ),
-                                window_id,
-                                ctx,
-                            );
-                        });
-                        return;
-                    }
+                if let Some(conversation) = conversation
+                    && !conversation.status().is_done()
+                    && !conversation.is_empty()
+                {
+                    let window_id = ctx.window_id();
+                    ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
+                        toast_stack.add_ephemeral_toast(
+                            DismissibleToast::error(
+                                "Conversations cannot be deleted while in progress.".to_string(),
+                            ),
+                            window_id,
+                            ctx,
+                        );
+                    });
+                    return;
                 }
 
                 self.selected_index = None;
@@ -1034,10 +1034,10 @@ impl TypedActionView for ConversationListView {
 
                 // If the selection is no longer valid (because it was one of the
                 // list items that we're now hiding), select the last selectable item.
-                if let Some(index) = self.selected_index {
-                    if !self.is_selectable(index) {
-                        self.selected_index = self.find_last_selectable_index();
-                    }
+                if let Some(index) = self.selected_index
+                    && !self.is_selectable(index)
+                {
+                    self.selected_index = self.find_last_selectable_index();
                 }
 
                 ctx.notify();

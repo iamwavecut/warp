@@ -6,8 +6,8 @@ use warp_cli::agent::OutputFormat;
 use warpui::platform::TerminationMode;
 use warpui::{AppContext, SingletonEntity};
 
-use crate::auth::user::PrincipalType;
 use crate::auth::AuthStateProvider;
+use crate::auth::user::PrincipalType;
 
 pub fn login(ctx: &mut AppContext) -> Result<()> {
     println!("Login is disabled in this local-first build.");

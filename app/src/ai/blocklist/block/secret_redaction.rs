@@ -9,7 +9,7 @@ use warpui::platform::Cursor;
 
 use super::{AIBlockAction, TextLocation};
 use crate::ai::agent::{AIAgentOutput, AIAgentTextSection, AgentOutputText};
-use crate::terminal::model::secrets::{SecretLevel, SecretsRegex, SECRETS_REGEX};
+use crate::terminal::model::secrets::{SECRETS_REGEX, SecretLevel, SecretsRegex};
 
 pub const SECRET_REDACTION_REPLACEMENT_CHARACTER: &str = "*";
 
@@ -508,7 +508,7 @@ impl SecretRedactionState {
                     // the case where a secret is split across streaming chunks.
                     let combined_text = format!(
                         "{}{}",
-                        &self.last_word_to_rescan_for_redaction,
+                        self.last_word_to_rescan_for_redaction,
                         &text[self.last_scanned_secret_redaction_byte_index..]
                     );
                     let secret_ranges_with_levels =

@@ -30,12 +30,12 @@ use warp_editor::{
 };
 use warp_util::user_input::UserInput;
 use warpui::{
+    AppContext, TypedActionView, ViewContext, WeakViewHandle,
     actions::StandardAction,
     elements::Axis,
     event::ModifiersState,
     keymap::{EditableBinding, FixedBinding, Keystroke, PerPlatformKeystroke},
     units::Pixels,
-    AppContext, TypedActionView, ViewContext, WeakViewHandle,
 };
 
 /// Limit the keybindings that conflict with the Agent Mode embedded editor.
@@ -1270,11 +1270,8 @@ impl RichTextAction<CodeEditorView> for CodeEditorViewAction {
 
         if view.as_ref(ctx).is_selecting {
             actions_to_dispatch.push(CodeEditorViewAction::SelectionEnd);
-        } else if cmd {
-            if let Location::Text { char_offset, .. } = location {
-                actions_to_dispatch
-                    .push(CodeEditorViewAction::MaybeClickOnHoveredLink(char_offset));
-            }
+        } else if cmd && let Location::Text { char_offset, .. } = location {
+            actions_to_dispatch.push(CodeEditorViewAction::MaybeClickOnHoveredLink(char_offset));
         }
         actions_to_dispatch
     }

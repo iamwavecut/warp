@@ -27,9 +27,9 @@ use warpui::{Entity, ModelContext};
 
 use crate::auth::UserUid;
 use crate::editor::{CrdtOperation, ReplicaId};
+use crate::terminal::TerminalModel;
 use crate::terminal::model::block::BlockId;
 use crate::terminal::shared_session::SharedSessionScrollbackType;
-use crate::terminal::TerminalModel;
 
 const HOSTED_SHARED_SESSIONS_DISABLED: &str =
     "Hosted shared sessions are disabled in this local-first build.";

@@ -1,8 +1,9 @@
 use crate::{
+    AppContext, CloudModel, UpdateManager,
     cloud_object::{
+        CloudObject, Owner, Revision, Space,
         breadcrumbs::ContainingObject,
         model::{persistence::CloudModelEvent, view::CloudViewModel},
-        CloudObject, Owner, Revision, Space,
     },
     drive::sharing::{ContentEditability, SharingAccessLevel},
     env_vars::CloudEnvVarCollection,
@@ -12,7 +13,6 @@ use crate::{
         },
         ids::{ClientId, ServerId, SyncId},
     },
-    AppContext, CloudModel, UpdateManager,
 };
 
 use warpui::{Entity, ModelContext, SingletonEntity};
@@ -66,12 +66,11 @@ impl ActiveEnvVarCollectionData {
     }
 
     fn handle_cloud_model_event(&mut self, event: &CloudModelEvent, ctx: &mut ModelContext<Self>) {
-        if let CloudModelEvent::ObjectMoved { type_and_id, .. } = event {
-            if let Some(env_var_collection_id) = type_and_id.as_generic_string_object_id() {
-                if self.is_active_env_var_collection(env_var_collection_id) {
-                    ctx.emit(ActiveEnvVarCollectionDataEvent::BreadcrumbsChanged)
-                }
-            }
+        if let CloudModelEvent::ObjectMoved { type_and_id, .. } = event
+            && let Some(env_var_collection_id) = type_and_id.as_generic_string_object_id()
+            && self.is_active_env_var_collection(env_var_collection_id)
+        {
+            ctx.emit(ActiveEnvVarCollectionDataEvent::BreadcrumbsChanged)
         }
     }
 
@@ -86,24 +85,24 @@ impl ActiveEnvVarCollectionData {
 
         match (&result.operation, &result.success_type) {
             (ObjectOperation::Create { .. }, OperationSuccessType::Success) => {
-                if let Some(current_id) = self.id() {
-                    if current_id.into_client() == result.client_id {
-                        let server_id = result.server_id.expect("Expect server id on success");
-                        let env_var_collection_id = SyncId::ServerId(server_id);
+                if let Some(current_id) = self.id()
+                    && current_id.into_client() == result.client_id
+                {
+                    let server_id = result.server_id.expect("Expect server id on success");
+                    let env_var_collection_id = SyncId::ServerId(server_id);
 
-                        if let Some(env_var_collection) =
-                            cloud_model.get_env_var_collection(&env_var_collection_id)
-                        {
-                            self.saving_status = SavingStatus::Saved;
-                            self.active_env_var_collection =
-                                ActiveEnvVarCollection::CommittedEnvVarCollection(
-                                    env_var_collection_id,
-                                );
-                            self.revision_ts
-                                .clone_from(&env_var_collection.metadata.revision);
-                            ctx.emit(ActiveEnvVarCollectionDataEvent::CreatedOnServer(server_id));
-                            ctx.notify();
-                        }
+                    if let Some(env_var_collection) =
+                        cloud_model.get_env_var_collection(&env_var_collection_id)
+                    {
+                        self.saving_status = SavingStatus::Saved;
+                        self.active_env_var_collection =
+                            ActiveEnvVarCollection::CommittedEnvVarCollection(
+                                env_var_collection_id,
+                            );
+                        self.revision_ts
+                            .clone_from(&env_var_collection.metadata.revision);
+                        ctx.emit(ActiveEnvVarCollectionDataEvent::CreatedOnServer(server_id));
+                        ctx.notify();
                     }
                 }
             }
@@ -138,14 +137,13 @@ impl ActiveEnvVarCollectionData {
             (ObjectOperation::Trash, OperationSuccessType::Success)
             | (ObjectOperation::Untrash, OperationSuccessType::Success) => {
                 let server_id = result.server_id.expect("Expect server id on success");
-                if let Some(current_id) = self.id() {
-                    if current_id.into_client() == result.client_id
-                        && cloud_model
-                            .get_env_var_collection(&SyncId::ServerId(server_id))
-                            .is_some()
-                    {
-                        ctx.emit(ActiveEnvVarCollectionDataEvent::TrashStatusChanged);
-                    }
+                if let Some(current_id) = self.id()
+                    && current_id.into_client() == result.client_id
+                    && cloud_model
+                        .get_env_var_collection(&SyncId::ServerId(server_id))
+                        .is_some()
+                {
+                    ctx.emit(ActiveEnvVarCollectionDataEvent::TrashStatusChanged);
                 }
             }
             _ => {}

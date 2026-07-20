@@ -10,10 +10,10 @@ use warpui::SingletonEntity;
 use warpui::{ModelContext, TypedActionView};
 
 use crate::interaction_sources::AddTabWithShellSource;
+use crate::local_control::LocalControlBridge;
 use crate::local_control::resolver::{
     decode_params, target_window_id_for_target, validate_tab_create_target, workspace_for_window,
 };
-use crate::local_control::LocalControlBridge;
 use crate::terminal::available_shells::AvailableShell;
 #[cfg(feature = "local_tty")]
 use crate::terminal::available_shells::AvailableShells;

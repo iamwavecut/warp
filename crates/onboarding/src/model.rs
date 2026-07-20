@@ -1,7 +1,7 @@
+use crate::OnboardingIntention;
 use crate::slides::{
     AgentAutonomy, AgentDevelopmentSettings, OnboardingModelInfo, ProjectOnboardingSettings,
 };
-use crate::OnboardingIntention;
 use ai::LLMId;
 use warpui::{Entity, ModelContext};
 

@@ -4,24 +4,24 @@ use session_sharing_protocol::sharer::SessionSourceType;
 use std::collections::HashMap;
 use warp_multi_agent_api::{self as api, client_action as api_client_action};
 
-use crate::ai::agent::conversation::ConversationStatus;
 use crate::ai::agent::AIAgentInput;
+use crate::ai::agent::conversation::ConversationStatus;
 use crate::ai::agent_conversations_model::{AgentConversationsModel, AgentRunDisplayStatus};
 use crate::ai::ambient_agents::task::TaskPrincipalInfo;
 use crate::ai::ambient_agents::{AgentSource, AmbientAgentTask, AmbientAgentTaskState};
 use crate::ai::blocklist::history_model::BlocklistAIHistoryModel;
-use crate::auth::{user::TEST_USER_UID, UserUid};
+use crate::auth::{UserUid, user::TEST_USER_UID};
 use warpui::platform::WindowStyle;
 use warpui::{App, ViewHandle};
 
 use crate::context_chips::prompt_type::PromptType;
 use crate::editor::InteractionState;
 
-use crate::terminal::model::blocks::{ToTotalIndex as _, INLINE_BANNER_HEIGHT};
 use crate::terminal::TerminalView;
+use crate::terminal::model::blocks::{INLINE_BANNER_HEIGHT, ToTotalIndex as _};
 use crate::test_util::add_window_with_terminal;
 use crate::test_util::terminal::initialize_app_for_terminal_view;
-use crate::{assert_lines_approx_eq, FeatureFlag};
+use crate::{FeatureFlag, assert_lines_approx_eq};
 
 use super::*;
 
@@ -622,8 +622,8 @@ fn test_on_session_share_ended_clears_frozen_followup_input_for_owned_ambient_se
 }
 
 #[test]
-fn test_on_session_share_ended_does_not_insert_tombstone_for_non_ambient_session_under_cloud_mode_setup_v2(
-) {
+fn test_on_session_share_ended_does_not_insert_tombstone_for_non_ambient_session_under_cloud_mode_setup_v2()
+ {
     let _flag = FeatureFlag::CloudModeSetupV2.override_enabled(true);
 
     App::test((), |mut app| async move {

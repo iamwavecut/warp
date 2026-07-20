@@ -4,15 +4,15 @@ use crate::ai::local_child_harnesses::local_child_harness_disabled_message;
 use crate::ai::{
     agent_sdk::{
         driver::{
-            harness::{
-                claude_code::prepare_claude_environment_config, harness_kind,
-                harness_model_env_vars, HarnessKind,
-            },
             AgentDriverError,
+            harness::{
+                HarnessKind, claude_code::prepare_claude_environment_config, harness_kind,
+                harness_model_env_vars,
+            },
         },
         task_env_vars, validate_cli_installed,
     },
-    ambient_agents::{task::HarnessModelConfig, AmbientAgentTaskId},
+    ambient_agents::{AmbientAgentTaskId, task::HarnessModelConfig},
 };
 use crate::terminal::shell::ShellType;
 use shell_words::quote as shell_quote;

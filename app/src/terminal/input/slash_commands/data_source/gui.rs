@@ -14,16 +14,16 @@ use super::{
 use crate::ai::agent::conversation::AIConversationId;
 #[cfg(not(target_family = "wasm"))]
 use crate::ai::agent_conversations_model::AgentConversationsModel;
-use crate::ai::blocklist::agent_view::{AgentViewController, AgentViewControllerEvent};
-use crate::ai::blocklist::block::cli_controller::CLISubagentController;
 #[cfg(not(target_family = "wasm"))]
 use crate::ai::blocklist::BlocklistAIHistoryModel;
+use crate::ai::blocklist::agent_view::{AgentViewController, AgentViewControllerEvent};
+use crate::ai::blocklist::block::cli_controller::CLISubagentController;
+use crate::search::SyncDataSource;
 use crate::search::data_source::{Query, QueryResult};
 use crate::search::mixer::DataSourceRunErrorWrapper;
-use crate::search::slash_command_menu::static_commands::commands::{self, COMMAND_REGISTRY};
-use crate::search::slash_command_menu::static_commands::Availability;
 use crate::search::slash_command_menu::StaticCommand;
-use crate::search::SyncDataSource;
+use crate::search::slash_command_menu::static_commands::Availability;
+use crate::search::slash_command_menu::static_commands::commands::COMMAND_REGISTRY;
 use crate::settings::{InputSettings, InputSettingsChangedEvent};
 use crate::terminal::input::slash_commands::AcceptSlashCommandOrLocalPrompt;
 use crate::terminal::model::session::active_session::ActiveSession;
@@ -208,9 +208,9 @@ impl GuiSlashCommandDataSource {
 
     fn command_passes_gui_gates(
         &self,
-        command: &StaticCommand,
-        availability: Availability,
-        #[cfg(not(target_family = "wasm"))] ctx: &AppContext,
+        _command: &StaticCommand,
+        _availability: Availability,
+        #[cfg(not(target_family = "wasm"))] _ctx: &AppContext,
     ) -> bool {
         true
     }

@@ -14,7 +14,7 @@ use uuid::Uuid;
 use warp_cli::agent::Harness;
 use warpui::{ModelHandle, ModelSpawner};
 
-use crate::ai::ambient_agents::{task::HarnessModelConfig, AmbientAgentTaskId};
+use crate::ai::ambient_agents::{AmbientAgentTaskId, task::HarnessModelConfig};
 use crate::ai::mcp::JSONTransportType;
 use crate::server::server_api::ServerApi;
 use crate::terminal::CLIAgent;
@@ -24,8 +24,8 @@ use super::super::terminal::{CommandHandle, TerminalDriver};
 use super::super::{AgentDriver, AgentDriverError};
 use super::json_utils::{read_json_file_or_default, write_json_file};
 use super::{
-    write_temp_file, HarnessCleanupDisposition, HarnessRunner, JSONMCPServer, SavePoint,
-    ThirdPartyHarness,
+    HarnessCleanupDisposition, HarnessRunner, JSONMCPServer, SavePoint, ThirdPartyHarness,
+    write_temp_file,
 };
 
 pub(crate) struct ClaudeHarness;
@@ -71,15 +71,15 @@ impl ThirdPartyHarness for ClaudeHarness {
         // and local context are most reliable when prepended directly to the prompt that gets
         // piped into the CLI. Order: resumption_prompt → context → prompt
         let mut parts: Vec<&str> = Vec::new();
-        if let Some(preamble) = resumption_prompt {
-            if !preamble.is_empty() {
-                parts.push(preamble);
-            }
+        if let Some(preamble) = resumption_prompt
+            && !preamble.is_empty()
+        {
+            parts.push(preamble);
         }
-        if let Some(ctx) = context {
-            if !ctx.is_empty() {
-                parts.push(ctx);
-            }
+        if let Some(ctx) = context
+            && !ctx.is_empty()
+        {
+            parts.push(ctx);
         }
         parts.push(prompt);
         let owned_prompt = parts.join("\n\n");
@@ -281,10 +281,10 @@ pub(crate) fn prepare_claude_environment_config(
 
 // This function is used specifically for determining where to land `.claude.json`.
 fn claude_global_config_path() -> Result<PathBuf> {
-    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
-        if !dir.is_empty() {
-            return Ok(PathBuf::from(dir).join(CLAUDE_JSON_FILE_NAME));
-        }
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR")
+        && !dir.is_empty()
+    {
+        return Ok(PathBuf::from(dir).join(CLAUDE_JSON_FILE_NAME));
     }
 
     home_dir_for_claude_config()
@@ -405,10 +405,10 @@ fn resolve_anthropic_api_key_suffix(
     resolved_env_vars: &HashMap<OsString, OsString>,
 ) -> Option<String> {
     // Worker-injected process env wins.
-    if let Ok(key) = std::env::var(ANTHROPIC_API_KEY_ENV) {
-        if !key.is_empty() {
-            return suffix_of(&key).map(str::to_owned);
-        }
+    if let Ok(key) = std::env::var(ANTHROPIC_API_KEY_ENV)
+        && !key.is_empty()
+    {
+        return suffix_of(&key).map(str::to_owned);
     }
     // Otherwise use the resolved value from the secrets map.
     resolved_env_vars

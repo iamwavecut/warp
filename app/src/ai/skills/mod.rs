@@ -59,14 +59,13 @@ impl SkillPathQuery for PathBuf {
 mod resolve_skill_spec;
 #[cfg(not(target_family = "wasm"))]
 pub use resolve_skill_spec::{
-    clone_repo_for_skill, resolve_skill_spec, ResolveSkillError, ResolvedSkill,
+    ResolveSkillError, ResolvedSkill, clone_repo_for_skill, resolve_skill_spec,
 };
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "local_fs")] {
         mod skill_manager;
         pub use skill_manager::{read_skills_from_directories, SkillManager, SkillWatcher};
-        #[cfg(test)]
-        pub use skill_manager::BundledSkillActivation;
+
     }
 }

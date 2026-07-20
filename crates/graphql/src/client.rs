@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use cynic::{GraphQlResponse, QueryFragment, QueryVariables};
 use http::StatusCode;
 use instant::Duration;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use warp_core::{channel::ChannelState, operating_system_info::OperatingSystemInfo};
 
 use crate::error::{UserFacingError, UserFacingErrorInterface};

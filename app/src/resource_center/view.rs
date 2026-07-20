@@ -1,6 +1,8 @@
-use vec1::{vec1, Vec1};
+use vec1::{Vec1, vec1};
 use warp_core::{features::FeatureFlag, ui::builder::AnimatedButtonOptions};
 use warpui::{
+    AppContext, Entity, EntityId, FocusContext, ModelHandle, SingletonEntity, TypedActionView,
+    View, ViewContext, ViewHandle, WindowId,
     elements::{
         Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Element, Flex,
         MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, SavePosition, Shrinkable,
@@ -10,20 +12,18 @@ use warpui::{
     presenter::ChildView,
     ui_components::components::{UiComponent, UiComponentStyles},
     windowing::{StateEvent, WindowManager},
-    AppContext, Entity, EntityId, FocusContext, ModelHandle, SingletonEntity, TypedActionView,
-    View, ViewContext, ViewHandle, WindowId,
 };
 
 use super::{
+    KeybindingsView, ResourceCenterMainEvent, ResourceCenterMainView, TipsCompleted,
     keybindings_page::KeybindingsEvent,
     section_views::{HEADER_FONT_SIZE, ICON_PADDING, KEYBOARD_ICON_SIZE, SECTION_SPACING},
-    KeybindingsView, ResourceCenterMainEvent, ResourceCenterMainView, TipsCompleted,
 };
 use crate::ui_components::{buttons::icon_button, window_focus_dimming::WindowFocusDimming};
 use crate::{
     appearance::Appearance,
     ui_components::icons,
-    workspace::{WorkspaceAction, PANEL_HEADER_HEIGHT},
+    workspace::{PANEL_HEADER_HEIGHT, WorkspaceAction},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

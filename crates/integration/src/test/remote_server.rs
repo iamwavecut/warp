@@ -8,7 +8,7 @@ use warp::integration_testing::subshell::{
     wait_for_remote_server_password_prompt,
 };
 use warp::integration_testing::terminal::util::{
-    current_shell_starter_and_version, ExpectedExitStatus,
+    ExpectedExitStatus, current_shell_starter_and_version,
 };
 use warp::integration_testing::terminal::{
     execute_command_for_single_terminal_in_tab, run_completer,
@@ -34,7 +34,7 @@ use warp::{
         },
         terminal::{
             execute_command_for_single_terminal_in_tab, run_completer,
-            util::{current_shell_starter_and_version, ExpectedExitStatus},
+            util::{ExpectedExitStatus, current_shell_starter_and_version},
             wait_until_bootstrapped_single_pane_for_tab,
         },
     },
@@ -45,7 +45,7 @@ use warp::{
 };
 use warpui::integration::TestStep;
 
-use super::{new_builder, Builder};
+use super::{Builder, new_builder};
 
 /// Common builder configuration for remote server tests: enables the
 /// `SshRemoteServer` feature flag for these tests and sets the install mode to

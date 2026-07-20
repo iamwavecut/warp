@@ -2,11 +2,11 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use super::TuiHoverable;
+use crate::elements::MouseStateHandle;
 use crate::elements::tui::{
     TuiConstraint, TuiElement, TuiEvent, TuiEventContext, TuiLayoutContext, TuiPaintContext,
     TuiPoint, TuiRect, TuiSize,
 };
-use crate::elements::MouseStateHandle;
 use crate::event::ModifiersState;
 use crate::{App, EntityId, EntityIdMap};
 

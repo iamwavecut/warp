@@ -1,33 +1,33 @@
 use futures::Future;
 use warpui::{
+    AppContext, Element, Entity, FocusContext, SingletonEntity, TypedActionView, View, ViewContext,
+    ViewHandle,
     elements::{Align, Flex, Hoverable, MouseStateHandle, ParentElement, SavePosition, Shrinkable},
     presenter::ChildView,
     windowing::{StateEvent, WindowManager},
-    AppContext, Element, Entity, FocusContext, SingletonEntity, TypedActionView, View, ViewContext,
-    ViewHandle,
 };
 
 use crate::{
     ai::{document::ai_document_model::AIDocumentId, facts::CloudAIFactModel},
     cloud_object::{
-        model::{persistence::CloudModel, view::CloudViewModel},
         CloudObjectEventEntrypoint, Owner, Space,
+        model::{persistence::CloudModel, view::CloudViewModel},
     },
-    env_vars::{manager::EnvVarCollectionSource, CloudEnvVarCollection},
+    env_vars::{CloudEnvVarCollection, manager::EnvVarCollectionSource},
     interaction_sources::SharingDialogSource,
-    notebooks::{manager::NotebookSource, CloudNotebook},
+    notebooks::{CloudNotebook, manager::NotebookSource},
     server::{
         cloud_objects::update_manager::{InitiatedBy, UpdateManager},
         ids::{ClientId, SyncId},
     },
-    workflows::{manager::WorkflowOpenSource, CloudWorkflow, WorkflowViewMode},
+    workflows::{CloudWorkflow, WorkflowViewMode, manager::WorkflowOpenSource},
     workspaces::user_workspaces::UserWorkspaces,
 };
 
 use super::{
+    CloudObjectTypeAndId, DriveObjectType,
     index::{DriveIndex, DriveIndexAction, DriveIndexEvent},
     items::WarpDriveItemId,
-    CloudObjectTypeAndId, DriveObjectType,
 };
 
 pub const MIN_SIDEBAR_WIDTH: f32 = 250.;
@@ -372,10 +372,10 @@ impl DrivePanel {
                             return;
                         }
                     }
-                    CloudObjectTypeAndId::Workflow(_) => {
-                        if !UserWorkspaces::has_capacity_for_shared_workflows(team_uid, ctx, 1) {
-                            return;
-                        }
+                    CloudObjectTypeAndId::Workflow(_)
+                        if !UserWorkspaces::has_capacity_for_shared_workflows(team_uid, ctx, 1) =>
+                    {
+                        return;
                     }
                     _ => (),
                 },
@@ -605,7 +605,7 @@ impl DrivePanel {
     pub fn has_warp_drive_initialized_sections(
         &self,
         app: &AppContext,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         self.index_view.as_ref(app).has_initialized_sections()
     }
 

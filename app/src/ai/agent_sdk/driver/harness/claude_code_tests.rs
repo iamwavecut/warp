@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
 
-use mockall::predicate::eq;
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -260,31 +259,35 @@ fn prepare_claude_environment_config_without_config_dir_uses_home_global_config(
     let home_dir = TempDir::new().unwrap();
     let old_home = std::env::var_os("HOME");
     let old_config_dir = std::env::var_os("CLAUDE_CONFIG_DIR");
-    std::env::set_var("HOME", home_dir.path());
-    std::env::remove_var("CLAUDE_CONFIG_DIR");
+    unsafe { std::env::set_var("HOME", home_dir.path()) };
+    unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") };
 
     let working_dir = home_dir.path().join("workspace/project");
     prepare_claude_environment_config(&working_dir, &HashMap::new()).unwrap();
 
     assert!(home_dir.path().join(CLAUDE_JSON_FILE_NAME).exists());
-    assert!(home_dir
-        .path()
-        .join(".claude")
-        .join(CLAUDE_SETTINGS_FILE_NAME)
-        .exists());
-    assert!(!home_dir
-        .path()
-        .join(".claude")
-        .join(CLAUDE_JSON_FILE_NAME)
-        .exists());
+    assert!(
+        home_dir
+            .path()
+            .join(".claude")
+            .join(CLAUDE_SETTINGS_FILE_NAME)
+            .exists()
+    );
+    assert!(
+        !home_dir
+            .path()
+            .join(".claude")
+            .join(CLAUDE_JSON_FILE_NAME)
+            .exists()
+    );
 
     match old_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
+        Some(home) => unsafe { std::env::set_var("HOME", home) },
+        None => unsafe { std::env::remove_var("HOME") },
     }
     match old_config_dir {
-        Some(dir) => std::env::set_var("CLAUDE_CONFIG_DIR", dir),
-        None => std::env::remove_var("CLAUDE_CONFIG_DIR"),
+        Some(dir) => unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", dir) },
+        None => unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") },
     }
 }
 
@@ -295,35 +298,39 @@ fn prepare_claude_environment_config_with_config_dir_uses_dir_global_config() {
     let claude_config_dir = TempDir::new().unwrap();
     let old_home = std::env::var_os("HOME");
     let old_config_dir = std::env::var_os("CLAUDE_CONFIG_DIR");
-    std::env::set_var("HOME", home_dir.path());
-    std::env::set_var("CLAUDE_CONFIG_DIR", claude_config_dir.path());
+    unsafe { std::env::set_var("HOME", home_dir.path()) };
+    unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", claude_config_dir.path()) };
 
     let working_dir = home_dir.path().join("workspace/project");
     prepare_claude_environment_config(&working_dir, &HashMap::new()).unwrap();
 
-    assert!(claude_config_dir
-        .path()
-        .join(CLAUDE_JSON_FILE_NAME)
-        .exists());
-    assert!(claude_config_dir
-        .path()
-        .join(CLAUDE_SETTINGS_FILE_NAME)
-        .exists());
+    assert!(
+        claude_config_dir
+            .path()
+            .join(CLAUDE_JSON_FILE_NAME)
+            .exists()
+    );
+    assert!(
+        claude_config_dir
+            .path()
+            .join(CLAUDE_SETTINGS_FILE_NAME)
+            .exists()
+    );
     assert!(!home_dir.path().join(CLAUDE_JSON_FILE_NAME).exists());
 
     match old_home {
-        Some(home) => std::env::set_var("HOME", home),
-        None => std::env::remove_var("HOME"),
+        Some(home) => unsafe { std::env::set_var("HOME", home) },
+        None => unsafe { std::env::remove_var("HOME") },
     }
     match old_config_dir {
-        Some(dir) => std::env::set_var("CLAUDE_CONFIG_DIR", dir),
-        None => std::env::remove_var("CLAUDE_CONFIG_DIR"),
+        Some(dir) => unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", dir) },
+        None => unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") },
     }
 }
 #[test]
 #[serial_test::serial]
 fn resolve_suffix_from_resolved_env_vars() {
-    std::env::remove_var(ANTHROPIC_API_KEY_ENV);
+    unsafe { std::env::remove_var(ANTHROPIC_API_KEY_ENV) };
     let key = "sk-ant-api03-abcdefghij1234567890ABCDEFGHIJ1234567890abcdefghij1234567890QLWn-dUnuwQ-hIhDiAAA";
     let resolved = HashMap::from([(OsString::from("ANTHROPIC_API_KEY"), OsString::from(key))]);
     let suffix = resolve_anthropic_api_key_suffix(&resolved);
@@ -333,7 +340,7 @@ fn resolve_suffix_from_resolved_env_vars() {
 #[test]
 #[serial_test::serial]
 fn resolve_suffix_returns_none_for_short_key() {
-    std::env::remove_var(ANTHROPIC_API_KEY_ENV);
+    unsafe { std::env::remove_var(ANTHROPIC_API_KEY_ENV) };
     let resolved = HashMap::from([(OsString::from("ANTHROPIC_API_KEY"), OsString::from("short"))]);
     assert_eq!(resolve_anthropic_api_key_suffix(&resolved), None);
 }
@@ -341,7 +348,7 @@ fn resolve_suffix_returns_none_for_short_key() {
 #[test]
 #[serial_test::serial]
 fn resolve_suffix_returns_none_when_empty() {
-    std::env::remove_var(ANTHROPIC_API_KEY_ENV);
+    unsafe { std::env::remove_var(ANTHROPIC_API_KEY_ENV) };
     assert_eq!(resolve_anthropic_api_key_suffix(&HashMap::new()), None);
 }
 
@@ -349,7 +356,7 @@ fn resolve_suffix_returns_none_when_empty() {
 #[serial_test::serial]
 fn suffix_uses_worker_injected_env_when_present() {
     let worker_key = "sk-ant-api03-WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW-worker-suffix!";
-    std::env::set_var(ANTHROPIC_API_KEY_ENV, worker_key);
+    unsafe { std::env::set_var(ANTHROPIC_API_KEY_ENV, worker_key) };
     // Even when the resolved map has a different value, the worker env wins.
     let resolved = HashMap::from([(
         OsString::from("ANTHROPIC_API_KEY"),
@@ -360,7 +367,7 @@ fn suffix_uses_worker_injected_env_when_present() {
     let suffix = resolve_anthropic_api_key_suffix(&resolved);
     let expected = &worker_key[worker_key.len() - 20..];
     assert_eq!(suffix.as_deref(), Some(expected));
-    std::env::remove_var(ANTHROPIC_API_KEY_ENV);
+    unsafe { std::env::remove_var(ANTHROPIC_API_KEY_ENV) };
 }
 
 #[test]

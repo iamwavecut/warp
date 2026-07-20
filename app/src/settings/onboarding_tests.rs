@@ -1,18 +1,18 @@
 use ai::LLMId;
-use onboarding::slides::{AgentAutonomy, AgentDevelopmentSettings, ProjectOnboardingSettings};
 use onboarding::SelectedSettings;
+use onboarding::slides::{AgentAutonomy, AgentDevelopmentSettings, ProjectOnboardingSettings};
 use serde_json::json;
 use warp_core::user_preferences::GetUserPreferences;
 use warpui::App;
 
+use crate::LaunchMode;
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::execution_profiles::{AIExecutionProfile, ActionPermission};
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::server::ids::{ClientId, SyncId};
-use crate::settings::{apply_onboarding_settings, PrivacySettings};
+use crate::settings::{PrivacySettings, apply_onboarding_settings};
 use crate::test_util::settings::initialize_settings_for_tests;
 use crate::workspaces::user_workspaces::UserWorkspaces;
-use crate::LaunchMode;
 
 #[test]
 fn apply_onboarding_settings_preserves_existing_local_profile() {

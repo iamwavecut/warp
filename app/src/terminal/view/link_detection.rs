@@ -2,16 +2,16 @@ use std::ops::Deref;
 
 use serde::{Serialize, Serializer};
 
-use warpui::{platform::Cursor, ViewContext};
+use warpui::{ViewContext, platform::Cursor};
 
 use crate::terminal::{
+    TerminalModel,
     model::{
+        RespectObfuscatedSecrets,
         grid::grid_handler::Link,
         index::Point,
         terminal_model::{WithinBlock, WithinModel},
-        RespectObfuscatedSecrets,
     },
-    TerminalModel,
 };
 
 cfg_if::cfg_if! {
@@ -387,11 +387,12 @@ impl super::TerminalView {
 
         // If the mouse is still on top of the previous highlighted link and that link is
         // still valid, we can keep highlighting it.
-        if let Some(link) = self.highlighted_link.as_ref() {
-            if link.contains(position) && !self.highlighted_link.is_invalidated() {
-                // If already hovering on a highlighted link, return.
-                return;
-            }
+        if let Some(link) = self.highlighted_link.as_ref()
+            && link.contains(position)
+            && !self.highlighted_link.is_invalidated()
+        {
+            // If already hovering on a highlighted link, return.
+            return;
         }
 
         // Updating the cursor shape repeatedly can cause flashing, so we only set it once, and only

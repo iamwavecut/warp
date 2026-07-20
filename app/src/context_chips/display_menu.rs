@@ -10,16 +10,12 @@ use crate::{
     },
     ui_components::icons::Icon,
 };
-use fuzzy_match::{match_indices_case_insensitive, FuzzyMatchResult};
+use fuzzy_match::{FuzzyMatchResult, match_indices_case_insensitive};
 use warp_core::ui::{appearance::Appearance, builder::MIN_FONT_SIZE, theme::Fill};
 use warp_editor::editor::NavigationKey;
 use warpui::{
-    color::ColorU,
-    elements::Highlight,
-    fonts::{Properties, Weight},
-    ui_components::components::{Coords, UiComponentStyles},
-};
-use warpui::{
+    AppContext, Element, Entity, FocusContext, SingletonEntity as _, TypedActionView, View,
+    ViewContext, ViewHandle,
     elements::{
         Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss,
         DispatchEventResult, DropShadow, Empty, EventHandler, Flex, Hoverable, MainAxisAlignment,
@@ -29,8 +25,12 @@ use warpui::{
     },
     keymap::FixedBinding,
     ui_components::components::UiComponent,
-    AppContext, Element, Entity, FocusContext, SingletonEntity as _, TypedActionView, View,
-    ViewContext, ViewHandle,
+};
+use warpui::{
+    color::ColorU,
+    elements::Highlight,
+    fonts::{Properties, Weight},
+    ui_components::components::{Coords, UiComponentStyles},
 };
 
 /// Trait for items that can be displayed in a generic menu
@@ -365,16 +365,14 @@ impl DisplayChipMenu {
                 self.menu_items.iter().map(|item| item.name()),
                 trimmed,
             );
-            if !already_matches_existing {
-                if let Some(synthetic) = builder(trimmed) {
-                    filtered_items.insert(
-                        0,
-                        FilteredMenuItem {
-                            item: synthetic,
-                            match_result: None,
-                        },
-                    );
-                }
+            if !already_matches_existing && let Some(synthetic) = builder(trimmed) {
+                filtered_items.insert(
+                    0,
+                    FilteredMenuItem {
+                        item: synthetic,
+                        match_result: None,
+                    },
+                );
             }
         }
 
@@ -781,10 +779,10 @@ impl View for DisplayChipMenu {
     }
 
     fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {
-        if focus_ctx.is_self_focused() {
-            if let Some(ref search_input) = self.search_input {
-                ctx.focus(search_input);
-            }
+        if focus_ctx.is_self_focused()
+            && let Some(ref search_input) = self.search_input
+        {
+            ctx.focus(search_input);
         }
     }
 

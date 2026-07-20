@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::{
-    compare_versions, run_cli_command_logged, CliAgentPluginManager, PluginInstallError,
-    PluginInstructionStep, PluginInstructions,
+    CliAgentPluginManager, PluginInstallError, PluginInstructionStep, PluginInstructions,
+    compare_versions, run_cli_command_logged,
 };
 use crate::features::FeatureFlag;
 use crate::terminal::model::session::LocalCommandExecutor;
@@ -299,10 +299,10 @@ fn installed_version(codex_dir: &Path) -> Option<String> {
 
 /// Checks `CODEX_HOME` first, falls back to `~/.codex`.
 fn codex_home_dir() -> io::Result<PathBuf> {
-    if let Ok(codex_home) = env::var(CODEX_HOME_ENV) {
-        if !codex_home.is_empty() {
-            return Ok(PathBuf::from(codex_home));
-        }
+    if let Ok(codex_home) = env::var(CODEX_HOME_ENV)
+        && !codex_home.is_empty()
+    {
+        return Ok(PathBuf::from(codex_home));
     }
     dirs::home_dir()
         .map(|home| home.join(CODEX_CONFIG_DIR))

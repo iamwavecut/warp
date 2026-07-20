@@ -1,9 +1,9 @@
+use crate::ai::mcp::FileBasedMCPManager;
 use crate::ai::mcp::file_based_manager::FileBasedMCPManagerEvent;
 use crate::ai::mcp::templatable_manager::oauth::{
-    load_credentials_from_secure_storage, write_to_secure_storage, FILE_BASED_MCP_CREDENTIALS_KEY,
-    TEMPLATABLE_MCP_CREDENTIALS_KEY,
+    FILE_BASED_MCP_CREDENTIALS_KEY, TEMPLATABLE_MCP_CREDENTIALS_KEY,
+    load_credentials_from_secure_storage, write_to_secure_storage,
 };
-use crate::ai::mcp::FileBasedMCPManager;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -14,37 +14,37 @@ use crate::ai::mcp::templatable::GalleryData;
 use crate::ai::mcp::templatable_manager::FigmaMcpStatus;
 use crate::ai::mcp::{JsonTemplate, MCPGalleryManager, MCPServer, MCPServerUpdate};
 
-use crate::ai::mcp::parsing::resolve_json;
 use crate::ai::mcp::TemplatableMCPServer;
+use crate::ai::mcp::parsing::resolve_json;
 use crate::{
+    GlobalResourceHandlesProvider,
     ai::mcp::{
-        logs, templatable_installation::VariableValue, StaticEnvVar,
-        TemplatableMCPServerInstallation, TransportType,
+        StaticEnvVar, TemplatableMCPServerInstallation, TransportType, logs,
+        templatable_installation::VariableValue,
     },
     persistence::ModelEvent,
     settings::AISettings,
     view_components::DismissibleToast,
     workspace::ToastStack,
-    GlobalResourceHandlesProvider,
 };
 use async_compat::CompatExt as _;
 use cfg_if::cfg_if;
 use futures::FutureExt as _;
-use rmcp::{transport::ConfigureCommandExt as _, ServiceExt as _};
-use simple_logger::manager::LogManager;
+use rmcp::{ServiceExt as _, transport::ConfigureCommandExt as _};
 use simple_logger::SimpleLogger;
+use simple_logger::manager::LogManager;
 use tokio::io::AsyncBufReadExt as _;
 use uuid::Uuid;
 use warp_core::safe_error;
 use warp_core::{execution_mode::AppExecutionMode, features::FeatureFlag, settings::Setting as _};
 use warpui::AppContext;
-use warpui::{windowing::WindowManager, ModelContext, SingletonEntity};
+use warpui::{ModelContext, SingletonEntity, windowing::WindowManager};
 
 use super::{
-    oauth::{self, AuthContext, FileBasedPersistedCredentialsMap, PersistedCredentialsMap},
-    utils::{query_resources_for, query_tools_for},
     MCPServerState, SpawnedServerInfo, TemplatableMCPServerInfo, TemplatableMCPServerManager,
     TemplatableMCPServerManagerEvent,
+    oauth::{self, AuthContext, FileBasedPersistedCredentialsMap, PersistedCredentialsMap},
+    utils::{query_resources_for, query_tools_for},
 };
 
 /// Controls the behavior of `spawn_server_impl`.
@@ -525,12 +525,11 @@ impl TemplatableMCPServerManager {
             // matches user expectations for repo-relative commands in `.mcp.json`.
             // Cloud-templated installations (lookup returns None) are unaffected and
             // continue to inherit Warp's process cwd.
-            if cli_server.cwd_parameter.is_none() {
-                if let Some(spawn_root) =
+            if cli_server.cwd_parameter.is_none()
+                && let Some(spawn_root) =
                     FileBasedMCPManager::as_ref(ctx).spawn_root_for_installation(installation_uuid)
-                {
-                    cli_server.cwd_parameter = Some(spawn_root.to_string_lossy().into_owned());
-                }
+            {
+                cli_server.cwd_parameter = Some(spawn_root.to_string_lossy().into_owned());
             }
         }
 
@@ -678,15 +677,18 @@ impl TemplatableMCPServerManager {
         }
         self.pending_oauth_csrf
             .retain(|_, v| *v != installation_uuid);
-        if let Some(server_info) = self.active_servers.remove(&installation_uuid) {
-            self.change_server_state(installation_uuid, MCPServerState::ShuttingDown, ctx);
-            // Cancel the server, and emit NotRunning state once it has stopped.
-            ctx.spawn(server_info.service.cancel(), move |me, _, ctx| {
-                me.change_server_state(installation_uuid, MCPServerState::NotRunning, ctx);
-                ctx.dispatch_global_action("workspace:save_app", ());
-            });
-        } else {
-            self.change_server_state(installation_uuid, MCPServerState::NotRunning, ctx);
+        match self.active_servers.remove(&installation_uuid) {
+            Some(server_info) => {
+                self.change_server_state(installation_uuid, MCPServerState::ShuttingDown, ctx);
+                // Cancel the server, and emit NotRunning state once it has stopped.
+                ctx.spawn(server_info.service.cancel(), move |me, _, ctx| {
+                    me.change_server_state(installation_uuid, MCPServerState::NotRunning, ctx);
+                    ctx.dispatch_global_action("workspace:save_app", ());
+                });
+            }
+            _ => {
+                self.change_server_state(installation_uuid, MCPServerState::NotRunning, ctx);
+            }
         }
 
         log::debug!("Successfully shut down server with installation uuid {installation_uuid}");
@@ -745,8 +747,10 @@ impl TemplatableMCPServerManager {
                 mcp_server_installation: mcp_server_installation.clone(),
             };
             if let Err(err) = sender.send(event) {
-                report_error!(anyhow::Error::new(err)
-                    .context("Failed to save TemplatableMCPServerInstallation to database"));
+                report_error!(
+                    anyhow::Error::new(err)
+                        .context("Failed to save TemplatableMCPServerInstallation to database")
+                );
             }
         }
 
@@ -841,8 +845,10 @@ impl TemplatableMCPServerManager {
                 installation_uuids: installation_uuids.clone(),
             };
             if let Err(err) = sender.send(event) {
-                report_error!(anyhow::Error::new(err)
-                    .context("Failed to delete installations from local database"));
+                report_error!(
+                    anyhow::Error::new(err)
+                        .context("Failed to delete installations from local database")
+                );
             }
         }
 
@@ -983,15 +989,13 @@ impl TemplatableMCPServerManager {
 
         self.delete_templatable_mcp_server_installation(installation_uuid, ctx);
 
-        if reuse_variable_values {
-            if let Some(existing_variable_values) = existing_variable_values {
-                self.install_from_template(
-                    templatable_mcp_server.clone(),
-                    existing_variable_values,
-                    true,
-                    ctx,
-                );
-            }
+        if reuse_variable_values && let Some(existing_variable_values) = existing_variable_values {
+            self.install_from_template(
+                templatable_mcp_server.clone(),
+                existing_variable_values,
+                true,
+                ctx,
+            );
         }
     }
 
@@ -1596,10 +1600,10 @@ impl<T: rmcp::transport::Transport<R>, R: rmcp::service::ServiceRole> rmcp::tran
         let logger = self.logger.clone();
         async move {
             let result = self.transport.receive().await;
-            if let Some(item) = &result {
-                if let Ok(json) = serde_json::to_string(item) {
-                    logger.log(format!("[info] MCP: Received response: {json}"));
-                }
+            if let Some(item) = &result
+                && let Ok(json) = serde_json::to_string(item)
+            {
+                logger.log(format!("[info] MCP: Received response: {json}"));
             }
             result
         }

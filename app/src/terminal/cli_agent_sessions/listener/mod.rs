@@ -1,11 +1,11 @@
 use warpui::{EntityId, ModelContext, ModelHandle, SingletonEntity};
 
 use super::{CLIAgentEvent, CLIAgentSessionsModel};
+use crate::terminal::CLIAgent;
 use crate::terminal::cli_agent_sessions::event::{
-    parse_event, CLIAgentEventPayload, CLIAgentEventType,
+    CLIAgentEventPayload, CLIAgentEventType, parse_event,
 };
 use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
-use crate::terminal::CLIAgent;
 
 /// Per-agent handler that filters and transforms parsed CLI agent events.
 /// Each CLI agent can have a different implementation depending on which events

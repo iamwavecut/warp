@@ -7,25 +7,25 @@ use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
 use crate::ai::blocklist::context_model::block_context_from_terminal_model;
 use crate::{
+    BlocklistAIHistoryModel,
     ai::{
         agent::{
-            conversation::AIConversationId, task::TaskId, AIAgentActionId, AIAgentActionResultType,
-            AIAgentContext, CancellationReason, ReadShellCommandOutputResult,
-            RequestCommandOutputResult, TransferShellCommandControlToUserResult,
-            WriteToLongRunningShellCommandResult,
+            AIAgentActionId, AIAgentActionResultType, AIAgentContext, CancellationReason,
+            ReadShellCommandOutputResult, RequestCommandOutputResult,
+            TransferShellCommandControlToUserResult, WriteToLongRunningShellCommandResult,
+            conversation::AIConversationId, task::TaskId,
         },
         blocklist::{
-            agent_view::{AgentViewController, AgentViewEntryOrigin},
             BlocklistAIActionEvent, BlocklistAIActionModel, BlocklistAIController,
             BlocklistAIHistoryEvent,
+            agent_view::{AgentViewController, AgentViewEntryOrigin},
         },
     },
     terminal::{
+        TerminalModel,
         model::block::BlockId,
         model_events::{ModelEvent, ModelEventDispatcher},
-        TerminalModel,
     },
-    BlocklistAIHistoryModel,
 };
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -410,16 +410,14 @@ impl CLISubagentController {
         // finishes or the user hands control back. We do NOT use ManuallyCancelled here
         // because that would mark the conversation (and ambient task) as cancelled,
         // which is incorrect since the conversation is still proceeding.
-        if should_cancel_conversation {
-            if let Some(conversation_id) = conversation_id {
-                self.controller.update(ctx, |controller, ctx| {
-                    controller.cancel_conversation_progress(
-                        conversation_id,
-                        CancellationReason::CLISubagentUserTakeover,
-                        ctx,
-                    );
-                });
-            }
+        if should_cancel_conversation && let Some(conversation_id) = conversation_id {
+            self.controller.update(ctx, |controller, ctx| {
+                controller.cancel_conversation_progress(
+                    conversation_id,
+                    CancellationReason::CLISubagentUserTakeover,
+                    ctx,
+                );
+            });
         }
 
         ctx.emit(CLISubagentEvent::UpdatedControl {
@@ -457,15 +455,17 @@ impl CLISubagentController {
         drop(terminal_model);
         if let Some(agent_view_controller) = &self.agent_view_controller {
             agent_view_controller.update(ctx, |controller, ctx| {
-                if !controller.is_inline() {
-                    if let Err(e) = controller.try_enter_inline_agent_view(
+                if !controller.is_inline()
+                    && let Err(e) = controller.try_enter_inline_agent_view(
                         conversation_id,
                         AgentViewEntryOrigin::LongRunningCommand,
                         ctx,
-                    ) {
-                        report_error!(anyhow::Error::new(e)
-                            .context("Failed to enter inline agent view for LRC handoff"));
-                    }
+                    )
+                {
+                    report_error!(
+                        anyhow::Error::new(e)
+                            .context("Failed to enter inline agent view for LRC handoff")
+                    );
                 }
             });
         }
@@ -557,8 +557,10 @@ impl CLISubagentController {
                     task_id,
                     *conversation_id,
                 ) {
-                    report_error!(anyhow::Error::new(e)
-                        .context("Could not update interaction mode to agent-monitored"));
+                    report_error!(
+                        anyhow::Error::new(e)
+                            .context("Could not update interaction mode to agent-monitored")
+                    );
                     return;
                 };
 

@@ -4,9 +4,9 @@ use uuid::Uuid;
 use warpui::{AppContext, ModelContext};
 
 use super::TemplatableMCPServerManager;
+use crate::ai::mcp::MCPServerUpdate;
 use crate::ai::mcp::templatable::TemplatableMCPServer;
 use crate::ai::mcp::templatable_installation::{TemplatableMCPServerInstallation, VariableValue};
-use crate::ai::mcp::MCPServerUpdate;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 

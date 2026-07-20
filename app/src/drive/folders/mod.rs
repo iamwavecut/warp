@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use super::items::folder::WarpDriveFolder;
-use super::items::WarpDriveItem;
 use super::CloudObjectTypeAndId;
+use super::items::WarpDriveItem;
+use super::items::folder::WarpDriveFolder;
 use crate::server::cloud_objects::update_manager::InitiatedBy;
 use crate::{
     appearance::Appearance,

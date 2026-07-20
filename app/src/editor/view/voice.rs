@@ -11,15 +11,15 @@ use crate::workspace::ToastStack;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use settings::Setting as _;
 use voice_input::{StartListeningError, VoiceInput, VoiceSessionResult};
-use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::theme::color::internal_colors;
+use warpui::ViewHandle;
+use warpui::r#async::SpawnedFutureHandle;
 use warpui::elements;
 use warpui::elements::{Container, CornerRadius, Icon, Radius};
 use warpui::platform::Cursor;
-use warpui::r#async::SpawnedFutureHandle;
 use warpui::ui_components::button::ButtonTooltipPosition;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
-use warpui::ViewHandle;
 use warpui::{AppContext, Element, SingletonEntity, ViewContext};
 
 use super::VoiceTranscriber;
@@ -79,9 +79,11 @@ impl EditorView {
                 crate::view_components::NewFeaturePopupEvent::Dismissed
             ) {
                 AISettings::handle(ctx).update(ctx, |settings, ctx| {
-                    warp_errors::report_if_error!(settings
-                        .dismissed_voice_input_new_feature_popup
-                        .set_value(true, ctx));
+                    warp_errors::report_if_error!(
+                        settings
+                            .dismissed_voice_input_new_feature_popup
+                            .set_value(true, ctx)
+                    );
                 });
                 ctx.notify();
             }
@@ -275,8 +277,10 @@ impl EditorView {
                                     Self::show_microphone_access_toast(ctx);
                                 }
                                 _ => {
-                                    report_error!(anyhow::Error::new(e)
-                                        .context("Failed to start voice input"));
+                                    report_error!(
+                                        anyhow::Error::new(e)
+                                            .context("Failed to start voice input")
+                                    );
                                 }
                             }
                             ctx.notify();

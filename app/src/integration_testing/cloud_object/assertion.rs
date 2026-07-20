@@ -1,7 +1,7 @@
 use warpui::{async_assert, integration::AssertionCallback};
 
 use crate::{
-    cloud_object::{model::persistence::CloudModel, CloudModelType, GenericCloudObject, Revision},
+    cloud_object::{CloudModelType, GenericCloudObject, Revision, model::persistence::CloudModel},
     server::ids::{HashableId, ServerId, SyncId, ToServerId},
 };
 

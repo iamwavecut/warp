@@ -28,8 +28,8 @@ use warp_util::user_input::UserInput;
 use warpui::text::point::Point;
 use warpui::units::IntoPixels;
 use warpui::{
-    keymap::Keystroke, platform::WindowStyle, App, SingletonEntity, TypedActionView, UpdateModel,
-    ViewHandle,
+    App, SingletonEntity, TypedActionView, UpdateModel, ViewHandle, keymap::Keystroke,
+    platform::WindowStyle,
 };
 
 // Await render/layout completion for a CodeEditorView in tests.

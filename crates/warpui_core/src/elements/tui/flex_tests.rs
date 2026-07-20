@@ -4,12 +4,12 @@ use std::rc::Rc;
 use ratatui::style::{Color, Modifier, Style};
 
 use super::TuiFlex;
+use crate::elements::CrossAxisAlignment;
 use crate::elements::tui::test_support::{render_to_lines, with_paint_context};
 use crate::elements::tui::{
     TuiBuffer, TuiChildView, TuiConstraint, TuiElement, TuiEvent, TuiEventContext, TuiEventHandler,
     TuiLayoutContext, TuiParentElement, TuiPresentationContext, TuiRect, TuiSize, TuiText,
 };
-use crate::elements::CrossAxisAlignment;
 use crate::event::KeyEventDetails;
 use crate::keymap::Keystroke;
 use crate::{App, EntityId, EntityIdMap};

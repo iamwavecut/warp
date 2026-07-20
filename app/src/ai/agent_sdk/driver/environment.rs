@@ -16,9 +16,9 @@ use futures::{channel::oneshot, future::join_all};
 use repo_metadata::repositories::{DetectedRepositories, RepoDetectionSource};
 use warp_completer::completer::CommandExitStatus;
 use warp_core::{command::ExitCode, safe_info, safe_warn};
-use warpui::{r#async::FutureExt, ModelContext, ModelSpawner, SingletonEntity};
+use warpui::{ModelContext, ModelSpawner, SingletonEntity, r#async::FutureExt};
 
-use super::{terminal::TerminalDriver, AgentDriverError};
+use super::{AgentDriverError, terminal::TerminalDriver};
 use warp_cli::agent::Harness;
 
 const CODEBASE_INDEX_SYNC_TIMEOUT: Duration = Duration::from_secs(60);
@@ -55,7 +55,7 @@ pub fn prepare_environment(
     is_sandbox: bool,
     harness: Harness,
     ctx: &mut ModelContext<TerminalDriver>,
-) -> impl Future<Output = Result<(), PrepareEnvironmentError>> {
+) -> impl Future<Output = Result<(), PrepareEnvironmentError>> + use<> {
     let spawner = ctx.spawner();
     async move {
         let AmbientAgentEnvironment {

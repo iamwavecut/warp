@@ -10,19 +10,20 @@ use warp_cli::agent::Harness;
 use warp_cli::skill::SkillSpec;
 use warp_core::ui::color::coloru_with_opacity;
 use warpui::{
+    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
     clipboard::ClipboardContent,
     elements::{
+        Border, ChildView, ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius,
+        CrossAxisAlignment, DragBarSide, Empty, Expanded, Flex, MainAxisAlignment, MainAxisSize,
+        MouseStateHandle, ParentElement, Radius, Resizable, ResizableStateHandle, SelectableArea,
+        SelectionHandle, Shrinkable, Text, Wrap,
         new_scrollable::{NewScrollable, SingleAxisConfig},
-        resizable_state_handle, Border, ChildView, ClippedScrollStateHandle, ConstrainedBox,
-        Container, CornerRadius, CrossAxisAlignment, DragBarSide, Empty, Expanded, Flex,
-        MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, Resizable,
-        ResizableStateHandle, SelectableArea, SelectionHandle, Shrinkable, Text, Wrap,
+        resizable_state_handle,
     },
     fonts::{Properties, Weight},
     keymap::FixedBinding,
     platform::Cursor,
     ui_components::components::UiComponent,
-    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
 use crate::ai::agent::api::ServerConversationToken;
@@ -35,7 +36,7 @@ use crate::ai::agent_management::details_action_buttons::{
     ActionButtonsConfig, AgentDetailsButtonEvent, ConversationActionButtonsRow,
 };
 use crate::ai::ambient_agents::task::TaskPrincipalInfo;
-use crate::ai::ambient_agents::{cancel_task_with_toast, AmbientAgentTaskId};
+use crate::ai::ambient_agents::{AmbientAgentTaskId, cancel_task_with_toast};
 use crate::ai::artifacts::{Artifact, ArtifactButtonsRow, ArtifactButtonsRowEvent};
 use crate::ai::blocklist::BlocklistAIHistoryModel;
 use crate::ai::harness_availability::HarnessAvailabilityModel;
@@ -52,13 +53,13 @@ use crate::ui_components::buttons::icon_button;
 use crate::ui_components::icons::Icon;
 use crate::util::bindings::CustomAction;
 use crate::util::time_format::{format_approx_duration_from_now, human_readable_precise_duration};
+use crate::view_components::DismissibleToast;
 #[cfg(not(target_family = "wasm"))]
 use crate::view_components::action_button::PrimaryTheme;
 use crate::view_components::action_button::{ActionButton, ButtonSize};
 use crate::view_components::copyable_text_field::{
-    render_copyable_text_field, CopyableTextFieldConfig, COPY_FEEDBACK_DURATION,
+    COPY_FEEDBACK_DURATION, CopyableTextFieldConfig, render_copyable_text_field,
 };
-use crate::view_components::DismissibleToast;
 use crate::workspace::{ForkedConversationDestination, ToastStack, WorkspaceAction};
 use crate::workspaces::user_profiles::UserProfiles;
 
@@ -1152,25 +1153,25 @@ impl ConversationDetailsPanel {
             .with_child(Shrinkable::new(1., skill_name_text).finish());
 
         // Add GitHub source link if we have enough info to construct it.
-        if let (Some(org), Some(repo)) = (&skill_spec.org, &skill_spec.repo) {
-            if skill_spec.is_full_path() {
-                let github_url = format!(
-                    "https://github.com/{}/{}/blob/-/{}",
-                    org, repo, skill_spec.skill_identifier
-                );
-                let source_link = appearance
-                    .ui_builder()
-                    .link(
-                        "Open in GitHub".to_string(),
-                        Some(github_url),
-                        None,
-                        self.mouse_states.skill_source_link.clone(),
-                    )
-                    .build()
-                    .finish();
-                row.add_child(separator());
-                row.add_child(Shrinkable::new(1., source_link).finish());
-            }
+        if let (Some(org), Some(repo)) = (&skill_spec.org, &skill_spec.repo)
+            && skill_spec.is_full_path()
+        {
+            let github_url = format!(
+                "https://github.com/{}/{}/blob/-/{}",
+                org, repo, skill_spec.skill_identifier
+            );
+            let source_link = appearance
+                .ui_builder()
+                .link(
+                    "Open in GitHub".to_string(),
+                    Some(github_url),
+                    None,
+                    self.mouse_states.skill_source_link.clone(),
+                )
+                .build()
+                .finish();
+            row.add_child(separator());
+            row.add_child(Shrinkable::new(1., source_link).finish());
         }
 
         Some(row.finish())
@@ -1579,14 +1580,14 @@ impl View for ConversationDetailsPanel {
             );
         }
 
-        if let PanelMode::Task { .. } = &self.data.mode {
-            if let Some(error_field) = self.render_error_field(appearance, app) {
-                content.add_child(
-                    Container::new(error_field)
-                        .with_margin_bottom(FIELD_SPACING)
-                        .finish(),
-                );
-            }
+        if let PanelMode::Task { .. } = &self.data.mode
+            && let Some(error_field) = self.render_error_field(appearance, app)
+        {
+            content.add_child(
+                Container::new(error_field)
+                    .with_margin_bottom(FIELD_SPACING)
+                    .finish(),
+            );
         }
 
         if let Some(source_section) = self.render_source_section(appearance) {

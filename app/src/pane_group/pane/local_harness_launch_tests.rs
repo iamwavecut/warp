@@ -19,7 +19,7 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: impl Into<OsString>) -> Self {
         let original = std::env::var_os(key);
-        std::env::set_var(key, value.into());
+        unsafe { std::env::set_var(key, value.into()) };
         Self { key, original }
     }
 }
@@ -27,9 +27,9 @@ impl EnvVarGuard {
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
         if let Some(original) = &self.original {
-            std::env::set_var(self.key, original);
+            unsafe { std::env::set_var(self.key, original) };
         } else {
-            std::env::remove_var(self.key);
+            unsafe { std::env::remove_var(self.key) };
         }
     }
 }
@@ -229,9 +229,11 @@ async fn prepare_local_claude_child_no_anthropic_model_when_empty() {
     .await
     .unwrap();
 
-    assert!(!prepared
-        .env_vars
-        .contains_key(&OsString::from("ANTHROPIC_MODEL")));
+    assert!(
+        !prepared
+            .env_vars
+            .contains_key(&OsString::from("ANTHROPIC_MODEL"))
+    );
 }
 
 #[tokio::test]

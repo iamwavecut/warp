@@ -3,9 +3,9 @@ use ordered_float::OrderedFloat;
 use warpui::{AppContext, Entity, EntityId, SingletonEntity};
 
 use crate::ai::execution_profiles::profiles::{AIExecutionProfilesModel, ClientProfileId};
+use crate::search::SyncDataSource;
 use crate::search::data_source::{Query, QueryResult};
 use crate::search::mixer::DataSourceRunErrorWrapper;
-use crate::search::SyncDataSource;
 use crate::terminal::input::inline_menu::{InlineMenuAction, InlineMenuType};
 use crate::terminal::input::profiles::search_item::ProfileSearchItem;
 
@@ -67,7 +67,7 @@ impl SyncDataSource for ProfileSelectorDataSource {
                 Some((profile_id, profile_name))
             })
             .collect();
-        profiles.sort_by(|(_, a), (_, b)| a.to_lowercase().cmp(&b.to_lowercase()));
+        profiles.sort_by_key(|(_, a)| a.to_lowercase());
 
         for (profile_id, profile_name) in profiles {
             if query_text.is_empty() {

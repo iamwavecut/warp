@@ -2,25 +2,25 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use itertools::Itertools;
 use warpui::r#async::FutureExt as AsyncFutureExt;
 use warpui::{AppContext, Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
 use crate::ai::agent::{
-    conversation::AIConversationId, AIAgentAction, AIAgentActionType, FileGlobResult,
-    FileGlobV2Match, FileGlobV2Result,
+    AIAgentAction, AIAgentActionType, FileGlobResult, FileGlobV2Match, FileGlobV2Result,
+    conversation::AIConversationId,
 };
 use crate::ai::blocklist::BlocklistAIPermissions;
 use crate::ai::paths::{host_native_absolute_path, join_paths, shell_native_absolute_path};
-use crate::terminal::model::session::command_executor::shell_quote_arg;
 use crate::terminal::model::session::ExecuteCommandOptions;
+use crate::terminal::model::session::command_executor::shell_quote_arg;
 use crate::{
     ai::agent::AIAgentActionResultType,
     terminal::{
-        model::session::active_session::ActiveSession, model::session::Session, shell::ShellType,
-        ShellLaunchData,
+        ShellLaunchData, model::session::Session, model::session::active_session::ActiveSession,
+        shell::ShellType,
     },
 };
 use warp_core::features::FeatureFlag;
@@ -30,8 +30,8 @@ const FILE_GLOB_TIMEOUT: Duration = Duration::from_secs(10);
 use warp_errors::report_error;
 
 use super::{
-    get_server_output_id, is_git_repository, ActionExecution, AnyActionExecution,
-    ExecuteActionInput, PreprocessActionInput,
+    ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput,
+    get_server_output_id, is_git_repository,
 };
 
 pub struct FileGlobExecutor {
@@ -98,7 +98,7 @@ impl FileGlobExecutor {
         &mut self,
         input: ExecuteActionInput,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Into<AnyActionExecution> {
+    ) -> impl Into<AnyActionExecution> + use<> {
         let AIAgentAction {
             action:
                 AIAgentActionType::FileGlob { patterns, path }

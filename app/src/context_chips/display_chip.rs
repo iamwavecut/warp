@@ -11,7 +11,7 @@ use crate::code::editor::{add_color, remove_color};
 use crate::code_review::code_review_view::CODE_REVIEW_TOOLTIP_TEXT;
 use crate::code_review::diff_state::DiffStats;
 use crate::context_chips::git_branch_on_click::{
-    is_plausible_new_branch_name, GitBranchOnClickValue,
+    GitBranchOnClickValue, is_plausible_new_branch_name,
 };
 use crate::context_chips::node_version_popup::{NodeVersionPopupEvent, NodeVersionPopupView};
 use crate::context_chips::spacing;
@@ -28,7 +28,7 @@ use crate::util::bindings::keybinding_name_to_display_string;
 use crate::util::truncation::truncate_from_beginning;
 use crate::view_components::action_button::{ActionButtonTheme, NakedTheme};
 use pathfinder_color::ColorU;
-use pathfinder_geometry::vector::{vec2f, Vector2F};
+use pathfinder_geometry::vector::{Vector2F, vec2f};
 use std::path::PathBuf;
 use warp_core::ui::theme::Fill;
 use warp_core::{features::FeatureFlag, ui::theme::color::internal_colors};
@@ -38,26 +38,26 @@ use warpui::platform::Cursor;
 use warpui::ui_components::components::UiComponentStyles;
 use warpui::ui_components::components::{Coords, UiComponent};
 use warpui::{
-    elements::{
-        Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius,
-        CrossAxisAlignment, Flex, Hoverable, MouseStateHandle, OffsetPositioning, ParentAnchor,
-        ParentElement, ParentOffsetBounds, Radius, Stack, Text, DEFAULT_UI_LINE_HEIGHT_RATIO,
-    },
-    fonts::{Cache, FamilyId, Properties, Weight},
     AppContext, Element, Entity, EntityId, Gradient, ModelHandle, SingletonEntity, TypedActionView,
     View, ViewContext, ViewHandle,
+    elements::{
+        Border, ChildAnchor, ChildView, ConstrainedBox, Container, CornerRadius,
+        CrossAxisAlignment, DEFAULT_UI_LINE_HEIGHT_RATIO, Flex, Hoverable, MouseStateHandle,
+        OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Stack, Text,
+    },
+    fonts::{Cache, FamilyId, Properties, Weight},
 };
 
 use crate::appearance::Appearance;
 use crate::completer::SessionContext;
 
 use super::{
-    agent_view_chip_color,
+    ChipResult, ContextChipKind, agent_view_chip_color,
     directory_fetcher::{DirectoryFetcher, DirectoryFetcherEvent, DirectoryItem, DirectoryType},
     display_menu::{
         ChipMenuType, DisplayChipMenu, FixedFooter, GenericMenuItem, PromptDisplayMenuEvent,
     },
-    github_pr_display_text_from_url, render_text_from_kind, ChipResult, ContextChipKind,
+    github_pr_display_text_from_url, render_text_from_kind,
 };
 use crate::workspace::view::TOGGLE_RIGHT_PANEL_BINDING_NAME;
 
@@ -335,15 +335,15 @@ impl GitLineChanges {
 
         let words: Vec<&str> = line.split_whitespace().collect();
         for (i, word) in words.iter().enumerate() {
-            if let Ok(num) = word.parse::<u32>() {
-                if let Some(next_word) = words.get(i + 1) {
-                    if next_word.starts_with("file") {
-                        files_changed = num;
-                    } else if next_word.starts_with("insertion") {
-                        lines_added = num;
-                    } else if next_word.starts_with("deletion") {
-                        lines_removed = num;
-                    }
+            if let Ok(num) = word.parse::<u32>()
+                && let Some(next_word) = words.get(i + 1)
+            {
+                if next_word.starts_with("file") {
+                    files_changed = num;
+                } else if next_word.starts_with("insertion") {
+                    lines_added = num;
+                } else if next_word.starts_with("deletion") {
+                    lines_removed = num;
                 }
             }
         }
@@ -628,20 +628,21 @@ impl DisplayChip {
                 ctx.subscribe_to_view(&menu_view, |me, _, event, ctx| match event {
                     PromptDisplayMenuEvent::MenuAction(generic_event) => {
                         let action_item = generic_event.action_item.as_any();
-                        let command =
-                            if let Some(git_branch) = action_item.downcast_ref::<GitBranch>() {
-                                git_branch.prompt_chip_command()
-                            } else if let Some(create_branch) =
-                                action_item.downcast_ref::<CreateGitBranch>()
-                            {
-                                create_branch.prompt_chip_command()
-                            } else {
-                                log::warn!(
+                        let command = if let Some(git_branch) =
+                            action_item.downcast_ref::<GitBranch>()
+                        {
+                            git_branch.prompt_chip_command()
+                        } else if let Some(create_branch) =
+                            action_item.downcast_ref::<CreateGitBranch>()
+                        {
+                            create_branch.prompt_chip_command()
+                        } else {
+                            log::warn!(
                                 "MenuAction event should contain a GitBranch or CreateGitBranch \
                                  action item"
                             );
-                                return;
-                            };
+                            return;
+                        };
 
                         ctx.emit(PromptDisplayChipEvent::TryExecuteCommand(command));
                         me.close_git_branch_menu(ctx);
@@ -1597,16 +1598,17 @@ impl View for DisplayChip {
     }
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
-        if let Some(chip) = self.render_chip(app) {
-            if self.is_in_agent_view {
-                chip
-            } else {
-                Container::new(chip)
-                    .with_margin_right(CHIP_MARGIN_RIGHT)
-                    .finish()
+        match self.render_chip(app) {
+            Some(chip) => {
+                if self.is_in_agent_view {
+                    chip
+                } else {
+                    Container::new(chip)
+                        .with_margin_right(CHIP_MARGIN_RIGHT)
+                        .finish()
+                }
             }
-        } else {
-            Empty::new().finish()
+            _ => Empty::new().finish(),
         }
     }
 }

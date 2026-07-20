@@ -1,20 +1,20 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::Icon;
+use warp_core::ui::theme::color::internal_colors;
 use warp_errors::report_error;
 use warp_util::path::LineAndColumnArg;
 use warpui::{
+    AppContext, Entity, FocusContext, ModelHandle, SingletonEntity, TypedActionView, View,
+    ViewContext, ViewHandle, WeakViewHandle,
     elements::{
-        resizable_state_handle, ChildView, ConstrainedBox, Container, CrossAxisAlignment,
-        DragBarSide, Element, Empty, Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle,
-        ParentElement, Resizable, ResizableStateHandle, Shrinkable,
+        ChildView, ConstrainedBox, Container, CrossAxisAlignment, DragBarSide, Element, Empty,
+        Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Resizable,
+        ResizableStateHandle, Shrinkable, resizable_state_handle,
     },
     platform::Cursor,
     ui_components::components::{Coords, UiComponent, UiComponentStyles},
-    AppContext, Entity, FocusContext, ModelHandle, SingletonEntity, TypedActionView, View,
-    ViewContext, ViewHandle, WeakViewHandle,
 };
 
 use crate::ai::agent::conversation::AIConversationId;
@@ -29,9 +29,9 @@ use crate::pane_group::{PaneGroup, WorkingDirectoriesEvent, WorkingDirectoriesMo
 use crate::settings_view::keybindings::{KeybindingChangedEvent, KeybindingChangedNotifier};
 #[cfg(feature = "local_fs")]
 use crate::util::file::external_editor::EditorSettings;
+use crate::util::openable_file_type::FileTarget;
 #[cfg(feature = "local_fs")]
 use crate::util::openable_file_type::resolve_file_target_with_editor_choice;
-use crate::util::openable_file_type::FileTarget;
 use crate::workspace::view::conversation_list::view::{
     ConversationListView, Event as ConversationListViewEvent,
 };
@@ -47,7 +47,7 @@ use crate::{
     appearance::Appearance,
     code::file_tree::FileTreeView,
     drive::panel::{MAX_SIDEBAR_WIDTH_RATIO, MIN_SIDEBAR_WIDTH},
-    pane_group::pane::view::header::{components::HEADER_EDGE_PADDING, PANE_HEADER_HEIGHT},
+    pane_group::pane::view::header::{PANE_HEADER_HEIGHT, components::HEADER_EDGE_PADDING},
     pane_group::{self},
     terminal::resizable_data::{ModalType, ResizableData},
     ui_components::{
@@ -180,10 +180,10 @@ fn toolbelt_tooltip_keybinding(binding_names: &[&'static str], app: &AppContext)
 
     // Preserve caller-provided ordering so we can prioritize specific bindings.
     for binding_name in binding_names {
-        if let Some(displayed) = keybinding_name_to_display_string(binding_name, app) {
-            if seen.insert(displayed.clone()) {
-                parts.push(displayed);
-            }
+        if let Some(displayed) = keybinding_name_to_display_string(binding_name, app)
+            && seen.insert(displayed.clone())
+        {
+            parts.push(displayed);
         }
     }
 
@@ -571,10 +571,10 @@ impl LeftPanelView {
 
         self.active_pane_group = Some(pane_group.downgrade());
 
-        if let Some(previous_pane_group_id) = previous_pane_group_id {
-            if previous_pane_group_id != pane_group_id {
-                self.deactivate_file_tree_view_for_pane_group(previous_pane_group_id, ctx);
-            }
+        if let Some(previous_pane_group_id) = previous_pane_group_id
+            && previous_pane_group_id != pane_group_id
+        {
+            self.deactivate_file_tree_view_for_pane_group(previous_pane_group_id, ctx);
         }
 
         // Query the current state from the model
@@ -905,9 +905,7 @@ impl LeftPanelView {
         match action {
             LeftPanelAction::ProjectExplorer => {
                 active_view_state::set(self, ToolPanelView::ProjectExplorer, ctx);
-                if force_open {
-                } else {
-                }
+                if force_open {}
             }
             LeftPanelAction::GlobalSearch { entry_focus } => {
                 let was_active = self.active_view.get()
@@ -925,9 +923,7 @@ impl LeftPanelView {
             }
             LeftPanelAction::WarpDrive => {
                 active_view_state::set(self, ToolPanelView::WarpDrive, ctx);
-                if force_open {
-                } else {
-                }
+                if force_open {}
             }
             LeftPanelAction::ConversationListView => {
                 active_view_state::set(self, ToolPanelView::ConversationListView, ctx);
@@ -1067,31 +1063,25 @@ impl View for LeftPanelView {
         };
 
         let content_area: Box<dyn Element> = match self.active_view.get() {
-            ToolPanelView::ProjectExplorer => {
-                if let Some(file_tree_view) = self.active_file_tree_view(app) {
-                    Shrinkable::new(
-                        1.0,
-                        Container::new(ChildView::new(&file_tree_view).finish())
-                            .with_padding_left(2.)
-                            .with_padding_right(2.)
-                            .finish(),
-                    )
-                    .finish()
-                } else {
-                    Shrinkable::new(1.0, Container::new(Empty::new().finish()).finish()).finish()
-                }
-            }
-            ToolPanelView::GlobalSearch { .. } => {
-                if let Some(global_search_view) = self.active_global_search_view(app) {
-                    Shrinkable::new(
-                        1.0,
-                        Container::new(ChildView::new(&global_search_view).finish()).finish(),
-                    )
-                    .finish()
-                } else {
-                    Shrinkable::new(1.0, Container::new(Empty::new().finish()).finish()).finish()
-                }
-            }
+            ToolPanelView::ProjectExplorer => match self.active_file_tree_view(app) {
+                Some(file_tree_view) => Shrinkable::new(
+                    1.0,
+                    Container::new(ChildView::new(&file_tree_view).finish())
+                        .with_padding_left(2.)
+                        .with_padding_right(2.)
+                        .finish(),
+                )
+                .finish(),
+                _ => Shrinkable::new(1.0, Container::new(Empty::new().finish()).finish()).finish(),
+            },
+            ToolPanelView::GlobalSearch { .. } => match self.active_global_search_view(app) {
+                Some(global_search_view) => Shrinkable::new(
+                    1.0,
+                    Container::new(ChildView::new(&global_search_view).finish()).finish(),
+                )
+                .finish(),
+                _ => Shrinkable::new(1.0, Container::new(Empty::new().finish()).finish()).finish(),
+            },
             ToolPanelView::WarpDrive => Shrinkable::new(
                 1.0,
                 Container::new(ChildView::new(&self.warp_drive_view).finish())

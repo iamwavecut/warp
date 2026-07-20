@@ -1,7 +1,7 @@
 use ai::agent::action::RunAgentsExecutionMode;
 use ai::agent::orchestration_config::{OrchestrationConfig, OrchestrationExecutionMode};
 
-use super::{should_show_harness_picker, OrchestrationEditState};
+use super::{OrchestrationEditState, should_show_harness_picker};
 
 fn local_config(harness_type: &str, model_id: &str) -> OrchestrationConfig {
     OrchestrationConfig {

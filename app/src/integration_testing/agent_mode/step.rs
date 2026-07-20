@@ -5,13 +5,13 @@ use std::time::Duration;
 
 use prost::Message;
 use warpui::integration::TestStep;
-use warpui::{async_assert, SingletonEntity};
+use warpui::{SingletonEntity, async_assert};
 
-use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::execution_profiles::ActionPermission;
+use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::llms::{LLMId, LLMPreferences};
 use crate::integration_testing::agent_mode::{
-    assert_latest_task_succeeds_or_blocked, assert_task_is_blocked, ConversationTarget,
+    ConversationTarget, assert_latest_task_succeeds_or_blocked, assert_task_is_blocked,
 };
 use crate::integration_testing::step::{
     new_step_with_default_assertions, new_step_with_default_assertions_for_pane,
@@ -164,8 +164,8 @@ pub fn submit_ai_query(query: &str, timeout: Duration) -> TestStep {
 
 /// Returns an assertion that prints the conversation ID to stdout once available.
 /// This assertion will poll until the conversation token is received from the server.
-fn print_conversation_id_assertion(
-) -> impl FnMut(&mut warpui::App, warpui::WindowId) -> warpui::integration::AssertionOutcome {
+fn print_conversation_id_assertion()
+-> impl FnMut(&mut warpui::App, warpui::WindowId) -> warpui::integration::AssertionOutcome {
     |app, window_id| {
         use warpui::integration::AssertionOutcome;
 

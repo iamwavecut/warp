@@ -9,8 +9,8 @@ use crate::input::Vector2F;
 use crate::interaction_sources::CodeContextDestination;
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::pane_group::pane::view::header::components::{
-    render_pane_header_buttons, render_pane_header_title_text, render_three_column_header,
-    CenteredHeaderEdgeWidth,
+    CenteredHeaderEdgeWidth, render_pane_header_buttons, render_pane_header_title_text,
+    render_three_column_header,
 };
 use crate::pane_group::pane::view::header::render_pane_header_draggable;
 use crate::pane_group::{CodePane, PaneConfigurationEvent, PaneDragDropLocation, TabBarAxis};
@@ -21,8 +21,8 @@ use crate::terminal::cli_agent::{
 };
 use crate::terminal::view::CliAgentRouting;
 use crate::util::path::{display_name_with_host, display_path_with_host};
-use crate::workspace::util::get_context_target_terminal_view;
 use crate::workspace::TabBarDropTargetData;
+use crate::workspace::util::get_context_target_terminal_view;
 use crate::{code::EditorTabBarDropTargetData, pane_group::pane::ActionOrigin};
 use lsp::LspManagerModel;
 use pathfinder_color::ColorU;
@@ -44,6 +44,8 @@ use warpui::text_layout::ClipConfig;
 #[cfg(feature = "local_fs")]
 use warpui::clipboard::ClipboardContent;
 use warpui::{
+    AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
+    ViewHandle, WindowId,
     elements::{
         AcceptedByDropTarget, Align, Border, ChildAnchor, ChildView, Clipped, ConstrainedBox,
         Container, CornerRadius, CrossAxisAlignment, Draggable, DraggableState, DropTarget, Empty,
@@ -55,15 +57,13 @@ use warpui::{
     id,
     keymap::EditableBinding,
     ui_components::{button::ButtonVariant, components::UiComponent},
-    AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
-    ViewHandle, WindowId,
 };
 
 use crate::util::openable_file_type::renders_in_warp_notebook_viewer;
 use crate::{
     menu::{MenuItem, MenuItemFields},
     notebooks::file::MarkdownDisplayMode,
-    search::{files::icon::icon_from_file_path, ItemHighlightState},
+    search::{ItemHighlightState, files::icon::icon_from_file_path},
     tab::TAB_BAR_BORDER_HEIGHT,
     ui_components::{blended_colors, buttons::icon_button},
     view_components::{DismissibleToast, MarkdownToggleEvent, MarkdownToggleView},
@@ -71,8 +71,8 @@ use crate::{
 };
 
 use crate::pane_group::{
-    pane::{view, PaneHeaderAction},
     BackingView, PaneConfiguration, PaneEvent,
+    pane::{PaneHeaderAction, view},
 };
 
 use super::{
@@ -364,15 +364,15 @@ impl CodeView {
 
     /// If a tab is a preview, promote it and emit "FileOpened"
     fn promote_if_preview(&mut self, ctx: &mut ViewContext<Self>) {
-        if let Some(tab) = self.tab_group.get_mut(self.active_tab_index) {
-            if tab.preview {
-                tab.preview = false;
-                self.set_title_after_content_update(ctx);
-                self.update_tab_bar_state(ctx);
-                self.focus_contents(ctx);
+        if let Some(tab) = self.tab_group.get_mut(self.active_tab_index)
+            && tab.preview
+        {
+            tab.preview = false;
+            self.set_title_after_content_update(ctx);
+            self.update_tab_bar_state(ctx);
+            self.focus_contents(ctx);
 
-                ctx.notify();
-            }
+            ctx.notify();
         }
     }
 
@@ -1222,12 +1222,11 @@ impl CodeView {
                     if is_clearing_group {
                         let unsaved_indices = self.unsaved_indices(ctx);
                         for &unsaved_index in &unsaved_indices {
-                            if let Some(tab) = self.tab_group.get(unsaved_index) {
-                                if tab.editor_view.as_ref(ctx).file_id().is_some() {
-                                    tab.editor_view.update(ctx, |editor, _| {
-                                        editor.mark_next_save_as_auto_save()
-                                    });
-                                }
+                            if let Some(tab) = self.tab_group.get(unsaved_index)
+                                && tab.editor_view.as_ref(ctx).file_id().is_some()
+                            {
+                                tab.editor_view
+                                    .update(ctx, |editor, _| editor.mark_next_save_as_auto_save());
                             }
                         }
                         self.clear_tab_group_with_intent(
@@ -1856,23 +1855,22 @@ impl CodeView {
                             .mouse_state_handles
                             .tab_draggable_state
                             .is_dragging()
+                        && let Some(path) = tab_data.local_path()
                     {
-                        if let Some(path) = tab_data.local_path() {
-                            let tooltip = appearance
-                                .ui_builder()
-                                .tool_tip(Self::relative_path(path, self.window_id, app))
-                                .build()
-                                .finish();
-                            stack.add_positioned_overlay_child(
-                                tooltip,
-                                OffsetPositioning::offset_from_parent(
-                                    vec2f(10., -1.),
-                                    ParentOffsetBounds::Unbounded,
-                                    ParentAnchor::BottomLeft,
-                                    ChildAnchor::TopLeft,
-                                ),
-                            );
-                        }
+                        let tooltip = appearance
+                            .ui_builder()
+                            .tool_tip(Self::relative_path(path, self.window_id, app))
+                            .build()
+                            .finish();
+                        stack.add_positioned_overlay_child(
+                            tooltip,
+                            OffsetPositioning::offset_from_parent(
+                                vec2f(10., -1.),
+                                ParentOffsetBounds::Unbounded,
+                                ParentAnchor::BottomLeft,
+                                ChildAnchor::TopLeft,
+                            ),
+                        );
                     }
 
                     stack.finish()

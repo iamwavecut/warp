@@ -2,8 +2,8 @@
 use std::io::ErrorKind;
 use std::{
     collections::{
-        hash_map::{Entry, OccupiedEntry},
         HashMap,
+        hash_map::{Entry, OccupiedEntry},
     },
     path::{Path, PathBuf},
 };
@@ -11,21 +11,21 @@ use std::{
 #[cfg(feature = "local_fs")]
 use aho_corasick::{AhoCorasick, MatchKind};
 #[cfg(feature = "local_fs")]
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 #[cfg(feature = "local_fs")]
 use futures::AsyncWriteExt;
 use warp_util::path::ShellFamily;
 use warpui::{
-    platform::{file_picker::FilePickerError, FilePickerConfiguration, OperatingSystem},
-    r#async::SpawnedFutureHandle,
     AppContext, Entity, ModelContext, SingletonEntity, WindowId,
+    r#async::SpawnedFutureHandle,
+    platform::{FilePickerConfiguration, OperatingSystem, file_picker::FilePickerError},
 };
 
 use crate::{
-    cloud_object::{model::persistence::CloudModel, Space},
+    cloud_object::{Space, model::persistence::CloudModel},
     safe_warn,
     view_components::DismissibleToast,
-    workspace::{active_terminal_in_window, ToastStack},
+    workspace::{ToastStack, active_terminal_in_window},
 };
 #[cfg(feature = "local_fs")]
 use crate::{
@@ -508,7 +508,7 @@ async fn write_object(
             }
             Err(err) => {
                 return Err(anyhow::Error::new(err)
-                    .context(format!("could not create {}", current_path.display())))
+                    .context(format!("could not create {}", current_path.display())));
             }
         }
     }
@@ -527,7 +527,7 @@ fn make_forbidden_filenames_matcher() -> AhoCorasick {
     // NTFS (Windows) disallows ASCII control characters in path names.
     let ascii_control = 0x00..0x1f;
     // These characters are disallowed by UNIX filesystems, APFS or HFS+ (macOS), or NTFS.
-    let forbidden = [b'/', b':', b'#', b'*', b'<', b'>', b'?', b'\\', b'|'];
+    let forbidden = *b"/:#*<>?\\|";
 
     let patterns = ascii_control.chain(forbidden).map(|ch| [ch]);
     AhoCorasick::builder()

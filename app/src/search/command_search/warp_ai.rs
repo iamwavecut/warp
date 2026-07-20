@@ -2,8 +2,8 @@ use super::workflows::{WorkflowIdentity, WorkflowSearchItem};
 use crate::{
     ai::AIRequestUsageModel,
     ai_assistant::{
-        execution_context::WarpAiExecutionContext, GenerateCommandsFromNaturalLanguageError,
-        AI_ASSISTANT_LOGO_COLOR,
+        AI_ASSISTANT_LOGO_COLOR, GenerateCommandsFromNaturalLanguageError,
+        execution_context::WarpAiExecutionContext,
     },
     appearance::Appearance,
     features::FeatureFlag,
@@ -31,8 +31,8 @@ use ordered_float::OrderedFloat;
 use std::{any::Any, sync::Arc};
 use warp_core::ui::builder;
 use warpui::{
-    elements::{ConstrainedBox, Container, Text},
     AppContext, Element, SingletonEntity,
+    elements::{ConstrainedBox, Container, Text},
 };
 
 const OPEN_WARP_AI_ITEM_BODY_TEXT: &str = "Ask Warp AI for command suggestions";

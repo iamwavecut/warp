@@ -6,8 +6,8 @@ use std::{
     io::{self, Write},
     path::PathBuf,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
     },
     thread,
     time::Duration,
@@ -15,13 +15,13 @@ use std::{
 
 use anyhow::Context as _;
 use futures::{
-    channel::oneshot,
-    future::{self, join_all, Either},
     FutureExt as _,
+    channel::oneshot,
+    future::{self, Either, join_all},
 };
 use itertools::Itertools as _;
 use oneshot::{Canceled, Receiver, Sender};
-use repo_metadata::{local_model::IndexedRepoState, RepoMetadataModel, RepositoryIdentifier};
+use repo_metadata::{RepoMetadataModel, RepositoryIdentifier, local_model::IndexedRepoState};
 use uuid::Uuid;
 
 use ai::skills::SKILL_PROVIDER_DEFINITIONS;
@@ -32,26 +32,26 @@ use warp_core::{features::FeatureFlag, safe_debug, safe_info};
 use warp_errors::{report_error, report_if_error};
 use warp_managed_secrets::ManagedSecretValue;
 use warpui::{
-    r#async::{FutureExt, TimeoutError},
     Entity, ModelContext, ModelHandle, ModelSpawner, SingletonEntity,
+    r#async::{FutureExt, TimeoutError},
 };
 
 use crate::ai::document::ai_document_model::{AIDocumentModel, AIDocumentModelEvent};
 use crate::ai::llms::{LLMId, LLMPreferences};
 use crate::ai::mcp::{JSONMCPServer, MCPServerState};
 use crate::ai::skills::{
-    filter_skills_by_spec, read_skills_from_directories, resolve_skill_repos, SkillManager,
-    SkillWatcher,
+    SkillManager, SkillWatcher, filter_skills_by_spec, read_skills_from_directories,
+    resolve_skill_repos,
 };
 use crate::ai::{
     agent::conversation::AIConversationId,
     agent_sdk::driver::harness::{
-        harness_model_env_vars, task_env_vars, HarnessCleanupDisposition, HarnessKind,
-        HarnessRunner, SavePoint, ThirdPartyHarness,
+        HarnessCleanupDisposition, HarnessKind, HarnessRunner, SavePoint, ThirdPartyHarness,
+        harness_model_env_vars, task_env_vars,
     },
 };
 use crate::terminal::cli_agent_sessions::plugin_manager::{
-    plugin_manager_for, CliAgentPluginManager,
+    CliAgentPluginManager, plugin_manager_for,
 };
 use crate::terminal::cli_agent_sessions::{
     CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
@@ -64,20 +64,20 @@ use crate::{
         },
         agent_environments::{AmbientAgentEnvironment, GithubRepo},
         ambient_agents::{
-            conversation_output_status_from_conversation, task::HarnessModelConfig,
             AmbientAgentTaskId, AmbientConversationStatus,
+            conversation_output_status_from_conversation, task::HarnessModelConfig,
         },
         blocklist::{
+            BlocklistAIHistoryEvent, BlocklistAIHistoryModel, BlocklistAIPermissions,
             agent_view::AgentViewEntryOrigin,
-            orchestration_event_streamer::register_agent_event_consumer, BlocklistAIHistoryEvent,
-            BlocklistAIHistoryModel, BlocklistAIPermissions,
+            orchestration_event_streamer::register_agent_event_consumer,
         },
         execution_profiles::profiles::AIExecutionProfilesModel,
         mcp::{
-            file_based_manager::{FileBasedMCPManager, FileBasedMCPManagerEvent},
-            parsing::{normalize_mcp_json, resolve_json, ParsedTemplatableMCPServerResult},
-            templatable_manager::TemplatableMCPServerManagerEvent,
             TemplatableMCPServerInstallation, TemplatableMCPServerManager,
+            file_based_manager::{FileBasedMCPManager, FileBasedMCPManagerEvent},
+            parsing::{ParsedTemplatableMCPServerResult, normalize_mcp_json, resolve_json},
+            templatable_manager::TemplatableMCPServerManagerEvent,
         },
     },
     auth::AuthStateProvider,
@@ -134,10 +134,10 @@ impl<T: Send + 'static> IdleTimeoutSender<T> {
 
     /// End the run by sending `value` immediately.
     fn end_run_now(&self, value: T) {
-        if let Ok(mut guard) = self.tx_cell.lock() {
-            if let Some(sender) = guard.take() {
-                let _ = sender.send(value);
-            }
+        if let Ok(mut guard) = self.tx_cell.lock()
+            && let Some(sender) = guard.take()
+        {
+            let _ = sender.send(value);
         }
     }
 
@@ -159,11 +159,11 @@ impl<T: Send + 'static> IdleTimeoutSender<T> {
             if generation.load(Ordering::SeqCst) != current_gen {
                 return;
             }
-            if let Ok(mut guard) = tx_cell.lock() {
-                if let Some(sender) = guard.take() {
-                    // Send the value after the idle timeout expires.
-                    let _ = sender.send(value);
-                }
+            if let Ok(mut guard) = tx_cell.lock()
+                && let Some(sender) = guard.take()
+            {
+                // Send the value after the idle timeout expires.
+                let _ = sender.send(value);
             }
         });
     }
@@ -314,9 +314,7 @@ pub enum AgentDriverError {
     MCPMissingVariables,
     #[error("Agent profile \"{0}\" not found")]
     ProfileError(String),
-    #[error(
-        "Failed to authenticate with server - hosted authentication is disabled in this build"
-    )]
+    #[error("Failed to authenticate with server - hosted authentication is disabled in this build")]
     NotLoggedIn,
     #[error("Terminal bootstrap failed")]
     BootstrapFailed,
@@ -505,7 +503,7 @@ impl AgentDriver {
         &mut self,
         task: Task,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = Result<(), AgentDriverError>> {
+    ) -> impl Future<Output = Result<(), AgentDriverError>> + use<> {
         let (tx, rx) = oneshot::channel();
         let foreground = ctx.spawner();
         let task_id = self.task_id;
@@ -538,17 +536,15 @@ impl AgentDriver {
             if task_id.is_some() {
                 // Keep the session alive after environment setup failures so
                 // the viewer can connect, receive scrollback, and see the error.
-                if let Err(err) = &result {
-                    if let (Some(idle_timeout), true) = (
+                if let Err(err) = &result
+                    && let (Some(idle_timeout), true) = (
                         idle_on_complete,
                         matches!(err, AgentDriverError::EnvironmentSetupFailed(_)),
-                    ) {
-                        let timeout = idle_timeout.min(SETUP_FAILED_IDLE_TIMEOUT);
-                        log::info!(
-                            "Environment setup failed; keeping session alive for {timeout:?}"
-                        );
-                        warpui::r#async::Timer::after(timeout).await;
-                    }
+                    )
+                {
+                    let timeout = idle_timeout.min(SETUP_FAILED_IDLE_TIMEOUT);
+                    log::info!("Environment setup failed; keeping session alive for {timeout:?}");
+                    warpui::r#async::Timer::after(timeout).await;
                 }
             }
 
@@ -558,7 +554,7 @@ impl AgentDriver {
 
     /// Check that the working directory exists. Since it's user-specified, we don't automatically
     /// create the directory (in case they made a typo).
-    fn check_working_dir(&self) -> impl Future<Output = Result<(), AgentDriverError>> {
+    fn check_working_dir(&self) -> impl Future<Output = Result<(), AgentDriverError>> + use<> {
         let working_dir = self.working_dir.clone();
         async move {
             match async_fs::metadata(&working_dir).await {
@@ -660,7 +656,7 @@ impl AgentDriver {
     fn start_profile_mcp_servers(
         &self,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = Result<(), AgentDriverError>> {
+    ) -> impl Future<Output = Result<(), AgentDriverError>> + use<> {
         let terminal_id = self.terminal_driver.as_ref(ctx).terminal_view().id();
         let permissions = BlocklistAIPermissions::as_ref(ctx);
         let profile_allowlist = permissions.get_mcp_allowlist(ctx, Some(terminal_id));
@@ -768,7 +764,7 @@ impl AgentDriver {
         &self,
         uuids: &[uuid::Uuid],
         ctx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = Result<(), AgentDriverError>> {
+    ) -> impl Future<Output = Result<(), AgentDriverError>> + use<> {
         let (tx, rx) = oneshot::channel();
         let servers_to_start = match self.get_mcp_servers_to_start(uuids, ctx) {
             Ok(val) => val,
@@ -809,7 +805,7 @@ impl AgentDriver {
         &self,
         mut installations: Vec<TemplatableMCPServerInstallation>,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = Result<(), AgentDriverError>> {
+    ) -> impl Future<Output = Result<(), AgentDriverError>> + use<> {
         if installations.is_empty() {
             return Either::Right(future::ready(Ok(())));
         }
@@ -830,12 +826,12 @@ impl AgentDriver {
 
         ctx.subscribe_to_model(&templatable_mcp_manager, move |_me, manager, event, ctx| {
             if let TemplatableMCPServerManagerEvent::StateChanged { uuid, state } = event {
-                if !uuids_to_start.contains(&uuid) {
+                if !uuids_to_start.contains(uuid) {
                     return;
                 }
                 match state {
                     MCPServerState::Running => {
-                        uuids_to_start.remove(&uuid);
+                        uuids_to_start.remove(uuid);
                         if uuids_to_start.is_empty() {
                             log::info!("All ephemeral MCP servers started");
                             if let Some(sender) = tx.take() {
@@ -910,8 +906,7 @@ impl AgentDriver {
                 wait_server_uuids,
                 ..
             } = event
-            {
-                if pending_repos.remove(repo_path) {
+                && pending_repos.remove(repo_path) {
                     collected_wait_uuids.extend(wait_server_uuids.iter().copied());
                     log::info!(
                         "Found file-based MCP server UUIDs in repo {repo_path:?}: {wait_server_uuids:?}"
@@ -930,7 +925,6 @@ impl AgentDriver {
                         ctx.unsubscribe_from_model(&manager);
                     }
                 }
-            }
         });
 
         rx
@@ -947,7 +941,7 @@ impl AgentDriver {
         &self,
         uuids: Vec<Uuid>,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = ()> {
+    ) -> impl Future<Output = ()> + use<> {
         // Filter out UUIDs that have already reached a terminal state.
         let mut pending_uuids: HashSet<Uuid> = {
             let templatable_manager = TemplatableMCPServerManager::as_ref(ctx);
@@ -1671,10 +1665,10 @@ impl AgentDriver {
         // Enable local notification integration before running the harness command.
         let plugin_manager: Option<Box<dyn CliAgentPluginManager>> =
             plugin_manager_for(harness.cli_agent());
-        if let Some(manager) = plugin_manager {
-            if let Err(e) = manager.install().await {
-                log::warn!("Plugin installation failed (continuing): {e}");
-            }
+        if let Some(manager) = plugin_manager
+            && let Err(e) = manager.install().await
+        {
+            log::warn!("Plugin installation failed (continuing): {e}");
         }
 
         Ok(exit_rx)
@@ -1994,8 +1988,8 @@ impl AgentDriver {
             // Fresh runs learn their conversation_id via
             // `ConversationServerTokenAssigned`; resumed runs already
             // registered in `new` (and so skip this branch).
-            if me.run_conversation_id.is_none() {
-                if let BlocklistAIHistoryEvent::ConversationServerTokenAssigned {
+            if me.run_conversation_id.is_none()
+                && let BlocklistAIHistoryEvent::ConversationServerTokenAssigned {
                     conversation_id,
                     ..
                 } = event
@@ -2008,7 +2002,6 @@ impl AgentDriver {
                     );
                     register_agent_event_consumer(*conversation_id, ctx.model_id(), ctx);
                 }
-            }
 
             match event {
                 BlocklistAIHistoryEvent::UpdatedTodoList { .. } => {
@@ -2059,8 +2052,8 @@ impl AgentDriver {
                         return;
                     };
 
-                    if !written_conversation_id {
-                        if let Some(token) = token_opt {
+                    if !written_conversation_id
+                        && let Some(token) = token_opt {
                             report_if_error!(output::with_stdout_buffered(|buf| match me.output_format {
                                 OutputFormat::Json | OutputFormat::Ndjson => output::json::conversation_started(&token, buf),
                                 OutputFormat::Text | OutputFormat::Pretty => output::text::conversation_started(&token, buf),
@@ -2071,7 +2064,6 @@ impl AgentDriver {
                                 *guard = Some(token.clone());
                             }
                         }
-                    }
 
                     // Once the outputs are fully streamed from the server, write them to stdout.
                     if exchange.output_status.is_finished() {
@@ -2218,27 +2210,29 @@ impl AgentDriver {
 
             let document_id_str = document_id.to_string();
 
-            report_if_error!(output::with_stdout_buffered(|buf| {
-                match me.output_format {
-                    OutputFormat::Json | OutputFormat::Ndjson => {
-                        output::json::plan_artifact_created(
-                            &document_id_str,
-                            &notebook_link,
-                            &document.title,
-                            buf,
-                        )
+            report_if_error!(
+                output::with_stdout_buffered(|buf| {
+                    match me.output_format {
+                        OutputFormat::Json | OutputFormat::Ndjson => {
+                            output::json::plan_artifact_created(
+                                &document_id_str,
+                                &notebook_link,
+                                &document.title,
+                                buf,
+                            )
+                        }
+                        OutputFormat::Text | OutputFormat::Pretty => {
+                            output::text::plan_artifact_created(
+                                &document_id_str,
+                                &notebook_link,
+                                &document.title,
+                                buf,
+                            )
+                        }
                     }
-                    OutputFormat::Text | OutputFormat::Pretty => {
-                        output::text::plan_artifact_created(
-                            &document_id_str,
-                            &notebook_link,
-                            &document.title,
-                            buf,
-                        )
-                    }
-                }
-            })
-            .context("Failed to write artifact_created"));
+                })
+                .context("Failed to write artifact_created")
+            );
         });
 
         self.terminal_driver.update(ctx, |td, ctx| {

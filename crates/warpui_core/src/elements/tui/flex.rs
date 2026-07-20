@@ -43,8 +43,8 @@ use super::{
     TuiBuffer, TuiConstraint, TuiElement, TuiEvent, TuiEventContext, TuiLayoutContext,
     TuiPaintContext, TuiPresentationContext, TuiRect, TuiRectExt, TuiSize,
 };
-use crate::elements::{Axis, CrossAxisAlignment};
 use crate::AppContext;
+use crate::elements::{Axis, CrossAxisAlignment};
 
 /// A child of a [`TuiFlex`] plus whether it fills leftover main-axis space.
 struct FlexChild {

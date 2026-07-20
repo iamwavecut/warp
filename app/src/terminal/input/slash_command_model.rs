@@ -319,10 +319,10 @@ impl SlashCommandModel {
         let old_state = self.state.clone();
         match self.detect_command(new, ctx) {
             SlashCommandEntryState::SlashCommand(detected_command) => {
-                if let SlashCommandEntryState::SlashCommand(old_detected_command) = &self.state {
-                    if *old_detected_command == detected_command {
-                        return;
-                    }
+                if let SlashCommandEntryState::SlashCommand(old_detected_command) = &self.state
+                    && *old_detected_command == detected_command
+                {
+                    return;
                 }
 
                 if !FeatureFlag::AgentView.is_enabled()
@@ -342,10 +342,10 @@ impl SlashCommandModel {
                 self.state = SlashCommandEntryState::SlashCommand(detected_command);
             }
             SlashCommandEntryState::SkillCommand(detected_skill) => {
-                if let SlashCommandEntryState::SkillCommand(old_detected_skill) = &self.state {
-                    if *old_detected_skill == detected_skill {
-                        return;
-                    }
+                if let SlashCommandEntryState::SkillCommand(old_detected_skill) = &self.state
+                    && *old_detected_skill == detected_skill
+                {
+                    return;
                 }
 
                 // Skill commands always require AI mode

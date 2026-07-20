@@ -11,9 +11,9 @@ use futures::stream::AbortHandle;
 use instant::Instant;
 use repo_metadata::CanonicalizedPath;
 use repo_metadata::{
+    DirectoryWatcher, Repository, RepositoryUpdate,
     repositories::{DetectedRepositories, DetectedRepositoriesEvent},
     repository::{BufferingRepositorySubscriber, RepositorySubscriber, SubscriberId},
-    DirectoryWatcher, Repository, RepositoryUpdate,
 };
 use settings::Setting as _;
 use warp_errors::report_error;
@@ -204,10 +204,11 @@ impl RepoOutlines {
 
     /// Computes the outline for the repo containing the next path in the queue, if any.
     fn compute_next_outline(&mut self, ctx: &mut ModelContext<Self>) {
-        if self.should_build_outlines(ctx) && self.active_outline_task.is_none() {
-            if let Some(repo_root) = self.outline_queue.pop_front() {
-                self.compute_outline_for_repo(repo_root, ctx);
-            }
+        if self.should_build_outlines(ctx)
+            && self.active_outline_task.is_none()
+            && let Some(repo_root) = self.outline_queue.pop_front()
+        {
+            self.compute_outline_for_repo(repo_root, ctx);
         }
     }
 

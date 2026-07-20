@@ -9,7 +9,7 @@ use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{AppContext, Element};
 
-use super::{render_block_banner, BLOCK_BANNER_DESCRIPTION_MAX_HEIGHT};
+use super::{BLOCK_BANNER_DESCRIPTION_MAX_HEIGHT, render_block_banner};
 use crate::appearance::Appearance;
 use crate::terminal::ssh::warpify::warpify_description;
 use crate::terminal::view::{RememberForWarpification, TerminalAction};

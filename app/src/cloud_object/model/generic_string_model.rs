@@ -8,7 +8,7 @@ use crate::{
         CreateObjectRequest, GenericCloudObject, GenericServerObject, GenericStringObjectFormat,
         GenericStringObjectUniqueKey, ObjectType, Revision, UpdateCloudObjectResult,
     },
-    drive::{items::WarpDriveItem, CloudObjectTypeAndId},
+    drive::{CloudObjectTypeAndId, items::WarpDriveItem},
     persistence::ModelEvent,
     server::{
         ids::{ObjectUid, ServerId, SyncId},

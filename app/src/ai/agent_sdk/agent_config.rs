@@ -2,11 +2,11 @@
 
 use std::{collections::BTreeMap, path::PathBuf};
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use warp_cli::agent::ListAgentConfigsArgs;
-use warpui::{platform::TerminationMode, AppContext, ModelContext, SingletonEntity};
+use warpui::{AppContext, ModelContext, SingletonEntity, platform::TerminationMode};
 
-use crate::ai::skills::{read_skills_from_directories, SkillDescriptor, SkillManager};
+use crate::ai::skills::{SkillDescriptor, SkillManager, read_skills_from_directories};
 use crate::server::server_api::ai::{
     AgentListEnvironment, AgentListItem, AgentListSource, AgentListVariant,
 };

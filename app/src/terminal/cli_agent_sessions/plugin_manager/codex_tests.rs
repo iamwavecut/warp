@@ -173,9 +173,9 @@ fn is_not_installed_via_trait_without_codex_plugin() {
     let dir = tempfile::tempdir().unwrap();
     write_enabled_config(dir.path());
 
-    std::env::set_var("CODEX_HOME", dir.path());
+    unsafe { std::env::set_var("CODEX_HOME", dir.path()) };
     let result = CodexPluginManager::new(None, None, None).is_installed();
-    std::env::remove_var("CODEX_HOME");
+    unsafe { std::env::remove_var("CODEX_HOME") };
 
     assert!(!result);
 }
@@ -187,9 +187,9 @@ fn is_installed_via_trait_with_codex_home_env() {
     let dir = tempfile::tempdir().unwrap();
     write_enabled_config(dir.path());
 
-    std::env::set_var("CODEX_HOME", dir.path());
+    unsafe { std::env::set_var("CODEX_HOME", dir.path()) };
     let result = CodexPluginManager::new(None, None, None).is_installed();
-    std::env::remove_var("CODEX_HOME");
+    unsafe { std::env::remove_var("CODEX_HOME") };
 
     assert!(result);
 }
@@ -202,9 +202,9 @@ fn does_not_need_update_without_codex_plugin() {
     write_enabled_config(dir.path());
     write_manifest(dir.path(), "0.2.0");
 
-    std::env::set_var("CODEX_HOME", dir.path());
+    unsafe { std::env::set_var("CODEX_HOME", dir.path()) };
     let result = CodexPluginManager::new(None, None, None).needs_update();
-    std::env::remove_var("CODEX_HOME");
+    unsafe { std::env::remove_var("CODEX_HOME") };
 
     assert!(!result);
 }
@@ -217,9 +217,9 @@ fn needs_update_via_trait_with_codex_home_env() {
     write_enabled_config(dir.path());
     write_manifest(dir.path(), "0.2.0");
 
-    std::env::set_var("CODEX_HOME", dir.path());
+    unsafe { std::env::set_var("CODEX_HOME", dir.path()) };
     let result = CodexPluginManager::new(None, None, None).needs_update();
-    std::env::remove_var("CODEX_HOME");
+    unsafe { std::env::remove_var("CODEX_HOME") };
 
     assert!(result);
 }
@@ -232,9 +232,9 @@ fn does_not_need_update_via_trait_when_version_current() {
     write_enabled_config(dir.path());
     write_manifest(dir.path(), "0.4.0");
 
-    std::env::set_var("CODEX_HOME", dir.path());
+    unsafe { std::env::set_var("CODEX_HOME", dir.path()) };
     let result = CodexPluginManager::new(None, None, None).needs_update();
-    std::env::remove_var("CODEX_HOME");
+    unsafe { std::env::remove_var("CODEX_HOME") };
 
     assert!(!result);
 }
@@ -246,9 +246,9 @@ fn needs_update_via_trait_when_installed_without_manifest() {
     let dir = tempfile::tempdir().unwrap();
     write_enabled_config(dir.path());
 
-    std::env::set_var("CODEX_HOME", dir.path());
+    unsafe { std::env::set_var("CODEX_HOME", dir.path()) };
     let result = CodexPluginManager::new(None, None, None).needs_update();
-    std::env::remove_var("CODEX_HOME");
+    unsafe { std::env::remove_var("CODEX_HOME") };
 
     assert!(result);
 }
@@ -259,9 +259,9 @@ fn ensure_codex_home_dir_creates_missing_env_dir() {
     let parent = tempfile::tempdir().unwrap();
     let codex_home = parent.path().join("workspace-codex-home");
 
-    std::env::set_var("CODEX_HOME", &codex_home);
+    unsafe { std::env::set_var("CODEX_HOME", &codex_home) };
     let result = super::ensure_codex_home_dir();
-    std::env::remove_var("CODEX_HOME");
+    unsafe { std::env::remove_var("CODEX_HOME") };
 
     assert!(result.is_ok());
     assert!(codex_home.is_dir());
@@ -276,9 +276,9 @@ fn does_not_need_update_for_non_git_marketplace_override() {
     write_marketplace_config(dir.path(), "directory");
     write_manifest(dir.path(), "0.2.0");
 
-    std::env::set_var("CODEX_HOME", dir.path());
+    unsafe { std::env::set_var("CODEX_HOME", dir.path()) };
     let result = CodexPluginManager::new(None, None, None).needs_update();
-    std::env::remove_var("CODEX_HOME");
+    unsafe { std::env::remove_var("CODEX_HOME") };
 
     assert!(!result);
 }

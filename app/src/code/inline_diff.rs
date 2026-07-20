@@ -7,16 +7,16 @@ use warp_util::file::FileId;
 #[cfg(not(target_family = "wasm"))]
 use warp_util::file::FileSaveError;
 use warp_util::standardized_path::StandardizedPath;
-use warpui::elements::ChildView;
 #[cfg(not(target_family = "wasm"))]
 use warpui::SingletonEntity;
+use warpui::elements::ChildView;
 use warpui::{AppContext, Element, Entity, TypedActionView, View, ViewContext, ViewHandle};
 
+use super::DiffResult;
 use super::diff_viewer::{DiffViewer, DisplayMode};
+use super::editor::NavBarBehavior;
 use super::editor::scroll::{ScrollPosition, ScrollTrigger};
 use super::editor::view::{CodeEditorEvent, CodeEditorView};
-use super::editor::NavBarBehavior;
-use super::DiffResult;
 #[cfg(not(target_family = "wasm"))]
 use crate::ai::blocklist::inline_action::code_diff_view::DiffSessionType;
 use crate::editor::InteractionState;
@@ -81,11 +81,9 @@ impl InlineDiffView {
             CodeEditorEvent::UnifiedDiffComputed(diff) => {
                 ctx.emit(InlineDiffViewEvent::DiffAccepted { diff: diff.clone() });
             }
-            CodeEditorEvent::ContentChanged { origin } => {
-                if origin.from_user() && !me.was_edited {
-                    me.was_edited = true;
-                    ctx.emit(InlineDiffViewEvent::UserEdited);
-                }
+            CodeEditorEvent::ContentChanged { origin } if origin.from_user() && !me.was_edited => {
+                me.was_edited = true;
+                ctx.emit(InlineDiffViewEvent::UserEdited);
             }
             _ => {}
         });

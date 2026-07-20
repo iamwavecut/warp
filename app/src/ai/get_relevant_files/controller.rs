@@ -2,12 +2,12 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use ai::index::full_source_code_embedding::RetrievalID;
 use ai::index::full_source_code_embedding::manager::{
     CodebaseIndexManager, CodebaseIndexManagerEvent,
 };
-use ai::index::full_source_code_embedding::RetrievalID;
 use ai::index::locations::CodeContextLocation;
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 use futures_util::stream::AbortHandle;
 use instant::Instant;
 use warp_core::features::FeatureFlag;

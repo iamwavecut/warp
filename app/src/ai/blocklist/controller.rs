@@ -12,16 +12,13 @@ use input_context::{input_context_for_request, parse_context_attachments};
 pub use slash_command::*;
 
 use self::response_stream::{ResponseStream, ResponseStreamEvent};
-use super::agent_view::AgentViewEntryOrigin;
 use super::ResponseStreamId;
 use super::{
+    BlocklistAIInputModel,
     action_model::{BlocklistAIActionEvent, BlocklistAIActionModel},
-    agent_view::{AgentViewController, AgentViewControllerEvent},
     context_model::BlocklistAIContextModel,
     conversation_selection::{ConversationSelectionEvent, ConversationSelectionHandle},
     history_model::BlocklistAIHistoryModel,
-    input_model::InputConfig,
-    BlocklistAIInputModel, InputType, QueuedQueryModel,
 };
 use crate::ai::agent::api::{self, ServerConversationToken};
 use crate::ai::agent::conversation::{AIConversation, ConversationStatus};
@@ -38,14 +35,14 @@ use crate::ai::document::ai_document_model::{
 };
 use crate::ai::llms::LLMId;
 use crate::ai::{
+    AIRequestUsageModel,
     agent::{
-        conversation::AIConversationId, AIAgentActionResultType, AIAgentAttachment, AIAgentContext,
-        AIAgentExchangeId, AIAgentInput, AIAgentOutputStatus, EntrypointType,
-        FinishedAIAgentOutput, RenderableAIError, RequestCost, RequestMetadata, StaticQueryType,
-        UserQueryMode,
+        AIAgentActionResultType, AIAgentAttachment, AIAgentContext, AIAgentExchangeId,
+        AIAgentInput, AIAgentOutputStatus, EntrypointType, FinishedAIAgentOutput,
+        RenderableAIError, RequestCost, RequestMetadata, StaticQueryType, UserQueryMode,
+        conversation::AIConversationId,
     },
     llms::LLMPreferences,
-    AIRequestUsageModel,
 };
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::features::FeatureFlag;
@@ -54,13 +51,13 @@ use crate::network::NetworkStatus;
 use crate::notebooks::editor::model::FileLinkResolutionContext;
 use crate::persistence::ModelEvent;
 use crate::terminal::model::block::{
-    formatted_terminal_contents_for_input, BlockId, CURSOR_MARKER,
+    BlockId, CURSOR_MARKER, formatted_terminal_contents_for_input,
 };
 use crate::terminal::view::inline_banner::ZeroStatePromptSuggestionType;
 use crate::terminal::{
-    model::session::{active_session::ActiveSession, SessionType},
-    model::terminal_model::TerminalModel,
     ShellLaunchData,
+    model::session::{SessionType, active_session::ActiveSession},
+    model::terminal_model::TerminalModel,
 };
 use anyhow::anyhow;
 use chrono::{DateTime, Local};
@@ -71,7 +68,7 @@ use session_sharing_protocol::common::ParticipantId;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use warp_core::assertions::safe_assert;
-use warp_multi_agent_api::{message, Task, ToolType};
+use warp_multi_agent_api::{Task, ToolType, message};
 use warpui::r#async::SpawnedFutureHandle;
 
 use super::orchestration_events::{OrchestrationEventService, OrchestrationEventServiceEvent};
@@ -889,8 +886,10 @@ impl BlocklistAIController {
             }) {
                 Ok(task_id) => task_id,
                 Err(e) => {
-                    report_error!(anyhow::Error::new(e)
-                        .context("Could not create CLI subagent task optimistically"));
+                    report_error!(
+                        anyhow::Error::new(e)
+                            .context("Could not create CLI subagent task optimistically")
+                    );
                     return;
                 }
             };
@@ -1097,8 +1096,10 @@ impl BlocklistAIController {
                 }) {
                     Ok(task_id) => (task_id, Some(running_command)),
                     Err(e) => {
-                        report_error!(anyhow::Error::new(e)
-                            .context("Could not create CLI subagent task optimistically"));
+                        report_error!(
+                            anyhow::Error::new(e)
+                                .context("Could not create CLI subagent task optimistically")
+                        );
                         return;
                     }
                 }
@@ -1127,20 +1128,21 @@ impl BlocklistAIController {
         };
 
         // Persist the updated visibility for each promoted block
-        if !promoted_blocks.is_empty() {
-            if let Some(sender) = GlobalResourceHandlesProvider::as_ref(ctx)
+        if !promoted_blocks.is_empty()
+            && let Some(sender) = GlobalResourceHandlesProvider::as_ref(ctx)
                 .get()
                 .model_event_sender
                 .as_ref()
-            {
-                for (block_id, agent_view_visibility) in promoted_blocks {
-                    if let Err(e) = sender.send(ModelEvent::UpdateBlockAgentViewVisibility {
-                        block_id: block_id.to_string(),
-                        agent_view_visibility: agent_view_visibility.into(),
-                    }) {
-                        report_error!(anyhow::Error::new(e)
-                            .context("Error sending UpdateBlockAgentViewVisibility event"));
-                    }
+        {
+            for (block_id, agent_view_visibility) in promoted_blocks {
+                if let Err(e) = sender.send(ModelEvent::UpdateBlockAgentViewVisibility {
+                    block_id: block_id.to_string(),
+                    agent_view_visibility: agent_view_visibility.into(),
+                }) {
+                    report_error!(
+                        anyhow::Error::new(e)
+                            .context("Error sending UpdateBlockAgentViewVisibility event")
+                    );
                 }
             }
         }
@@ -1445,17 +1447,19 @@ impl BlocklistAIController {
                         "a subagent is currently active"
                     }
                 );
-            } else if let Some((event_inputs, task_id)) = OrchestrationEventService::handle(ctx)
-                .update(ctx, |svc, ctx| {
-                    svc.drain_events_for_request(conversation_id, ctx)
-                })
-            {
-                has_piggybacked_events = true;
-                request_input
-                    .input_messages
-                    .entry(task_id)
-                    .or_default()
-                    .extend(event_inputs);
+            } else {
+                if let Some((event_inputs, task_id)) = OrchestrationEventService::handle(ctx)
+                    .update(ctx, |svc, ctx| {
+                        svc.drain_events_for_request(conversation_id, ctx)
+                    })
+                {
+                    has_piggybacked_events = true;
+                    request_input
+                        .input_messages
+                        .entry(task_id)
+                        .or_default()
+                        .extend(event_inputs);
+                }
             }
         }
 
@@ -2256,8 +2260,11 @@ impl BlocklistAIController {
                                         )
                                     });
                                 if let Err(e) = apply_result {
-                                    report_error!(anyhow::Error::new(e)
-                                        .context("Failed to apply client actions to conversation"));
+                                    report_error!(
+                                        anyhow::Error::new(e).context(
+                                            "Failed to apply client actions to conversation"
+                                        )
+                                    );
                                 }
                             }
                         }

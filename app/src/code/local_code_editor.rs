@@ -11,8 +11,8 @@ use std::{
 
 use futures::stream::AbortHandle;
 use lsp::{
-    types::FileLocation, LanguageId, LanguageServerId, LspEvent, LspManagerModel,
-    LspManagerModelEvent, LspServerModel, ReferenceLocation,
+    LanguageId, LanguageServerId, LspEvent, LspManagerModel, LspManagerModelEvent, LspServerModel,
+    ReferenceLocation, types::FileLocation,
 };
 use lsp_types::FormattingOptions;
 use markdown_parser::FormattedText;
@@ -32,32 +32,32 @@ use warp_util::{
     sync::Condition,
 };
 use warpui::{
+    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
+    WindowId,
     elements::{
         Border, ChildAnchor, ChildView, ClippedScrollStateHandle, ConstrainedBox, Container,
         CornerRadius, CrossAxisAlignment, DropShadow, Flex, Hoverable, MainAxisAlignment,
         MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement,
         ParentOffsetBounds, Radius, Rect, Shrinkable, Stack, Text,
     },
-    keymap::{macros::*, FixedBinding},
+    keymap::{FixedBinding, macros::*},
     text::point::Point,
     ui_components::{
         button::ButtonVariant,
         components::{Coords, UiComponent, UiComponentStyles},
     },
-    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
-    WindowId,
 };
-use warpui::{platform::SaveFilePickerConfiguration, ModelHandle};
+use warpui::{ModelHandle, platform::SaveFilePickerConfiguration};
 
 use crate::menu::{Event, Menu, MenuItem, MenuItemFields};
 
 use crate::{
     code::{
+        SaveOutcome, ShowFindReferencesCardProvider,
         buffer_location::LocalOrRemotePath as BufferFileLocation,
         editor::model::HoverableLink,
         footer::{CodeFooterView, CodeFooterViewEvent},
         global_buffer_model::{BufferState, GlobalBufferModel},
-        SaveOutcome, ShowFindReferencesCardProvider,
     },
     settings::{AISettings, CodeSettings},
     terminal::TerminalView,
@@ -94,6 +94,7 @@ const HOVER_DEBOUNCE_PERIOD: Duration = Duration::from_millis(500);
 /// auto-save. Mirrors VS Code's default `files.autoSaveDelay` of 1000ms.
 const AUTO_SAVE_DEBOUNCE_PERIOD: Duration = Duration::from_millis(1000);
 
+use super::ImmediateSaveError;
 use super::diff_viewer::DiffViewer;
 use super::editor::{
     scroll::{ScrollPosition, ScrollTrigger},
@@ -101,7 +102,6 @@ use super::editor::{
 };
 use super::find_references_view::{FindReferencesView, FindReferencesViewEvent};
 use super::language_server_extension::ProcessedDiagnostic;
-use super::ImmediateSaveError;
 
 type SaveCallback =
     Box<dyn FnOnce(SaveOutcome, &mut ViewContext<LocalCodeEditorView>) + Send + Sync + 'static>;
@@ -600,10 +600,10 @@ impl LocalCodeEditorView {
     ) {
         // Early return if user is not moving away from the active hovered range.
         let active_hovered_range = self.editor().as_ref(ctx).hovered_symbol_range(ctx);
-        if let Some(range) = active_hovered_range {
-            if range.contains(&offset) {
-                return;
-            }
+        if let Some(range) = active_hovered_range
+            && range.contains(&offset)
+        {
+            return;
         }
 
         let lsp_position = self
@@ -611,10 +611,11 @@ impl LocalCodeEditorView {
             .as_ref(ctx)
             .offset_to_lsp_position(offset, ctx);
 
-        if cfg!(debug_assertions) {
-            if let (Some(file_path), Some(lsp_server)) = (self.file_path(), &self.lsp_server) {
-                let buffer_version = self.editor().as_ref(ctx).buffer_version(ctx).as_usize();
-                lsp_server.as_ref(ctx).log_to_server_log(
+        if cfg!(debug_assertions)
+            && let (Some(file_path), Some(lsp_server)) = (self.file_path(), &self.lsp_server)
+        {
+            let buffer_version = self.editor().as_ref(ctx).buffer_version(ctx).as_usize();
+            lsp_server.as_ref(ctx).log_to_server_log(
                     lsp::LspServerLogLevel::Info,
                     format!(
                         "lsp-sync: gotoDefinition -> server file={} buffer_version={buffer_version} position={}:{}",
@@ -623,7 +624,6 @@ impl LocalCodeEditorView {
                         lsp_position.column,
                     ),
                 );
-            }
         }
 
         // Only fetch definition on hover (fast path).
@@ -810,21 +810,21 @@ impl LocalCodeEditorView {
                     return;
                 };
 
-                if let Some(ref_view) = &me.find_references_view {
-                    if let Some(reference) = ref_view.as_ref(ctx).get_reference(*index) {
-                        ctx.emit(LocalCodeEditorEvent::GotoDefinition {
-                            path: reference.file_path.clone(),
-                            line: reference.line_number.saturating_sub(1), // Convert 1-based to 0-based
-                            column: reference.column,
-                            source_server_id,
-                        });
-                        // Close the card after navigation
-                        me.find_references_view = None;
-                        me.editor.update(ctx, |editor, _ctx| {
-                            editor.set_find_references_anchor_offset(None);
-                        });
-                        ctx.notify();
-                    }
+                if let Some(ref_view) = &me.find_references_view
+                    && let Some(reference) = ref_view.as_ref(ctx).get_reference(*index)
+                {
+                    ctx.emit(LocalCodeEditorEvent::GotoDefinition {
+                        path: reference.file_path.clone(),
+                        line: reference.line_number.saturating_sub(1), // Convert 1-based to 0-based
+                        column: reference.column,
+                        source_server_id,
+                    });
+                    // Close the card after navigation
+                    me.find_references_view = None;
+                    me.editor.update(ctx, |editor, _ctx| {
+                        editor.set_find_references_anchor_offset(None);
+                    });
+                    ctx.notify();
                 }
             }
             FindReferencesViewEvent::CloseRequested => {
@@ -968,12 +968,11 @@ impl LocalCodeEditorView {
 
         // Subscribe to LSP server events for diagnostics updates.
         ctx.subscribe_to_model(&lsp_server, |me, _, event, ctx| {
-            if let LspEvent::DiagnosticsUpdated { path: updated_path } = event {
-                if let Some(file_path) = me.file_path() {
-                    if file_path == updated_path {
-                        me.refresh_diagnostics(ctx);
-                    }
-                }
+            if let LspEvent::DiagnosticsUpdated { path: updated_path } = event
+                && let Some(file_path) = me.file_path()
+                && file_path == updated_path
+            {
+                me.refresh_diagnostics(ctx);
             }
         });
 
@@ -1796,10 +1795,10 @@ impl LocalCodeEditorView {
         let path = PathBuf::from(path_str);
 
         // Ensure parent directories exist before registering file watcher / LSP.
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                let _ = std::fs::create_dir_all(parent);
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            let _ = std::fs::create_dir_all(parent);
         }
 
         let buffer = me.editor.as_ref(ctx).model.as_ref(ctx).buffer().clone();
@@ -1822,18 +1821,20 @@ impl LocalCodeEditorView {
         let buffer_version = me.editor.as_ref(ctx).version(ctx);
 
         me.base_content_version = Some(buffer_version);
-        let save_outcome = if let Err(err) = GlobalBufferModel::handle(ctx)
-            .update(ctx, move |model, ctx| {
-                model.save(file_id, content, buffer_version, ctx)
-            }) {
-            report_error!(&err);
-            ctx.emit(LocalCodeEditorEvent::FailedToSave {
-                error: Rc::new(err),
-            });
-            SaveOutcome::Failed
-        } else {
-            Self::subscribe_to_global_buffer_events(file_id, ctx);
-            SaveOutcome::Succeeded
+        let save_outcome = match GlobalBufferModel::handle(ctx).update(ctx, move |model, ctx| {
+            model.save(file_id, content, buffer_version, ctx)
+        }) {
+            Err(err) => {
+                report_error!(&err);
+                ctx.emit(LocalCodeEditorEvent::FailedToSave {
+                    error: Rc::new(err),
+                });
+                SaveOutcome::Failed
+            }
+            _ => {
+                Self::subscribe_to_global_buffer_events(file_id, ctx);
+                SaveOutcome::Succeeded
+            }
         };
         callback(save_outcome, ctx);
     }
@@ -2240,7 +2241,9 @@ impl DiffViewer for LocalCodeEditorView {
             }
             if let Some(path) = self.file_path().map(|p| p.to_path_buf()) {
                 if let Err(e) = std::fs::remove_file(&path) {
-                    report_error!(anyhow::Error::new(e).context("Failed to delete file after save"));
+                    report_error!(
+                        anyhow::Error::new(e).context("Failed to delete file after save")
+                    );
                 } else {
                     // This will close tabs with the file open
                     ctx.dispatch_typed_action(&WorkspaceAction::FileDeleted { path });

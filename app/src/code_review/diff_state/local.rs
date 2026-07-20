@@ -3,7 +3,7 @@
 //! Some of the code in this module is adapted from GitHub Desktop, which is licensed under the MIT license,
 //! Copyright (c) GitHub, Inc.  See GITHUB-DESKTOP-LICENSE in this directory.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::{
     collections::HashMap,
     fs::File,
@@ -21,7 +21,7 @@ cfg_if::cfg_if! {
 }
 #[cfg(not(target_arch = "wasm32"))]
 use warpui::AppContext;
-use warpui::{r#async::SpawnedFutureHandle, ModelContext};
+use warpui::{ModelContext, r#async::SpawnedFutureHandle};
 
 use crate::code_review::diff_size_limits::DiffSize;
 use crate::features::FeatureFlag;
@@ -31,8 +31,8 @@ use crate::util::git::get_all_branches;
 #[cfg(feature = "local_fs")]
 use crate::util::git::get_pr_for_branch;
 use crate::util::git::{
-    detect_current_branch, detect_main_branch, get_unpushed_commits, parse_unified_diff_header,
-    Commit, PrInfo,
+    Commit, PrInfo, detect_current_branch, detect_main_branch, get_unpushed_commits,
+    parse_unified_diff_header,
 };
 use warp_util::git::run_git_command;
 
@@ -277,13 +277,12 @@ impl LocalDiffStateModel {
             });
 
             ctx.spawn(fut, move |me, repo_path, ctx| {
-                if let Some(repo_path) = &repo_path {
-                    if let Some(repo_handle) = DetectedRepositories::as_ref(ctx)
+                if let Some(repo_path) = &repo_path
+                    && let Some(repo_handle) = DetectedRepositories::as_ref(ctx)
                         .get_local_watched_repo_for_path(repo_path, ctx)
-                    {
-                        me.set_active_repository(repo_handle, ctx);
-                        return;
-                    }
+                {
+                    me.set_active_repository(repo_handle, ctx);
+                    return;
                 }
                 // Repo detection completed but found no repository.
                 // Emit so subscribers (e.g. the server model) can drain
@@ -683,12 +682,10 @@ impl LocalDiffStateModel {
                             }
                         }
 
-                        if let Err(e) = fs::remove_file(repo_path.join(file_path)) {
-                            if e.kind() != std::io::ErrorKind::NotFound {
-                                log::warn!(
-                                    "Failed to remove file '{file_path}' from filesystem: {e}"
-                                );
-                            }
+                        if let Err(e) = fs::remove_file(repo_path.join(file_path))
+                            && e.kind() != std::io::ErrorKind::NotFound
+                        {
+                            log::warn!("Failed to remove file '{file_path}' from filesystem: {e}");
                         }
                     }
                     Ok(())
@@ -1226,12 +1223,12 @@ impl LocalDiffStateModel {
     /// `DirectoryWatcher` can be cleaned up.
     #[cfg(feature = "local_fs")]
     pub(crate) fn stop_active_watcher(&mut self, ctx: &mut ModelContext<Self>) {
-        if let Some(repository) = &self.repository {
-            if let Some(subscriber_id) = self.subscriber_id.take() {
-                repository.update(ctx, |repo, ctx| {
-                    repo.stop_watching(subscriber_id, ctx);
-                });
-            }
+        if let Some(repository) = &self.repository
+            && let Some(subscriber_id) = self.subscriber_id.take()
+        {
+            repository.update(ctx, |repo, ctx| {
+                repo.stop_watching(subscriber_id, ctx);
+            });
         }
     }
 
@@ -1993,7 +1990,10 @@ impl LocalDiffStateModel {
                         })?;
                         files.push((path.to_string(), status));
                     } else {
-                        log::warn!("Invalid format for changed entry: '{token}' - expected at least 9 parts, got {}", parts.len());
+                        log::warn!(
+                            "Invalid format for changed entry: '{token}' - expected at least 9 parts, got {}",
+                            parts.len()
+                        );
                     }
                 }
                 '2' => {
@@ -2030,7 +2030,10 @@ impl LocalDiffStateModel {
                         files.push((path.to_string(), status));
                         i += 1; // Skip the old path token
                     } else {
-                        log::warn!("Invalid format for renamed/copied entry: '{token}' - expected at least 10 parts, got {}", parts.len());
+                        log::warn!(
+                            "Invalid format for renamed/copied entry: '{token}' - expected at least 10 parts, got {}",
+                            parts.len()
+                        );
                     }
                 }
                 'u' => {
@@ -2041,7 +2044,11 @@ impl LocalDiffStateModel {
                         let path = parts[10];
                         files.push((path.to_string(), GitFileStatus::Conflicted));
                     } else {
-                        log::warn!("Invalid format for unmerged entry: '{}' - expected at least 11 parts, got {}", token, parts.len());
+                        log::warn!(
+                            "Invalid format for unmerged entry: '{}' - expected at least 11 parts, got {}",
+                            token,
+                            parts.len()
+                        );
                     }
                 }
                 '?' => {
@@ -2050,7 +2057,9 @@ impl LocalDiffStateModel {
                         let path = &token[2..]; // Skip "? "
                         files.push((path.to_string(), GitFileStatus::Untracked));
                     } else {
-                        log::warn!("Invalid format for untracked entry: '{token}' - expected path after '? '");
+                        log::warn!(
+                            "Invalid format for untracked entry: '{token}' - expected path after '? '"
+                        );
                     }
                 }
                 '!' => {

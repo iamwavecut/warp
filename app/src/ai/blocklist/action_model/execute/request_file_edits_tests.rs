@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use ai::agent::action_result::AnyFileContent;
 use ai::agent::FileLocations;
+use ai::agent::action_result::AnyFileContent;
 
 use super::updated_file_contexts_from_editor_buffers;
 

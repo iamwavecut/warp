@@ -10,6 +10,7 @@ use warp_terminal::model::BlockId;
 
 use crate::{
     agent::{
+        AIAgentCitation, FileLocations,
         action_result::{
             AIAgentActionResultType, AskUserQuestionResult, CallMCPToolResult,
             CreateDocumentsResult, EditDocumentsResult, FetchConversationResult, FileGlobResult,
@@ -21,7 +22,6 @@ use crate::{
             TransferShellCommandControlToUserResult, UseComputerResult,
             WriteToLongRunningShellCommandResult,
         },
-        AIAgentCitation, FileLocations,
     },
     diff_validation::ParsedDiff,
     document::AIDocumentId,

@@ -4,37 +4,38 @@ use chrono::{Duration, Utc};
 use futures_util::future::BoxFuture;
 use warp_core::ui::appearance::Appearance;
 use warp_editor::editor::EditorView;
-use warpui::elements::ChildView;
 use warpui::r#async::Timer;
+use warpui::elements::ChildView;
 use warpui::{
-    platform::WindowStyle, AddSingletonModel, App, AppContext, Element, Entity, SingletonEntity,
-    TypedActionView, View, ViewHandle, WindowId,
+    AddSingletonModel, App, AppContext, Element, Entity, SingletonEntity, TypedActionView, View,
+    ViewHandle, WindowId, platform::WindowStyle,
 };
 
 use crate::{
+    GlobalResourceHandles, GlobalResourceHandlesProvider, PrivacySettings,
     auth::{
+        AuthStateProvider, UserUid,
         auth_manager::AuthManager,
         user::{TEST_USER_EMAIL, TEST_USER_UID},
-        AuthStateProvider, UserUid,
     },
     cloud_object::{
+        Owner, Revision, ServerCloudObject, ServerMetadata, ServerNotebook, ServerPermissions,
         model::{
             actions::ObjectActions,
             persistence::CloudModel,
             view::{CloudViewModel, Editor, EditorState},
         },
-        Owner, Revision, ServerCloudObject, ServerMetadata, ServerNotebook, ServerPermissions,
     },
     drive::OpenWarpDriveObjectSettings,
     editor::{DisplayPoint, EditorAction, InteractionState, SelectAction},
     network::NetworkStatus,
     notebooks::{
+        CloudNotebook, CloudNotebookModel, NotebookLocation,
         active_notebook_data::Mode,
         editor::{
             keys::NotebookKeybindings, notebook_command::NotebookCommand, view::EditorViewAction,
         },
         notebook::FocusedComponent,
-        CloudNotebook, CloudNotebookModel, NotebookLocation,
     },
     pane_group::PaneEvent,
     search::files::model::FileSearchModel,
@@ -47,14 +48,13 @@ use crate::{
     settings_view::keybindings::KeybindingChangedNotifier,
     terminal::keys::TerminalKeybindings,
     test_util::settings::initialize_settings_for_tests,
-    workflows::{workflow::Workflow, WorkflowSource, WorkflowType},
+    workflows::{WorkflowSource, WorkflowType, workflow::Workflow},
     workspace::ActiveSession,
     workspaces::{
         team_tester::TeamTesterStatus,
         user_profiles::{UserProfileWithUID, UserProfiles},
         user_workspaces::UserWorkspaces,
     },
-    GlobalResourceHandles, GlobalResourceHandlesProvider, PrivacySettings,
 };
 
 use super::{NotebookEvent, NotebookView, SAVE_PERIOD};
@@ -800,10 +800,12 @@ fn test_conflicting_notebook_read_only() {
         });
 
         notebook_view.read(&app, |notebook_view, ctx| {
-            assert!(notebook_view
-                .active_notebook_data
-                .as_ref(ctx)
-                .has_conflicts(ctx));
+            assert!(
+                notebook_view
+                    .active_notebook_data
+                    .as_ref(ctx)
+                    .has_conflicts(ctx)
+            );
             assert_eq!(notebook_view.mode(ctx), Mode::View);
         })
     });

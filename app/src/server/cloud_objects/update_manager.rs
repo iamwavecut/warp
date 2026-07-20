@@ -2,22 +2,22 @@ use crate::{
     ai::facts::{AIFact, CloudAIFactModel},
     auth::AuthStateProvider,
     cloud_object::{
+        CloudLinkSharing, CloudModelType, CloudObject, CloudObjectEventEntrypoint,
+        CloudObjectLocation, CloudObjectSyncStatus, GenericCloudObject, GenericStringObjectFormat,
+        JsonObjectType, NumInFlightRequests, ObjectDeleteResult, ObjectIdType,
+        ObjectMetadataUpdateResult, ObjectPermissionsUpdateData, ObjectType, Owner, Revision,
+        RevisionAndLastEditor, ServerCloudObject, ServerMetadata, Space,
         model::{
             actions::{ObjectAction, ObjectActionHistory, ObjectActionType, ObjectActions},
             generic_string_model::GenericStringObjectId,
             persistence::{CloudModel, CloudModelEvent, UpdateSource},
             view::{CloudViewModel, Editor, EditorState},
         },
-        CloudLinkSharing, CloudModelType, CloudObject, CloudObjectEventEntrypoint,
-        CloudObjectLocation, CloudObjectSyncStatus, GenericCloudObject, GenericStringObjectFormat,
-        JsonObjectType, NumInFlightRequests, ObjectDeleteResult, ObjectIdType,
-        ObjectMetadataUpdateResult, ObjectPermissionsUpdateData, ObjectType, Owner, Revision,
-        RevisionAndLastEditor, ServerCloudObject, ServerMetadata, Space,
     },
     drive::{
+        CloudObjectTypeAndId,
         folders::{CloudFolderModel, FolderId},
         sharing::SharingAccessLevel,
-        CloudObjectTypeAndId,
     },
     env_vars::{CloudEnvVarCollectionModel, EnvVarCollection},
     network::{NetworkStatus, NetworkStatusEvent, NetworkStatusKind},
@@ -25,16 +25,16 @@ use crate::{
     persistence::ModelEvent,
     server::{
         ids::{
-            parse_sqlite_id_to_uid, ClientId, HashableId, HashedSqliteId, ObjectUid, ServerId,
-            SyncId, ToServerId,
+            ClientId, HashableId, HashedSqliteId, ObjectUid, ServerId, SyncId, ToServerId,
+            parse_sqlite_id_to_uid,
         },
         server_api::object::{GuestIdentifier, ObjectClient},
         sync_queue::{CreationFailureReason, QueueItem, SyncQueue, SyncQueueEvent},
     },
     workflows::{
+        CloudWorkflowModel, WorkflowId,
         workflow::Workflow,
         workflow_enum::{CloudWorkflowEnum, CloudWorkflowEnumModel, WorkflowEnum},
-        CloudWorkflowModel, WorkflowId,
     },
     workspaces::{user_profiles::UserProfiles, user_workspaces::UserWorkspaces},
 };
@@ -44,12 +44,12 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashSet;
 use std::future::Future;
-use std::sync::{mpsc::SyncSender, Arc};
+use std::sync::{Arc, mpsc::SyncSender};
 use std::time::Duration;
 use warp_graphql::object_permissions::AccessLevel;
 use warp_graphql::scalars::time::ServerTimestamp;
-use warpui::r#async::FutureId;
 use warpui::AppContext;
+use warpui::r#async::FutureId;
 use warpui::{Entity, ModelContext, RequestState, RetryOption, SingletonEntity};
 
 lazy_static! {
@@ -596,18 +596,17 @@ impl UpdateManager {
                             if matches!(
                                 fetch_single_object_option,
                                 FetchSingleObjectOption::ForceOverwrite
-                            ) {
-                                if let Some(object) = cloud_model.get_mut_by_uid(&uid) {
-                                    let had_conflict = object.has_conflicting_changes();
-                                    object.replace_object_with_conflict();
-                                    // If there was a conflict, `upsert_from_server_cloud_object` won't
-                                    // have emitted an update event. Do it here instead.
-                                    if had_conflict {
-                                        ctx.emit(CloudModelEvent::ObjectUpdated {
-                                            type_and_id: object.cloud_object_type_and_id(),
-                                            source: UpdateSource::Server,
-                                        });
-                                    }
+                            ) && let Some(object) = cloud_model.get_mut_by_uid(&uid)
+                            {
+                                let had_conflict = object.has_conflicting_changes();
+                                object.replace_object_with_conflict();
+                                // If there was a conflict, `upsert_from_server_cloud_object` won't
+                                // have emitted an update event. Do it here instead.
+                                if had_conflict {
+                                    ctx.emit(CloudModelEvent::ObjectUpdated {
+                                        type_and_id: object.cloud_object_type_and_id(),
+                                        source: UpdateSource::Server,
+                                    });
                                 }
                             }
 
@@ -1643,7 +1642,9 @@ impl UpdateManager {
                 let cloud_model = CloudModel::as_ref(ctx);
                 let object: Option<&CloudWorkflowEnum> = cloud_model.get_object_of_type(enum_id);
                 let Some(object) = object else {
-                    report_error!("Could not find referenced workflow enum to copy over to the new space, skipping");
+                    report_error!(
+                        "Could not find referenced workflow enum to copy over to the new space, skipping"
+                    );
                     continue;
                 };
 
@@ -2144,11 +2145,10 @@ impl UpdateManager {
         // Populate sync queue.
         SyncQueue::handle(ctx).update(ctx, |sync_queue, ctx| {
             let cloud_model = CloudModel::as_ref(ctx);
-            if let Some(object) = cloud_model.get_object_of_type::<K, M>(&object_id) {
-                if let Some(queue_item) = object.create_object_queue_item(entrypoint, initiated_by)
-                {
-                    sync_queue.enqueue(queue_item, ctx);
-                }
+            if let Some(object) = cloud_model.get_object_of_type::<K, M>(&object_id)
+                && let Some(queue_item) = object.create_object_queue_item(entrypoint, initiated_by)
+            {
+                sync_queue.enqueue(queue_item, ctx);
             };
         });
     }

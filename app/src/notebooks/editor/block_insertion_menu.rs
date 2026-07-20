@@ -14,7 +14,7 @@ use warpui::{AppContext, Element, SingletonEntity, ViewContext, ViewHandle};
 
 use crate::{
     appearance::Appearance,
-    cloud_object::{model::persistence::CloudModel, ObjectIdType, Space},
+    cloud_object::{ObjectIdType, Space, model::persistence::CloudModel},
     drive::CloudObjectTypeAndId,
     menu::{self, Menu, MenuItemFields},
     notebooks::EmbeddedObjectInfo,
@@ -28,9 +28,9 @@ use crate::{
 };
 
 use super::{
+    BlockType,
     embedded_item::EmbeddedWorkflow,
     view::{EditorViewAction, EditorViewEvent, RichTextEditorView},
-    BlockType,
 };
 
 /// The saved position ID for the block insertion button.

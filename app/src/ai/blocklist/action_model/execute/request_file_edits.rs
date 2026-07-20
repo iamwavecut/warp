@@ -7,33 +7,33 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use ai::diff_validation::AIRequestedCodeDiff;
-use futures::{channel::oneshot, future::BoxFuture, FutureExt};
+use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use itertools::Itertools;
-use vec1::{vec1, Vec1};
+use vec1::{Vec1, vec1};
 use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity as _, ViewHandle};
 
 use apply_diff_model::ApplyDiffModel;
 use diff_application::DiffApplicationError;
 
 use crate::{
+    BlocklistAIHistoryModel,
     ai::{
         agent::{
-            conversation::AIConversationId, AIAgentAction, AIAgentActionId,
-            AIAgentActionResultType, AIAgentActionType, AIAgentOutputMessage,
-            AIAgentOutputMessageType, AIIdentifiers, AnyFileContent, FileContext, FileLocations,
-            RequestFileEditsResult, UpdatedFileContext,
+            AIAgentAction, AIAgentActionId, AIAgentActionResultType, AIAgentActionType,
+            AIAgentOutputMessage, AIAgentOutputMessageType, AIIdentifiers, AnyFileContent,
+            FileContext, FileLocations, RequestFileEditsResult, UpdatedFileContext,
+            conversation::AIConversationId,
         },
         blocklist::{
+            BlocklistAIPermissions,
             inline_action::code_diff_view::{
                 CodeDiffView, CodeDiffViewEvent, DiffSessionType, FileDiff,
             },
-            BlocklistAIPermissions,
         },
         paths::host_native_absolute_path,
     },
     safe_warn,
-    terminal::model::session::{active_session::ActiveSession, SessionType},
-    BlocklistAIHistoryModel,
+    terminal::model::session::{SessionType, active_session::ActiveSession},
 };
 
 use super::{ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput};
@@ -130,7 +130,7 @@ impl RequestFileEditsExecutor {
         &mut self,
         input: ExecuteActionInput,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Into<AnyActionExecution> {
+    ) -> impl Into<AnyActionExecution> + use<> {
         let ExecuteActionInput {
             action:
                 AIAgentAction {

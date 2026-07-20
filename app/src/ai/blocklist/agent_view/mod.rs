@@ -23,7 +23,7 @@ pub use controller::*;
 pub(crate) use conversation_selection::AgentViewConversationSelection;
 pub use ephemeral_message_model::*;
 pub use inline_agent_view_header::*;
-pub use orchestration_pill_bar::{render_orchestration_breadcrumbs, OrchestrationPillBar};
+pub use orchestration_pill_bar::{OrchestrationPillBar, render_orchestration_breadcrumbs};
 use pathfinder_color::ColorU;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::color::blend::Blend;

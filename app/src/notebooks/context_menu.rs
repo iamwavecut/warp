@@ -12,8 +12,8 @@ use crate::{
     editor::EditorView,
     menu::{self, Menu, MenuItem, MenuItemFields},
     notebooks::ActionEntrypoint,
-    pane_group::{focus_state::PaneFocusHandle, PaneEvent, SplitPaneState},
-    util::bindings::{keybinding_name_to_display_string, trigger_to_keystroke, CustomAction},
+    pane_group::{PaneEvent, SplitPaneState, focus_state::PaneFocusHandle},
+    util::bindings::{CustomAction, keybinding_name_to_display_string, trigger_to_keystroke},
 };
 
 use super::editor::{keys::custom_action_to_display, view::RichTextEditorView};

@@ -20,45 +20,45 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 use warpui::{
+    AppContext, Element, Entity, EntityId, SingletonEntity as _, TypedActionView, View, ViewAsRef,
+    ViewContext, ViewHandle,
     elements::{
         ChildView, Clipped, Container, CornerRadius, CrossAxisAlignment, Fill, Flex,
         MainAxisAlignment, MainAxisSize, ParentElement, Radius, Rect, Shrinkable,
         SizeConstraintCondition, SizeConstraintSwitch,
     },
     ui_components::{components::UiComponentStyles, segmented_control::RenderableOptionConfig},
-    AppContext, Element, Entity, EntityId, SingletonEntity as _, TypedActionView, View, ViewAsRef,
-    ViewContext, ViewHandle,
 };
 
 use warp_core::ui::{
     color::{
-        coloru_with_opacity,
-        contrast::{foreground_color_with_minimum_contrast, MinimumAllowedContrast},
-        Opacity, Rgb,
+        Opacity, Rgb, coloru_with_opacity,
+        contrast::{MinimumAllowedContrast, foreground_color_with_minimum_contrast},
     },
     theme,
 };
 
 use std::boxed::Box;
 use warpui::{
-    ui_components::segmented_control::{SegmentedControl, SegmentedControlEvent},
     ModelHandle,
+    ui_components::segmented_control::{SegmentedControl, SegmentedControlEvent},
 };
 
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 
-use crate::ai::blocklist::prompt::PromptIconButtonTheme;
 use crate::ai::blocklist::BlocklistAIHistoryEvent;
+use crate::ai::blocklist::prompt::PromptIconButtonTheme;
 
 use crate::{
+    BlocklistAIHistoryModel,
     ai::{
+        AIRequestUsageModel,
         blocklist::{
-            prompt::prompt_alert::{PromptAlertEvent, PromptAlertView},
             BlocklistAIInputModel, InputConfig, InputType,
+            prompt::prompt_alert::{PromptAlertEvent, PromptAlertView},
         },
         execution_profiles::profiles::AIExecutionProfilesModel,
-        AIRequestUsageModel,
     },
     network::NetworkStatus,
     settings::AISettings,
@@ -75,7 +75,6 @@ use crate::{
         ActionButton, ActionButtonTheme, ButtonSize, NakedTheme, TooltipAlignment,
     },
     workspaces::user_workspaces::UserWorkspaces,
-    BlocklistAIHistoryModel,
 };
 use warp_core::features::FeatureFlag;
 use warpui::ui_components::segmented_control::TooltipConfig;
@@ -230,7 +229,7 @@ fn calculate_profile_model_selector_threshold(
     let model_name_char_count = active_llm.menu_display_name().chars().count() as f32;
     let model_text_width = model_name_char_count * em_width;
 
-    let result = if has_multiple_profiles {
+    if has_multiple_profiles {
         let profile_name_char_count = AIExecutionProfilesModel::as_ref(ctx)
             .active_profile(Some(terminal_view_id), ctx)
             .data()
@@ -243,8 +242,7 @@ fn calculate_profile_model_selector_threshold(
         font_size * 20.0 + profile_text_width + model_text_width
     } else {
         20.0 * font_size + base_constant + model_text_width
-    };
-    result
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

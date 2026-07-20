@@ -43,11 +43,11 @@ use crate::terminal::model::completions::{
 use crate::terminal::model::escape_sequences::C0;
 use crate::terminal::model::index::VisibleRow;
 use crate::terminal::model::iterm_image::parse_iterm_image_metadata;
-use crate::terminal::model::tmux::commands::{parse_command, TmuxCommandResponse};
+use crate::terminal::model::tmux::commands::{TmuxCommandResponse, parse_command};
 use crate::terminal::model::tmux::parser::{
     TmuxControlModeHandler, TmuxControlModeParser, TmuxMessage,
 };
-use crate::terminal::model::tmux::{format_input, ControlModeEvent};
+use crate::terminal::model::tmux::{ControlModeEvent, format_input};
 use crate::{safe_debug, safe_error, safe_warn};
 
 /// Marks an OSC as one that is sent by Warp logic registered in the shell.
@@ -219,12 +219,11 @@ fn parse_number(input: &[u8]) -> Option<u8> {
     let mut num: u8 = 0;
     for c in input {
         let c = *c as char;
-        if let Some(digit) = c.to_digit(10) {
+        {
+            let digit = c.to_digit(10)?;
             num = num
                 .checked_mul(10)
                 .and_then(|v| v.checked_add(digit as u8))?
-        } else {
-            return None;
         }
     }
     Some(num)
@@ -685,10 +684,10 @@ impl<'a, H: Handler + 'a, W: io::Write> Performer<'a, H, W> {
     /// Calls the appropriate `ansi::Handler` function according to the given hook. This function
     /// assumes that the hook was encoded originally.
     fn handle_decoded_hook(&mut self, hook: Result<DProtoHook, serde_json::Error>) {
-        if let Ok(ref hook) = hook {
-            if !self.validate_hook_session_id(hook) {
-                return;
-            }
+        if let Ok(ref hook) = hook
+            && !self.validate_hook_session_id(hook)
+        {
+            return;
         }
         match hook {
             Ok(DProtoHook::CommandFinished { value }) => self.handler.command_finished(value),
@@ -721,10 +720,13 @@ impl<'a, H: Handler + 'a, W: io::Write> Performer<'a, H, W> {
                 self.handler.remote_warpification_is_unavailable(value)
             }
             Ok(DProtoHook::SshTmuxInstaller { value }) => {
-                if let Ok(tmux_installation) = TmuxInstallationState::from_str(&value) {
-                    self.handler.notify_ssh_tmux_is_installed(tmux_installation)
-                } else {
-                    log::error!("Received invalid SSH tmux installer value: '{value}'");
+                match TmuxInstallationState::from_str(&value) {
+                    Ok(tmux_installation) => {
+                        self.handler.notify_ssh_tmux_is_installed(tmux_installation)
+                    }
+                    _ => {
+                        log::error!("Received invalid SSH tmux installer value: '{value}'");
+                    }
                 }
             }
             Ok(DProtoHook::TmuxInstallFailed { value }) => self.handler.tmux_install_failed(value),
@@ -745,10 +747,10 @@ impl<'a, H: Handler + 'a, W: io::Write> Performer<'a, H, W> {
         // This is because we can guarantee that theses RC file hook don't contain non-ASCII chars
         // that might otherwise corrupt parsing of the PTY output (the same can't be said for the
         // payloads of other DCS hooks).
-        if let Ok(ref hook) = hook {
-            if !self.validate_hook_session_id(hook) {
-                return;
-            }
+        if let Ok(ref hook) = hook
+            && !self.validate_hook_session_id(hook)
+        {
+            return;
         }
         match hook {
             Ok(DProtoHook::InitShell { value }) => self.handler.init_shell(value),
@@ -1034,12 +1036,12 @@ where
                         .map(|x| str::from_utf8(x))
                         .collect::<Result<Vec<_>, _>>()
                         .map(|parts| parts.join(";").trim().to_owned());
-                    if let Ok(body) = body {
-                        if !body.is_empty() {
-                            log::info!("Received OSC 9 notification: {}", body);
-                            self.handler.pluggable_notification(None, body);
-                            return;
-                        }
+                    if let Ok(body) = body
+                        && !body.is_empty()
+                    {
+                        log::info!("Received OSC 9 notification: {}", body);
+                        self.handler.pluggable_notification(None, body);
+                        return;
                     }
                 }
                 unhandled(params);
@@ -1047,35 +1049,35 @@ where
 
             // Get/set Foreground, Background, Cursor colors.
             b"10" | b"11" | b"12" => {
-                if params.len() >= 2 {
-                    if let Some(mut dynamic_code) = parse_number(params[0]) {
-                        for param in &params[1..] {
-                            // 10 is the first dynamic color, also the foreground.
-                            let offset = dynamic_code as usize - 10;
-                            let index = color_index::FOREGROUND + offset;
+                if params.len() >= 2
+                    && let Some(mut dynamic_code) = parse_number(params[0])
+                {
+                    for param in &params[1..] {
+                        // 10 is the first dynamic color, also the foreground.
+                        let offset = dynamic_code as usize - 10;
+                        let index = color_index::FOREGROUND + offset;
 
-                            // End of setting dynamic colors.
-                            if index > color_index::CURSOR {
-                                unhandled(params);
-                                break;
-                            }
-
-                            if let Some(color) = xparse_color(param) {
-                                self.handler.set_color(index, color);
-                            } else if param == b"?" {
-                                self.handler.dynamic_color_sequence(
-                                    writer,
-                                    dynamic_code,
-                                    index,
-                                    terminator,
-                                );
-                            } else {
-                                unhandled(params);
-                            }
-                            dynamic_code += 1;
+                        // End of setting dynamic colors.
+                        if index > color_index::CURSOR {
+                            unhandled(params);
+                            break;
                         }
-                        return;
+
+                        if let Some(color) = xparse_color(param) {
+                            self.handler.set_color(index, color);
+                        } else if param == b"?" {
+                            self.handler.dynamic_color_sequence(
+                                writer,
+                                dynamic_code,
+                                index,
+                                terminator,
+                            );
+                        } else {
+                            unhandled(params);
+                        }
+                        dynamic_code += 1;
                     }
+                    return;
                 }
                 unhandled(params);
             }
@@ -1356,7 +1358,9 @@ where
                             );
                         }
                         _ => {
-                            log::warn!("Invalid Warp OSC marker parameter for completions match metadata: {parameter}");
+                            log::warn!(
+                                "Invalid Warp OSC marker parameter for completions match metadata: {parameter}"
+                            );
                         }
                     }
                 }
@@ -1649,7 +1653,7 @@ where
         }
 
         macro_rules! configure_charset {
-            ($charset:path, $intermediates:expr) => {{
+            ($charset:path, $intermediates:expr_2021) => {{
                 let index: CharsetIndex = match $intermediates {
                     [b'('] => CharsetIndex::G0,
                     [b')'] => CharsetIndex::G1,
@@ -1816,7 +1820,9 @@ impl<'a, H: Handler + 'a, W: io::Write> TmuxPerformer<'a, H, W> {
         );
 
         let PrimaryPaneState::Pending { pane_output_map } = previous_pane_state else {
-            log::error!("Received primary pane initialization message after primary pane was already initialized!");
+            log::error!(
+                "Received primary pane initialization message after primary pane was already initialized!"
+            );
             return;
         };
 

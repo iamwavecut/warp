@@ -14,17 +14,17 @@ use uuid::Uuid;
 use warp_cli::agent::Harness;
 use warpui::{ModelHandle, ModelSpawner, SingletonEntity};
 
-use crate::ai::ambient_agents::{task::HarnessModelConfig, AmbientAgentTaskId};
+use crate::ai::ambient_agents::{AmbientAgentTaskId, task::HarnessModelConfig};
 use crate::ai::mcp::JSONTransportType;
 use crate::server::server_api::ServerApi;
-use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::terminal::CLIAgent;
+use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use warp_managed_secrets::ManagedSecretValue;
 
 use super::super::terminal::{CommandHandle, TerminalDriver};
 use super::super::{AgentDriver, AgentDriverError};
 use super::json_utils::read_json_file_or_default;
-use super::{write_temp_file, HarnessRunner, JSONMCPServer, SavePoint, ThirdPartyHarness};
+use super::{HarnessRunner, JSONMCPServer, SavePoint, ThirdPartyHarness, write_temp_file};
 
 pub(crate) struct CodexHarness;
 
@@ -310,10 +310,10 @@ fn prepare_codex_environment_config(
 }
 
 fn codex_config_dir() -> Result<PathBuf> {
-    if let Ok(dir) = std::env::var(CODEX_HOME_ENV) {
-        if !dir.is_empty() {
-            return Ok(PathBuf::from(dir));
-        }
+    if let Ok(dir) = std::env::var(CODEX_HOME_ENV)
+        && !dir.is_empty()
+    {
+        return Ok(PathBuf::from(dir));
     }
     dirs::home_dir()
         .map(|home| home.join(CODEX_CONFIG_DIR))

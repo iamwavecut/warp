@@ -1,9 +1,9 @@
 use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
 #[cfg(feature = "local_fs")]
 use ai::skills::SKILL_PROVIDER_DEFINITIONS;
-use repo_metadata::repositories::DetectedRepositories;
 #[cfg(feature = "local_fs")]
 use repo_metadata::RepoMetadataModel;
+use repo_metadata::repositories::DetectedRepositories;
 use warp_core::ui::appearance::Appearance;
 
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
@@ -21,30 +21,30 @@ use crate::code_review::git_status_update::GitStatusUpdateModel;
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::warp_managed_paths_watcher::WarpManagedPathsWatcher;
 use warpui::SingletonEntity;
-use warpui::{platform::WindowStyle, App, ViewHandle, WindowId};
+use warpui::{App, ViewHandle, WindowId, platform::WindowStyle};
 use watcher::HomeDirectoryWatcher;
 
 use super::settings::initialize_history_persistence_for_tests;
+use crate::AgentNotificationsModel;
+use crate::ai::blocklist::BlocklistAIPermissions;
+use crate::ai::blocklist::SerializedBlockListItem;
 use crate::ai::blocklist::agent_view::orchestration_pill_bar_model::OrchestrationPillBarModel;
 use crate::ai::blocklist::orchestration_event_streamer::OrchestrationEventStreamer;
 use crate::ai::blocklist::orchestration_events::OrchestrationEventService;
-use crate::ai::blocklist::BlocklistAIPermissions;
-use crate::ai::blocklist::SerializedBlockListItem;
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::llms::LLMPreferences;
 use crate::ai::outline::RepoOutlines;
 use crate::ai::restored_conversations::RestoredAgentConversations;
-use crate::auth::auth_manager::AuthManager;
 use crate::auth::AuthStateProvider;
+use crate::auth::auth_manager::AuthManager;
 use crate::suggestions::ignored_suggestions_model::IgnoredSuggestionsModel;
 use crate::terminal::shared_session::permissions_manager::SessionPermissionsManager;
 use crate::terminal::view::inline_banner::ByoLlmAuthBannerSessionState;
 use crate::undo_close::UndoCloseStack;
 use crate::workspace::{OneTimeModalModel, WorkspaceRegistry};
-use crate::AgentNotificationsModel;
 use crate::{
-    ai::{blocklist::BlocklistAIHistoryModel, AIRequestUsageModel},
+    ai::{AIRequestUsageModel, blocklist::BlocklistAIHistoryModel},
     cloud_object::model::persistence::CloudModel,
     context_chips::prompt::Prompt,
     experiments,
@@ -60,11 +60,11 @@ use crate::{
     system::SystemInfo,
     system::SystemStats,
     terminal::{
-        alt_screen_reporting::AltScreenReporting, keys::TerminalKeybindings,
-        resizable_data::ResizableData, History, TerminalView,
+        History, TerminalView, alt_screen_reporting::AltScreenReporting, keys::TerminalKeybindings,
+        resizable_data::ResizableData,
     },
     workflows::local_workflows::LocalWorkflows,
-    workspace::{sync_inputs::SyncedInputState, ActiveSession},
+    workspace::{ActiveSession, sync_inputs::SyncedInputState},
     workspaces::{
         team_tester::TeamTesterStatus, update_manager::TeamUpdateManager,
         user_workspaces::UserWorkspaces,

@@ -5,50 +5,49 @@ pub mod toolbar_item;
 use crate::ai::blocklist::agent_view::is_in_cloud_context;
 use crate::{
     ai::{
+        AIRequestUsageModel,
         blocklist::{
+            BlocklistAIInputModel,
             history_model::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel},
             prompt::prompt_alert::{PromptAlertEvent, PromptAlertView},
             usage::icon_for_context_window_usage,
-            BlocklistAIInputModel,
         },
         execution_profiles::profiles::AIExecutionProfilesModel,
-        AIRequestUsageModel,
     },
     appearance::Appearance,
     completer::SessionContext,
     context_chips::{
-        self,
+        self, ContextChipKind,
         display_chip::{DisplayChip, DisplayChipConfig, PromptChipShellCommand},
         prompt_type::PromptType,
-        ContextChipKind,
     },
     features::FeatureFlag,
     network::NetworkStatus,
     settings::{AISettings, AISettingsChangedEvent},
     settings_view::SettingsSection,
     terminal::{
+        CLIAgent, TerminalModel,
         cli_agent_sessions::{
-            listener::agent_supports_rich_status, CLIAgentInputState, CLIAgentSessionsModel,
-            CLIAgentSessionsModelEvent,
+            CLIAgentInputState, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
+            listener::agent_supports_rich_status,
         },
-        input::{models::InlineModelSelectorTab, MenuPositioningProvider},
+        input::{MenuPositioningProvider, models::InlineModelSelectorTab},
         profile_model_selector::{ProfileModelSelector, ProfileModelSelectorEvent},
         session_settings::{SessionSettings, SessionSettingsChangedEvent, ToolbarChipSelection},
         shared_session::SharedSessionStatus,
+        view::TerminalAction,
         view::ambient_agent::{AmbientAgentViewModel, ModelSelector, ModelSelectorEvent},
         view::init::OPEN_CLI_AGENT_RICH_INPUT_KEYBINDING,
-        view::TerminalAction,
-        CLIAgent, TerminalModel,
     },
     ui_components::icons::Icon,
     view_components::{
+        DismissibleToast,
         action_button::{
             ActionButton, ActionButtonTheme, AdjoinedSide, ButtonSize, KeystrokeSource,
             TooltipAlignment,
         },
-        DismissibleToast,
     },
-    workspace::{view::TOGGLE_PROJECT_EXPLORER_BINDING_NAME, ToastStack},
+    workspace::{ToastStack, view::TOGGLE_PROJECT_EXPLORER_BINDING_NAME},
     workspaces::user_workspaces::UserWorkspaces,
 };
 use toolbar_item::AgentToolbarItemKind;
@@ -57,9 +56,9 @@ use warp_cli::agent::Harness;
 use std::sync::Arc;
 
 #[cfg(not(target_family = "wasm"))]
-use crate::terminal::local_shell::LocalShellState;
-#[cfg(not(target_family = "wasm"))]
 use crate::terminal::ShellLaunchData;
+#[cfg(not(target_family = "wasm"))]
+use crate::terminal::local_shell::LocalShellState;
 #[cfg(feature = "voice_input")]
 use crate::voice::transcriber::TranscribeError;
 use ai::document::{AIDocumentId, AIDocumentVersion};
@@ -79,19 +78,19 @@ use tokio::fs;
 use voice_input::{StartListeningError, VoiceSessionResult};
 
 use warp_core::ui::{
-    color::{blend::Blend, contrast::MinimumAllowedContrast, ContrastingColor},
-    theme::{color::internal_colors, Fill},
+    color::{ContrastingColor, blend::Blend, contrast::MinimumAllowedContrast},
+    theme::{Fill, color::internal_colors},
 };
 #[cfg(feature = "voice_input")]
 use warpui::r#async::SpawnedFutureHandle;
 use warpui::{
+    AppContext, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
+    ViewHandle,
     elements::{
         ChildView, Clipped, ConstrainedBox, Container, CrossAxisAlignment, DispatchEventResult,
         Element, Empty, EventHandler, Flex, MainAxisAlignment, MainAxisSize, ParentElement,
         Shrinkable, Wrap, WrapFill, WrapFillEntireRun,
     },
-    AppContext, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
-    ViewHandle,
 };
 
 #[cfg(not(target_family = "wasm"))]
@@ -99,8 +98,8 @@ use warpui::r#async::Timer;
 
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::{
-    compare_versions, plugin_manager_for, plugin_manager_for_with_shell, CliAgentPluginManager,
-    PluginInstallError, PluginModalKind,
+    CliAgentPluginManager, PluginInstallError, PluginModalKind, compare_versions,
+    plugin_manager_for, plugin_manager_for_with_shell,
 };
 #[cfg(not(target_family = "wasm"))]
 use crate::view_components::ToastLink;
@@ -456,31 +455,30 @@ impl AgentInputFooter {
                 // When a session starts, update the install chip label and
                 // start a debounce timer for non-auto-install agents.
                 #[cfg(not(target_family = "wasm"))]
-                if let CLIAgentSessionsModelEvent::Started { .. } = event {
-                    if let Some(agent) = me.cli_agent(ctx) {
-                        let label = format!("Enable {} notifications", agent.display_name());
-                        me.install_plugin_button.update(ctx, |button, ctx| {
-                            button.set_label(label, ctx);
-                        });
-                        if let Some(manager) = plugin_manager_for(agent) {
-                            if !manager.can_auto_install() {
-                                ctx.spawn(
-                                    Timer::after(PLUGIN_CHIP_DEBOUNCE),
-                                    |me, _, ctx: &mut ViewContext<Self>| {
-                                        let suppress = CLIAgentSessionsModel::as_ref(ctx)
-                                            .session(me.terminal_view_id)
-                                            .is_some_and(|s| {
-                                                s.listener.is_some()
-                                                    && agent_supports_rich_status(&s.agent)
-                                            });
-                                        if !suppress {
-                                            me.plugin_chip_ready = true;
-                                            ctx.notify();
-                                        }
-                                    },
-                                );
-                            }
-                        }
+                if let CLIAgentSessionsModelEvent::Started { .. } = event
+                    && let Some(agent) = me.cli_agent(ctx)
+                {
+                    let label = format!("Enable {} notifications", agent.display_name());
+                    me.install_plugin_button.update(ctx, |button, ctx| {
+                        button.set_label(label, ctx);
+                    });
+                    if let Some(manager) = plugin_manager_for(agent)
+                        && !manager.can_auto_install()
+                    {
+                        ctx.spawn(
+                            Timer::after(PLUGIN_CHIP_DEBOUNCE),
+                            |me, _, ctx: &mut ViewContext<Self>| {
+                                let suppress = CLIAgentSessionsModel::as_ref(ctx)
+                                    .session(me.terminal_view_id)
+                                    .is_some_and(|s| {
+                                        s.listener.is_some() && agent_supports_rich_status(&s.agent)
+                                    });
+                                if !suppress {
+                                    me.plugin_chip_ready = true;
+                                    ctx.notify();
+                                }
+                            },
+                        );
                     }
                 }
 
@@ -748,10 +746,8 @@ impl AgentInputFooter {
                 .is_some_and(|ambient_agent_model| {
                     ambient_agent_model.as_ref(app).selected_harness() == Harness::Oz
                 });
-        if is_oz_harness {
-            if let Some(model_selector) = self.v2_model_selector.as_ref() {
-                right = right.with_child(ChildView::new(model_selector).finish());
-            }
+        if is_oz_harness && let Some(model_selector) = self.v2_model_selector.as_ref() {
+            right = right.with_child(ChildView::new(model_selector).finish());
         }
 
         Flex::row()
@@ -928,10 +924,10 @@ impl AgentInputFooter {
         }
 
         #[cfg(not(target_family = "wasm"))]
-        if let Some(manager) = plugin_manager_for(session.agent) {
-            if !manager.can_auto_install() {
-                return true;
-            }
+        if let Some(manager) = plugin_manager_for(session.agent)
+            && !manager.can_auto_install()
+        {
+            return true;
         }
         if session.is_remote() {
             return true;
@@ -1076,7 +1072,6 @@ impl AgentInputFooter {
 
                 if result.is_ok() {
                     ctx.emit(AgentInputFooterEvent::PluginInstalled(agent));
-                } else {
                 }
 
                 ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
@@ -1253,23 +1248,23 @@ impl AgentInputFooter {
             .with_spacing(4.);
 
         // CLI agent brand icon is always rendered (not configurable).
-        if let Some(agent) = self.cli_agent(app) {
-            if let Some(icon) = agent.icon() {
-                let icon_color = agent
-                    .brand_color()
-                    .map(|c| c.on_background(background_color, MinimumAllowedContrast::NonText))
-                    .unwrap_or_else(|| appearance.theme().foreground().into_solid());
-                left_buttons.add_child(
-                    Container::new(
-                        ConstrainedBox::new(icon.to_warpui_icon(Fill::Solid(icon_color)).finish())
-                            .with_width(cli_icon_size)
-                            .with_height(cli_icon_size)
-                            .finish(),
-                    )
-                    .with_padding_right(8.)
-                    .finish(),
-                );
-            }
+        if let Some(agent) = self.cli_agent(app)
+            && let Some(icon) = agent.icon()
+        {
+            let icon_color = agent
+                .brand_color()
+                .map(|c| c.on_background(background_color, MinimumAllowedContrast::NonText))
+                .unwrap_or_else(|| appearance.theme().foreground().into_solid());
+            left_buttons.add_child(
+                Container::new(
+                    ConstrainedBox::new(icon.to_warpui_icon(Fill::Solid(icon_color)).finish())
+                        .with_width(cli_icon_size)
+                        .with_height(cli_icon_size)
+                        .finish(),
+                )
+                .with_padding_right(8.)
+                .finish(),
+            );
         }
 
         if let Some(chip_kind) = self.plugin_chip_kind(app) {
@@ -1332,11 +1327,8 @@ impl AgentInputFooter {
     }
 
     pub fn has_open_chip_menu(&self, app: &AppContext) -> bool {
-        let has_open_display_chip = self
-            .all_display_chips()
-            .any(|chip| chip.as_ref(app).display_chip_kind().has_open_menu());
-
-        has_open_display_chip
+        self.all_display_chips()
+            .any(|chip| chip.as_ref(app).display_chip_kind().has_open_menu())
     }
 
     pub fn is_model_selector_open(&self, app: &AppContext) -> bool {
@@ -1930,9 +1922,11 @@ impl TypedActionView for AgentInputFooter {
             AgentInputFooterAction::ToggleAutodetectionSetting => {
                 let ai_settings = AISettings::handle(ctx);
                 ai_settings.update(ctx, |settings, ctx| {
-                    report_if_error!(settings
-                        .ai_autodetection_enabled_internal
-                        .toggle_and_save_value(ctx));
+                    report_if_error!(
+                        settings
+                            .ai_autodetection_enabled_internal
+                            .toggle_and_save_value(ctx)
+                    );
                 });
             }
             AgentInputFooterAction::InstallPlugin => {

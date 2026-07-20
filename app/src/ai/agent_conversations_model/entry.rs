@@ -4,9 +4,9 @@ use warp_cli::agent::Harness;
 use warpui::{AppContext, SingletonEntity};
 
 use super::{
-    artifacts_match_filter, AgentManagementFilters, AgentRunDisplayStatus, ArtifactFilter,
-    ConversationMetadata, CreatedOnFilter, CreatorFilter, HarnessFilter, OwnerFilter,
-    SessionStatus, SourceFilter, StatusFilter,
+    AgentManagementFilters, AgentRunDisplayStatus, ArtifactFilter, ConversationMetadata,
+    CreatedOnFilter, CreatorFilter, HarnessFilter, OwnerFilter, SessionStatus, SourceFilter,
+    StatusFilter, artifacts_match_filter,
 };
 use crate::ai::active_agent_views_model::{ActiveAgentViewsModel, ConversationOrTaskId};
 use crate::ai::agent::api::ServerConversationToken;

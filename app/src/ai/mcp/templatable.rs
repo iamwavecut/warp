@@ -52,12 +52,11 @@ impl TemplatableMCPServer {
     ) -> Option<HashMap<String, serde_json::Value>> {
         const POINTERS: [&str; 4] = ["/mcp/servers", "/servers", "/mcpServers", "/mcp_servers"];
         for pointer in POINTERS {
-            if let Some(value) = config.pointer(pointer) {
-                if let Ok(servers) =
+            if let Some(value) = config.pointer(pointer)
+                && let Ok(servers) =
                     serde_json::from_value::<HashMap<String, serde_json::Value>>(value.clone())
-                {
-                    return Some(servers);
-                }
+            {
+                return Some(servers);
             }
         }
         None

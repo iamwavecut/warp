@@ -4,24 +4,24 @@ use num_traits::SaturatingSub;
 use string_offset::CharOffset;
 use warp_core::ui::{
     appearance::Appearance,
-    theme::{color::internal_colors, WarpTheme},
+    theme::{WarpTheme, color::internal_colors},
 };
 use warp_editor::{
     content::buffer::InitialBufferState,
     render::{element::VerticalExpansionBehavior, model::Decoration},
 };
 use warpui::{
+    AppContext, Element, SingletonEntity, ViewContext,
     elements::{
         Border, ChildView, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container,
         CornerRadius, CrossAxisAlignment, Flex, FormattedTextElement, HighlightedHyperlink,
         Hoverable, MouseStateHandle, ParentElement, Radius, Rect, ScrollbarWidth,
     },
-    AppContext, Element, SingletonEntity, ViewContext,
 };
 
 use crate::code::local_code_editor::{
-    HoverContentSegment, LocalCodeEditorView, LspHoverState, HOVER_TOOLTIP_MAX_HEIGHT,
-    HOVER_TOOLTIP_MAX_WIDTH,
+    HOVER_TOOLTIP_MAX_HEIGHT, HOVER_TOOLTIP_MAX_WIDTH, HoverContentSegment, LocalCodeEditorView,
+    LspHoverState,
 };
 use crate::editor::InteractionState;
 

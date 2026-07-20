@@ -5,8 +5,8 @@ use async_channel::Sender;
 pub use command_executor::*;
 
 use anyhow::Result;
-use futures::future::{BoxFuture, Shared};
 use futures::FutureExt;
+use futures::future::{BoxFuture, Shared};
 use instant::Instant;
 use once_cell::sync::OnceCell;
 use smol_str::SmolStr;
@@ -20,30 +20,30 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use typed_path::{TypedPath, TypedPathBuf, WindowsPath};
 use warp_util::path::{
-    convert_msys2_to_windows_native_path, convert_wsl_to_windows_host_path, msys2_exe_to_root,
-    ShellFamily,
+    ShellFamily, convert_msys2_to_windows_native_path, convert_wsl_to_windows_host_path,
+    msys2_exe_to_root,
 };
 
 use version_compare::Version;
 use warp_completer::completer::{
     CommandExitStatus, CommandOutput, PathSeparators, TopLevelCommandCaseSensitivity,
 };
-use warpui::{platform::OperatingSystem, Entity, ModelContext, SingletonEntity};
+use warpui::{Entity, ModelContext, SingletonEntity, platform::OperatingSystem};
 
 #[cfg(feature = "local_tty")]
 use crate::features::FeatureFlag;
 #[cfg(feature = "local_tty")]
 use crate::remote_server::manager::{RemoteServerManager, RemoteServerManagerEvent};
-use crate::terminal::event::ExecutedExecutorCommandEvent;
 use crate::terminal::ShellHost;
 use crate::terminal::ShellLaunchData;
+use crate::terminal::event::ExecutedExecutorCommandEvent;
 #[cfg(feature = "local_tty")]
 use command_executor::remote_server_executor::RemoteServerCommandExecutor;
 use parking_lot::{Mutex, RwLock};
 
+use crate::terminal::History;
 use crate::terminal::shell::{Shell, ShellType};
 use crate::terminal::warpify::SubshellSource;
-use crate::terminal::History;
 
 use super::ansi::{BootstrappedValue, InitShellValue, SSHValue};
 use super::terminal_model::{HistoryEntry, SubshellInitializationInfo};
@@ -105,7 +105,7 @@ fn escape_powershell_single_quotes(path: &OsStr) -> OsString {
 
 // SessionId is defined in warp_core and re-exported here for backward compatibility.
 pub use warp_core::SessionId;
-use warp_errors::{register_error, report_error, ErrorExt};
+use warp_errors::{ErrorExt, register_error, report_error};
 
 /// Information about the sessions within a given terminal pane/top-level
 /// shell.
@@ -403,11 +403,9 @@ impl Sessions {
                 session_info.session_type,
                 BootstrapSessionType::WarpifiedRemote
             )
+            && let Some(host_id) = RemoteServerManager::as_ref(ctx).host_id_for_session(session_id)
         {
-            if let Some(host_id) = RemoteServerManager::as_ref(ctx).host_id_for_session(session_id)
-            {
-                session.set_remote_host_id(Some(host_id.clone()));
-            }
+            session.set_remote_host_id(Some(host_id.clone()));
         }
 
         History::handle(ctx).update(ctx, |history, ctx| {
@@ -490,12 +488,11 @@ impl Sessions {
         event: ExecutedExecutorCommandEvent,
     ) {
         if let Some(in_band_command_output_tx) = self.in_band_command_output_tx_map.get(&session_id)
+            && let Err(e) = in_band_command_output_tx.try_send(event)
         {
-            if let Err(e) = in_band_command_output_tx.try_send(event) {
-                log::warn!(
-                    "Failed to send ExecutedExecutorCommandEvent to InBandCommandExecutor: {e:#}"
-                );
-            }
+            log::warn!(
+                "Failed to send ExecutedExecutorCommandEvent to InBandCommandExecutor: {e:#}"
+            );
         }
     }
 
@@ -1161,22 +1158,17 @@ impl Session {
                         ExecuteCommandOptions::default(),
                     )
                     .await;
-                HashSet::from_iter(
-                    ShellType::PowerShell
-                        .executables_from_shell_command_output(
-                            windows_results,
-                            false, /* is_msys2 */
-                        )
-                        .into_iter(),
-                )
+                HashSet::from_iter(ShellType::PowerShell.executables_from_shell_command_output(
+                    windows_results,
+                    false, /* is_msys2 */
+                ))
             } else {
                 HashSet::new()
             };
             new_commands.extend(
                 shell
                     .shell_type()
-                    .executables_from_shell_command_output(result, is_msys2)
-                    .into_iter(),
+                    .executables_from_shell_command_output(result, is_msys2),
             );
             if external_commands.set(new_commands).is_err() {
                 log::warn!("External commands should only be loaded once per session.");
@@ -1495,11 +1487,11 @@ impl Session {
                     );
                     return vec![];
                 };
-                let res = output_string
+
+                output_string
                     .lines()
                     .map(|s| s.trim().to_string())
-                    .collect();
-                res
+                    .collect()
             }
             _ => {
                 log::warn!("failed to get git_branches_for_command_corrections");
@@ -1766,7 +1758,9 @@ pub mod testing {
                 .set(external_commands_with_values(commands))
                 .is_err()
             {
-                log::warn!("Ignored call to set_external_commands, as external commands had already been set!");
+                log::warn!(
+                    "Ignored call to set_external_commands, as external commands had already been set!"
+                );
             };
         }
 

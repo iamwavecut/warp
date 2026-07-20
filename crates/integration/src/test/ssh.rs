@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use regex::Regex;
 use settings::Setting as _;
 use warp::integration_testing::terminal::util::{
-    current_shell_starter_and_version, nonce, ExactLine, ExpectedExitStatus,
+    ExactLine, ExpectedExitStatus, current_shell_starter_and_version, nonce,
 };
 use warp::integration_testing::terminal::{
     assert_active_block_output_for_single_terminal_in_tab,
@@ -29,7 +29,7 @@ use warp::{
             assert_active_block_output_for_single_terminal_in_tab,
             assert_long_running_block_executing_for_single_terminal_in_tab,
             execute_command_for_single_terminal_in_tab,
-            util::{current_shell_starter_and_version, nonce, ExactLine, ExpectedExitStatus},
+            util::{ExactLine, ExpectedExitStatus, current_shell_starter_and_version, nonce},
             validate_block_output, wait_until_bootstrapped_single_pane_for_tab,
         },
         view_getters::{single_terminal_view, single_terminal_view_for_tab},

@@ -10,6 +10,8 @@ use warp_util::path::user_friendly_path;
 #[cfg(feature = "local_fs")]
 use warpui::clipboard::ClipboardContent;
 use warpui::{
+    AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
+    ViewHandle,
     accessibility::{AccessibilityContent, WarpA11yRole},
     elements::{
         Align, Container, CrossAxisAlignment, DispatchEventResult, Empty, EventHandler, Flex,
@@ -22,8 +24,6 @@ use warpui::{
         button::{ButtonVariant, TextAndIcon, TextAndIconAlignment},
         components::{UiComponent, UiComponentStyles},
     },
-    AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
-    ViewHandle,
 };
 
 #[cfg(feature = "local_fs")]
@@ -35,13 +35,13 @@ use crate::{
     menu::{MenuItem, MenuItemFields},
     notebooks::editor::{model::NotebooksEditorModel, rich_text_styles},
     pane_group::{
+        BackingView, PaneConfiguration, PaneEvent,
         focus_state::PaneFocusHandle,
         pane::view,
         pane::view::header::components::{
-            render_pane_header_buttons, render_pane_header_title_text, render_three_column_header,
-            CenteredHeaderEdgeWidth,
+            CenteredHeaderEdgeWidth, render_pane_header_buttons, render_pane_header_title_text,
+            render_three_column_header,
         },
-        BackingView, PaneConfiguration, PaneEvent,
     },
     settings::FontSettings,
     terminal::model::session::Session,
@@ -52,10 +52,11 @@ use crate::{
 };
 
 use super::{
-    context_menu::{show_rich_editor_context_menu, ContextMenuAction, ContextMenuState},
+    NotebookLocation,
+    context_menu::{ContextMenuAction, ContextMenuState, show_rich_editor_context_menu},
     editor::view::{EditorViewEvent, RichTextEditorConfig, RichTextEditorView},
     link::{NotebookLinks, SessionSource},
-    styles, NotebookLocation,
+    styles,
 };
 #[cfg(feature = "local_fs")]
 use crate::code::editor_management::CodeSource;
@@ -637,11 +638,11 @@ impl FileNotebookView {
             let Some(path) = self.local_path() else {
                 return;
             };
-            if let Some(active_session) = handle.as_ref(ctx).session(ctx.window_id()) {
-                if active_session.is_local() {
-                    self.set_context(&path, active_session, ctx);
-                    ctx.unsubscribe_to_model(&handle);
-                }
+            if let Some(active_session) = handle.as_ref(ctx).session(ctx.window_id())
+                && active_session.is_local()
+            {
+                self.set_context(&path, active_session, ctx);
+                ctx.unsubscribe_to_model(&handle);
             }
         }
     }
@@ -859,7 +860,7 @@ impl TypedActionView for FileNotebookView {
             #[cfg(feature = "local_fs")]
             FileNotebookAction::OpenAsCode => self.open_as_code(ctx),
             FileNotebookAction::ContextMenu(action) => {
-                if matches!(action, ContextMenuAction::Open(_)) {}
+                matches!(action, ContextMenuAction::Open(_));
                 #[cfg(feature = "local_fs")]
                 {
                     let copy_file_path = self.local_path().map(|path| path.display().to_string());
@@ -917,7 +918,7 @@ impl BackingView for FileNotebookView {
 
     fn pane_header_overflow_menu_items(
         &self,
-        ctx: &AppContext,
+        _ctx: &AppContext,
     ) -> Vec<MenuItem<FileNotebookAction>> {
         let mut actions = vec![];
         if let Some(SourceFile::Local {

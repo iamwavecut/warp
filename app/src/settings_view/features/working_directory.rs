@@ -10,7 +10,7 @@ use crate::{
     editor::{EditorView, Event as EditorEvent, SingleLineEditorOptions, TextOptions},
     settings_view::features_page::render_group,
     terminal::session_settings::*,
-    view_components::{dropdown::TOP_MENU_BAR_HEIGHT, Dropdown, DropdownItem},
+    view_components::{Dropdown, DropdownItem, dropdown::TOP_MENU_BAR_HEIGHT},
 };
 
 #[derive(Clone, Debug, PartialEq)]

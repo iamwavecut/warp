@@ -289,12 +289,11 @@ impl MCPServer {
 
         let pointers = ["/mcp/servers", "/servers", "/mcpServers"];
         for pointer in pointers.into_iter() {
-            if let Some(value) = config.pointer(pointer) {
-                if let Ok(servers) =
+            if let Some(value) = config.pointer(pointer)
+                && let Ok(servers) =
                     serde_json::from_value::<HashMap<String, JSONMCPServer>>(value.clone())
-                {
-                    return Ok(servers);
-                }
+            {
+                return Ok(servers);
             }
         }
         serde_json::from_value::<HashMap<String, JSONMCPServer>>(config)

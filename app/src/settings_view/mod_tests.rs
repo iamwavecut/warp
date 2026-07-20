@@ -768,9 +768,11 @@ fn umbrella_with_no_visible_subpages_is_skipped_entirely() {
         "Agents umbrella should not appear when none of its subpages are visible"
     );
     // The still-visible Code umbrella remains as a stop.
-    assert!(stops
-        .iter()
-        .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 2, .. })));
+    assert!(
+        stops
+            .iter()
+            .any(|s| matches!(s, NavStop::CollapsedUmbrella { nav_index: 2, .. }))
+    );
 }
 
 #[test]
@@ -786,9 +788,11 @@ fn filtered_out_top_level_page_is_skipped() {
         "Appearance should be filtered out entirely"
     );
     // But other pages remain.
-    assert!(stops
-        .iter()
-        .any(|s| matches!(s, NavStop::Section(SettingsSection::Account))));
+    assert!(
+        stops
+            .iter()
+            .any(|s| matches!(s, NavStop::Section(SettingsSection::Account)))
+    );
 }
 
 // ── current_stop_index ──────────────────────────────────────────────────────

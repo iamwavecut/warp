@@ -23,22 +23,23 @@ use crate::{
     ai::agent::CurrentHead,
     code::editor::view::CodeEditorRenderOptions,
     code::editor::{CommentEditor, CommentEditorEvent, EditorCommentsModel, EditorReviewComment},
-    code_review::{comments::ReviewCommentBatch, DiffSetScope},
+    code_review::{DiffSetScope, comments::ReviewCommentBatch},
 };
 use crate::{
     ai::agent::{AIAgentAttachment, DiffBase},
     code::{
         editor::{
-            view::{CodeEditorEvent, CodeEditorView},
             GutterHoverTarget,
+            view::{CodeEditorEvent, CodeEditorView},
         },
         editor_management::CodeEditorStatus,
         local_code_editor::{
-            render_unsaved_circle_with_tooltip, LocalCodeEditorEvent, LocalCodeEditorView,
+            LocalCodeEditorEvent, LocalCodeEditorView, render_unsaved_circle_with_tooltip,
         },
         view::PendingSaveIntent,
     },
     code_review::{
+        CodeReviewContextDestination,
         comments::AttachedReviewCommentTarget,
         context::convert_file_diffs_to_diffset_hunks,
         diff_state::{
@@ -48,14 +49,13 @@ use crate::{
         },
         editor_state::CodeReviewEditorState,
         hidden_lines::calculate_hidden_lines,
-        CodeReviewContextDestination,
     },
 };
 
 #[cfg(feature = "local_fs")]
 use crate::{
     code::editor::line::EditorLineLocation,
-    ui_components::dialog::{dialog_styles, Dialog},
+    ui_components::dialog::{Dialog, dialog_styles},
 };
 use crate::{
     code::global_buffer_model::GlobalBufferModel, code_review::comments::ReviewCommentBatchEvent,
@@ -63,19 +63,19 @@ use crate::{
 use crate::{
     menu::{Event as MenuEvent, Menu, MenuItem, MenuItemFields},
     pane_group::{
-        focus_state::{PaneFocusHandle, PaneGroupFocusEvent},
         PaneId,
+        focus_state::{PaneFocusHandle, PaneGroupFocusEvent},
     },
     quit_warning::UnsavedStateSummary,
     terminal::input::MenuPositioning,
     terminal::view::{CliAgentRouting, InitProjectModel, TerminalAction, TerminalView},
-    util::bindings::{custom_tag_to_keystroke, keybinding_name_to_display_string, CustomAction},
+    util::bindings::{CustomAction, custom_tag_to_keystroke, keybinding_name_to_display_string},
     view_components::{
+        DismissibleToast,
         action_button::{
             ActionButton, ActionButtonTheme, AdjoinedSide, ButtonSize, DangerPrimaryTheme,
             KeystrokeSource, NakedTheme, PaneHeaderTheme, SecondaryTheme,
         },
-        DismissibleToast,
     },
     workspace::{ToastStack, Workspace, WorkspaceAction},
 };
@@ -88,9 +88,9 @@ use crate::terminal::cli_agent::{
 use crate::util::file::external_editor::EditorSettings;
 use crate::util::git::BranchEntry;
 #[cfg(feature = "local_fs")]
-use crate::util::openable_file_type::resolve_file_target_with_editor_choice;
-#[cfg(feature = "local_fs")]
 use crate::util::openable_file_type::FileTarget;
+#[cfg(feature = "local_fs")]
+use crate::util::openable_file_type::resolve_file_target_with_editor_choice;
 use crate::view_components::find::{Event as FindViewEvent, Find, FindEvent, FindWithinBlockState};
 use ai::project_context::model::ProjectContextModel;
 #[cfg(feature = "local_fs")]
@@ -100,8 +100,8 @@ use string_offset::CharOffset;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use pathfinder_geometry::rect::RectF;
-use pathfinder_geometry::vector::{vec2f, Vector2F};
-use rand::{distributions::Alphanumeric, Rng};
+use pathfinder_geometry::vector::{Vector2F, vec2f};
+use rand::{Rng, distributions::Alphanumeric};
 use warp_core::{
     channel::{Channel, ChannelState},
     features::FeatureFlag,
@@ -109,18 +109,20 @@ use warp_core::{
     ui::theme::color::internal_colors,
 };
 use warpui::{
+    AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle, WindowId,
     clipboard::ClipboardContent,
     elements::{
-        new_scrollable::{
-            NewScrollable, NewScrollableElement, ScrollableAppearance, SingleAxisConfig,
-        },
-        resizable_state_handle, Align, Border, ChildAnchor, ChildView, ClippedScrollStateHandle,
-        ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DispatchEventResult,
+        Align, Border, ChildAnchor, ChildView, ClippedScrollStateHandle, ConstrainedBox, Container,
+        CornerRadius, CrossAxisAlignment, DEFAULT_UI_LINE_HEIGHT_RATIO, DispatchEventResult,
         DragBarSide, Element, Empty, EventHandler, Flex, List, ListState, MainAxisAlignment,
         MouseStateHandle, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds,
         Percentage, PositionedElementAnchor, PositionedElementOffsetBounds, Radius, Rect,
         Resizable, ResizableStateHandle, ScrollOffset, ScrollStateHandle, ScrollbarWidth, Stack,
-        Text, DEFAULT_UI_LINE_HEIGHT_RATIO,
+        Text,
+        new_scrollable::{
+            NewScrollable, NewScrollableElement, ScrollableAppearance, SingleAxisConfig,
+        },
+        resizable_state_handle,
     },
     keymap::Keystroke,
     ui_components::{
@@ -128,20 +130,19 @@ use warpui::{
         components::{Coords, UiComponentStyles},
     },
     units::Pixels,
-    AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle, WindowId,
+};
+use warpui::{
+    ModelHandle, WeakViewHandle,
+    fonts::{Properties, Weight},
 };
 use warpui::{
     elements::{Clipped, MainAxisSize, Shrinkable},
-    text_layout::{default_compute_baseline_position, ClipConfig},
+    text_layout::{ClipConfig, default_compute_baseline_position},
 };
 use warpui::{
     elements::{Hoverable, SavePosition},
     platform::Cursor,
     ui_components::components::UiComponent,
-};
-use warpui::{
-    fonts::{Properties, Weight},
-    ModelHandle, WeakViewHandle,
 };
 
 use crate::code::footer::{CodeFooterView, CodeFooterViewEvent};
@@ -159,26 +160,26 @@ use crate::{
     code::editor::{add_color, remove_color},
     code_review::diff_selector::{DiffSelector, DiffSelectorEvent, DiffTarget},
     editor::InteractionState,
-    pane_group::pane::{view, BackingView, PaneEvent},
+    pane_group::pane::{BackingView, PaneEvent, view},
     themes::theme::WarpTheme,
 };
 
 use vec1::Vec1;
 
 use super::{
+    GlobalCodeReviewEvent, GlobalCodeReviewModel,
     code_review_header::CodeReviewHeader,
     comment_list_view::{CommentListDebugState, CommentListEvent, CommentListView},
-    comments::{attach_pending_imported_comments, AttachedReviewComment, CommentOrigin},
+    comments::{AttachedReviewComment, CommentOrigin, attach_pending_imported_comments},
     diff_size_limits::DiffSize,
     git_dialog::{GitDialog, GitDialogEvent, GitDialogKind},
-    GlobalCodeReviewEvent, GlobalCodeReviewModel,
 };
-use crate::code::buffer_location::LocalOrRemotePath;
 use crate::code::ShowCommentEditorProvider;
 #[cfg(not(target_family = "wasm"))]
 use crate::code::ShowFindReferencesCard;
+use crate::code::buffer_location::LocalOrRemotePath;
 use crate::code_review::comments::CommentId;
-use crate::ui_components::render_file_search_row::{render_file_search_row, FileSearchRowOptions};
+use crate::ui_components::render_file_search_row::{FileSearchRowOptions, render_file_search_row};
 use crate::workspace::view::right_panel::{ReviewDestination, ReviewSubmissionResult};
 use warp_editor::model::CoreEditorModel;
 #[cfg(not(target_family = "wasm"))]
@@ -1008,11 +1009,10 @@ impl CodeReviewView {
         if let ReviewCommentBatchEvent::Changed {
             should_reposition_comments: true,
         } = event
+            && self.all_editors_loaded()
         {
-            if self.all_editors_loaded() {
-                let diff_mode = self.diff_state_model.as_ref(ctx).diff_mode(ctx);
-                self.reposition_comments_in_file(&diff_mode, ctx);
-            }
+            let diff_mode = self.diff_state_model.as_ref(ctx).diff_mode(ctx);
+            self.reposition_comments_in_file(&diff_mode, ctx);
         }
     }
 
@@ -1433,15 +1433,13 @@ impl CodeReviewView {
 
     fn open_file_sidebar(&mut self, ctx: &mut ViewContext<Self>) {
         self.file_sidebar_expanded = true;
-        if let Some(containing_pane_id) = self.containing_pane_id {
-            if let Some(pane_width) = ctx
+        if let Some(containing_pane_id) = self.containing_pane_id
+            && let Some(pane_width) = ctx
                 .element_position_by_id(containing_pane_id.position_id())
                 .map(|rect| rect.width())
-            {
-                if let Ok(mut state) = self.ui_state_handles.sidebar_resizable_state.lock() {
-                    state.set_size(pane_width * FILE_SIDEBAR_PANE_WIDTH_PERCENTAGE);
-                }
-            }
+            && let Ok(mut state) = self.ui_state_handles.sidebar_resizable_state.lock()
+        {
+            state.set_size(pane_width * FILE_SIDEBAR_PANE_WIDTH_PERCENTAGE);
         }
     }
 
@@ -1457,14 +1455,14 @@ impl CodeReviewView {
                 self.update_file_nav_button_tooltip(ctx);
                 ctx.notify();
             }
-        } else if !is_maximized {
-            if let Some(was_expanded) = self.file_sidebar_expanded_before_maximize.take() {
-                // Transitioning to minimized: restore saved sidebar state
-                if self.file_sidebar_expanded != was_expanded {
-                    self.file_sidebar_expanded = was_expanded;
-                    self.update_file_nav_button_tooltip(ctx);
-                    ctx.notify();
-                }
+        } else if !is_maximized
+            && let Some(was_expanded) = self.file_sidebar_expanded_before_maximize.take()
+        {
+            // Transitioning to minimized: restore saved sidebar state
+            if self.file_sidebar_expanded != was_expanded {
+                self.file_sidebar_expanded = was_expanded;
+                self.update_file_nav_button_tooltip(ctx);
+                ctx.notify();
             }
         }
     }
@@ -1526,10 +1524,10 @@ impl CodeReviewView {
             if entry.is_main {
                 continue;
             }
-            if let Some(current_name) = &current_branch_name {
-                if entry.name == *current_name {
-                    continue;
-                }
+            if let Some(current_name) = &current_branch_name
+                && entry.name == *current_name
+            {
+                continue;
             }
             let is_selected = match &current_mode {
                 DiffMode::OtherBranch(name) => name == &entry.name,
@@ -2711,7 +2709,7 @@ impl CodeReviewView {
             return;
         };
 
-        let is_existing = model.read(ctx, |batch, _| {
+        let _is_existing = model.read(ctx, |batch, _| {
             batch.get_review_comment_by_id(comment.id).is_some()
         });
 
@@ -2720,9 +2718,6 @@ impl CodeReviewView {
         });
 
         // Diagnostics: record whether this was a new comment or an edit.
-        if is_existing {
-        } else {
-        }
 
         ctx.focus_self();
     }
@@ -2935,7 +2930,7 @@ impl CodeReviewView {
             let full_file_location = repo_path.join(&file.file_diff.file_path);
 
             let local_code_view = ctx.add_typed_action_view(|ctx| {
-                let editor = LocalCodeEditorView::new_with_global_buffer(
+                LocalCodeEditorView::new_with_global_buffer(
                     full_file_location.clone(),
                     |buffer_state, ctx| {
                         ctx.add_typed_action_view(|ctx| {
@@ -2984,9 +2979,7 @@ impl CodeReviewView {
                     self_handle.upgrade(app).and_then(|code_review_view| {
                         code_review_view.as_ref(app).terminal_view(app)
                     })
-                }));
-
-                editor
+                }))
             });
 
             let inner_editor = local_code_view.as_ref(ctx).editor().clone();
@@ -3295,10 +3288,10 @@ impl CodeReviewView {
             return;
         };
 
-        if let Some((_, file_state)) = loaded_state.file_states.get_index_mut(file_index) {
-            if let Some(editor_state) = &mut file_state.editor_state {
-                editor_state.set_loaded();
-            }
+        if let Some((_, file_state)) = loaded_state.file_states.get_index_mut(file_index)
+            && let Some(editor_state) = &mut file_state.editor_state
+        {
+            editor_state.set_loaded();
         }
 
         if self.all_editors_loaded() {
@@ -3538,10 +3531,8 @@ impl CodeReviewView {
 
         let RelocateCommentsResult {
             comments: relocated_comments,
-            fallback_count,
+            fallback_count: _,
         } = Self::relocate_comments(comments, state, &repo_path, ctx);
-
-        if fallback_count > 0 {}
 
         if !newly_imported_ids.is_empty() {
             let (_active_count, _outdated_count) = relocated_comments
@@ -4032,27 +4023,25 @@ impl CodeReviewView {
             // Check for initialized project-scoped rules.
             if let Some(rules) =
                 ProjectContextModel::as_ref(app).find_applicable_project_rules(repo_path)
+                && let Some(first_rule) = rules.active_rules.first()
+                && let Some(file_name) = first_rule.path.file_name()
             {
-                if let Some(first_rule) = rules.active_rules.first() {
-                    if let Some(file_name) = first_rule.path.file_name() {
-                        zero_state_column.add_child(
-                            Container::new(
-                                Text::new(
-                                    format!(
-                                        "Repo is initialized with a {} file.",
-                                        file_name.to_string_lossy()
-                                    ),
-                                    appearance.ui_font_family(),
-                                    12.,
-                                )
-                                .with_color(theme.sub_text_color(theme.surface_2()).into())
-                                .finish(),
-                            )
-                            .with_margin_top(8.)
-                            .finish(),
-                        );
-                    }
-                }
+                zero_state_column.add_child(
+                    Container::new(
+                        Text::new(
+                            format!(
+                                "Repo is initialized with a {} file.",
+                                file_name.to_string_lossy()
+                            ),
+                            appearance.ui_font_family(),
+                            12.,
+                        )
+                        .with_color(theme.sub_text_color(theme.surface_2()).into())
+                        .finish(),
+                    )
+                    .with_margin_top(8.)
+                    .finish(),
+                );
             }
         }
 
@@ -5540,39 +5529,36 @@ impl CodeReviewView {
                 ctx.focus_self();
             }
             CodeEditorEvent::HiddenSectionExpanded => {
-                if let CodeReviewViewState::Loaded(LoadedState { file_states, .. }) = self.state() {
-                    if let Some(index) = file_states.get_index_of(&file_path) {
-                        self.viewported_list_state
-                            .invalidate_height_for_index(index);
-                        ctx.notify();
-                    }
+                if let CodeReviewViewState::Loaded(LoadedState { file_states, .. }) = self.state()
+                    && let Some(index) = file_states.get_index_of(&file_path)
+                {
+                    self.viewported_list_state
+                        .invalidate_height_for_index(index);
+                    ctx.notify();
                 }
             }
             CodeEditorEvent::Focused => {
                 ctx.emit(CodeReviewViewEvent::Pane(PaneEvent::FocusSelf));
             }
-            CodeEditorEvent::ContentChanged { origin, .. } => {
-                if origin.from_user() {
-                    if let Some((view_handle, content_version)) = self.last_revert.take() {
-                        let same_content_version =
-                            content_version == editor.as_ref(ctx).version(ctx);
+            CodeEditorEvent::ContentChanged { origin, .. } if origin.from_user() => {
+                if let Some((view_handle, content_version)) = self.last_revert.take() {
+                    let same_content_version = content_version == editor.as_ref(ctx).version(ctx);
 
-                        // If the revert was for a different editor or the content version is the same, keep the revert.
-                        if view_handle.id() != editor.id() || same_content_version {
-                            self.last_revert = Some((view_handle, content_version));
-                        } else {
-                            self.last_revert = None;
-                            self.dismiss_revert_toast(ctx);
-                        }
+                    // If the revert was for a different editor or the content version is the same, keep the revert.
+                    if view_handle.id() != editor.id() || same_content_version {
+                        self.last_revert = Some((view_handle, content_version));
+                    } else {
+                        self.last_revert = None;
+                        self.dismiss_revert_toast(ctx);
                     }
+                }
 
-                    if self.find_model.as_ref(ctx).is_find_bar_open()
-                        && FeatureFlag::CodeReviewFind.is_enabled()
-                    {
-                        self.find_model.update(ctx, |model, model_ctx| {
-                            model.run_search(self.editor_handles(), model_ctx);
-                        });
-                    }
+                if self.find_model.as_ref(ctx).is_find_bar_open()
+                    && FeatureFlag::CodeReviewFind.is_enabled()
+                {
+                    self.find_model.update(ctx, |model, model_ctx| {
+                        model.run_search(self.editor_handles(), model_ctx);
+                    });
                 }
             }
             _ => {}
@@ -6104,19 +6090,15 @@ impl CodeReviewView {
     }
 
     fn save_file(&mut self, repo_relative_path: &str, ctx: &mut ViewContext<CodeReviewView>) {
-        if let CodeReviewViewState::Loaded(state) = self.state() {
-            if let Some(file_state) = state.file_states.get(repo_relative_path) {
-                if let Some(editor) = file_state.editor_state.as_ref().map(|state| state.editor()) {
-                    if let Err(err) =
-                        editor.update(ctx, |local_editor, ctx| local_editor.save_local(ctx))
-                    {
-                        safe_error!(
-                            safe: ("Failed to save file: {err}"),
-                            full: ("Failed to save file {}: {err:?}", repo_relative_path)
-                        );
-                    }
-                }
-            }
+        if let CodeReviewViewState::Loaded(state) = self.state()
+            && let Some(file_state) = state.file_states.get(repo_relative_path)
+            && let Some(editor) = file_state.editor_state.as_ref().map(|state| state.editor())
+            && let Err(err) = editor.update(ctx, |local_editor, ctx| local_editor.save_local(ctx))
+        {
+            safe_error!(
+                safe: ("Failed to save file: {err}"),
+                full: ("Failed to save file {}: {err:?}", repo_relative_path)
+            );
         }
     }
 
@@ -6612,10 +6594,10 @@ impl CodeReviewView {
         let mut unsaved_paths = Vec::new();
         if let CodeReviewViewState::Loaded(state) = self.state() {
             for file_state in state.file_states.values() {
-                if let Some(model) = &file_state.editor_state {
-                    if model.has_unsaved_changes(app) {
-                        unsaved_paths.push(file_state.file_diff.file_path.clone());
-                    }
+                if let Some(model) = &file_state.editor_state
+                    && model.has_unsaved_changes(app)
+                {
+                    unsaved_paths.push(file_state.file_diff.file_path.clone());
                 }
             }
         }
@@ -7184,7 +7166,7 @@ impl TypedActionView for CodeReviewView {
                     !self.discard_dialog_state.stash_changes_enabled;
                 ctx.notify();
             }
-            CodeReviewAction::ToggleFileSelection(ref file_path) => {
+            CodeReviewAction::ToggleFileSelection(file_path) => {
                 if let Some(selected) = self.discard_dialog_state.selected_files.get_mut(file_path)
                 {
                     *selected = !*selected;

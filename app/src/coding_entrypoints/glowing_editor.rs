@@ -1,7 +1,7 @@
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::Vector2F;
-use warp_core::ui::appearance::Appearance;
 use warp_core::ui::Icon;
+use warp_core::ui::appearance::Appearance;
 use warpui::elements::{
     Align, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, DropShadow, Flex,
     MainAxisAlignment, ParentElement as _, Radius, Shrinkable,
@@ -94,11 +94,9 @@ impl GlowingEditor {
             }
             EditorEvent::Escape => ctx.emit(GlowingEditorEvent::Cancel),
             // Clear error state when user types (since this is submit-only validation)
-            EditorEvent::Edited(_) => {
-                if self.has_error {
-                    self.has_error = false;
-                    ctx.notify();
-                }
+            EditorEvent::Edited(_) if self.has_error => {
+                self.has_error = false;
+                ctx.notify();
             }
             _ => (),
         }

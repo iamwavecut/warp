@@ -31,9 +31,9 @@ use crate::{
     input_classifier::InputClassifierModel,
     settings::{AISettings, AISettingsChangedEvent, InputBoxType, InputSettings},
     terminal::{
+        History, TerminalModel,
         input::decorations::ParsedTokensSnapshot,
         model::{rich_content::RichContentType, session::SessionId},
-        History, TerminalModel,
     },
 };
 
@@ -449,9 +449,11 @@ impl BlocklistAIInputModel {
         if new_config.input_type.is_ai() {
             AISettings::handle(ctx).update(ctx, |settings, ctx| {
                 let new_num_times = *settings.entered_agent_mode_num_times + 1;
-                report_if_error!(settings
-                    .entered_agent_mode_num_times
-                    .set_value(new_num_times, ctx));
+                report_if_error!(
+                    settings
+                        .entered_agent_mode_num_times
+                        .set_value(new_num_times, ctx)
+                );
             });
         }
 
@@ -715,16 +717,15 @@ impl BlocklistAIInputModel {
 
                     // If we have history entries (i.e., a live session), check for
                     // close matches to short-circuit as shell input.
-                    if let Some(history_entries) = history_entries {
-                        if has_any_close_matches(
+                    if let Some(history_entries) = history_entries
+                        && has_any_close_matches(
                             &buffer_cloned,
                             history_entries.iter().map(AsRef::as_ref),
                             HISTORY_ENTRY_MATCH_CUTOFF,
                         )
                         .await
-                        {
-                            return InputType::Shell;
-                        }
+                    {
+                        return InputType::Shell;
                     }
 
                     futures_lite::future::yield_now().await;

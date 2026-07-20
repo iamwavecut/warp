@@ -1,15 +1,15 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
     cloud_object::{
+        GenericCloudObject, GenericStringObjectFormat, GenericStringObjectUniqueKey,
+        JsonObjectType, Revision, UniquePer,
         model::{
             generic_string_model::{GenericStringModel, GenericStringObjectId, StringModel},
             json_model::{JsonModel, JsonSerializer},
         },
-        GenericCloudObject, GenericStringObjectFormat, GenericStringObjectUniqueKey,
-        JsonObjectType, Revision, UniquePer,
     },
     server::sync_queue::QueueItem,
 };

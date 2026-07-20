@@ -11,14 +11,13 @@ use crate::{
 };
 
 use super::{
-    color,
+    ShellLaunchState, SizeInfo, TerminalModel, TerminalView, color,
     event_listener::ChannelEventListener,
     model::block::BlockSize,
     safe_mode_settings::get_secret_obfuscation_mode,
     session_settings::SessionSettings,
     settings::TerminalSettings,
-    view::{create_size_info_for_blocklist, WARP_PROMPT_HEIGHT_LINES},
-    ShellLaunchState, SizeInfo, TerminalModel, TerminalView,
+    view::{WARP_PROMPT_HEIGHT_LINES, create_size_info_for_blocklist},
 };
 use crate::pane_group::pane::DetachType;
 

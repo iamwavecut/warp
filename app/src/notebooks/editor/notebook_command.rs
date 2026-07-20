@@ -18,8 +18,8 @@ use warp_editor::{
         buffer::{Buffer, BufferEvent, EditOrigin},
         selection_model::BufferSelectionModel,
         text::{
-            BlockType, BufferBlockStyle, CodeBlockType, CODE_BLOCK_DEFAULT_DISPLAY_LANG,
-            CODE_BLOCK_SHELL_DISPLAY_LANG,
+            BlockType, BufferBlockStyle, CODE_BLOCK_DEFAULT_DISPLAY_LANG,
+            CODE_BLOCK_SHELL_DISPLAY_LANG, CodeBlockType,
         },
     },
     editor::RunnableCommandModel,
@@ -28,9 +28,11 @@ use warp_editor::{
 use markdown_parser::markdown_parser::CODE_BLOCK_DEFAULT_MARKDOWN_LANG;
 use warp_util::user_input::UserInput;
 use warpui::{
-    elements::Align, platform::Cursor, r#async::SpawnedFutureHandle, AppContext, AssetProvider as _,
+    AppContext, AssetProvider as _, r#async::SpawnedFutureHandle, elements::Align, platform::Cursor,
 };
 use warpui::{
+    Element, Entity, ModelAsRef, ModelContext, ModelHandle, SingletonEntity, ViewHandle,
+    WeakModelHandle, WindowId,
     elements::{
         Border, Container, CornerRadius, CrossAxisAlignment, Empty, Flex, MainAxisAlignment,
         MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
@@ -38,11 +40,10 @@ use warpui::{
     fonts::Properties,
     presenter::ChildView,
     ui_components::components::{UiComponent, UiComponentStyles},
-    Element, Entity, ModelAsRef, ModelContext, ModelHandle, SingletonEntity, ViewHandle,
-    WeakModelHandle, WindowId,
 };
 
 use crate::{
+    ASSETS,
     appearance::Appearance,
     completer::SessionAgnosticContext,
     drive::workflows::arguments::ArgumentsState,
@@ -50,12 +51,12 @@ use crate::{
     features::FeatureFlag,
     menu::MenuItemFields,
     notebooks::{
-        file::MarkdownDisplayMode, styles::block_footer_action_button, ActionEntrypoint, BlockInfo,
+        ActionEntrypoint, BlockInfo, file::MarkdownDisplayMode, styles::block_footer_action_button,
     },
     settings::FontSettings,
     terminal::input::{
-        decorations::{parse_current_commands_and_tokens, ParsedTokenData, ParsedTokensSnapshot},
         DEBOUNCE_INPUT_DECORATION_PERIOD,
+        decorations::{ParsedTokenData, ParsedTokensSnapshot, parse_current_commands_and_tokens},
     },
     themes::theme::{AnsiColorIdentifier, AnsiColors},
     ui_components::{buttons::icon_button, icons::Icon},
@@ -63,19 +64,18 @@ use crate::{
         bindings::CustomAction,
         color::{ContrastingColor, MinimumAllowedContrast},
     },
-    view_components::{dropdown::DropdownAction, Dropdown},
-    workflows::{workflow::Workflow, WorkflowType},
-    ASSETS,
+    view_components::{Dropdown, dropdown::DropdownAction},
+    workflows::{WorkflowType, workflow::Workflow},
 };
 use warp_core::r#async::debounce;
 
 use super::{
+    NotebookWorkflow,
     interaction_state_model::InteractionStateModel,
-    keys::{custom_action_to_display, NotebookKeybindings},
+    keys::{NotebookKeybindings, custom_action_to_display},
     model::ChildModelHandle,
     rich_text_styles,
     view::EditorViewAction,
-    NotebookWorkflow,
 };
 
 lazy_static! {
@@ -229,17 +229,18 @@ impl NotebookCommand {
 
         let syntax_config = {
             let ps = SyntaxSet::load_defaults_newlines();
-            if let Ok(asset) = ASSETS.get("bundled/syntax_theme/base16.tmTheme") {
-                let mut cursor = std::io::Cursor::new(asset);
-                match ThemeSet::load_from_reader(&mut cursor) {
-                    Ok(theme) => Some((ps, theme)),
-                    Err(e) => {
-                        log::debug!("Failed to load theme set from asset: {e}");
-                        None
+            match ASSETS.get("bundled/syntax_theme/base16.tmTheme") {
+                Ok(asset) => {
+                    let mut cursor = std::io::Cursor::new(asset);
+                    match ThemeSet::load_from_reader(&mut cursor) {
+                        Ok(theme) => Some((ps, theme)),
+                        Err(e) => {
+                            log::debug!("Failed to load theme set from asset: {e}");
+                            None
+                        }
                     }
                 }
-            } else {
-                None
+                _ => None,
             }
         };
 
@@ -749,14 +750,14 @@ impl RunnableCommandModel for NotebookCommand {
                     custom_action_to_display(CustomAction::Copy),
                 )
                 .on_click(move |ctx, app, _| {
-                    if let Some(command_model) = model.upgrade(app) {
-                        if let Some(block_content) = command_model.as_ref(app).command(app) {
-                            ctx.dispatch_typed_action(EditorViewAction::CopyTextToClipboard {
-                                text: UserInput::new(block_content.trim()),
-                                block: BlockInfo::CodeBlock,
-                                entrypoint: ActionEntrypoint::Button,
-                            });
-                        }
+                    if let Some(command_model) = model.upgrade(app)
+                        && let Some(block_content) = command_model.as_ref(app).command(app)
+                    {
+                        ctx.dispatch_typed_action(EditorViewAction::CopyTextToClipboard {
+                            text: UserInput::new(block_content.trim()),
+                            block: BlockInfo::CodeBlock,
+                            entrypoint: ActionEntrypoint::Button,
+                        });
                     }
                 })
                 .finish(),
@@ -776,10 +777,10 @@ impl RunnableCommandModel for NotebookCommand {
                         NotebookKeybindings::as_ref(ctx).run_commands_keybinding(),
                     )
                     .on_click(move |ctx, app, _| {
-                        if let Some(command_model) = model.upgrade(app) {
-                            if let Some(workflow) = command_model.as_ref(app).to_workflow(app) {
-                                ctx.dispatch_typed_action(EditorViewAction::RunWorkflow(workflow));
-                            }
+                        if let Some(command_model) = model.upgrade(app)
+                            && let Some(workflow) = command_model.as_ref(app).to_workflow(app)
+                        {
+                            ctx.dispatch_typed_action(EditorViewAction::RunWorkflow(workflow));
                         }
                     })
                     .finish(),

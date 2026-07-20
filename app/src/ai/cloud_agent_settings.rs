@@ -3,7 +3,7 @@
 //! This module contains user-specific settings for local agent workspace
 //! features, such as remembering the last selected environment.
 
-use settings::{macros::define_settings_group, SupportedPlatforms, SyncToCloud};
+use settings::{SupportedPlatforms, SyncToCloud, macros::define_settings_group};
 
 use crate::server::ids::SyncId;
 

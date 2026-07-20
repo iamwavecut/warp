@@ -3,14 +3,14 @@ use crate::coding_entrypoints::glowing_editor::{GlowingEditor, GlowingEditorEven
 use crate::ui_components::icons::Icon;
 use warpui::elements::{ChildView, Expanded, Fill, MainAxisAlignment, MainAxisSize};
 use warpui::{
+    AppContext, Element, Entity, FocusContext, SingletonEntity as _, TypedActionView, View,
+    ViewContext, ViewHandle,
     elements::{
         ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Flex, Hoverable,
         MouseStateHandle, ParentElement as _, Radius, Text,
     },
     fonts::{Properties, Weight},
     platform::Cursor,
-    AppContext, Element, Entity, FocusContext, SingletonEntity as _, TypedActionView, View,
-    ViewContext, ViewHandle,
 };
 
 const ICON_MARGIN_LEFT: f32 = 12.;

@@ -1,8 +1,10 @@
 use crate::{
+    AccessibilityData, AddSingletonModel, Clipboard, Scene, ZoomFactor,
     assets::{
-        asset_cache::{AssetCache, AssetHandle, AssetSource, AssetState},
         AssetProvider,
+        asset_cache::{AssetCache, AssetHandle, AssetSource, AssetState},
     },
+    r#async::{SpawnableOutput, Timer, block_on},
     event::KeyState,
     fonts::FallbackFontModel,
     image_cache::{self, ImageCache},
@@ -10,17 +12,15 @@ use crate::{
         AlertDialog, AlertDialogWithCallbacks, AppModalCallback, ModalId, PlatformModalResponseData,
     },
     platform::{
+        FullscreenState, MicrophoneAccessState, SaveFilePickerConfiguration, SystemTheme,
+        TerminationMode, WindowContext,
         app::TerminationResult,
         file_picker::{FilePickerConfiguration, FilePickerError},
         keyboard::KeyCode,
-        FullscreenState, MicrophoneAccessState, SaveFilePickerConfiguration, SystemTheme,
-        TerminationMode, WindowContext,
     },
-    r#async::{block_on, SpawnableOutput, Timer},
     windowing::{self, WindowCallbacks, WindowManager},
-    AccessibilityData, AddSingletonModel, Clipboard, Scene, ZoomFactor,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::Utc;
 use futures::{future::join_all, prelude::*};
 use instant::Instant;
@@ -38,16 +38,25 @@ use std::{
     pin::pin,
     rc::{self, Rc},
     sync::{
-        atomic::{AtomicI64, Ordering},
         Arc, OnceLock,
+        atomic::{AtomicI64, Ordering},
     },
 };
 use warp_errors::report_error;
 
 use crate::{
+    Action, AddWindowOptions, AnyModel, AnyModelHandle, ApplicationBundleInfo, CursorInfo, Effect,
+    Element, Entity, EntityId, EntityIdMap, EntityIdSet, Event, GetSingletonModelHandle,
+    ModelAsRef, ModelContext, ModelHandle, NextNewWindowsHasThisWindowsBoundsUponClose, Presenter,
+    ReadModel, ReadView, SingletonEntity, SpawnedFuture, TaskId, TypedActionView, UpdateModel,
+    UpdateView, View, ViewAsRef, ViewContext, ViewHandle, WindowId, WindowInvalidation,
     accessibility::{AccessibilityVerbosity, ActionAccessibilityContent},
     actions::StandardAction,
     assets,
+    r#async::{
+        FutureId,
+        executor::{self, Background, Foreground, ForegroundTask},
+    },
     core::{ActionType, Window},
     fonts::{self, ExternalFontFamily, RequestedFallbackFontSource},
     keymap::{
@@ -57,23 +66,14 @@ use crate::{
     notification::{NotificationSendError, RequestPermissionsOutcome, UserNotification},
     platform::{self, Cursor, WindowBounds, WindowOptions, WindowStyle},
     presenter::{CursorUpdate, DispatchedActionKind},
-    r#async::{
-        executor::{self, Background, Foreground, ForegroundTask},
-        FutureId,
-    },
     rendering,
     util::post_inc,
-    Action, AddWindowOptions, AnyModel, AnyModelHandle, ApplicationBundleInfo, CursorInfo, Effect,
-    Element, Entity, EntityId, EntityIdMap, EntityIdSet, Event, GetSingletonModelHandle,
-    ModelAsRef, ModelContext, ModelHandle, NextNewWindowsHasThisWindowsBoundsUponClose, Presenter,
-    ReadModel, ReadView, SingletonEntity, SpawnedFuture, TaskId, TypedActionView, UpdateModel,
-    UpdateView, View, ViewAsRef, ViewContext, ViewHandle, WindowId, WindowInvalidation,
 };
 
 use super::{
-    autotracking, ActionCallback, BlurContext, FocusContext, GlobalActionCallback, GlobalShortcut,
+    ActionCallback, BlurContext, FocusContext, GlobalActionCallback, GlobalShortcut,
     InvalidationCallback, Observation, PendingUnsubscribes, RefCounts, StoredView, Subscription,
-    TaskCallback, TypedActionCallback, ViewType,
+    TaskCallback, TypedActionCallback, ViewType, autotracking,
 };
 
 #[cfg(feature = "tui")]
@@ -444,7 +444,7 @@ impl App {
     }
 
     #[cfg(test)]
-    pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> {
+    pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> + use<> {
         self.0.borrow().finish_pending_tasks()
     }
 
@@ -2620,10 +2620,9 @@ impl AppContext {
                     _ => (),
                 };
 
-                if let Some(presenter) = ctx.presenter(window_id) {
-                    ctx.handle_window_event(event, window_id, presenter)
-                } else {
-                    crate::windowing::EventDispatchResult::default()
+                match ctx.presenter(window_id) {
+                    Some(presenter) => ctx.handle_window_event(event, window_id, presenter),
+                    _ => crate::windowing::EventDispatchResult::default(),
                 }
             }),
             resize_callback: Box::new(move |window, ctx| {
@@ -3015,23 +3014,24 @@ impl AppContext {
         let view_id = EntityId::new();
         self.pending_flushes += 1;
         let mut ctx = ViewContext::new(self, window_id, view_id);
-        let handle = if let Some(view) = build_view(&mut ctx) {
-            if let Some(window) = self.windows.get_mut(&window_id) {
-                window
-                    .views
-                    .insert(view_id, StoredView::Gui(Box::new(view)));
-            } else {
-                panic!("Window does not exist");
+        let handle = match build_view(&mut ctx) {
+            Some(view) => {
+                if let Some(window) = self.windows.get_mut(&window_id) {
+                    window
+                        .views
+                        .insert(view_id, StoredView::Gui(Box::new(view)));
+                } else {
+                    panic!("Window does not exist");
+                }
+                self.view_to_window.insert(view_id, window_id);
+                self.window_invalidations
+                    .entry(window_id)
+                    .or_default()
+                    .updated
+                    .insert(view_id);
+                Some(ViewHandle::new(window_id, view_id, &self.ref_counts))
             }
-            self.view_to_window.insert(view_id, window_id);
-            self.window_invalidations
-                .entry(window_id)
-                .or_default()
-                .updated
-                .insert(view_id);
-            Some(ViewHandle::new(window_id, view_id, &self.ref_counts))
-        } else {
-            None
+            _ => None,
         };
         self.flush_effects();
         handle
@@ -3962,12 +3962,13 @@ impl AppContext {
             for mut subscription in subscriptions {
                 let alive = match &mut subscription {
                     Subscription::FromModel { model_id, callback } => {
-                        if let Some(mut model) = self.models.remove(model_id) {
-                            callback(model.as_any_mut(), payload.as_ref(), self, *model_id);
-                            self.models.insert(*model_id, model);
-                            true
-                        } else {
-                            false
+                        match self.models.remove(model_id) {
+                            Some(mut model) => {
+                                callback(model.as_any_mut(), payload.as_ref(), self, *model_id);
+                                self.models.insert(*model_id, model);
+                                true
+                            }
+                            _ => false,
                         }
                     }
                     Subscription::FromView {
@@ -3980,31 +3981,32 @@ impl AppContext {
                             .get(view_id)
                             .copied()
                             .unwrap_or(*stored_window_id);
-                        if let Some(mut view) = self
+                        match self
                             .windows
                             .get_mut(&current_window_id)
                             .and_then(|window| window.views.remove(view_id))
                         {
-                            callback(
-                                view.as_any_mut(),
-                                payload.as_ref(),
-                                self,
-                                current_window_id,
-                                *view_id,
-                            );
+                            Some(mut view) => {
+                                callback(
+                                    view.as_any_mut(),
+                                    payload.as_ref(),
+                                    self,
+                                    current_window_id,
+                                    *view_id,
+                                );
 
-                            // XXX We need to check whether window is None
-                            // once again because callback could
-                            // potentially erase the window (i.e. if we
-                            // handle the Terminal exit event)
-                            if let Some(window) = self.windows.get_mut(&current_window_id) {
-                                window.views.insert(*view_id, view);
-                                true
-                            } else {
-                                false
+                                // XXX We need to check whether window is None
+                                // once again because callback could
+                                // potentially erase the window (i.e. if we
+                                // handle the Terminal exit event)
+                                if let Some(window) = self.windows.get_mut(&current_window_id) {
+                                    window.views.insert(*view_id, view);
+                                    true
+                                } else {
+                                    false
+                                }
                             }
-                        } else {
-                            false
+                            _ => false,
                         }
                     }
                     Subscription::FromApp { callback } => {
@@ -4049,12 +4051,13 @@ impl AppContext {
                 for mut observation in observations {
                     let alive = match &mut observation {
                         Observation::FromModel { model_id, callback } => {
-                            if let Some(mut model) = self.models.remove(model_id) {
-                                callback(model.as_any_mut(), observed_id, self, *model_id);
-                                self.models.insert(*model_id, model);
-                                true
-                            } else {
-                                false
+                            match self.models.remove(model_id) {
+                                Some(mut model) => {
+                                    callback(model.as_any_mut(), observed_id, self, *model_id);
+                                    self.models.insert(*model_id, model);
+                                    true
+                                }
+                                _ => false,
                             }
                         }
                         Observation::FromView {
@@ -4067,24 +4070,25 @@ impl AppContext {
                                 .get(view_id)
                                 .copied()
                                 .unwrap_or(*stored_window_id);
-                            if let Some(mut view) = self
+                            match self
                                 .windows
                                 .get_mut(&current_window_id)
                                 .and_then(|w| w.views.remove(view_id))
                             {
-                                callback(
-                                    view.as_any_mut(),
-                                    observed_id,
-                                    self,
-                                    current_window_id,
-                                    *view_id,
-                                );
-                                if let Some(window) = self.windows.get_mut(&current_window_id) {
-                                    window.views.insert(*view_id, view);
+                                Some(mut view) => {
+                                    callback(
+                                        view.as_any_mut(),
+                                        observed_id,
+                                        self,
+                                        current_window_id,
+                                        *view_id,
+                                    );
+                                    if let Some(window) = self.windows.get_mut(&current_window_id) {
+                                        window.views.insert(*view_id, view);
+                                    }
+                                    true
                                 }
-                                true
-                            } else {
-                                false
+                                _ => false,
                             }
                         }
                         Observation::FromApp { callback } => {
@@ -4259,17 +4263,20 @@ impl AppContext {
                 loop {
                     match stream.next().await {
                         Some(item) => {
-                            if let Some(app) = app.upgrade() {
-                                let mut app = app.borrow_mut();
+                            match app.upgrade() {
+                                Some(app) => {
+                                    let mut app = app.borrow_mut();
 
-                                // If the entity that spawned the stream no longer exists, terminate
-                                // the stream.
-                                if app.relay_task_output(task_id, Box::new(item)).is_err() {
-                                    app.stream_completed(task_id);
+                                    // If the entity that spawned the stream no longer exists, terminate
+                                    // the stream.
+                                    if app.relay_task_output(task_id, Box::new(item)).is_err() {
+                                        app.stream_completed(task_id);
+                                        break;
+                                    }
+                                }
+                                _ => {
                                     break;
                                 }
-                            } else {
-                                break;
                             }
                         }
                         None => {
@@ -4301,9 +4308,9 @@ impl AppContext {
     pub fn open_file_picker(
         &mut self,
         callback: impl FnOnce(Result<Vec<String>, FilePickerError>, &mut AppContext)
-            + Send
-            + Sync
-            + 'static,
+        + Send
+        + Sync
+        + 'static,
         config: FilePickerConfiguration,
     ) {
         self.platform_delegate
@@ -4384,13 +4391,16 @@ impl AppContext {
                 mut on_item,
                 on_done,
             } => {
-                if let Some(mut model) = self.models.remove(&model_id) {
-                    on_item(model.as_any_mut(), output, self, model_id);
-                    self.models.insert(model_id, model);
-                } else {
-                    result = Err(anyhow!(
-                        "Unable to retrieve model when relaying task output from stream"
-                    ));
+                match self.models.remove(&model_id) {
+                    Some(mut model) => {
+                        on_item(model.as_any_mut(), output, self, model_id);
+                        self.models.insert(model_id, model);
+                    }
+                    _ => {
+                        result = Err(anyhow!(
+                            "Unable to retrieve model when relaying task output from stream"
+                        ));
+                    }
                 }
                 // Streams go through different code paths compared to Futures.
                 // Even if the stream halts after this call, we still need to
@@ -4429,21 +4439,24 @@ impl AppContext {
                 mut on_item,
                 on_done,
             } => {
-                if let Some(mut view) = self
+                match self
                     .windows
                     .get_mut(&window_id)
                     .and_then(|w| w.views.remove(&view_id))
                 {
-                    on_item(view.as_any_mut(), output, self, window_id, view_id);
-                    self.windows
-                        .get_mut(&window_id)
-                        .ok_or_else(|| anyhow!("Unable to retrieve window for view"))?
-                        .views
-                        .insert(view_id, view);
-                } else {
-                    result = Err(anyhow!(
-                        "Unable to retrieve view when relaying task output from stream"
-                    ));
+                    Some(mut view) => {
+                        on_item(view.as_any_mut(), output, self, window_id, view_id);
+                        self.windows
+                            .get_mut(&window_id)
+                            .ok_or_else(|| anyhow!("Unable to retrieve window for view"))?
+                            .views
+                            .insert(view_id, view);
+                    }
+                    _ => {
+                        result = Err(anyhow!(
+                            "Unable to retrieve view when relaying task output from stream"
+                        ));
+                    }
                 }
                 // Streams go through different code paths compared to Futures.
                 // Even if the stream halts after this call, we still need to
@@ -4517,7 +4530,7 @@ impl AppContext {
     }
 
     #[cfg(test)]
-    pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> {
+    pub fn finish_pending_tasks(&self) -> impl Future<Output = ()> + use<> {
         let mut pending_tasks = self.task_callbacks.keys().cloned().collect::<HashSet<_>>();
         let task_done = self.task_done.1.clone();
 
@@ -4597,21 +4610,24 @@ impl UpdateModel for AppContext {
         T: Entity,
         F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
     {
-        if let Some(mut model) = self.models.remove(&handle.id()) {
-            self.pending_flushes += 1;
-            let mut ctx = ModelContext::new(self, handle.id());
-            let result = update(
-                model
-                    .as_any_mut()
-                    .downcast_mut()
-                    .expect("Downcast is type safe"),
-                &mut ctx,
-            );
-            self.models.insert(handle.id(), model);
-            self.flush_effects();
-            result
-        } else {
-            panic!("Circular model update");
+        match self.models.remove(&handle.id()) {
+            Some(mut model) => {
+                self.pending_flushes += 1;
+                let mut ctx = ModelContext::new(self, handle.id());
+                let result = update(
+                    model
+                        .as_any_mut()
+                        .downcast_mut()
+                        .expect("Downcast is type safe"),
+                    &mut ctx,
+                );
+                self.models.insert(handle.id(), model);
+                self.flush_effects();
+                result
+            }
+            _ => {
+                panic!("Circular model update");
+            }
         }
     }
 }
@@ -4625,10 +4641,11 @@ impl UpdateView for AppContext {
         self.pending_flushes += 1;
         let window_id = handle.window_id(self);
         let mut view = if let Some(window) = self.windows.get_mut(&window_id) {
-            if let Some(view) = window.views.remove(&handle.id()) {
-                view
-            } else {
-                panic!("Circular view update");
+            match window.views.remove(&handle.id()) {
+                Some(view) => view,
+                _ => {
+                    panic!("Circular view update");
+                }
             }
         } else {
             panic!("Window does not exist");

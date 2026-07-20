@@ -6,10 +6,12 @@ use warp_core::{
     features::FeatureFlag,
     ui::{
         appearance::Appearance,
-        theme::{color::internal_colors::neutral_4, Fill},
+        theme::{Fill, color::internal_colors::neutral_4},
     },
 };
 use warpui::{
+    AppContext, Element, Entity, SingletonEntity as _, TypedActionView, View, ViewContext,
+    ViewHandle,
     elements::{
         ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, Flex, Hoverable,
         MainAxisAlignment, MainAxisSize, MouseState, MouseStateHandle, ParentElement, Radius,
@@ -18,8 +20,6 @@ use warpui::{
         button::{ButtonVariant, TextAndIcon, TextAndIconAlignment},
         components::{Coords, UiComponent, UiComponentStyles},
     },
-    AppContext, Element, Entity, SingletonEntity as _, TypedActionView, View, ViewContext,
-    ViewHandle,
 };
 
 use crate::{
@@ -188,13 +188,12 @@ impl AliasBar {
         if let Some(alias) = self
             .selected_alias
             .and_then(|index| self.aliases.get_mut(index))
+            && alias.env_vars != sync_id
         {
-            if alias.env_vars != sync_id {
-                alias.env_vars = sync_id;
-                self.mark_dirty(true, ctx);
+            alias.env_vars = sync_id;
+            self.mark_dirty(true, ctx);
 
-                let _ = ctx;
-            }
+            let _ = ctx;
         }
     }
 

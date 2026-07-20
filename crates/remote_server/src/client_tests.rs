@@ -5,11 +5,11 @@ use warpui_core::r#async::executor;
 
 use super::*;
 use crate::proto::{
+    ClientMessage, CodebaseIndexStatus, CodebaseIndexStatusState, CodebaseIndexStatusUpdated,
+    CodebaseIndexStatusesSnapshot, ErrorCode, GetDiffStateResponse, InitializeResponse,
+    OpenBufferResponse, RunCommandResponse, RunCommandSuccess, ServerMessage, WriteFile,
     client_message, host_scoped_request, notification, run_command_response, server_message,
-    session_scoped_request, ClientMessage, CodebaseIndexStatus, CodebaseIndexStatusState,
-    CodebaseIndexStatusUpdated, CodebaseIndexStatusesSnapshot, ErrorCode, GetDiffStateResponse,
-    InitializeResponse, OpenBufferResponse, RunCommandResponse, RunCommandSuccess, ServerMessage,
-    WriteFile,
+    session_scoped_request,
 };
 use crate::protocol;
 
@@ -174,6 +174,7 @@ async fn initialize_round_trip() {
             InitializeParams {
                 user_id: String::new(),
                 user_email: String::new(),
+                codebase_index_limits: None,
             },
         )
         .await
@@ -201,6 +202,7 @@ async fn initialize_sends_empty_auth_token_when_none() {
             InitializeParams {
                 user_id: String::new(),
                 user_email: String::new(),
+                codebase_index_limits: None,
             },
         )
         .await
@@ -226,6 +228,7 @@ async fn initialize_sends_auth_token_when_provided() {
             InitializeParams {
                 user_id: String::new(),
                 user_email: String::new(),
+                codebase_index_limits: None,
             },
         )
         .await
@@ -302,6 +305,7 @@ async fn disconnected_on_closed_stream() {
             InitializeParams {
                 user_id: String::new(),
                 user_email: String::new(),
+                codebase_index_limits: None,
             },
         )
         .await;
@@ -383,6 +387,7 @@ async fn concurrent_in_flight_requests() {
                 InitializeParams {
                     user_id: String::new(),
                     user_email: String::new(),
+                    codebase_index_limits: None,
                 },
             )
             .await

@@ -1,8 +1,9 @@
 use warp_core::ui::appearance::Appearance;
-use warpui::{platform::WindowStyle, App, ViewHandle};
+use warpui::{App, ViewHandle, platform::WindowStyle};
 
 use crate::auth::AuthStateProvider;
 use crate::{
+    GlobalResourceHandles, GlobalResourceHandlesProvider,
     cloud_object::model::{actions::ObjectActions, persistence::CloudModel, view::CloudViewModel},
     env_vars::{
         active_env_var_collection_data::SavingStatus,
@@ -19,7 +20,6 @@ use crate::{
     workspaces::{
         team_tester::TeamTesterStatus, user_profiles::UserProfiles, user_workspaces::UserWorkspaces,
     },
-    GlobalResourceHandles, GlobalResourceHandlesProvider,
 };
 
 fn initialize_app(app: &mut App) {

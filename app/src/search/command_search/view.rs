@@ -9,39 +9,39 @@ use lazy_static::lazy_static;
 use std::{collections::HashSet, ops::Range, sync::Arc, time::Duration};
 use warp_core::features::FeatureFlag;
 use warpui::{
+    AppContext, Element, Entity, FocusContext, ModelHandle, SingletonEntity, TypedActionView, View,
+    ViewContext, ViewHandle, WeakViewHandle,
     accessibility::{AccessibilityContent, WarpA11yRole},
     elements::{
-        resizable_state_handle, Align, AnchorPair, Border, ConstrainedBox, Container, CornerRadius,
-        CrossAxisAlignment, Dismiss, Fill, Flex, OffsetPositioning, OffsetType, ParentElement,
-        ParentOffsetBounds, PositionedElementOffsetBounds, PositioningAxis, Radius, Resizable,
-        ResizableStateHandle, SavePosition, ScrollStateHandle, Scrollable, ScrollableElement,
-        Shrinkable, Stack, UniformList, UniformListState, XAxisAnchor, YAxisAnchor,
+        Align, AnchorPair, Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
+        Dismiss, Fill, Flex, OffsetPositioning, OffsetType, ParentElement, ParentOffsetBounds,
+        PositionedElementOffsetBounds, PositioningAxis, Radius, Resizable, ResizableStateHandle,
+        SavePosition, ScrollStateHandle, Scrollable, ScrollableElement, Shrinkable, Stack,
+        UniformList, UniformListState, XAxisAnchor, YAxisAnchor, resizable_state_handle,
     },
     presenter::ChildView,
     ui_components::components::{UiComponent, UiComponentStyles},
-    AppContext, Element, Entity, FocusContext, ModelHandle, SingletonEntity, TypedActionView, View,
-    ViewContext, ViewHandle, WeakViewHandle,
 };
 
 use crate::{
     ai_assistant::{
-        execution_context::WarpAiExecutionContext, GenerateCommandsFromNaturalLanguageError,
+        GenerateCommandsFromNaturalLanguageError, execution_context::WarpAiExecutionContext,
     },
     appearance::Appearance,
     completer::SessionContext,
     drive::settings::WarpDriveSettings,
     search::{
+        QueryFilter,
         command_search::searcher::{CommandSearchItemAction, CommandSearchMixer},
         result_renderer::{QueryResultRenderer, QueryResultRendererStyles},
         search_bar::{SearchBar, SearchBarEvent, SearchBarState, SearchResultOrdering},
-        QueryFilter,
     },
     settings::AISettings,
     terminal::{
+        History, HistoryEvent,
         input::MenuPositioning,
         model::session::SessionId,
-        resizable_data::{ModalType, ResizableData, DEFAULT_UNIVERSAL_SEARCH_WIDTH},
-        History, HistoryEvent,
+        resizable_data::{DEFAULT_UNIVERSAL_SEARCH_WIDTH, ModalType, ResizableData},
     },
 };
 
@@ -51,7 +51,7 @@ use super::{
     history::history_data_source_for_session,
     notebooks::notebooks_data_source,
     warp_ai::WarpAIDataSource,
-    workflows::{cloud_workflows_data_source, WorkflowsDataSource},
+    workflows::{WorkflowsDataSource, cloud_workflows_data_source},
     zero_state::{CommandSearchZeroStateEvent, CommandSearchZeroStateView},
 };
 
@@ -367,10 +367,10 @@ impl CommandSearchView {
         visible_results_range: Range<usize>,
         ctx: &mut ViewContext<Self>,
     ) {
-        if let Some(current_visible_results_range) = &self.state.visible_results_range {
-            if current_visible_results_range == &visible_results_range {
-                return;
-            }
+        if let Some(current_visible_results_range) = &self.state.visible_results_range
+            && current_visible_results_range == &visible_results_range
+        {
+            return;
         }
         self.state.visible_results_range = Some(visible_results_range);
         ctx.notify();
@@ -908,21 +908,20 @@ impl View for CommandSearchView {
             ),
         );
 
-        if !should_show_zero_state {
-            if let (Some(selected_result_renderer), Some(details_panel_positioning)) = (
+        if !should_show_zero_state
+            && let (Some(selected_result_renderer), Some(details_panel_positioning)) = (
                 self.selected_result_renderer(app),
                 self.offset_positioning_for_details_panel(app),
-            ) {
-                if let Some(details) = selected_result_renderer.render_details(app) {
-                    stack.add_positioned_overlay_child(
-                        Container::new(details)
-                            .with_margin_bottom(DETAILS_PANEL_MARGIN)
-                            .with_margin_right(DETAILS_PANEL_MARGIN)
-                            .finish(),
-                        details_panel_positioning,
-                    );
-                }
-            }
+            )
+            && let Some(details) = selected_result_renderer.render_details(app)
+        {
+            stack.add_positioned_overlay_child(
+                Container::new(details)
+                    .with_margin_bottom(DETAILS_PANEL_MARGIN)
+                    .with_margin_right(DETAILS_PANEL_MARGIN)
+                    .finish(),
+                details_panel_positioning,
+            );
         }
 
         Dismiss::new(Container::new(stack.finish()).with_margin_top(36.).finish())

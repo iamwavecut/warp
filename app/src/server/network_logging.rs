@@ -96,8 +96,8 @@ pub(super) fn init<'a>(
 
     for client in http_clients.into_iter() {
         client.set_before_request_fn(Box::new(enclose!((tx) move |request, serialized_payload| {
-            if !tx.is_closed() {
-                if let Err(e) = tx.try_send(NetworkLogItem::request(
+            if !tx.is_closed()
+                && let Err(e) = tx.try_send(NetworkLogItem::request(
                     request,
                     serialized_payload.clone(),
                     chrono::Local::now().fixed_offset(),
@@ -106,15 +106,13 @@ pub(super) fn init<'a>(
                         "Error sending request from http client to logging task: {e}"
                     );
                 }
-            }
         })));
 
         client.set_after_response_fn(Box::new(enclose!((tx) move |response| {
-            if !tx.is_closed() {
-                if let Err(e) = tx.try_send(NetworkLogItem::response(response, chrono::Local::now().fixed_offset())) {
+            if !tx.is_closed()
+                && let Err(e) = tx.try_send(NetworkLogItem::response(response, chrono::Local::now().fixed_offset())) {
                     log::error!("Error sending request from http client to logging task: {e}");
                 }
-            }
         })));
     }
 }

@@ -19,8 +19,8 @@ use crate::settings_view::SettingsSection;
 use crate::tab::SelectedTabColor;
 use crate::terminal::ShellLaunchData;
 use crate::themes::theme::AnsiColorIdentifier;
-use crate::workspace::view::left_panel::ToolPanelView;
 use crate::workspace::WorkspaceRegistry;
+use crate::workspace::view::left_panel::ToolPanelView;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppState {
@@ -337,10 +337,10 @@ pub fn get_app_state(app: &AppContext) -> AppState {
 
     for (index, window_id) in app.window_ids().enumerate() {
         // Determine index of active window
-        if let Some(active_window_id) = active_window_id {
-            if active_window_id == window_id {
-                active_window_index = Some(index);
-            }
+        if let Some(active_window_id) = active_window_id
+            && active_window_id == window_id
+        {
+            active_window_index = Some(index);
         }
 
         if let Some(workspace) = WorkspaceRegistry::as_ref(app).get(window_id, app) {

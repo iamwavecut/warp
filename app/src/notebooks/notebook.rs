@@ -15,7 +15,10 @@ use warp_editor::{
     model::{CoreEditorModel, RichTextEditorModel},
 };
 use warpui::{
+    AppContext, BlurContext, Element, Entity, FocusContext, ModelAsRef, ModelHandle,
+    SingletonEntity, TypedActionView, View, ViewContext, ViewHandle, WindowId,
     accessibility::{AccessibilityContent, WarpA11yRole},
+    r#async::SpawnedFutureHandle,
     clipboard::ClipboardContent,
     elements::{
         Align, Clipped, ConstrainedBox, Container, CrossAxisAlignment, DispatchEventResult, Empty,
@@ -24,13 +27,10 @@ use warpui::{
     },
     keymap::{EditableBinding, FixedBinding},
     presenter::ChildView,
-    r#async::SpawnedFutureHandle,
     ui_components::{
         button::ButtonVariant,
         components::{UiComponent, UiComponentStyles},
     },
-    AppContext, BlurContext, Element, Entity, FocusContext, ModelAsRef, ModelHandle,
-    SingletonEntity, TypedActionView, View, ViewContext, ViewHandle, WindowId,
 };
 
 use crate::{
@@ -40,17 +40,17 @@ use crate::{
     },
     appearance::Appearance,
     cloud_object::{
+        CloudObject, CloudObjectEventEntrypoint, ObjectType, Owner, Space,
         grab_edit_access_modal::{GrabEditAccessModal, GrabEditAccessModalEvent},
         model::{
             persistence::{CloudModel, CloudModelEvent, UpdateSource},
             view::{Editor, EditorState},
         },
-        CloudObject, CloudObjectEventEntrypoint, ObjectType, Owner, Space,
     },
     cmd_or_ctrl_shift,
     drive::{
-        export::ExportManager, items::WarpDriveItemId, sharing::ShareableObject,
-        CloudObjectTypeAndId, OpenWarpDriveObjectSettings,
+        CloudObjectTypeAndId, OpenWarpDriveObjectSettings, export::ExportManager,
+        items::WarpDriveItemId, sharing::ShareableObject,
     },
     editor::{
         EditOrigin, EditorView, Event as EditorEvent, InteractionState,
@@ -61,22 +61,22 @@ use crate::{
     menu::{MenuItem, MenuItemFields},
     network::{NetworkStatus, NetworkStatusEvent},
     notebooks::{
-        editor::{model::NotebooksEditorModel, rich_text_styles},
         CloudNotebook,
+        editor::{model::NotebooksEditorModel, rich_text_styles},
     },
     pane_group::{
+        BackingView, PaneConfiguration, PaneEvent,
         focus_state::{PaneFocusHandle, PaneGroupFocusEvent},
         pane::view,
-        BackingView, PaneConfiguration, PaneEvent,
     },
     server::{
         cloud_objects::update_manager::{FetchSingleObjectOption, UpdateManager},
         ids::{ClientId, ServerId, SyncId},
     },
     settings::{
+        FontSettings, FontSettingsChangedEvent, NotebookFontSize,
         app_installation_detection::{UserAppInstallDetectionSettings, UserAppInstallStatus},
-        decrease_notebook_font_size, increase_notebook_font_size, FontSettings,
-        FontSettingsChangedEvent, NotebookFontSize,
+        decrease_notebook_font_size, increase_notebook_font_size,
     },
     terminal::safe_mode_settings::get_secret_obfuscation_mode,
     throttle::throttle,
@@ -91,21 +91,22 @@ use crate::{
 use self::details_bar::DetailsBar;
 
 use super::{
+    CloudNotebookModel, NotebookId, NotebookLocation,
     active_notebook_data::{
         ActiveNotebook, ActiveNotebookData, ActiveNotebookDataEvent, Mode, SavingStatus,
         TrashStatus,
     },
     context_menu::{
-        show_rich_editor_context_menu, show_text_editor_context_menu, ContextMenuAction,
-        ContextMenuState,
+        ContextMenuAction, ContextMenuState, show_rich_editor_context_menu,
+        show_text_editor_context_menu,
     },
     editor::{
-        view::{EditorViewEvent, RichTextEditorConfig, RichTextEditorView},
         NotebookWorkflow,
+        view::{EditorViewEvent, RichTextEditorConfig, RichTextEditorView},
     },
     link::{NotebookLinks, SessionSource},
     manager::NotebookManager,
-    styles, CloudNotebookModel, NotebookId, NotebookLocation,
+    styles,
 };
 
 mod details_bar;
@@ -118,8 +119,7 @@ const EDIT_BUTTON_MARGIN: f32 = 6.;
 const HEADER_MARGIN: f32 = 15.;
 const BANNER_VERTICAL_MARGIN: f32 = 10.;
 
-const CONFLICT_RESOLUTION_MESSAGE: &str =
-    "This notebook could not be saved because changes were made while you were editing. Please copy your work and refresh.";
+const CONFLICT_RESOLUTION_MESSAGE: &str = "This notebook could not be saved because changes were made while you were editing. Please copy your work and refresh.";
 const REFRESH_BUTTON_TEXT: &str = "Refresh";
 
 const FEATURE_NOT_AVAILABLE_MESSAGE: &str = "This notebook could not be saved to the server because the feature is temporarily unavailable. The changes are saved locally. Please retry later.";
@@ -754,18 +754,18 @@ impl NotebookView {
                 }
             }
             CloudModelEvent::ObjectMoved { type_and_id, .. } => {
-                if self.as_active_notebook_id(type_and_id, ctx).is_some() {
-                    if let Some(space) = self.active_notebook_data.as_ref(ctx).space(ctx) {
-                        self.input
-                            .update(ctx, |editor, ctx| editor.set_space(space, ctx));
-                    }
+                if self.as_active_notebook_id(type_and_id, ctx).is_some()
+                    && let Some(space) = self.active_notebook_data.as_ref(ctx).space(ctx)
+                {
+                    self.input
+                        .update(ctx, |editor, ctx| editor.set_space(space, ctx));
                 }
             }
-            CloudModelEvent::ObjectCreated { type_and_id, .. } => {
-                if self.as_active_notebook_id(type_and_id, ctx).is_some() {
-                    // Re-render to update the status bar.
-                    ctx.notify();
-                }
+            CloudModelEvent::ObjectCreated { type_and_id, .. }
+                if self.as_active_notebook_id(type_and_id, ctx).is_some() =>
+            {
+                // Re-render to update the status bar.
+                ctx.notify();
             }
             _ => (),
         }
@@ -877,10 +877,11 @@ impl NotebookView {
     /// Enqueue a save of the notebook's content.
     fn enqueue_content_update(&mut self, ctx: &mut ViewContext<Self>) {
         self.content_is_dirty = true;
-        report_if_error!(self
-            .save_tx
-            .try_send(NotebookUpdateRequestDebounceArg {})
-            .context("Error enqueuing content save"));
+        report_if_error!(
+            self.save_tx
+                .try_send(NotebookUpdateRequestDebounceArg {})
+                .context("Error enqueuing content save")
+        );
         self.active_notebook_data.update(ctx, |data, ctx| {
             // Mark the notebook as saving as soon as there are changes to be saved. It won't be
             // marked as Saved until we get a response from the server.
@@ -893,10 +894,11 @@ impl NotebookView {
     /// Enqueue a save of the notebook's title.
     fn enqueue_title_update(&mut self) {
         self.title_is_dirty = true;
-        report_if_error!(self
-            .save_tx
-            .try_send(NotebookUpdateRequestDebounceArg {})
-            .context("Error enqueuing title save"));
+        report_if_error!(
+            self.save_tx
+                .try_send(NotebookUpdateRequestDebounceArg {})
+                .context("Error enqueuing title save")
+        );
     }
 
     fn handle_input_editor_event(&mut self, event: &EditorViewEvent, ctx: &mut ViewContext<Self>) {
@@ -1061,9 +1063,11 @@ impl NotebookView {
 
     fn apply_font_size_to_setting(&mut self, new_font_size: f32, ctx: &mut ViewContext<Self>) {
         FontSettings::handle(ctx).update(ctx, |font_settings, ctx| {
-            report_if_error!(font_settings
-                .notebook_font_size
-                .set_value(new_font_size, ctx))
+            report_if_error!(
+                font_settings
+                    .notebook_font_size
+                    .set_value(new_font_size, ctx)
+            )
         });
     }
 
@@ -1299,17 +1303,15 @@ impl NotebookView {
                 .user_app_installation_detected
                 .value()
                 == UserAppInstallStatus::Detected
+            && let Some(link) = self.notebook_link(ctx)
+            && let Ok(url) = Url::parse(&link)
         {
-            if let Some(link) = self.notebook_link(ctx) {
-                if let Ok(url) = Url::parse(&link) {
-                    menu_items.push(
-                        MenuItemFields::new("Open on Desktop")
-                            .with_on_select_action(NotebookAction::OpenLinkOnDesktop(url))
-                            .with_icon(icons::Icon::Laptop)
-                            .into_item(),
-                    );
-                }
-            }
+            menu_items.push(
+                MenuItemFields::new("Open on Desktop")
+                    .with_on_select_action(NotebookAction::OpenLinkOnDesktop(url))
+                    .with_icon(icons::Icon::Laptop)
+                    .into_item(),
+            );
         }
 
         // Add "Duplicate" to menu
@@ -2151,7 +2153,7 @@ impl TypedActionView for NotebookView {
                 ctx.emit(NotebookEvent::Pane(PaneEvent::FocusActiveSession))
             }
             NotebookAction::ContextMenu(action) => {
-                if matches!(action, ContextMenuAction::Open(_)) {}
+                matches!(action, ContextMenuAction::Open(_));
                 self.context_menu.handle_action(action, ctx);
             }
             NotebookAction::Duplicate => self.duplicate_object(ctx),

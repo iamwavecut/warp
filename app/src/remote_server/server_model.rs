@@ -14,13 +14,13 @@ use remote_server::proto::OpenBufferSuccess;
 use repo_metadata::repositories::{DetectedRepositories, RepoDetectionSource};
 use repo_metadata::{RepoMetadataEvent, RepoMetadataModel, RepositoryIdentifier};
 use warp_core::channel::ChannelState;
-use warp_core::{safe_error, SessionId};
+use warp_core::{SessionId, safe_error};
 use warp_files::{FileModel, FileModelEvent};
 use warp_util::content_version::ContentVersion;
 use warp_util::file::FileId;
 use warp_util::standardized_path::StandardizedPath;
-use warpui::platform::TerminationMode;
 use warpui::r#async::{Spawnable, SpawnableOutput, SpawnedFutureHandle};
+use warpui::platform::TerminationMode;
 use warpui::{Entity, ModelContext, ModelHandle, SingletonEntity};
 
 use super::codebase_index_status::{
@@ -33,15 +33,12 @@ use super::diff_state_tracker::{
     DiffModelKey, DiffStateUpdate, RemoteDiffStateManager, SubscribeOutcome,
 };
 use super::proto::{
-    client_message, delete_file_response, discard_files_response, get_diff_state_response,
-    get_fragment_metadata_from_hash_response, host_scoped_request, notification,
-    resolve_conflict_response, run_command_response, save_buffer_response, server_message,
-    session_scoped_request, write_file_response, Abort, Authenticate, BranchInfo, BufferEdit,
-    BufferUpdatedPush, ClientMessage, CloseBuffer, CodebaseIndexLimits, CodebaseIndexStatus,
-    CodebaseIndexStatusUpdated, CodebaseIndexStatusesSnapshot, CodebaseResyncMode, DeleteFile,
-    DeleteFileResponse, DeleteFileSuccess, DiscardFilesError, DiscardFilesResponse,
-    DiscardFilesSuccess, DropCodebaseIndex, ErrorCode, ErrorResponse, FailedFileRead,
-    FileContextProto, FileOperationError, FragmentMetadata as ProtoFragmentMetadata,
+    Abort, Authenticate, BranchInfo, BufferEdit, BufferUpdatedPush, ClientMessage, CloseBuffer,
+    CodebaseIndexLimits, CodebaseIndexStatus, CodebaseIndexStatusUpdated,
+    CodebaseIndexStatusesSnapshot, CodebaseResyncMode, DeleteFile, DeleteFileResponse,
+    DeleteFileSuccess, DiscardFilesError, DiscardFilesResponse, DiscardFilesSuccess,
+    DropCodebaseIndex, ErrorCode, ErrorResponse, FailedFileRead, FileContextProto,
+    FileOperationError, FragmentMetadata as ProtoFragmentMetadata,
     FragmentMetadataLookupError as ProtoFragmentMetadataLookupError,
     FragmentMetadataLookupErrorCode, GetBranchesError, GetBranchesResponse, GetBranchesSuccess,
     GetDiffStateResponse, GetFragmentMetadataFromHash, GetFragmentMetadataFromHashResponse,
@@ -51,7 +48,10 @@ use super::proto::{
     ResolveConflictSuccess, ResyncCodebase, RunCommandError, RunCommandErrorCode,
     RunCommandRequest, RunCommandResponse, RunCommandSuccess, SaveBuffer, SaveBufferResponse,
     SaveBufferSuccess, ServerMessage, SessionBootstrapped, TextEdit, WriteFile, WriteFileResponse,
-    WriteFileSuccess,
+    WriteFileSuccess, client_message, delete_file_response, discard_files_response,
+    get_diff_state_response, get_fragment_metadata_from_hash_response, host_scoped_request,
+    notification, resolve_conflict_response, run_command_response, save_buffer_response,
+    server_message, session_scoped_request, write_file_response,
 };
 use super::server_buffer_tracker::{PendingBufferRequestKind, ServerBufferTracker};
 use crate::code::global_buffer_model::{GlobalBufferModel, GlobalBufferModelEvent};
@@ -70,7 +70,7 @@ const MAX_BRANCH_COUNT_CAP: usize = 500;
 pub type ConnectionId = uuid::Uuid;
 use super::protocol::RequestId;
 use crate::ai::agent::FileLocations;
-use crate::ai::blocklist::{read_local_file_context, ReadFileContextResult};
+use crate::ai::blocklist::{ReadFileContextResult, read_local_file_context};
 use crate::auth::auth_state::{AuthState, AuthStateProvider};
 use crate::features::FeatureFlag;
 use crate::terminal::model::session::command_executor::{
@@ -553,8 +553,8 @@ impl ServerModel {
                     // When a file-watcher update couldn't be applied because
                     // the buffer has unsaved client edits, forward the conflict
                     // to connected clients so they can show a resolution banner.
-                    if !success {
-                        if let Some(conns) = me.buffers.connections_for_buffer(file_id) {
+                    if !success
+                        && let Some(conns) = me.buffers.connections_for_buffer(file_id) {
                             // Collect to break the immutable borrow on `me.buffers`
                             // before calling `me.send_server_message(&mut self)`.
                             let conns: Vec<_> = conns.iter().copied().collect();
@@ -571,7 +571,6 @@ impl ServerModel {
                                 );
                             }
                         }
-                    }
                 }
                 GlobalBufferModelEvent::RemoteBufferConflict { .. } => {
                     // Not relevant for server-local buffers.
@@ -1844,13 +1843,12 @@ impl ServerModel {
                                 },
                             ),
                         );
-                        if is_git {
-                            if let Some(sent_roots) = me
+                        if is_git
+                            && let Some(sent_roots) = me
                                 .snapshot_sent_roots_by_connection
                                 .get_mut(&conn_id_for_response)
-                            {
-                                sent_roots.insert(root_path);
-                            }
+                        {
+                            sent_roots.insert(root_path);
                         }
                     }
                 }
@@ -2149,36 +2147,33 @@ impl ServerModel {
         // For force_reload on an already-tracked buffer, skip open_server_local
         // to avoid a spurious BufferLoaded event that would consume the pending
         // request before ServerLocalBufferUpdated can use it for exclusion.
-        if msg.force_reload {
-            if let Some(file_id) = self.buffers.file_id_for_path(&msg.path) {
-                self.buffers.add_connection(file_id, conn_id);
-                let gbm = GlobalBufferModel::handle(ctx);
+        if msg.force_reload
+            && let Some(file_id) = self.buffers.file_id_for_path(&msg.path)
+        {
+            self.buffers.add_connection(file_id, conn_id);
+            let gbm = GlobalBufferModel::handle(ctx);
 
-                self.buffers.insert_pending(
-                    file_id,
-                    request_id.clone(),
-                    conn_id,
-                    PendingBufferRequestKind::OpenBuffer,
-                );
-                if let Err(e) =
-                    gbm.update(ctx, |gbm, ctx| gbm.force_reload_server_local(file_id, ctx))
-                {
-                    self.buffers
-                        .take_pending_by_kind(&file_id, PendingBufferRequestKind::OpenBuffer);
-                    return HandlerOutcome::Sync(server_message::Message::OpenBufferResponse(
-                        OpenBufferResponse {
-                            result: Some(
-                                remote_server::proto::open_buffer_response::Result::Error(
-                                    FileOperationError { message: e },
-                                ),
-                            ),
-                        },
-                    ));
-                }
-                return HandlerOutcome::Async(None);
+            self.buffers.insert_pending(
+                file_id,
+                request_id.clone(),
+                conn_id,
+                PendingBufferRequestKind::OpenBuffer,
+            );
+            if let Err(e) = gbm.update(ctx, |gbm, ctx| gbm.force_reload_server_local(file_id, ctx))
+            {
+                self.buffers
+                    .take_pending_by_kind(&file_id, PendingBufferRequestKind::OpenBuffer);
+                return HandlerOutcome::Sync(server_message::Message::OpenBufferResponse(
+                    OpenBufferResponse {
+                        result: Some(remote_server::proto::open_buffer_response::Result::Error(
+                            FileOperationError { message: e },
+                        )),
+                    },
+                ));
             }
-            // Buffer not yet tracked — fall through to open_server_local below.
+            return HandlerOutcome::Async(None);
         }
+        // Buffer not yet tracked — fall through to open_server_local below.
 
         let path = PathBuf::from(&msg.path);
         let gbm = GlobalBufferModel::handle(ctx);

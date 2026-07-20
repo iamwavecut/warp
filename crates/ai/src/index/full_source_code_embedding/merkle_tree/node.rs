@@ -17,11 +17,11 @@ use super::hash::MerkleHash;
 use super::serialized_tree::{SerializedFilesystemInfo, SerializedMerkleNode};
 use super::tree::UpdateFileResult;
 use super::{ContentHash, DirEntryOrFragment, NodeHash};
+use crate::index::full_source_code_embedding::Error;
 use crate::index::full_source_code_embedding::chunker::chunk_code;
 use crate::index::full_source_code_embedding::fragment_metadata::{
     FragmentMetadata, LeafToFragmentMetadataUpdates,
 };
-use crate::index::full_source_code_embedding::Error;
 use crate::index::{DirectoryEntry, Entry, FileMetadata, THREADPOOL};
 
 /// ID that uniquely identifies a node in the merkle tree. It contains the node type
@@ -635,7 +635,7 @@ impl<'a> NodeLens<'a> {
         Self { node }
     }
 
-    pub fn children(&self) -> impl Iterator<Item = NodeLens<'a>> {
+    pub fn children(&self) -> impl Iterator<Item = NodeLens<'a>> + use<'a> {
         self.node.children().map(|node| NodeLens { node })
     }
 

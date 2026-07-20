@@ -5,10 +5,10 @@ use super::{
     cli_controller::{CLISubagentController, CLISubagentEvent, UserTakeOverReason},
     model::{AIBlockModel, AIBlockModelImpl, AIBlockOutputStatus},
     view_impl::common::{
+        AutoExecuteButtonProps, ButtonProps, ForceRefreshButtonProps, LOAD_OUTPUT_MESSAGE,
+        MaybeShimmeringText, WAITING_FOR_USER_INPUT_MESSAGE, WarpingIndicatorProps, WarpingProps,
         render_switch_control_to_user_button, render_warping_indicator,
-        render_warping_indicator_base, AutoExecuteButtonProps, ButtonProps,
-        ForceRefreshButtonProps, MaybeShimmeringText, WarpingIndicatorProps, WarpingProps,
-        LOAD_OUTPUT_MESSAGE, WAITING_FOR_USER_INPUT_MESSAGE,
+        render_warping_indicator_base,
     },
 };
 use crate::{
@@ -20,8 +20,8 @@ use crate::{
 };
 use crate::{
     ai::blocklist::agent_view::{
-        agent_view_bg_fill, child_agent_status_card::ChildAgentStatusCard, is_in_cloud_context,
         AgentMessageBar, AgentViewController, EphemeralMessageModel,
+        child_agent_status_card::ChildAgentStatusCard, is_in_cloud_context,
     },
     terminal::input::{
         buffer_model::InputBufferModel,
@@ -34,57 +34,57 @@ use crate::{
 use warp_multi_agent_api as api;
 
 use crate::{
+    BlocklistAIHistoryModel,
     ai::{
+        AgentTip,
         agent::{
-            conversation::AIConversationId, icons, AIAgentExchangeId, AIAgentOutput,
-            AIAgentOutputMessageType, CancellationReason, SummarizationType,
+            AIAgentExchangeId, AIAgentOutput, AIAgentOutputMessageType, CancellationReason,
+            SummarizationType, conversation::AIConversationId, icons,
         },
         blocklist::{
+            BlocklistAIActionEvent, BlocklistAIActionModel, BlocklistAIContextEvent,
+            BlocklistAIContextModel, BlocklistAIController, BlocklistAIHistoryEvent,
+            BlocklistAIInputEvent, BlocklistAIInputModel, QueuedQueryEvent, QueuedQueryModel,
+            ResponseStreamId,
             agent_view::shortcuts::AgentShortcutViewModel,
             ai_brand_color,
             model::AIBlockModelHelper,
             summarization_cancel_dialog::{
                 self, SummarizationCancelDialog, SummarizationCancelDialogEvent,
             },
-            BlocklistAIActionEvent, BlocklistAIActionModel, BlocklistAIContextEvent,
-            BlocklistAIContextModel, BlocklistAIController, BlocklistAIHistoryEvent,
-            BlocklistAIInputEvent, BlocklistAIInputModel, QueuedQueryEvent, QueuedQueryModel,
-            ResponseStreamId,
         },
         llms::LLMPreferences,
-        AgentTip,
     },
     settings::{InputModeSettings, InputSettings},
     settings_view::keybindings::KeybindingChangedNotifier,
     terminal::{
+        CANCEL_COMMAND_KEYBINDING, TOGGLE_AUTOEXECUTE_MODE_KEYBINDING,
+        TOGGLE_HIDE_CLI_RESPONSES_KEYBINDING, TOGGLE_QUEUE_NEXT_PROMPT_KEYBINDING, TerminalModel,
         input::SET_INPUT_MODE_TERMINAL_ACTION_NAME,
         model::block::LONG_RUNNING_COMMAND_DURATION_MS,
         model_events::{ModelEvent, ModelEventDispatcher},
         view::ambient_agent::{AmbientAgentViewModel, AmbientAgentViewModelEvent},
         warpify::render::LEFT_STRIPE_WIDTH,
-        TerminalModel, CANCEL_COMMAND_KEYBINDING, TOGGLE_AUTOEXECUTE_MODE_KEYBINDING,
-        TOGGLE_HIDE_CLI_RESPONSES_KEYBINDING, TOGGLE_QUEUE_NEXT_PROMPT_KEYBINDING,
     },
     util::bindings::keybinding_name_to_keystroke,
-    BlocklistAIHistoryModel,
 };
 use instant::Instant;
 use parking_lot::FairMutex;
 use pathfinder_color::ColorU;
 use warp_core::{
     features::FeatureFlag,
-    ui::{appearance::Appearance, theme::Fill, Icon as CoreIcon},
+    ui::{Icon as CoreIcon, appearance::Appearance, theme::Fill},
 };
 use warpui::elements::shimmering_text::ShimmeringTextStateHandle;
 use warpui::{
+    AppContext, Element, Entity, EntityId, ModelHandle, SingletonEntity, View, ViewContext,
+    ViewHandle,
+    r#async::SpawnedFutureHandle,
     elements::{Border, Container, Empty, Flex, MouseStateHandle, ParentElement, Text},
     keymap::Keystroke,
     presenter::ChildView,
-    r#async::SpawnedFutureHandle,
-    AppContext, Element, Entity, EntityId, ModelHandle, SingletonEntity, View, ViewContext,
-    ViewHandle,
 };
-use warpui::{r#async::Timer, TypedActionView};
+use warpui::{TypedActionView, r#async::Timer};
 
 pub fn init(app: &mut AppContext) {
     summarization_cancel_dialog::init(app);
@@ -1089,12 +1089,13 @@ fn resolve_fallback_warping_message<V: View>(
             conv.exchange_with_id(exchange_id)
         })
         .is_some_and(|exchange| exchange.has_user_query());
-    if is_fallback.is_none() && !is_new_user_query {
-        if let Some(prev) = latest_model_used_before_exchange(model, app) {
-            is_fallback = Some(prev.is_fallback);
-            if !prev.model_display_name.is_empty() {
-                display_name = Some(prev.model_display_name);
-            }
+    if is_fallback.is_none()
+        && !is_new_user_query
+        && let Some(prev) = latest_model_used_before_exchange(model, app)
+    {
+        is_fallback = Some(prev.is_fallback);
+        if !prev.model_display_name.is_empty() {
+            display_name = Some(prev.model_display_name);
         }
     }
     if !is_fallback.unwrap_or(false) {
@@ -1119,104 +1120,112 @@ impl View for BlocklistAIStatusBar {
         {
             return cloud_mode_setup_terminal_message;
         }
-        let status_element =
-            if let Some(cloud_mode_setup_status) = self.render_cloud_mode_setup_status(app) {
-                cloud_mode_setup_status
-            } else if FeatureFlag::CloudModeSetupV2.is_enabled()
-                && self
-                    .ambient_agent_view_model
-                    .as_ref()
-                    .is_some_and(|ambient_agent_view_model| {
-                        let terminal_model = self.terminal_model.lock();
-                        is_cloud_agent_pre_first_exchange(
-                            Some(ambient_agent_view_model),
-                            &self.agent_view_controller,
-                            &terminal_model,
-                            app,
-                        )
-                    })
-            {
-                render_warping_indicator_base(
-                    WarpingIndicatorProps {
-                        icon: None,
-                        warping_indicator_text: MaybeShimmeringText::Shimmering {
-                            text: "Setting up environment".into(),
-                            shimmering_text_handle: self.shimmering_text_handle.clone(),
+        let status_element = match self.render_cloud_mode_setup_status(app) {
+            Some(cloud_mode_setup_status) => cloud_mode_setup_status,
+            _ => {
+                if FeatureFlag::CloudModeSetupV2.is_enabled()
+                    && self.ambient_agent_view_model.as_ref().is_some_and(
+                        |ambient_agent_view_model| {
+                            let terminal_model = self.terminal_model.lock();
+                            is_cloud_agent_pre_first_exchange(
+                                Some(ambient_agent_view_model),
+                                &self.agent_view_controller,
+                                &terminal_model,
+                                app,
+                            )
                         },
-                        non_shimmering_text: None,
-                        non_shimmering_suffix: None,
-                        buttons: None,
-                        is_passive_code_diff: false,
-                        secondary_element: self.render_tip(app),
-                    },
-                    app,
-                )
-            } else if self
-                .terminal_model
-                .lock()
-                .block_list()
-                .active_block()
-                .is_agent_tagged_in()
-                && self
-                    .ephemeral_message_model
-                    .as_ref(app)
-                    .current_message()
-                    .is_none()
-            {
-                render_warping_indicator_base(
-                    WarpingIndicatorProps {
-                        icon: Some(icons::gray_clock_icon(appearance).finish()),
-                        warping_indicator_text: MaybeShimmeringText::Static(
-                            WAITING_FOR_USER_INPUT_MESSAGE.into(),
-                        ),
-                        non_shimmering_text: None,
-                        non_shimmering_suffix: None,
-                        buttons: Some(render_switch_control_to_user_button(
-                            "Exit",
-                            "Exit agent input",
-                            ButtonProps {
-                                button_handle: &self.state_handles.take_over_button,
-                                keystroke: self.set_terminal_input_keystroke.as_ref(),
-                                is_active: false,
+                    )
+                {
+                    render_warping_indicator_base(
+                        WarpingIndicatorProps {
+                            icon: None,
+                            warping_indicator_text: MaybeShimmeringText::Shimmering {
+                                text: "Setting up environment".into(),
+                                shimmering_text_handle: self.shimmering_text_handle.clone(),
                             },
-                            appearance,
-                        )),
-                        is_passive_code_diff: false,
-                        secondary_element: self.render_tip(app),
-                    },
-                    app,
-                )
-            } else if let (Some(warping_indicator), true) = (
-                self.render_warping_indicator_for_latest_exchange(app),
-                self.ephemeral_message_model
-                    .as_ref(app)
-                    .current_message()
-                    .is_none(),
-            ) {
-                warping_indicator
-            } else if self.ambient_agent_view_model.as_ref().is_some_and(
-                |ambient_agent_view_model| {
-                    ambient_agent_view_model
+                            non_shimmering_text: None,
+                            non_shimmering_suffix: None,
+                            buttons: None,
+                            is_passive_code_diff: false,
+                            secondary_element: self.render_tip(app),
+                        },
+                        app,
+                    )
+                } else if self
+                    .terminal_model
+                    .lock()
+                    .block_list()
+                    .active_block()
+                    .is_agent_tagged_in()
+                    && self
+                        .ephemeral_message_model
                         .as_ref(app)
-                        .is_waiting_for_session()
-                },
-            ) {
-                // Don't render warping indicator - the loading screen is shown in the main view
-                return Empty::new().finish();
-            } else if agent_view_controller.is_active() {
-                // The new orchestration pill bar in the agent view header
-                // replaces the legacy child-agent status card rows; when
-                // it's enabled, render only the message bar here.
-                let mut column = Flex::column();
-                if !FeatureFlag::OrchestrationPillBar.is_enabled() {
-                    column =
-                        column.with_child(ChildView::new(&self.child_agent_status_card).finish());
+                        .current_message()
+                        .is_none()
+                {
+                    render_warping_indicator_base(
+                        WarpingIndicatorProps {
+                            icon: Some(icons::gray_clock_icon(appearance).finish()),
+                            warping_indicator_text: MaybeShimmeringText::Static(
+                                WAITING_FOR_USER_INPUT_MESSAGE.into(),
+                            ),
+                            non_shimmering_text: None,
+                            non_shimmering_suffix: None,
+                            buttons: Some(render_switch_control_to_user_button(
+                                "Exit",
+                                "Exit agent input",
+                                ButtonProps {
+                                    button_handle: &self.state_handles.take_over_button,
+                                    keystroke: self.set_terminal_input_keystroke.as_ref(),
+                                    is_active: false,
+                                },
+                                appearance,
+                            )),
+                            is_passive_code_diff: false,
+                            secondary_element: self.render_tip(app),
+                        },
+                        app,
+                    )
+                } else {
+                    match (
+                        self.render_warping_indicator_for_latest_exchange(app),
+                        self.ephemeral_message_model
+                            .as_ref(app)
+                            .current_message()
+                            .is_none(),
+                    ) {
+                        (Some(warping_indicator), true) => warping_indicator,
+                        _ => {
+                            if self.ambient_agent_view_model.as_ref().is_some_and(
+                                |ambient_agent_view_model| {
+                                    ambient_agent_view_model
+                                        .as_ref(app)
+                                        .is_waiting_for_session()
+                                },
+                            ) {
+                                // Don't render warping indicator - the loading screen is shown in the main view
+                                return Empty::new().finish();
+                            } else if agent_view_controller.is_active() {
+                                // The new orchestration pill bar in the agent view header
+                                // replaces the legacy child-agent status card rows; when
+                                // it's enabled, render only the message bar here.
+                                let mut column = Flex::column();
+                                if !FeatureFlag::OrchestrationPillBar.is_enabled() {
+                                    column = column.with_child(
+                                        ChildView::new(&self.child_agent_status_card).finish(),
+                                    );
+                                }
+                                column = column
+                                    .with_child(ChildView::new(&self.agent_message_bar).finish());
+                                return column.finish();
+                            } else {
+                                return Empty::new().finish();
+                            }
+                        }
+                    }
                 }
-                column = column.with_child(ChildView::new(&self.agent_message_bar).finish());
-                return column.finish();
-            } else {
-                return Empty::new().finish();
-            };
+            }
+        };
 
         let appearance = Appearance::as_ref(app);
         let theme = appearance.theme();

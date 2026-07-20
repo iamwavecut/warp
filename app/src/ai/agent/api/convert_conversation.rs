@@ -5,8 +5,8 @@
 //! Some conversions may be lossy if it's not important to recover that UI state.
 
 use crate::ai::agent::api::convert_from::{
-    convert_user_query_mode, ConversionParams, ConvertAPIMessageToClientOutputMessage,
-    MaybeAIAgentOutputMessage,
+    ConversionParams, ConvertAPIMessageToClientOutputMessage, MaybeAIAgentOutputMessage,
+    convert_user_query_mode,
 };
 use crate::ai::agent::conversation::update_todo_list_from_todo_op;
 use crate::ai::agent::task::TaskId;
@@ -152,7 +152,7 @@ pub(crate) fn convert_input_context(context: Option<&api::InputContext>) -> Arc<
             };
 
             // Convert binary data to base64
-            use base64::{engine::general_purpose, Engine};
+            use base64::{Engine, engine::general_purpose};
             let data = general_purpose::STANDARD.encode(&image.data);
 
             result.push(AIAgentContext::Image(ImageContext {
@@ -373,8 +373,8 @@ impl ConvertToExchanges for &api::Task {
                     false
                 }
                 api::message::Message::InvokeSkill(invoke_skill) => {
-                    if let Some(api_skill) = invoke_skill.skill.clone() {
-                        if let Ok(parsed_skill) = ParsedSkill::try_from(api_skill) {
+                    if let Some(api_skill) = invoke_skill.skill.clone()
+                        && let Ok(parsed_skill) = ParsedSkill::try_from(api_skill) {
                             let user_query = invoke_skill
                                 .user_query
                                 .clone()
@@ -391,8 +391,7 @@ impl ConvertToExchanges for &api::Task {
                                 user_query,
                             };
                             current_inputs.push(input);
-                        };
-                    };
+                        };;
 
                     true
                 }
@@ -429,8 +428,8 @@ impl ConvertToExchanges for &api::Task {
                 | api::message::Message::OrchestrationConfigSnapshot(_) => false,
             };
 
-            if !added_message_as_exchange_input {
-                if let Ok(MaybeAIAgentOutputMessage::Message(output_msg)) = (*api_message)
+            if !added_message_as_exchange_input
+                && let Ok(MaybeAIAgentOutputMessage::Message(output_msg)) = (*api_message)
                     .clone()
                     .to_client_output_message(ConversionParams {
                         current_todo_list: todo_lists.last(),
@@ -438,9 +437,8 @@ impl ConvertToExchanges for &api::Task {
                         active_code_review: None,
                         task_id: &TaskId::new(api_message.task_id.clone()),
                     })
-                {
-                    current_outputs.push(output_msg);
-                }
+            {
+                current_outputs.push(output_msg);
             }
         }
 

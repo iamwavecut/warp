@@ -10,13 +10,14 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 #[cfg(feature = "local_fs")]
 use warp_files::FileModel;
-use warpui::{platform::WindowStyle, App, SingletonEntity, View};
+use warpui::{App, SingletonEntity, View, platform::WindowStyle};
 
 use crate::server::server_api::team::MockTeamClient;
 use crate::server::server_api::workspace::MockWorkspaceClient;
 use crate::terminal::keys::TerminalKeybindings;
 use crate::{
-    auth::{auth_manager::AuthManager, AuthStateProvider},
+    GlobalResourceHandles, GlobalResourceHandlesProvider,
+    auth::{AuthStateProvider, auth_manager::AuthManager},
     cloud_object::model::persistence::CloudModel,
     notebooks::{editor::keys::NotebookKeybindings, file::is_markdown_file},
     search::files::model::FileSearchModel,
@@ -26,7 +27,6 @@ use crate::{
     test_util::settings::initialize_settings_for_tests,
     workspace::ActiveSession,
     workspaces::user_workspaces::UserWorkspaces,
-    GlobalResourceHandles, GlobalResourceHandlesProvider,
 };
 
 use super::{FileNotebookView, FileState, MarkdownDisplayMode};

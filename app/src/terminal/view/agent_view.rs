@@ -1,27 +1,27 @@
 use warp_core::{features::FeatureFlag, ui::appearance::Appearance};
-use warpui::{keymap::Keystroke, EntityId, SingletonEntity, ViewContext};
+use warpui::{EntityId, SingletonEntity, ViewContext, keymap::Keystroke};
 
 use super::load_ai_conversation::RestoreConversationEntryBehavior;
 use crate::{
     ai::{
         agent::conversation::AIConversationId,
         blocklist::{
+            BlocklistAIHistoryModel,
             agent_view::{
                 AgentViewEntryBlock, AgentViewEntryBlockEvent, AgentViewEntryBlockParams,
-                AgentViewEntryOrigin, AutoTriggerBehavior, DismissalStrategy, EnterAgentViewError,
-                EphemeralMessage, ENTER_OR_EXIT_CONFIRMATION_WINDOW,
+                AgentViewEntryOrigin, AutoTriggerBehavior, DismissalStrategy,
+                ENTER_OR_EXIT_CONFIRMATION_WINDOW, EnterAgentViewError, EphemeralMessage,
             },
             history_model::CloudConversationData,
-            BlocklistAIHistoryModel,
         },
     },
     global_resource_handles::GlobalResourceHandlesProvider,
     persistence::ModelEvent,
     terminal::{
+        TerminalView,
         input::message_bar::{Message, MessageItem},
         model::rich_content::RichContentType,
         view::{AgentViewEntryMetadata, RichContentInsertionPosition, RichContentMetadata},
-        TerminalView,
     },
     view_components::DismissibleToast,
     workspace::ToastStack,
@@ -240,8 +240,10 @@ impl TerminalView {
                         block_id: block_id.to_string(),
                         agent_view_visibility: agent_view_visibility.into(),
                     }) {
-                        report_error!(anyhow::Error::new(e)
-                            .context("Error sending UpdateBlockAgentViewVisibility event"));
+                        report_error!(
+                            anyhow::Error::new(e)
+                                .context("Error sending UpdateBlockAgentViewVisibility event")
+                        );
                     }
                 }
             }

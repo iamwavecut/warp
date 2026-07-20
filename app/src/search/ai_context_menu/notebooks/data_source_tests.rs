@@ -4,12 +4,13 @@ use chrono::{Duration, Utc};
 use settings::manager::SettingsManager;
 use warpui::{App, SingletonEntity};
 
+use crate::NetworkStatus;
 use crate::auth::AuthStateProvider;
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::cloud_object::model::view::CloudViewModel;
 use crate::cloud_object::{Owner, Revision, ServerMetadata, ServerNotebook, ServerPermissions};
-use crate::notebooks::manager::NotebookManager;
 use crate::notebooks::CloudNotebookModel;
+use crate::notebooks::manager::NotebookManager;
 use crate::search::ai_context_menu::notebooks::data_source::NotebookDataSource;
 use crate::search::data_source::Query;
 use crate::search::mixer::SyncDataSource;
@@ -22,7 +23,6 @@ use crate::system::SystemStats;
 use crate::workspaces::team_tester::TeamTesterStatus;
 use crate::workspaces::user_profiles::UserProfiles;
 use crate::workspaces::user_workspaces::UserWorkspaces;
-use crate::NetworkStatus;
 
 use crate::server::server_api::object::MockObjectClient;
 use crate::server::server_api::team::MockTeamClient;

@@ -3,16 +3,10 @@ use lazy_static::lazy_static;
 use settings::{RespectUserSyncSetting, SyncToCloud};
 use warpui::{App, ModelHandle};
 
-use crate::auth::auth_manager::AuthManager;
-use crate::auth::user::TEST_USER_UID;
 use crate::auth::AuthStateProvider;
 use crate::auth::UserUid;
-use crate::cloud_object::model::actions::ObjectActions;
-use crate::cloud_object::model::generic_string_model::GenericStringModel;
-use crate::cloud_object::model::view::CloudViewModel;
-use crate::cloud_object::model::view::EditorState;
-use crate::cloud_object::model::view::UpdateTimestamp;
-use crate::cloud_object::model::view::EDITOR_TIMEOUT_DURATION_MINUTES;
+use crate::auth::auth_manager::AuthManager;
+use crate::auth::user::TEST_USER_UID;
 use crate::cloud_object::CloudObjectMetadata;
 use crate::cloud_object::CloudObjectPermissions;
 use crate::cloud_object::CloudObjectStatuses;
@@ -22,19 +16,25 @@ use crate::cloud_object::ObjectIdType;
 use crate::cloud_object::Owner;
 use crate::cloud_object::ServerMetadata;
 use crate::cloud_object::ServerPermissions;
+use crate::cloud_object::model::actions::ObjectActions;
+use crate::cloud_object::model::generic_string_model::GenericStringModel;
+use crate::cloud_object::model::view::CloudViewModel;
+use crate::cloud_object::model::view::EDITOR_TIMEOUT_DURATION_MINUTES;
+use crate::cloud_object::model::view::EditorState;
+use crate::cloud_object::model::view::UpdateTimestamp;
+use crate::drive::DriveIndexVariant;
 use crate::drive::folders::CloudFolderModel;
 use crate::drive::folders::FolderId;
-use crate::drive::DriveIndexVariant;
 use crate::features::FeatureFlag;
 use crate::notebooks::CloudNotebookModel;
 use crate::notebooks::NotebookId;
 use crate::server::ids::ServerId;
 use crate::server::ids::ServerIdAndType;
-use crate::server::server_api::object::ObjectClient;
 use crate::server::server_api::ServerApiProvider;
+use crate::server::server_api::object::ObjectClient;
 use crate::server::sync_queue::SyncQueue;
-use crate::settings::init_and_register_user_preferences;
 use crate::settings::Preference;
+use crate::settings::init_and_register_user_preferences;
 use crate::system::SystemStats;
 use crate::workspaces::team::Team;
 use crate::workspaces::team_tester::TeamTesterStatus;
@@ -42,10 +42,10 @@ use crate::workspaces::user_profiles::UserProfiles;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::workspaces::workspace::Workspace;
 
-use crate::workflows::CloudWorkflowModel;
-use crate::workspaces::workspace::WorkspaceUid;
 use crate::NetworkStatus;
 use crate::UpdateManager;
+use crate::workflows::CloudWorkflowModel;
+use crate::workspaces::workspace::WorkspaceUid;
 use std::sync::Arc;
 
 use super::*;
@@ -1415,15 +1415,19 @@ fn test_shared_object_in_unshared_folder() {
             assert!(!notebook.is_trashed(cloud_model));
 
             // Check that iteration APIs include the notebook where it's expected.
-            assert!(cloud_model
-                .active_cloud_objects_in_space(Space::Shared, ctx)
-                .any(|obj| obj.uid() == notebook.uid()));
-            assert!(cloud_model
-                .active_cloud_objects_in_location_without_descendents(
-                    CloudObjectLocation::Space(Space::Shared),
-                    ctx
-                )
-                .any(|obj| obj.uid() == notebook.uid()));
+            assert!(
+                cloud_model
+                    .active_cloud_objects_in_space(Space::Shared, ctx)
+                    .any(|obj| obj.uid() == notebook.uid())
+            );
+            assert!(
+                cloud_model
+                    .active_cloud_objects_in_location_without_descendents(
+                        CloudObjectLocation::Space(Space::Shared),
+                        ctx
+                    )
+                    .any(|obj| obj.uid() == notebook.uid())
+            );
             assert_eq!(
                 cloud_model
                     .trashed_cloud_objects_in_space(Space::Shared, ctx)

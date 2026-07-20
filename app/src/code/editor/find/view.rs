@@ -19,21 +19,21 @@ use warpui::elements::{ChildAnchor, OffsetPositioning, Radius, SavePosition, Shr
 use warpui::keymap::EditableBinding;
 use warpui::ui_components::components::UiComponent;
 pub use warpui::{
+    AppContext,
     accessibility::{AccessibilityContent, WarpA11yRole},
     elements::{ParentElement as _, Stack},
     geometry::vector::vec2f,
-    AppContext,
 };
 use warpui::{
+    Entity, SingletonEntity, TypedActionView, View,
     elements::{
         Align, Border, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
         DropShadow, Element, Flex, Hoverable, MouseStateHandle, ParentAnchor, ParentOffsetBounds,
         Rect, Text,
     },
-    Entity, SingletonEntity, TypedActionView, View,
 };
-use warpui::{presenter::ChildView, ViewContext, ViewHandle};
 use warpui::{FocusContext, ModelHandle};
+use warpui::{ViewContext, ViewHandle, presenter::ChildView};
 
 pub const FIND_BAR_WIDTH: f32 = 500.;
 const ICON_PADDING: f32 = 4.;
@@ -316,12 +316,11 @@ impl CodeEditorFind {
             EditorEvent::Escape => {
                 self.close_find_bar(ctx);
             }
-            EditorEvent::Navigate(NavigationKey::Tab) => {
+            EditorEvent::Navigate(NavigationKey::Tab)
                 // If replace editor is currently open and the user presses 'tab', focus on the find editor
-                if self.is_replace_open {
+                if self.is_replace_open => {
                     ctx.focus(&self.replace_editor);
                 }
-            }
             _ => {}
         }
     }

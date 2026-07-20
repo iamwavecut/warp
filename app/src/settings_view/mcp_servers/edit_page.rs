@@ -15,6 +15,7 @@ use warp_editor::{
     content::buffer::InitialBufferState, render::element::VerticalExpansionBehavior,
 };
 use warpui::{
+    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
     elements::{
         Border, ChildAnchor, ChildView, Container, CornerRadius, CrossAxisAlignment, Flex,
         MainAxisAlignment, MainAxisSize, MouseStateHandle, OffsetPositioning, ParentAnchor,
@@ -22,37 +23,37 @@ use warpui::{
     },
     platform::Cursor,
     ui_components::components::UiComponent,
-    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
 use crate::{
+    GlobalResourceHandlesProvider,
     ai::{
         blocklist::secret_redaction::find_secrets_in_text,
         mcp::{
-            parsing::{prettify_json, resolve_json, ParsedTemplatableMCPServerResult},
             MCPServer, TemplatableMCPServer, TemplatableMCPServerInstallation,
             TemplatableMCPServerManager, TransportType,
+            parsing::{ParsedTemplatableMCPServerResult, prettify_json, resolve_json},
         },
     },
     banner::{Banner, BannerTextContent},
     code::editor::view::{CodeEditorRenderOptions, CodeEditorView},
     persistence::ModelEvent,
     settings_view::mcp_servers::{
+        ServerCardItemId,
         destructive_mcp_confirmation_dialog::{
             DestructiveMCPConfirmationDialog, DestructiveMCPConfirmationDialogEvent,
             DestructiveMCPConfirmationDialogVariant,
         },
-        style, ServerCardItemId,
+        style,
     },
     terminal::safe_mode_settings::SafeModeSettings,
     ui_components::{buttons::icon_button, icons::Icon},
     view_components::{
-        action_button::{ActionButton, DangerSecondaryTheme, PrimaryTheme},
         DismissibleToast,
+        action_button::{ActionButton, DangerSecondaryTheme, PrimaryTheme},
     },
     workspace::ToastStack,
     workspaces::user_workspaces::UserWorkspaces,
-    GlobalResourceHandlesProvider,
 };
 
 #[cfg(feature = "local_fs")]
@@ -458,10 +459,10 @@ impl MCPServersEditPageView {
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(style::EDIT_PAGE_BUTTON_SPACING);
 
-        if let Some(server_card_item_id) = self.server_card_item_id {
-            if Self::is_deletable(server_card_item_id, app) {
-                footer.add_child(ChildView::new(&self.delete_button).finish());
-            }
+        if let Some(server_card_item_id) = self.server_card_item_id
+            && Self::is_deletable(server_card_item_id, app)
+        {
+            footer.add_child(ChildView::new(&self.delete_button).finish());
         }
 
         footer.finish()
@@ -615,17 +616,18 @@ impl MCPServersEditPageView {
             };
             let global_resource_handles = GlobalResourceHandlesProvider::as_ref(ctx).get().clone();
 
-            if let Some(model_event_sender) = &global_resource_handles.model_event_sender {
-                if let Err(e) =
+            if let Some(model_event_sender) = &global_resource_handles.model_event_sender
+                && let Err(e) =
                     model_event_sender.send(ModelEvent::UpsertMCPServerEnvironmentVariables {
                         mcp_server_uuid: mcp_server.uuid.as_bytes().to_vec(),
                         environment_variables: env_vars_string,
                     })
-                {
-                    report_error!(anyhow::Error::new(e)
-                        .context("Error persisting MCP server env vars to database"));
-                };
-            }
+            {
+                report_error!(
+                    anyhow::Error::new(e)
+                        .context("Error persisting MCP server env vars to database")
+                );
+            };
         }
     }
 

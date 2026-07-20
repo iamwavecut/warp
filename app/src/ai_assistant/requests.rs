@@ -10,12 +10,12 @@ use warpui::{Entity, ModelContext};
 use crate::{
     ai::RequestLimitInfo,
     ai_assistant::utils::{AssistantTranscriptPart, TranscriptPartSubType},
-    server::server_api::{ai::AIClient, ServerApi},
+    server::server_api::{ServerApi, ai::AIClient},
 };
 
 use super::{
     execution_context::WarpAiExecutionContext,
-    utils::{markdown_segments_from_text, FormattedTranscriptMessage, TranscriptPart},
+    utils::{FormattedTranscriptMessage, TranscriptPart, markdown_segments_from_text},
 };
 use anyhow::Result;
 

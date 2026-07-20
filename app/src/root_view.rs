@@ -1,8 +1,8 @@
 use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::blocklist::SerializedBlockListItem;
 use crate::appearance::Appearance;
-use crate::auth::auth_manager::AuthManager;
 use crate::auth::AuthStateProvider;
+use crate::auth::auth_manager::AuthManager;
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::cloud_object::{GenericStringObjectFormat, JsonObjectType, ObjectType};
 use crate::drive::items::WarpDriveItemId;
@@ -10,8 +10,8 @@ use crate::drive::{CloudObjectTypeAndId, OpenWarpDriveObjectArgs, OpenWarpDriveO
 use crate::interval_timer::IntervalTimer;
 use crate::launch_configs::launch_config;
 use crate::notebooks::manager::NotebookSource;
-use crate::settings::apply_onboarding_settings;
 use crate::settings::AISettings;
+use crate::settings::apply_onboarding_settings;
 use onboarding::{
     AgentOnboardingEvent, AgentOnboardingView, OnboardingIntention, SelectedSettings,
 };
@@ -22,9 +22,9 @@ use crate::report_if_error;
 use crate::server::ids::SyncId;
 use crate::settings::QuakeModeSettings;
 use crate::settings::ThemeSettings;
+use crate::settings_view::SettingsSection;
 use crate::settings_view::flags;
 use crate::settings_view::mcp_servers_page::MCPServersSettingsPage;
-use crate::settings_view::SettingsSection;
 use crate::terminal::available_shells::AvailableShell;
 use crate::terminal::general_settings::GeneralSettings;
 use crate::terminal::keys_settings::KeysSettings;
@@ -34,30 +34,30 @@ use crate::themes::onboarding_theme_picker_themes;
 use crate::themes::theme::{AnsiColorIdentifier, Blend, Fill, ThemeKind, WarpThemeConfig};
 use crate::uri::{OpenMCPSettingsArgs, OpenSettingsArgs};
 use crate::util::bindings::{self, is_binding_pty_compliant};
-use crate::util::traffic_lights::{traffic_light_data, TrafficLightData, TrafficLightMouseStates};
+use crate::util::traffic_lights::{TrafficLightData, TrafficLightMouseStates, traffic_light_data};
 use crate::view_components::DismissibleToast;
 use crate::window_settings::WindowSettings;
-use crate::workspace::hoa_onboarding::mark_hoa_onboarding_completed;
 use crate::workspace::WorkspaceAction;
-use crate::workspace::{view::OnboardingTutorial, PaneViewLocator, Workspace, WorkspaceRegistry};
+use crate::workspace::hoa_onboarding::mark_hoa_onboarding_completed;
+use crate::workspace::{PaneViewLocator, Workspace, WorkspaceRegistry, view::OnboardingTutorial};
 use crate::workspaces::update_manager::TeamUpdateManager;
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
+use crate::{ChannelState, features::FeatureFlag};
+use crate::{GlobalResourceHandles, GlobalResourceHandlesProvider};
 use crate::{
+    UpdateQuakeModeEventArg,
     app_state::{AppState, PaneUuid, WindowSnapshot},
     pane_group::{NewTerminalOptions, PanesLayout},
-    UpdateQuakeModeEventArg,
 };
-use crate::{features::FeatureFlag, ChannelState};
-use crate::{GlobalResourceHandles, GlobalResourceHandlesProvider};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use pathfinder_geometry::rect::RectF;
-use pathfinder_geometry::vector::{vec2f, Vector2F};
+use pathfinder_geometry::vector::{Vector2F, vec2f};
 use serde::{Deserialize, Serialize};
 use settings::Setting as _;
 use std::path::Path;
-use std::sync::mpsc::SyncSender;
 use std::sync::Arc;
+use std::sync::mpsc::SyncSender;
 use std::{collections::HashMap, path::PathBuf};
 use url::Url;
 use warp_core::context_flag::ContextFlag;
@@ -72,11 +72,11 @@ use warpui::elements::{
     Border, ChildAnchor, OffsetPositioning, ParentAnchor, ParentElement, ParentOffsetBounds, Stack,
 };
 use warpui::rendering::OnGPUDeviceSelected;
-use warpui::{id, AddWindowOptions, DisplayId, EntityId, SingletonEntity};
+use warpui::{AddWindowOptions, DisplayId, EntityId, SingletonEntity, id};
 use warpui::{
+    AppContext, Element, Entity, TypedActionView, View, ViewContext, ViewHandle, WindowId,
     platform::{WindowBounds, WindowStyle},
     presenter::ChildView,
-    AppContext, Element, Entity, TypedActionView, View, ViewContext, ViewHandle, WindowId,
 };
 use warpui::{FocusContext, NextNewWindowsHasThisWindowsBoundsUponClose};
 
@@ -513,12 +513,15 @@ pub fn create_transferred_window(
     let pane_group_id = transferred_tab.pane_group.id();
     ctx.transfer_view_tree_to_window(pane_group_id, source_window_id, new_window_id);
 
-    if let Some(new_workspace) = WorkspaceRegistry::as_ref(ctx).get(new_window_id, ctx) {
-        new_workspace.update(ctx, |workspace, ctx| {
-            workspace.adopt_transferred_pane_group(transferred_tab.pane_group.clone(), ctx);
-        });
-    } else {
-        log::warn!("Failed to find workspace in newly created window {new_window_id:?}");
+    match WorkspaceRegistry::as_ref(ctx).get(new_window_id, ctx) {
+        Some(new_workspace) => {
+            new_workspace.update(ctx, |workspace, ctx| {
+                workspace.adopt_transferred_pane_group(transferred_tab.pane_group.clone(), ctx);
+            });
+        }
+        _ => {
+            log::warn!("Failed to find workspace in newly created window {new_window_id:?}");
+        }
     }
     new_window_id
 }
@@ -1481,8 +1484,8 @@ impl RootView {
         let onboarding_view_for_workspaces = onboarding_view.clone();
         ctx.subscribe_to_model(
             &UserWorkspaces::handle(ctx),
-            move |_, user_workspaces, event, ctx| match event {
-                UserWorkspacesEvent::TeamsChanged => {
+            move |_, user_workspaces, event, ctx| {
+                if let UserWorkspacesEvent::TeamsChanged = event {
                     let workspace_enforces_autonomy = user_workspaces
                         .as_ref(ctx)
                         .ai_autonomy_settings()
@@ -1492,7 +1495,6 @@ impl RootView {
                             .set_workspace_enforces_autonomy(workspace_enforces_autonomy, ctx);
                     });
                 }
-                _ => {}
             },
         );
 
@@ -1572,9 +1574,11 @@ impl RootView {
                 // auto-opened for discoverability.
                 if matches!(selected_settings, SelectedSettings::Terminal { .. }) {
                     AISettings::handle(ctx).update(ctx, |settings, ctx| {
-                        report_if_error!(settings
-                            .has_auto_opened_conversation_list
-                            .set_value(true, ctx));
+                        report_if_error!(
+                            settings
+                                .has_auto_opened_conversation_list
+                                .set_value(true, ctx)
+                        );
                     });
                 }
 
@@ -1641,10 +1645,10 @@ impl RootView {
 
         let mut quake_mode_state = QUAKE_STATE.lock();
         // If the window we are focusing is the Quake Mode window, then update the QuakeModeState.
-        if let Some(mode) = quake_mode_state.as_mut() {
-            if mode.window_id == window_id {
-                mode.window_state = WindowState::Open;
-            }
+        if let Some(mode) = quake_mode_state.as_mut()
+            && mode.window_id == window_id
+        {
+            mode.window_state = WindowState::Open;
         }
 
         ctx.windows().show_window_and_focus_app(window_id);

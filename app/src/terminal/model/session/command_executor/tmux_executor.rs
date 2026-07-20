@@ -68,28 +68,28 @@ impl TmuxCommandExecutor {
     }
 
     pub fn handle_executed_command_event(&self, event: ExecutedExecutorCommandEvent) {
-        if let Some(output_tx) = self.in_flight_commands.lock().get(&event.command_id) {
-            if !output_tx.is_closed() {
-                // We shouldn't be receiving exit codes that aren't 32 bit signed integers.
-                let exit_code = Some(ExitCode::from(event.exit_code as i32));
-                let command_output = if event.exit_code == 0 {
-                    CommandOutput {
-                        stdout: event.output,
-                        stderr: vec![],
-                        status: CommandExitStatus::Success,
-                        exit_code,
-                    }
-                } else {
-                    CommandOutput {
-                        stdout: vec![],
-                        stderr: event.output,
-                        status: CommandExitStatus::Failure,
-                        exit_code,
-                    }
-                };
-                if let Err(error) = output_tx.try_send(command_output) {
-                    log::error!("Error occurred when sending generator command output: {error}");
+        if let Some(output_tx) = self.in_flight_commands.lock().get(&event.command_id)
+            && !output_tx.is_closed()
+        {
+            // We shouldn't be receiving exit codes that aren't 32 bit signed integers.
+            let exit_code = Some(ExitCode::from(event.exit_code as i32));
+            let command_output = if event.exit_code == 0 {
+                CommandOutput {
+                    stdout: event.output,
+                    stderr: vec![],
+                    status: CommandExitStatus::Success,
+                    exit_code,
                 }
+            } else {
+                CommandOutput {
+                    stdout: vec![],
+                    stderr: event.output,
+                    status: CommandExitStatus::Failure,
+                    exit_code,
+                }
+            };
+            if let Err(error) = output_tx.try_send(command_output) {
+                log::error!("Error occurred when sending generator command output: {error}");
             }
         }
     }

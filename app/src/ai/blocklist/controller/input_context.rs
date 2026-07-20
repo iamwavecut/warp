@@ -12,8 +12,8 @@ use crate::remote_server::codebase_index_model::RemoteCodebaseIndexModel;
 use crate::{
     ai::{
         agent::{
-            conversation::AIConversationId, AIAgentAttachment, AIAgentContext,
-            DocumentContentAttachmentSource, DriveObjectPayload,
+            AIAgentAttachment, AIAgentContext, DocumentContentAttachmentSource, DriveObjectPayload,
+            conversation::AIConversationId,
         },
         block_context::BlockContext,
         blocklist::{BlocklistAIContextModel, SessionContext},
@@ -22,15 +22,15 @@ use crate::{
         skills::list_skills_if_changed,
     },
     cloud_object::{
+        GenericCloudObject, GenericStringObjectFormat, JsonObjectType, ObjectType,
         model::{
             generic_string_model::{CloudStringObject, GenericStringObjectId},
             persistence::CloudModel,
         },
-        GenericCloudObject, GenericStringObjectFormat, JsonObjectType, ObjectType,
     },
     terminal::{
-        model::{block::BlockId, session::active_session::ActiveSession},
         TerminalView,
+        model::{block::BlockId, session::active_session::ActiveSession},
     },
 };
 use warp_graphql::generic_string_object::GenericStringObjectFormat as GraphQLFormat;
@@ -268,19 +268,18 @@ pub(super) fn parse_context_attachments(
     }
 
     // Add pending AI document as attachment if present
-    if let Some(document_id) = context_model.pending_document_id() {
-        if let Some(content) = AIDocumentModel::as_ref(ctx).get_document_content(&document_id, ctx)
-        {
-            let document_id_str = document_id.to_string();
-            let attachment = AIAgentAttachment::DocumentContent {
-                document_id: document_id_str.clone(),
-                content,
-                source: DocumentContentAttachmentSource::PlanEdited,
-                line_range: None,
-            };
-            // Use the document ID as the reference key
-            referenced_attachments.insert(document_id_str, attachment);
-        }
+    if let Some(document_id) = context_model.pending_document_id()
+        && let Some(content) = AIDocumentModel::as_ref(ctx).get_document_content(&document_id, ctx)
+    {
+        let document_id_str = document_id.to_string();
+        let attachment = AIAgentAttachment::DocumentContent {
+            document_id: document_id_str.clone(),
+            content,
+            source: DocumentContentAttachmentSource::PlanEdited,
+            line_range: None,
+        };
+        // Use the document ID as the reference key
+        referenced_attachments.insert(document_id_str, attachment);
     }
 
     referenced_attachments

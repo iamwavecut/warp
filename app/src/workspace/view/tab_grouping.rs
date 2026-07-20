@@ -4,10 +4,10 @@ use itertools::{Either, Itertools};
 use warp_core::features::FeatureFlag;
 use warpui::{EntityId, SingletonEntity, UpdateView, ViewContext};
 
-use super::{group_member_index_range, group_member_indices, Workspace};
+use super::{Workspace, group_member_index_range, group_member_indices};
 use crate::appearance::Appearance;
 use crate::menu::{MenuItem, MenuItemFields};
-use crate::tab::{TabData, MOVE_TO_GROUP_LABEL};
+use crate::tab::{MOVE_TO_GROUP_LABEL, TabData};
 use crate::terminal::session_settings::NewSessionSource;
 use crate::workspace::action::{TabContextMenuAnchor, WorkspaceAction};
 use crate::workspace::close_session_confirmation_dialog::OpenDialogSource;
@@ -152,14 +152,13 @@ impl Workspace {
     /// visually active across a tab reorder. Pass the pane group id captured
     /// before the reorder; no-op if it can't be found.
     fn restore_active_tab_index(&mut self, pane_group_id: Option<EntityId>) {
-        if let Some(active_id) = pane_group_id {
-            if let Some(new_index) = self
+        if let Some(active_id) = pane_group_id
+            && let Some(new_index) = self
                 .tabs
                 .iter()
                 .position(|tab| tab.pane_group.id() == active_id)
-            {
-                self.active_tab_index = new_index;
-            }
+        {
+            self.active_tab_index = new_index;
         }
     }
 
@@ -471,11 +470,11 @@ impl Workspace {
             );
             return;
         }
-        if let Some(gid) = group_id {
-            if !self.tab_groups.contains_key(&gid) {
-                log::warn!("Tried to assign tab {tab_index} to unknown group {gid:?}");
-                return;
-            }
+        if let Some(gid) = group_id
+            && !self.tab_groups.contains_key(&gid)
+        {
+            log::warn!("Tried to assign tab {tab_index} to unknown group {gid:?}");
+            return;
         }
 
         if self.tabs[tab_index].group_id == group_id {
@@ -803,9 +802,11 @@ impl Workspace {
     /// group" only when there's a destination group worth offering.
     fn tab_selection_menu_items(&self) -> Vec<MenuItem<WorkspaceAction>> {
         let shared_group = self.selection_shared_group();
-        let mut menu_items = vec![MenuItemFields::new("Create group from tabs")
-            .with_on_select_action(WorkspaceAction::NewTabGroupFromSelectedTabs)
-            .into_item()];
+        let mut menu_items = vec![
+            MenuItemFields::new("Create group from tabs")
+                .with_on_select_action(WorkspaceAction::NewTabGroupFromSelectedTabs)
+                .into_item(),
+        ];
 
         // Only single-group selections have an unambiguous group to leave.
         if shared_group.is_some() {

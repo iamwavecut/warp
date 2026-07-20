@@ -1,11 +1,10 @@
 use warpui::{
-    async_assert, async_assert_eq,
+    AppContext, SingletonEntity, async_assert, async_assert_eq,
     integration::{AssertionCallback, AssertionWithDataCallback},
-    AppContext, SingletonEntity,
 };
 
 use crate::{
-    ai::facts::{view::AIFactPage, CloudAIFactModel},
+    ai::facts::{CloudAIFactModel, view::AIFactPage},
     cloud_object::model::{generic_string_model::GenericStringObjectId, persistence::CloudModel},
     integration_testing::view_getters::workspace_view,
     server::ids::SyncId,

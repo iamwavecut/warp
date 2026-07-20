@@ -1,9 +1,9 @@
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::ambient_agents::{
-    conversation_output_status_from_conversation, AmbientAgentTaskId, AmbientConversationStatus,
+    AmbientAgentTaskId, AmbientConversationStatus, conversation_output_status_from_conversation,
 };
 use crate::ai::artifacts::{Artifact, ArtifactButtonsRow, ArtifactButtonsRowEvent};
-use crate::ai::blocklist::{format_credits, BlocklistAIHistoryModel};
+use crate::ai::blocklist::{BlocklistAIHistoryModel, format_credits};
 use crate::appearance::Appearance;
 use crate::server::ids::SyncId;
 use crate::settings::ai::{AISettings, AISettingsChangedEvent};
@@ -462,11 +462,11 @@ impl ConversationEndedTombstoneView {
                     row.add_child(ChildView::new(continue_in_cloud_button).finish());
                     has_button = true;
                 }
-                if harness_allows_continue {
-                    if let Some(continue_locally_button) = &self.continue_locally_button {
-                        row.add_child(ChildView::new(continue_locally_button).finish());
-                        has_button = true;
-                    }
+                if harness_allows_continue
+                    && let Some(continue_locally_button) = &self.continue_locally_button
+                {
+                    row.add_child(ChildView::new(continue_locally_button).finish());
+                    has_button = true;
                 }
             }
         }

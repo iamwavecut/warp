@@ -6,8 +6,8 @@ use warpui::App;
 
 use super::super::diff_state_tracker::RemoteDiffStateManager;
 use super::super::proto::{
-    server_message, write_file_response, Authenticate, Initialize, ServerMessage,
-    WriteFileResponse, WriteFileSuccess,
+    Authenticate, Initialize, ServerMessage, WriteFileResponse, WriteFileSuccess, server_message,
+    write_file_response,
 };
 use super::super::protocol::RequestId;
 use super::super::server_buffer_tracker::ServerBufferTracker;

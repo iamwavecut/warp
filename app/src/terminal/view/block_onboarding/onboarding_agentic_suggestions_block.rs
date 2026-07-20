@@ -19,8 +19,8 @@ use warpui::{
 };
 
 use crate::ai::blocklist::{
-    ai_brand_color, BlocklistAIActionEvent, BlocklistAIActionModel, BlocklistAIHistoryEvent,
-    BlocklistAIHistoryModel,
+    BlocklistAIActionEvent, BlocklistAIActionModel, BlocklistAIHistoryEvent,
+    BlocklistAIHistoryModel, ai_brand_color,
 };
 use crate::terminal::event::BlockType;
 use crate::terminal::model::session::SessionId;

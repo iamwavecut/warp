@@ -8,28 +8,28 @@ use warp_core::features::FeatureFlag;
 use warpui::{App, EntityId};
 
 use crate::{
+    GlobalResourceHandles, GlobalResourceHandlesProvider,
     ai::{
         agent::{
-            api::ServerConversationToken, conversation::AIConversationId, AIAgentExchange,
-            AIAgentExchangeId, AIAgentInput, AIAgentOutputStatus, FinishedAIAgentOutput, Shared,
-            UserQueryMode,
+            AIAgentExchange, AIAgentExchangeId, AIAgentInput, AIAgentOutputStatus,
+            FinishedAIAgentOutput, Shared, UserQueryMode, api::ServerConversationToken,
+            conversation::AIConversationId,
         },
-        blocklist::{controller::RequestInput, ResponseStreamId},
+        blocklist::{ResponseStreamId, controller::RequestInput},
         llms::LLMId,
     },
     input_suggestions::HistoryInputSuggestion,
     persistence::{
+        ModelEvent,
         model::{
             AgentConversation, AgentConversationData, AgentConversationRecord,
             PersistedAutoexecuteMode,
         },
-        ModelEvent,
     },
     terminal::model::session::SessionId,
     test_util::settings::{
         initialize_history_persistence_for_tests, initialize_settings_for_tests,
     },
-    GlobalResourceHandles, GlobalResourceHandlesProvider,
 };
 
 use super::{

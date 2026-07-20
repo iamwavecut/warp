@@ -1,13 +1,13 @@
 use itertools::Itertools as _;
 use warpui::{
-    elements::ChildView, Element as _, Entity, SingletonEntity as _, TypedActionView, View,
-    ViewAsRef, ViewContext, ViewHandle,
+    Element as _, Entity, SingletonEntity as _, TypedActionView, View, ViewAsRef, ViewContext,
+    ViewHandle, elements::ChildView,
 };
 
 use crate::{
     cloud_object::{
-        model::persistence::{CloudModel, CloudModelEvent},
         CloudObject as _, GenericStringObjectFormat, JsonObjectType,
+        model::persistence::{CloudModel, CloudModelEvent},
     },
     drive::CloudObjectTypeAndId,
     server::ids::SyncId,

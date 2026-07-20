@@ -1,8 +1,8 @@
 use super::*;
 use crate::ai::agent::conversation::AIConversation;
 use crate::persistence::ModelEvent;
-use crate::server::server_api::ai::MockAIClient;
 use crate::server::server_api::ServerApiProvider;
+use crate::server::server_api::ai::MockAIClient;
 use crate::test_util::settings::initialize_settings_for_tests;
 use crate::{GlobalResourceHandles, GlobalResourceHandlesProvider};
 use std::sync::Arc;
@@ -112,8 +112,8 @@ fn ai_conversation_new_restored_preserves_last_event_sequence() {
 #[test]
 fn restored_conversations_skip_v2_streaming_when_orchestration_v2_disabled() {
     use crate::ai::agent::conversation::AIConversation;
-    use crate::server::server_api::ai::MockAIClient;
     use crate::server::server_api::ServerApiProvider;
+    use crate::server::server_api::ai::MockAIClient;
     use std::sync::Arc;
     use warpui::App;
 
@@ -193,8 +193,8 @@ fn build_pending_events_preserves_message_sequence_and_timestamp() {
 fn handle_event_batch_persists_max_seq_to_history_model() {
     use crate::ai::agent::conversation::{AIConversation, AIConversationId};
     use crate::persistence::ModelEvent;
-    use crate::server::server_api::ai::MockAIClient;
     use crate::server::server_api::ServerApiProvider;
+    use crate::server::server_api::ai::MockAIClient;
     use crate::test_util::settings::initialize_settings_for_tests;
     use crate::{GlobalResourceHandles, GlobalResourceHandlesProvider};
     use std::sync::Arc;
@@ -405,9 +405,10 @@ fn killed_run_ids_are_bounded() {
             assert_eq!(me.killed_run_ids.len(), MAX_KILLED_RUN_IDS);
             assert!(!me.killed_run_ids.contains("killed-run-0"));
             assert!(me.killed_run_ids.contains("killed-run-1"));
-            assert!(me
-                .killed_run_ids
-                .contains(&format!("killed-run-{MAX_KILLED_RUN_IDS}")));
+            assert!(
+                me.killed_run_ids
+                    .contains(&format!("killed-run-{MAX_KILLED_RUN_IDS}"))
+            );
         });
     });
 }
@@ -421,8 +422,8 @@ fn on_conversation_removed_prunes_stale_child_run_id_from_parent() {
     // model after the removal, which always returned `None` because the
     // history model emits `RemoveConversation` after dropping the record.
     use crate::ai::agent::conversation::AIConversation;
-    use crate::server::server_api::ai::MockAIClient;
     use crate::server::server_api::ServerApiProvider;
+    use crate::server::server_api::ai::MockAIClient;
     use std::sync::Arc;
     use warpui::App;
 
@@ -480,8 +481,8 @@ fn on_conversation_removed_prunes_stale_child_run_id_from_parent() {
 #[test]
 fn on_conversation_removed_prunes_killed_child_run_id_from_parent_but_keeps_tombstone() {
     use crate::ai::agent::conversation::AIConversation;
-    use crate::server::server_api::ai::MockAIClient;
     use crate::server::server_api::ServerApiProvider;
+    use crate::server::server_api::ai::MockAIClient;
     use std::sync::Arc;
     use warpui::App;
 

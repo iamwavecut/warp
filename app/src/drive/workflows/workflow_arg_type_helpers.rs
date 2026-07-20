@@ -4,7 +4,7 @@ use warp_errors::report_error;
 use warpui::{AppContext, SingletonEntity, ViewHandle};
 
 use crate::{
-    cloud_object::{model::persistence::CloudModel, CloudObjectEventEntrypoint, Owner},
+    cloud_object::{CloudObjectEventEntrypoint, Owner, model::persistence::CloudModel},
     editor::EditorView,
     server::{cloud_objects::update_manager::UpdateManager, ids::SyncId},
     workflows::{

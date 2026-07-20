@@ -7,9 +7,9 @@ use parking_lot::RwLock;
 use warpui::{AppContext, Entity, SingletonEntity};
 
 use super::{
+    UserUid,
     credentials::Credentials,
     user::{PrincipalType, User},
-    UserUid,
 };
 
 /// Describes what persistence action to take based on the current auth state.

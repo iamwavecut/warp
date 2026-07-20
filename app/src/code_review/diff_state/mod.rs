@@ -7,7 +7,6 @@
 
 use crate::util::git::{BranchEntry, Commit, PrInfo};
 use std::{path::PathBuf, sync::Arc};
-use warp_core::SessionId;
 use warpui::{AppContext, ModelContext, ModelHandle};
 
 use anyhow::Result;
@@ -17,9 +16,9 @@ use warp_util::{remote_path::RemotePath, standardized_path::StandardizedPath};
 use crate::code_review::diff_size_limits::DiffSize;
 #[cfg_attr(not(feature = "local_fs"), allow(dead_code))]
 mod local;
+pub use local::LocalDiffStateModel;
 #[cfg(feature = "local_fs")]
 pub(crate) use local::diff_metadata_against_head;
-pub use local::LocalDiffStateModel;
 
 mod remote;
 pub use remote::RemoteDiffStateModel;

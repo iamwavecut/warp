@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use super::{
-    settings_page::{
-        render_sub_header, MatchData, PageType, SettingsPageMeta, SettingsPageViewHandle,
-        SettingsWidget,
-    },
     SettingsSection,
+    settings_page::{
+        MatchData, PageType, SettingsPageMeta, SettingsPageViewHandle, SettingsWidget,
+        render_sub_header,
+    },
 };
 use crate::search_bar::SearchBar;
 use crate::util::bindings::{
@@ -24,8 +24,8 @@ use crate::{
 use itertools::Itertools;
 
 use warp_core::ui::theme::color::internal_colors;
-use warpui::{elements::Wrap, units::Pixels};
 use warpui::{
+    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
     elements::{
         Align, Border, ClippedScrollStateHandle, ClippedScrollable, Container, CornerRadius, Empty,
         EventHandler, Fill, Flex, Hoverable, MouseState, MouseStateHandle, ParentElement, Radius,
@@ -34,8 +34,8 @@ use warpui::{
     fonts::Weight,
     keymap::{Keystroke, Trigger},
     ui_components::components::{Coords, UiComponent, UiComponentStyles},
-    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
+use warpui::{elements::Wrap, units::Pixels};
 use warpui::{
     elements::{ConstrainedBox, DispatchEventResult},
     presenter::ChildView,
@@ -117,10 +117,10 @@ struct ConflictMap {
 
 impl ConflictMap {
     fn update(&mut self, old: &Option<Keystroke>, new: Option<Keystroke>) {
-        if let Some(old) = old {
-            if let Some(old_conflict_count) = self.map.get_mut(old) {
-                *old_conflict_count = old_conflict_count.saturating_sub(1);
-            }
+        if let Some(old) = old
+            && let Some(old_conflict_count) = self.map.get_mut(old)
+        {
+            *old_conflict_count = old_conflict_count.saturating_sub(1);
         }
 
         if let Some(new) = new {
@@ -519,7 +519,7 @@ impl KeybindingsView {
 
         let search_bar = ctx.add_typed_action_view(|_| SearchBar::new(search_editor.clone()));
 
-        let page = PageType::new_monolith(KeybindingsWidget::default(), None, false);
+        let page = PageType::new_monolith(KeybindingsWidget, None, false);
         Self {
             page,
             clipped_scroll_state: Default::default(),

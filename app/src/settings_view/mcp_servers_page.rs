@@ -1,27 +1,29 @@
 use std::collections::HashMap;
 use uuid::Uuid;
 use warpui::{
+    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
     elements::{ChildView, Container},
     ui_components::components::{Coords, UiComponentStyles},
-    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
 use crate::{
     ai::mcp::{
-        gallery::MCPGalleryManager, templatable_installation::VariableValue, FileBasedMCPManager,
-        TemplatableMCPServer, TemplatableMCPServerInstallation, TemplatableMCPServerManager,
+        FileBasedMCPManager, TemplatableMCPServer, TemplatableMCPServerInstallation,
+        TemplatableMCPServerManager, gallery::MCPGalleryManager,
+        templatable_installation::VariableValue,
     },
     appearance::Appearance,
     modal::{Modal, ModalViewState},
     settings_view::{
+        SettingsSection,
         mcp_servers::{
+            ServerCardItemId,
             edit_page::{MCPServersEditPageView, MCPServersEditPageViewEvent},
             installation_modal::{InstallationModalBody, InstallationModalBodyEvent},
             list_page::{MCPServersListPageView, MCPServersListPageViewEvent},
-            style, ServerCardItemId,
+            style,
         },
         settings_page::{MatchData, PageType, SettingsPageMeta, SettingsWidget},
-        SettingsSection,
     },
     view_components::DismissibleToast,
     workspace::ToastStack,
@@ -164,13 +166,12 @@ impl MCPServersSettingsPageView {
             ServerCardItemId::FileBasedMCP(uuid) => {
                 if let Some(installation) =
                     FileBasedMCPManager::as_ref(ctx).get_installation_by_uuid(uuid)
+                    && let Some(hash) = installation.hash()
                 {
-                    if let Some(hash) = installation.hash() {
-                        TemplatableMCPServerManager::handle(ctx).update(ctx, |manager, ctx| {
-                            manager.shutdown_server(uuid, ctx);
-                            manager.purge_file_based_server_credentials(&vec![hash], ctx);
-                        });
-                    }
+                    TemplatableMCPServerManager::handle(ctx).update(ctx, |manager, ctx| {
+                        manager.shutdown_server(uuid, ctx);
+                        manager.purge_file_based_server_credentials(&vec![hash], ctx);
+                    });
                 }
                 self.add_toast(&message, ctx);
             }

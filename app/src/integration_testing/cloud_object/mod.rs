@@ -1,14 +1,14 @@
 mod assertion;
 
 pub use assertion::*;
-use futures::{future::join_all, FutureExt};
+use futures::{FutureExt, future::join_all};
 use itertools::Itertools;
 use std::future::Future;
 use std::pin::Pin;
 use warpui::{App, SingletonEntity};
 
 use crate::{
-    cloud_object::{model::persistence::CloudModel, Space},
+    cloud_object::{Space, model::persistence::CloudModel},
     server::cloud_objects::update_manager::UpdateManager,
 };
 

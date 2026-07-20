@@ -4,15 +4,15 @@ use chrono::{DateTime, Local};
 use session_sharing_protocol::common::SessionId;
 use warp_core::ui::appearance::Appearance;
 use warpui::{
+    AppContext, SingletonEntity, WeakViewHandle,
     color::ColorU,
     ui_components::components::{UiComponent, UiComponentStyles},
-    AppContext, SingletonEntity, WeakViewHandle,
 };
 
 use crate::{
     cloud_object::model::persistence::CloudModel,
     server::{ids::ServerId, server_api::object::GuestIdentifier},
-    terminal::{shared_session::join_link, TerminalView},
+    terminal::{TerminalView, shared_session::join_link},
     ui_components::{
         avatar::{Avatar, AvatarContent},
         icons::Icon,

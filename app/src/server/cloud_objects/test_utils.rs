@@ -1,6 +1,6 @@
 use std::sync::{
-    mpsc::{sync_channel, Receiver},
     Arc,
+    mpsc::{Receiver, sync_channel},
 };
 
 use settings::manager::SettingsManager;
@@ -8,7 +8,7 @@ use warp_core::execution_mode::{AppExecutionMode, ExecutionMode};
 use warpui::{App, ModelHandle, SingletonEntity};
 
 use crate::{
-    auth::{auth_manager::AuthManager, AuthStateProvider},
+    auth::{AuthStateProvider, auth_manager::AuthManager},
     cloud_object::model::{
         actions::ObjectActions,
         persistence::{CloudModel, CloudModelEvent},
@@ -17,8 +17,8 @@ use crate::{
     persistence::ModelEvent,
     server::{
         server_api::{
-            object::{MockObjectClient, ObjectClient},
             ServerApiProvider,
+            object::{MockObjectClient, ObjectClient},
         },
         sync_queue::SyncQueue,
     },

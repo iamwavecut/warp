@@ -7,12 +7,12 @@ use crate::workspace::cross_window_tab_drag::CrossWindowTabDrag;
 use ::settings::ToggleableSetting;
 use warp_core::execution_mode::AppExecutionMode;
 
-use crate::ai::agent::conversation::AIConversationId;
+use crate::GlobalResourceHandlesProvider;
 use crate::ai::agent::AIAgentExchangeId;
+use crate::ai::agent::conversation::AIConversationId;
 use crate::root_view::OpenPath;
 use crate::undo_close::UndoCloseStack;
 use crate::workspace::{Workspace, WorkspaceAction};
-use crate::GlobalResourceHandlesProvider;
 use std::path::PathBuf;
 use warpui::windowing::WindowManager;
 use warpui::{AppContext, SingletonEntity, TypedActionView};
@@ -180,14 +180,13 @@ fn undo_close(_: &(), ctx: &mut AppContext) {
 
 /// Dispatches an action to the active workspace, if one exists.
 fn dispatch_to_active_workspace(ctx: &mut AppContext, action: WorkspaceAction) {
-    if let Some(window_id) = WindowManager::as_ref(ctx).active_window() {
-        if let Some(workspaces) = ctx.views_of_type::<Workspace>(window_id) {
-            if let Some(workspace) = workspaces.into_iter().next() {
-                workspace.update(ctx, |workspace, ctx| {
-                    workspace.handle_action(&action, ctx);
-                });
-            }
-        }
+    if let Some(window_id) = WindowManager::as_ref(ctx).active_window()
+        && let Some(workspaces) = ctx.views_of_type::<Workspace>(window_id)
+        && let Some(workspace) = workspaces.into_iter().next()
+    {
+        workspace.update(ctx, |workspace, ctx| {
+            workspace.handle_action(&action, ctx);
+        });
     }
 }
 

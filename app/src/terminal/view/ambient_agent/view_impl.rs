@@ -3,26 +3,26 @@
 use warp_cli::agent::Harness;
 use warp_terminal::model::BlockId;
 
+use crate::ai::agent::RenderableAIError;
 use crate::ai::agent::conversation::{AIConversationId, ConversationStatus};
 use crate::ai::agent::display_user_query_with_mode;
-use crate::ai::agent::RenderableAIError;
 use warp_core::features::FeatureFlag;
 use warpui::prelude::Empty;
 
-use crate::ai::blocklist::{agent_view::AgentViewEntryOrigin, BlocklistAIHistoryModel};
+use crate::ai::blocklist::{BlocklistAIHistoryModel, agent_view::AgentViewEntryOrigin};
 use crate::ai::conversation_details_panel::ConversationDetailsData;
-use crate::terminal::view::rich_content::RichContentInsertionPosition;
-use crate::terminal::view::TerminalView;
 use crate::terminal::CLIAgent;
+use crate::terminal::view::TerminalView;
+use crate::terminal::view::rich_content::RichContentInsertionPosition;
 use warp_core::ui::appearance::Appearance;
 use warpui::elements::Align;
 use warpui::{AppContext, Element, EntityId, SingletonEntity, ViewContext};
 
+use super::AmbientAgentViewModelEvent;
 use super::loading_screen::{
     render_cloud_mode_cancelled_screen, render_cloud_mode_error_screen,
     render_cloud_mode_github_auth_required_screen, render_cloud_mode_loading_screen,
 };
-use super::AmbientAgentViewModelEvent;
 use crate::terminal::view::Event as TerminalViewEvent;
 
 const CHILD_AGENT_GITHUB_AUTH_REQUIRED_BLOCKED_ACTION: &str =

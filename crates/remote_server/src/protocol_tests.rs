@@ -2,8 +2,8 @@ use prost::Message;
 
 use super::*;
 use crate::proto::{
-    client_message, server_message, session_scoped_request, ClientMessage, Initialize,
-    InitializeResponse, ServerMessage,
+    ClientMessage, Initialize, InitializeResponse, ServerMessage, client_message, server_message,
+    session_scoped_request,
 };
 
 #[tokio::test]

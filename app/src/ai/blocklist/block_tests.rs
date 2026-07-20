@@ -1,4 +1,4 @@
-use super::{received_message_collapsible_id, CollapsibleElementState, CollapsibleExpansionState};
+use super::{CollapsibleElementState, CollapsibleExpansionState, received_message_collapsible_id};
 use crate::ai::agent::StartAgentExecutionMode;
 use crate::ai::blocklist::action_model::{
     compose_run_agents_child_prompt, run_agents_to_start_agent_mode,

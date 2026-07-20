@@ -16,12 +16,12 @@ use warp_editor::{
 use warp_util::user_input::UserInput;
 use warpui::assets::asset_cache::{AssetCache, AssetState};
 
+use warpui::r#async::block_on;
 use warpui::event::ModifiersState;
 use warpui::image_cache::ImageType;
-use warpui::r#async::block_on;
 use warpui::units::Pixels;
 use warpui::windowing::WindowManager;
-use warpui::{platform::WindowStyle, presenter::ChildView, App, Element, Entity, View, ViewHandle};
+use warpui::{App, Element, Entity, View, ViewHandle, platform::WindowStyle, presenter::ChildView};
 use warpui::{SingletonEntity, TypedActionView, WindowId};
 
 use super::{EditorViewAction, LayoutAffectingAssetLoad, RichTextEditorConfig, RichTextEditorView};
@@ -39,16 +39,16 @@ use crate::server::server_api::workspace::MockWorkspaceClient;
 use crate::settings::FontSettings;
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 
+use crate::UserWorkspaces;
 use crate::auth::AuthStateProvider;
 use crate::terminal::keys::TerminalKeybindings;
-use crate::terminal::{model::session::Session, shell::ShellType, ShellLaunchData};
+use crate::terminal::{ShellLaunchData, model::session::Session, shell::ShellType};
 use crate::test_util::assert_eventually;
 use crate::test_util::settings::initialize_settings_for_tests;
 use crate::workspace::ActiveSession;
-use crate::UserWorkspaces;
 use crate::{
-    cloud_object::model::persistence::CloudModel, search::files::model::FileSearchModel,
     GlobalResourceHandles, GlobalResourceHandlesProvider,
+    cloud_object::model::persistence::CloudModel, search::files::model::FileSearchModel,
 };
 
 /// Container for a [`RichTextEditorView`] in unit tests.

@@ -1,5 +1,6 @@
 use crate::{
-    cloud_object::{model::persistence::CloudModel, Owner},
+    PaneViewLocator, WindowId,
+    cloud_object::{Owner, model::persistence::CloudModel},
     env_vars::view::env_var_collection::EnvVarCollectionView,
     pane_group::{EnvVarCollectionPane, PaneContent},
     safe_warn,
@@ -9,9 +10,8 @@ use crate::{
         },
         ids::SyncId,
     },
-    PaneViewLocator, WindowId,
 };
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{HashMap, hash_map::Entry};
 use warpui::{Entity, EntityId, ModelContext, SingletonEntity, WeakViewHandle};
 
 pub struct EnvVarCollectionManager {
@@ -161,10 +161,10 @@ impl EnvVarCollectionManager {
                     let env_var_collection = CloudModel::as_ref(ctx)
                         .get_env_var_collection(env_var_collection_id)
                         .cloned();
-                    if let Some(env_var_collection) = env_var_collection {
-                        if let Some(data) = pane_data.handle.upgrade(ctx) {
-                            data.update(ctx, |view, ctx| view.load(env_var_collection, ctx));
-                        }
+                    if let Some(env_var_collection) = env_var_collection
+                        && let Some(data) = pane_data.handle.upgrade(ctx)
+                    {
+                        data.update(ctx, |view, ctx| view.load(env_var_collection, ctx));
                     }
                 }
             }

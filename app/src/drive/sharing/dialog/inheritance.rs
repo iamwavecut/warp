@@ -7,7 +7,7 @@ use warpui::{AppContext, Element, SingletonEntity as _};
 
 use super::style;
 use crate::{
-    cloud_object::{model::persistence::CloudModel, ServerObjectContainer},
+    cloud_object::{ServerObjectContainer, model::persistence::CloudModel},
     drive::CloudObjectTypeAndId,
     interaction_sources::SharingDialogSource,
     server::ids::SyncId,

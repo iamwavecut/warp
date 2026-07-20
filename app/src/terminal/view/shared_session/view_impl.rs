@@ -9,6 +9,7 @@ use crate::drive::sharing::ShareableObject;
 use crate::editor::{InteractionState, ReplicaId};
 use crate::interaction_sources::SharingDialogSource;
 use crate::settings::InputModeSettings;
+use crate::terminal::TerminalModel;
 use crate::terminal::block_list_viewport::ScrollPositionUpdate;
 use crate::terminal::model::blocks::BlockListPoint;
 use crate::terminal::model::index::Point;
@@ -20,14 +21,13 @@ use crate::terminal::shared_session::role_change_modal::{
 };
 use crate::terminal::shared_session::settings::SharedSessionSettings;
 use crate::terminal::shared_session::{
-    join_link, SharedSessionActionSource, SharedSessionScrollbackType, SharedSessionStatus,
-    COPY_LINK_TEXT,
+    COPY_LINK_TEXT, SharedSessionActionSource, SharedSessionScrollbackType, SharedSessionStatus,
+    join_link,
 };
 use crate::terminal::view::{
     ContextMenuAction, Event, InlineBannerItem, InlineBannerType, RichContentInsertionPosition,
     SharedSessionBanners, SizeUpdateBuilder, TerminalAction, TerminalView,
 };
-use crate::terminal::TerminalModel;
 use crate::view_components::{DismissibleToast, ToastFlavor};
 use crate::{
     menu::{MenuItem, MenuItemFields},
@@ -63,15 +63,15 @@ use crate::terminal::shared_session::participant_avatar_view::ParticipantAvatarV
 use session_sharing_protocol::common::ParticipantList;
 use session_sharing_protocol::common::ParticipantPresenceUpdate;
 
-use warpui::elements::MouseStateHandle;
 use warpui::AppContext;
+use warpui::elements::MouseStateHandle;
 
-use super::adapter::{Adapter, Kind, Participant};
-use super::sharer::inactivity_modal::InactivityModalEvent;
-use super::sharer::Sharer;
-use super::viewer::Viewer;
 #[cfg(not(target_family = "wasm"))]
 use super::ConversationEndedTombstoneView;
+use super::adapter::{Adapter, Kind, Participant};
+use super::sharer::Sharer;
+use super::sharer::inactivity_modal::InactivityModalEvent;
+use super::viewer::Viewer;
 
 impl TerminalView {
     pub fn sharer_session_kind(&self) -> Option<&Kind> {
@@ -184,10 +184,10 @@ impl TerminalView {
                     .presence_manager()
                     .as_ref(ctx)
                     .viewer_role(participant_id);
-                if let Some(old_role) = viewer_role {
-                    if old_role == *role {
-                        return;
-                    }
+                if let Some(old_role) = viewer_role
+                    && old_role == *role
+                {
+                    return;
                 }
 
                 let should_confirm_shared_session_edit_access =
@@ -706,10 +706,10 @@ impl TerminalView {
             self.insert_conversation_ended_tombstone(ctx);
         }
         // Ensure inactivity timer is aborted for sharer
-        if let Some(sharer) = self.shared_session_sharer_mut() {
-            if let Some(old_abort_handle) = sharer.inactivity_timer_abort_handle.take() {
-                old_abort_handle.abort();
-            }
+        if let Some(sharer) = self.shared_session_sharer_mut()
+            && let Some(old_abort_handle) = sharer.inactivity_timer_abort_handle.take()
+        {
+            old_abort_handle.abort();
         }
         #[cfg(not(target_arch = "wasm32"))]
         if self.active_viewer_driven_size.is_some() && !self.is_shared_session_for_ambient_agent() {
@@ -740,15 +740,15 @@ impl TerminalView {
             });
         });
 
-        if self.pending_cloud_followup_task_id.is_none() {
-            if self.model.lock().shared_session_status().is_viewer() {
-                // When the session is ended, the input should be uneditable iff this is a viewer.
-                self.input().update(ctx, |input, ctx| {
-                    input.editor().update(ctx, |editor, ctx| {
-                        editor.set_interaction_state(InteractionState::Selectable, ctx);
-                    });
+        if self.pending_cloud_followup_task_id.is_none()
+            && self.model.lock().shared_session_status().is_viewer()
+        {
+            // When the session is ended, the input should be uneditable iff this is a viewer.
+            self.input().update(ctx, |input, ctx| {
+                input.editor().update(ctx, |editor, ctx| {
+                    editor.set_interaction_state(InteractionState::Selectable, ctx);
                 });
-            }
+            });
         }
 
         self.pane_configuration.update(ctx, |pane_config, ctx| {
@@ -885,10 +885,10 @@ impl TerminalView {
         // session due to inactivity. Clear any existing timer and return early so
         // the session stays open until explicitly closed.
         if self.model.lock().is_shared_ambient_agent_session() {
-            if let Some(sharer) = self.shared_session_sharer_mut() {
-                if let Some(old_abort_handle) = sharer.inactivity_timer_abort_handle.take() {
-                    old_abort_handle.abort();
-                }
+            if let Some(sharer) = self.shared_session_sharer_mut()
+                && let Some(old_abort_handle) = sharer.inactivity_timer_abort_handle.take()
+            {
+                old_abort_handle.abort();
             }
             return;
         }
@@ -1104,11 +1104,9 @@ impl TerminalView {
 
         // If we the participant has block(s) selected, scroll to the block where the avatar is.
         // Otherwise, if the participant has block text selected, scroll so the cursor is in view.
-        if let Some(block_index) = {
-            let index =
-                participant.get_selected_block_index_for_avatar(self.model.lock().block_list());
-            index
-        } {
+        if let Some(block_index) =
+            { participant.get_selected_block_index_for_avatar(self.model.lock().block_list()) }
+        {
             self.update_scroll_position_locking(
                 ScrollPositionUpdate::ScrollToTopOfBlockWithBuffer {
                     block_index,
@@ -1139,8 +1137,6 @@ impl TerminalView {
                 },
                 ctx,
             );
-        } else {
-            return;
         }
     }
 
@@ -1344,12 +1340,12 @@ impl TerminalView {
         role_request_response: RoleRequestResponse,
         ctx: &mut ViewContext<Self>,
     ) {
-        if let Some(shared_session) = self.shared_session.as_mut() {
-            if let RoleRequestResponse::Approved { new_role } = role_request_response {
-                let self_id = shared_session.presence_manager().as_ref(ctx).id();
-                shared_session.update_participant_role(&self_id, new_role, ctx);
-                self.on_self_role_updated(new_role, ctx);
-            }
+        if let Some(shared_session) = self.shared_session.as_mut()
+            && let RoleRequestResponse::Approved { new_role } = role_request_response
+        {
+            let self_id = shared_session.presence_manager().as_ref(ctx).id();
+            shared_session.update_participant_role(&self_id, new_role, ctx);
+            self.on_self_role_updated(new_role, ctx);
         }
 
         self.update_shared_session_pane_header(ctx);

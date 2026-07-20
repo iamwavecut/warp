@@ -1,14 +1,14 @@
-use crate::ai::llms::{is_using_api_key_for_provider, LLMId, LLMInfo};
+use crate::ai::llms::{LLMId, LLMInfo, is_using_api_key_for_provider};
 use crate::menu::{MenuItem, MenuItemFields, MenuTooltipPosition};
 use itertools::Itertools;
 use std::sync::Arc;
 use warp_core::ui::Icon;
 use warpui::{
+    Action, AppContext, Element,
     elements::{
         ConstrainedBox, Container, CrossAxisAlignment, Empty, Flex, ParentElement, SavePosition,
         Shrinkable, Text,
     },
-    Action, AppContext, Element,
 };
 
 pub fn is_auto(llm: &LLMInfo) -> bool {

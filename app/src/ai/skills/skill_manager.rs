@@ -3,9 +3,9 @@ mod file_watchers;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use ai::skills::{parse_bundled_skill, provider_rank, ParsedSkill, SkillProvider, SkillReference};
+use ai::skills::{ParsedSkill, SkillProvider, SkillReference, parse_bundled_skill, provider_rank};
 pub use file_watchers::{
-    extract_skill_parent_directory, read_skills_from_directories, SkillWatcher, SkillWatcherEvent,
+    SkillWatcher, SkillWatcherEvent, extract_skill_parent_directory, read_skills_from_directories,
 };
 use warp_core::channel::ChannelState;
 use warp_core::features::FeatureFlag;
@@ -414,22 +414,25 @@ impl SkillManager {
 
     pub fn handle_skills_added(&mut self, skills: Vec<ParsedSkill>) {
         for skill in skills {
-            if let Ok(parent_dir) = extract_skill_parent_directory(&skill.path) {
-                self.directory_skills
-                    .entry(parent_dir)
-                    .or_default()
-                    .insert(skill.path.clone());
+            match extract_skill_parent_directory(&skill.path) {
+                Ok(parent_dir) => {
+                    self.directory_skills
+                        .entry(parent_dir)
+                        .or_default()
+                        .insert(skill.path.clone());
 
-                self.skills_by_name
-                    .entry(skill.name.clone())
-                    .or_default()
-                    .insert(skill.path.clone());
-                self.skills_by_path.insert(skill.path.clone(), skill);
-            } else {
-                log::warn!(
-                    "Could not extract parent directory for skill: {:?}",
-                    skill.path
-                );
+                    self.skills_by_name
+                        .entry(skill.name.clone())
+                        .or_default()
+                        .insert(skill.path.clone());
+                    self.skills_by_path.insert(skill.path.clone(), skill);
+                }
+                _ => {
+                    log::warn!(
+                        "Could not extract parent directory for skill: {:?}",
+                        skill.path
+                    );
+                }
             }
         }
     }

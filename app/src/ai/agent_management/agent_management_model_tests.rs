@@ -4,6 +4,7 @@ use warp_errors::report_if_error;
 use warpui::{App, EntityId, ModelHandle, SingletonEntity};
 
 use super::AgentNotificationsModel;
+use crate::BlocklistAIHistoryModel;
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent_management::notifications::{
@@ -14,7 +15,6 @@ use crate::ai::blocklist::BlocklistAIHistoryEvent;
 use crate::settings::AISettings;
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::test_util::settings::initialize_settings_for_tests;
-use crate::BlocklistAIHistoryModel;
 
 fn setup_app(
     app: &mut App,
@@ -141,9 +141,11 @@ fn add_notification_tracks_unread_activity_when_in_app_notifications_are_hidden(
                     .filtered_count(NotificationFilter::All),
                 1
             );
-            assert!(model
-                .notifications()
-                .has_unread_for_terminal_view(terminal_view_id));
+            assert!(
+                model
+                    .notifications()
+                    .has_unread_for_terminal_view(terminal_view_id)
+            );
         });
     });
 }

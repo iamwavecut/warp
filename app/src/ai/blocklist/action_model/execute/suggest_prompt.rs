@@ -1,6 +1,7 @@
-use futures::{channel::oneshot, future::BoxFuture, FutureExt};
+use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use warpui::{Entity, ModelContext};
 
+use crate::AIAgentActionResultType;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent::{
     AIAgentAction, AIAgentActionId, AIAgentActionType, SuggestPromptRequest, SuggestPromptResult,
@@ -8,7 +9,6 @@ use crate::ai::agent::{
 use crate::ai::blocklist::action_model::execute::{
     ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput,
 };
-use crate::AIAgentActionResultType;
 
 pub struct PromptSuggestionExecutor {
     suggest_prompt_result_tx: Option<oneshot::Sender<SuggestPromptResult>>,
@@ -39,7 +39,7 @@ impl PromptSuggestionExecutor {
         &mut self,
         input: ExecuteActionInput,
         _ctx: &mut ModelContext<Self>,
-    ) -> impl Into<AnyActionExecution> {
+    ) -> impl Into<AnyActionExecution> + use<> {
         let AIAgentAction {
             action: AIAgentActionType::SuggestPrompt(request),
             ..

@@ -11,7 +11,7 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::theme::color::internal_colors;
 use warp_core::ui::theme::{Fill as ThemeFill, WarpTheme};
-use warp_core::ui::{appearance::Appearance, Icon};
+use warp_core::ui::{Icon, appearance::Appearance};
 use warpui::elements::{
     ChildAnchor, ChildView, Dismiss, Empty, Hoverable, MainAxisSize, MouseStateHandle,
     ParentAnchor, ParentOffsetBounds, Rect, Shrinkable,
@@ -19,11 +19,11 @@ use warpui::elements::{
 use warpui::platform::Cursor;
 use warpui::ui_components::components::{UiComponent, UiComponentStyles};
 use warpui::{
+    AppContext, Element, Entity, ModelHandle, SingletonEntity, View, WeakModelHandle,
     elements::{
         Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Fill, Flex,
         MainAxisAlignment, OffsetPositioning, Padding, ParentElement, Radius, Stack,
     },
-    AppContext, Element, Entity, ModelHandle, SingletonEntity, View, WeakModelHandle,
 };
 use warpui::{TypedActionView, ViewContext, ViewHandle};
 
@@ -384,12 +384,12 @@ impl CodeFooterView {
             let status = Self::detect_installation_status(&path, ctx);
 
             // Update button label based on initial status (handles cached results)
-            if let Some(enable_button) = &enable_lsp_button {
-                if let Some(label) = Self::button_label_for_status(&status) {
-                    enable_button.update(ctx, |button, ctx| {
-                        button.set_label(label, ctx);
-                    });
-                }
+            if let Some(enable_button) = &enable_lsp_button
+                && let Some(label) = Self::button_label_for_status(&status)
+            {
+                enable_button.update(ctx, |button, ctx| {
+                    button.set_label(label, ctx);
+                });
             }
 
             // Subscribe to InstallStatusUpdate events from PersistedWorkspace
@@ -1550,13 +1550,13 @@ impl CodeFooterView {
             // Then check for any starting/busy server
             for server in &live {
                 let server_ref = server.as_ref(app);
-                if let Some(msg) = Self::server_status_message(server_ref) {
-                    if matches!(
+                if let Some(msg) = Self::server_status_message(server_ref)
+                    && matches!(
                         server_ref.state(),
                         LspModelState::Starting | LspModelState::Available { .. }
-                    ) {
-                        return (Some(msg), false);
-                    }
+                    )
+                {
+                    return (Some(msg), false);
                 }
             }
             // Then check stopped
@@ -1758,16 +1758,14 @@ impl View for CodeFooterView {
                 );
             }
 
-            if should_show_enable_button {
-                if let Some(enable_lsp) = &self.enable_lsp_button {
-                    // Left margin only to separate from status text; right margin removed
-                    // to tighten padding between elements
-                    footer_content.add_child(
-                        Container::new(ChildView::new(enable_lsp).finish())
-                            .with_margin_left(ICON_MARGIN)
-                            .finish(),
-                    );
-                }
+            if should_show_enable_button && let Some(enable_lsp) = &self.enable_lsp_button {
+                // Left margin only to separate from status text; right margin removed
+                // to tighten padding between elements
+                footer_content.add_child(
+                    Container::new(ChildView::new(enable_lsp).finish())
+                        .with_margin_left(ICON_MARGIN)
+                        .finish(),
+                );
             }
         }
 

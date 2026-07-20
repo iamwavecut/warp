@@ -5,9 +5,10 @@ use warp_errors::report_error;
 use warpui::{AppContext, ModelContext, SingletonEntity};
 
 use super::{
-    input_context_for_request, parse_context_attachments, BlocklistAIController,
-    BlocklistAIControllerEvent, RequestInput,
+    BlocklistAIController, BlocklistAIControllerEvent, RequestInput, input_context_for_request,
+    parse_context_attachments,
 };
+use crate::BlocklistAIHistoryModel;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent::{
     AIAgentContext, AIAgentInput, CancellationReason, CloneRepositoryURL, EntrypointType,
@@ -16,7 +17,6 @@ use crate::ai::agent::{
 use crate::ai::blocklist::agent_view::AgentViewEntryOrigin;
 use crate::search::slash_command_menu::static_commands::commands;
 use crate::terminal::input::slash_commands::SlashCommandTrigger;
-use crate::BlocklistAIHistoryModel;
 
 pub enum SlashCommandRequest {
     CreateNewProject {

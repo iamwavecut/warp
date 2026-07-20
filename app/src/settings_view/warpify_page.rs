@@ -10,14 +10,14 @@ use warp_core::features::FeatureFlag;
 use warpui::elements::{FormattedTextElement, HighlightedHyperlink};
 use warpui::keymap::ContextPredicate;
 use warpui::{
+    Action, AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View,
+    ViewContext, ViewHandle,
     elements::{Container, Flex, MouseStateHandle, ParentElement},
     presenter::ChildView,
     ui_components::{
         components::{Coords, UiComponent, UiComponentStyles},
         switch::SwitchStateHandle,
     },
-    Action, AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View,
-    ViewContext, ViewHandle,
 };
 
 use crate::terminal::warpify::settings::{
@@ -31,18 +31,17 @@ use crate::{
     view_components::{SubmittableTextInput, SubmittableTextInputEvent},
 };
 
-use super::settings_page::{
-    render_body_item, render_dropdown_item, render_page_title, AdditionalInfo, Category,
-    LocalOnlyIconState, MatchData, PageType, SettingsPageEvent, SettingsWidget, ToggleState,
-    HEADER_FONT_SIZE, HEADER_PADDING,
-};
 use super::SettingsSection;
+use super::settings_page::{
+    AdditionalInfo, Category, HEADER_FONT_SIZE, HEADER_PADDING, LocalOnlyIconState, MatchData,
+    PageType, SettingsPageEvent, SettingsWidget, ToggleState, render_body_item,
+    render_dropdown_item, render_page_title,
+};
 use super::{
-    flags,
+    SettingsAction, ToggleSettingActionPair, flags,
     settings_page::{
-        add_setting, render_alternating_color_list, SettingsPageMeta, SettingsPageViewHandle,
+        SettingsPageMeta, SettingsPageViewHandle, add_setting, render_alternating_color_list,
     },
-    SettingsAction, ToggleSettingActionPair,
 };
 use crate::view_components::dropdown::{Dropdown, DropdownItem};
 
@@ -94,8 +93,7 @@ const SPACE_AFTER_TEXT_INPUT: f32 = ITEM_VERTICAL_SPACING - BUILT_IN_TEXT_INPUT_
 
 const SSH_TMUX_WARPIFICATION_DESCRIPTION: &str = "The tmux ssh wrapper works in many situations where the default one does not, but may require you to hit a button to warpify. Takes effect in new tabs.";
 
-const SSH_EXTENSION_INSTALL_MODE_DESCRIPTION: &str =
-    "Controls the installation behavior for Warp's SSH extension when a remote host doesn't have it installed.";
+const SSH_EXTENSION_INSTALL_MODE_DESCRIPTION: &str = "Controls the installation behavior for Warp's SSH extension when a remote host doesn't have it installed.";
 
 /// This page lets users configure when they get asked to warpify a session. Some shell commands
 /// are recognized by default. Users can add new shell commands, or prevent the default ones from
@@ -447,9 +445,11 @@ impl TypedActionView for WarpifyPageView {
             RemoveAddedCommand(index) => self.remove_added_command(*index, ctx),
             ToggleSshWarpification => {
                 WarpifySettings::handle(ctx).update(ctx, |ssh_settings, ctx| {
-                    report_if_error!(ssh_settings
-                        .enable_ssh_warpification
-                        .toggle_and_save_value(ctx));
+                    report_if_error!(
+                        ssh_settings
+                            .enable_ssh_warpification
+                            .toggle_and_save_value(ctx)
+                    );
                 });
                 let enabled = *WarpifySettings::as_ref(ctx)
                     .enable_ssh_warpification
@@ -470,9 +470,11 @@ impl TypedActionView for WarpifyPageView {
             }
             SetSshExtensionInstallMode(mode) => {
                 WarpifySettings::handle(ctx).update(ctx, |warpify_settings, ctx| {
-                    report_if_error!(warpify_settings
-                        .ssh_extension_install_mode
-                        .set_value(*mode, ctx));
+                    report_if_error!(
+                        warpify_settings
+                            .ssh_extension_install_mode
+                            .set_value(*mode, ctx)
+                    );
                 });
             }
             WarpifyPageAction::RemoveDenylistedSshHost(index) => {

@@ -1,44 +1,44 @@
-use crate::ai::mcp::templatable::GalleryData;
+use crate::ToastStack;
 use crate::ai::mcp::MCPServerUpdate;
+use crate::ai::mcp::templatable::GalleryData;
 use crate::modal::Modal;
 use crate::modal::ModalEvent;
 use crate::modal::ModalViewState;
 use crate::settings::{AISettings, AISettingsChangedEvent};
 use crate::settings_view::mcp_servers_page::InstallOrigin;
 use crate::settings_view::settings_page::{
-    build_toggle_element, render_body_item_label, LocalOnlyIconState, ToggleState,
+    LocalOnlyIconState, ToggleState, build_toggle_element, render_body_item_label,
 };
 use crate::util::truncation::truncate_from_end;
 use crate::view_components::DismissibleToast;
-use crate::ToastStack;
 
 #[cfg(feature = "local_fs")]
 use crate::ai::mcp::{
+    FileMCPWatcher,
+    FileMCPWatcherEvent,
     // Import events for file-based manager and watcher conditionally
     // since their WASM variants don't export events.
     file_based_manager::FileBasedMCPManagerEvent,
-    FileMCPWatcher,
-    FileMCPWatcherEvent,
 };
 
 use crate::{
     ai::mcp::{
+        FileBasedMCPManager, MCPGalleryManager, MCPProvider, TemplatableMCPServerInstallation,
         logs,
         templatable::TemplatableMCPServer,
         templatable_manager::{TemplatableMCPServerManager, TemplatableMCPServerManagerEvent},
-        FileBasedMCPManager, MCPGalleryManager, MCPProvider, TemplatableMCPServerInstallation,
     },
     appearance::Appearance,
     editor::{EditorView, PropagateAndNoOpNavigationKeys, SingleLineEditorOptions, TextOptions},
     pane_group::Direction,
     search_bar::SearchBar,
     settings_view::mcp_servers::{
+        ServerCardItemId,
         server_card::{
             ServerCardEvent, ServerCardOptions, ServerCardStatus, ServerCardView, TitleChip,
         },
         style,
         update_modal::{UpdateModalBody, UpdateModalBodyEvent},
-        ServerCardItemId,
     },
     ui_components::blended_colors,
     view_components::action_button::{ActionButton, NakedTheme},
@@ -51,18 +51,18 @@ use std::{collections::HashMap, path::PathBuf};
 use strum::IntoEnumIterator;
 use uuid::Uuid;
 use warp_core::features::FeatureFlag;
-use warp_core::ui::{appearance::AppearanceEvent, theme::color::internal_colors, Icon};
+use warp_core::ui::{Icon, theme::color::internal_colors};
 use warpui::{
+    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
     elements::{
-        Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
-        Expanded, Fill, Flex, FormattedTextElement, HighlightedHyperlink, MainAxisAlignment,
-        MainAxisSize, ParentElement, Radius, Text,
+        Align, Border, ChildView, ConstrainedBox, Container, CrossAxisAlignment, Expanded, Fill,
+        Flex, FormattedTextElement, HighlightedHyperlink, MainAxisAlignment, MainAxisSize,
+        ParentElement, Text,
     },
     ui_components::{
         components::{Coords, UiComponent, UiComponentStyles},
         switch::SwitchStateHandle,
     },
-    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
 const DESCRIPTION_TEXT: &str = "Add MCP servers to extend the Warp Agent's capabilities. MCP servers expose data sources or tools to agents through a standardized interface, essentially acting like plugins. Add a custom server, or use the presets to get started with popular servers.";
@@ -918,11 +918,9 @@ impl MCPServersListPageView {
         static FILE_BASED_MCP_DESCRIPTION_FRAGMENTS: std::sync::LazyLock<
             Vec<FormattedTextFragment>,
         > = std::sync::LazyLock::new(|| {
-            vec![
-                FormattedTextFragment::plain_text(
-                    "Automatically detect and spawn MCP servers from globally-scoped third-party AI agent configuration files (e.g. in your home directory). Servers detected inside a repository are never spawned automatically and must be enabled individually in the \"Detected from\" sections below.",
-                ),
-            ]
+            vec![FormattedTextFragment::plain_text(
+                "Automatically detect and spawn MCP servers from globally-scoped third-party AI agent configuration files (e.g. in your home directory). Servers detected inside a repository are never spawned automatically and must be enabled individually in the \"Detected from\" sections below.",
+            )]
         });
 
         let description = FormattedTextElement::new(
@@ -1291,10 +1289,10 @@ impl MCPServersListPageView {
 
     fn file_based_root_chip_text(root_path: &PathBuf) -> Option<String> {
         // If the path is the user's home directory, set the text to "global".
-        if let Some(home_dir) = dirs::home_dir() {
-            if root_path == &home_dir {
-                return Some("global".to_string());
-            }
+        if let Some(home_dir) = dirs::home_dir()
+            && root_path == &home_dir
+        {
+            return Some("global".to_string());
         }
 
         // If the path is the Warp data directory (e.g. ~/.warp or ~/.warp_dev), set the text to

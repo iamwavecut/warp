@@ -14,7 +14,7 @@ use ai::agent::orchestration_config::OrchestrationConfig;
 use ai::skills::SkillReference;
 
 use crate::ai::blocklist::inline_action::orchestration_controls::OrchestrationEditState;
-use futures::{future::BoxFuture, FutureExt};
+use futures::{FutureExt, future::BoxFuture};
 use warp_core::execution_mode::AppExecutionMode;
 use warpui::{Entity, EntityId, ModelContext, ModelHandle};
 
@@ -241,7 +241,7 @@ impl RunAgentsExecutor {
         &mut self,
         input: ExecuteActionInput,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Into<AnyActionExecution> {
+    ) -> impl Into<AnyActionExecution> + use<> {
         let AIAgentAction { action, id, .. } = input.action;
         let AIAgentActionType::RunAgents(request) = action else {
             return ActionExecution::InvalidAction;

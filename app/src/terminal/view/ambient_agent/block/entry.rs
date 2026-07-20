@@ -1,8 +1,10 @@
 use settings::Setting;
-use warp_core::ui::{appearance::Appearance, Icon};
-use warpui::prelude::Empty;
+use warp_core::ui::{Icon, appearance::Appearance};
 use warpui::AppContext;
+use warpui::prelude::Empty;
 use warpui::{
+    Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
+    WeakModelHandle,
     elements::{
         ConstrainedBox, Container, CrossAxisAlignment, Flex, Hoverable, MainAxisSize,
         MouseStateHandle, ParentElement, Shrinkable, Text,
@@ -10,11 +12,9 @@ use warpui::{
     fonts::Properties,
     platform::Cursor,
     text_layout::ClipConfig,
-    Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
-    WeakModelHandle,
 };
 
-use crate::ai::blocklist::agent_view::{render_block_container, AgentViewEntryOrigin};
+use crate::ai::blocklist::agent_view::{AgentViewEntryOrigin, render_block_container};
 use crate::terminal::view::ambient_agent::AmbientAgentViewModel;
 use crate::{
     pane_group::pane::{PaneConfiguration, PaneConfigurationEvent, PaneStack},
@@ -22,7 +22,7 @@ use crate::{
     ui_components::{
         agent_icon::terminal_view_agent_icon_variant,
         blended_colors,
-        icon_with_status::{render_icon_with_status, IconWithStatusVariant},
+        icon_with_status::{IconWithStatusVariant, render_icon_with_status},
     },
 };
 
@@ -48,14 +48,17 @@ impl AmbientAgentEntryBlock {
         pane_stack: WeakModelHandle<PaneStack<TerminalView>>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
-        if let Some(view_model) = terminal_view
+        match terminal_view
             .as_ref(ctx)
             .ambient_agent_view_model()
             .cloned()
         {
-            ctx.subscribe_to_model(&view_model, Self::handle_ambient_agent_view_model_event);
-        } else {
-            log::warn!("AmbientAgentEntryBlock created without an ambient agent view model");
+            Some(view_model) => {
+                ctx.subscribe_to_model(&view_model, Self::handle_ambient_agent_view_model_event);
+            }
+            _ => {
+                log::warn!("AmbientAgentEntryBlock created without an ambient agent view model");
+            }
         }
 
         let pane_configuration = terminal_view.as_ref(ctx).pane_configuration().clone();

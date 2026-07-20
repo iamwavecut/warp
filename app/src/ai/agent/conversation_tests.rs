@@ -4,8 +4,8 @@ use warp_core::features::FeatureFlag;
 use warp_multi_agent_api as api;
 
 use super::{
-    artifact_from_fork_proto, AIConversation, AIConversationAutoexecuteMode, AIConversationId,
-    ConversationStatus, RestoreConversationError,
+    AIConversation, AIConversationAutoexecuteMode, AIConversationId, ConversationStatus,
+    RestoreConversationError, artifact_from_fork_proto,
 };
 use crate::ai::artifacts::Artifact;
 use crate::persistence::model::AgentConversationData;

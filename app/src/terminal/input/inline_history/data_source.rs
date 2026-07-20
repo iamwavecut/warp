@@ -12,19 +12,19 @@ use ordered_float::OrderedFloat;
 use warpui::{AppContext, Entity, EntityId, ModelHandle, SingletonEntity};
 
 use crate::ai::agent::conversation::{AIConversationId, ConversationStatus};
-use crate::ai::blocklist::agent_view::AgentViewController;
 use crate::ai::blocklist::BlocklistAIHistoryModel;
+use crate::ai::blocklist::agent_view::AgentViewController;
 use crate::input_suggestions::{HistoryInputSuggestion, HistoryOrder};
+use crate::search::SyncDataSource;
 use crate::search::data_source::{Query, QueryFilter, QueryResult};
 use crate::search::mixer::DataSourceRunErrorWrapper;
-use crate::search::SyncDataSource;
 use crate::terminal::history::{History, LinkedWorkflowData, UpArrowHistoryConfig};
 use crate::terminal::input::inline_history::search_item::InlineHistoryItem;
 use crate::terminal::input::inline_menu::{
     InlineMenuAction, InlineMenuClickBehavior, InlineMenuType,
 };
-use crate::terminal::model::session::active_session::ActiveSession;
 use crate::terminal::model::session::SessionId;
+use crate::terminal::model::session::active_session::ActiveSession;
 
 #[derive(Clone, Debug)]
 pub enum AcceptHistoryItem {
@@ -234,7 +234,7 @@ fn interleave_conversations(base: Vec<MenuEntry>, conversations: Vec<MenuEntry>)
 
     let base_current = base.into_iter().skip(current_start_idx).collect::<Vec<_>>();
     let mut conversations = conversations;
-    conversations.sort_by(|a, b| a.sort_timestamp.cmp(&b.sort_timestamp));
+    conversations.sort_by_key(|a| a.sort_timestamp);
 
     let mut i = 0;
     for conv in conversations {

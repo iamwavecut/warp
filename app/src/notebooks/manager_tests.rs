@@ -2,15 +2,16 @@ use std::sync::mpsc;
 
 use warp_core::ui::appearance::Appearance;
 use warpui::{
-    platform::WindowStyle, AddSingletonModel, App, EntityId, ModelHandle, ViewContext, ViewHandle,
+    AddSingletonModel, App, EntityId, ModelHandle, ViewContext, ViewHandle, platform::WindowStyle,
 };
 
 use crate::{
+    GlobalResourceHandles, GlobalResourceHandlesProvider,
     ai::blocklist::BlocklistAIHistoryModel,
-    auth::{auth_manager::AuthManager, AuthStateProvider},
+    auth::{AuthStateProvider, auth_manager::AuthManager},
     cloud_object::{
-        model::{actions::ObjectActions, persistence::CloudModel, view::CloudViewModel},
         Owner,
+        model::{actions::ObjectActions, persistence::CloudModel, view::CloudViewModel},
     },
     network::NetworkStatus,
     notebooks::{editor::keys::NotebookKeybindings, notebook::NotebookView},
@@ -31,7 +32,6 @@ use crate::{
     workspaces::{
         team_tester::TeamTesterStatus, user_profiles::UserProfiles, user_workspaces::UserWorkspaces,
     },
-    GlobalResourceHandles, GlobalResourceHandlesProvider,
 };
 
 use super::NotebookManager;

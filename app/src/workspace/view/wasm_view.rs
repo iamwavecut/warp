@@ -7,6 +7,7 @@ use crate::uri::browser_url_handler::parse_current_url;
 
 use super::PanelPosition;
 
+use crate::BlocklistAIHistoryModel;
 use crate::ai::agent_conversations_model::AgentConversationsModel;
 use crate::ai::conversation_details_panel::{
     ConversationDetailsData, ConversationDetailsPanel, ConversationDetailsPanelEvent,
@@ -17,7 +18,6 @@ use crate::view_components::action_button::{ActionButton, ButtonSize, NakedTheme
 use crate::wasm_nux_dialog::{WasmNUXDialog, WasmNUXDialogEvent};
 use crate::workspace::action::WorkspaceAction;
 use crate::workspace::view::{NotebookSource, OpenWarpDriveObjectSettings, Workspace};
-use crate::BlocklistAIHistoryModel;
 
 const TRANSCRIPT_PANEL_WIDTH: f32 = 280.0;
 

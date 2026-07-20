@@ -40,9 +40,11 @@ impl TeamUpdateManager {
         let model_event_sender = self.model_event_sender.clone();
         if let Some(model_event_sender) = &model_event_sender {
             for event in events {
-                report_if_error!(model_event_sender
-                    .send(event)
-                    .context("Unable to save teams metadata to sqlite"));
+                report_if_error!(
+                    model_event_sender
+                        .send(event)
+                        .context("Unable to save teams metadata to sqlite")
+                );
             }
         }
     }

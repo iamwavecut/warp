@@ -2,7 +2,7 @@ use crate::{
     network::{NetworkStatus, NetworkStatusKind},
     util::bindings::keybinding_name_to_display_string,
 };
-use warpui::{async_assert, async_assert_eq, integration::TestStep, SingletonEntity};
+use warpui::{SingletonEntity, async_assert, async_assert_eq, integration::TestStep};
 
 fn set_and_assert_network_status(status: NetworkStatusKind) -> TestStep {
     TestStep::new("Set and assert network status")

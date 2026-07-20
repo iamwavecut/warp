@@ -3,8 +3,8 @@ pub mod util;
 use crate::{
     ai::facts::CloudAIFactModel,
     cloud_object::{
-        model::generic_string_model::GenericStringObjectId, GenericServerObject,
-        RevisionAndLastEditor, ServerFolder, ServerObject, UpdateCloudObjectResult,
+        GenericServerObject, RevisionAndLastEditor, ServerFolder, ServerObject,
+        UpdateCloudObjectResult, model::generic_string_model::GenericStringObjectId,
     },
     env_vars::CloudEnvVarCollectionModel,
     server::{graphql::get_user_facing_error_message, ids::ServerId},
@@ -12,7 +12,7 @@ use crate::{
     workflows::workflow_enum::CloudWorkflowEnumModel,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use warp_graphql::{
     generic_string_object::GenericStringObjectFormat,
     mutations::update_generic_string_object::{

@@ -22,8 +22,8 @@ use crate::search::mixer::{SearchMixer, SearchMixerEvent};
 use crate::search::result_renderer::{QueryResultRenderer, QueryResultRendererStyles};
 use crate::search::slash_command_menu::static_commands::commands::COMMAND_REGISTRY;
 use crate::terminal::input::buffer_model::{InputBufferModel, InputBufferUpdateEvent};
-use crate::terminal::input::inline_menu::styles as inline_styles;
 use crate::terminal::input::inline_menu::QueryResultRendererExt as _;
+use crate::terminal::input::inline_menu::styles as inline_styles;
 use crate::terminal::input::slash_command_model::{SlashCommandEntryState, SlashCommandModel};
 use crate::terminal::input::slash_commands::view::CloseReason;
 use crate::terminal::input::slash_commands::{
@@ -508,10 +508,9 @@ impl CloudModeV2SlashCommandView {
         if let MenuState::NoSearchActive {
             expanded_sections, ..
         } = &mut self.menu_state
+            && !expanded_sections.insert(section)
         {
-            if !expanded_sections.insert(section) {
-                expanded_sections.remove(&section);
-            }
+            expanded_sections.remove(&section);
         }
         clamp_browsing_selection(&mut self.menu_state);
         ctx.notify();
@@ -609,14 +608,12 @@ impl CloudModeV2SlashCommandView {
             results,
             selected_idx,
         } = &mut self.menu_state
+            && let Some(item) = results.get(idx)
+            && !item.search_result.is_disabled()
         {
-            if let Some(item) = results.get(idx) {
-                if !item.search_result.is_disabled() {
-                    *selected_idx = Some(idx);
-                    self.scroll_selected_into_view(idx);
-                    ctx.notify();
-                }
-            }
+            *selected_idx = Some(idx);
+            self.scroll_selected_into_view(idx);
+            ctx.notify();
         }
     }
 }

@@ -9,7 +9,7 @@ use warp_core::features::FeatureFlag;
 use warp_errors::report_error;
 use warp_multi_agent_api::client_action::Action;
 use warp_multi_agent_api::message::Message;
-use warp_multi_agent_api::response_event::{stream_finished, ClientActions};
+use warp_multi_agent_api::response_event::{ClientActions, stream_finished};
 use warpui::{AppContext, ModelContext, SingletonEntity};
 
 use super::response_stream::ResponseStreamId;
@@ -323,8 +323,11 @@ impl BlocklistAIController {
                 self.terminal_surface_id,
                 ctx,
             ) {
-                report_error!(anyhow::Error::new(e)
-                    .context("Failed to apply client actions to conversation for shared session"));
+                report_error!(
+                    anyhow::Error::new(e).context(
+                        "Failed to apply client actions to conversation for shared session"
+                    )
+                );
             }
         });
         let Some(conversation) = history_model.as_ref(ctx).conversation(&conversation_id) else {
@@ -378,24 +381,24 @@ impl BlocklistAIController {
                             _ => None,
                         };
 
-                        if let Some(input_ctx) = ctx_opt {
-                            if let Some(dir) = &input_ctx.directory {
-                                self.context_model.update(ctx, |context_model, ctx| {
-                                    context_model.update_directory_context(
-                                        if dir.pwd.is_empty() {
-                                            None
-                                        } else {
-                                            Some(dir.pwd.clone())
-                                        },
-                                        if dir.home.is_empty() {
-                                            None
-                                        } else {
-                                            Some(dir.home.clone())
-                                        },
-                                        ctx,
-                                    );
-                                });
-                            }
+                        if let Some(input_ctx) = ctx_opt
+                            && let Some(dir) = &input_ctx.directory
+                        {
+                            self.context_model.update(ctx, |context_model, ctx| {
+                                context_model.update_directory_context(
+                                    if dir.pwd.is_empty() {
+                                        None
+                                    } else {
+                                        Some(dir.pwd.clone())
+                                    },
+                                    if dir.home.is_empty() {
+                                        None
+                                    } else {
+                                        Some(dir.home.clone())
+                                    },
+                                    ctx,
+                                );
+                            });
                         }
                     }
                 }
@@ -451,7 +454,7 @@ impl BlocklistAIController {
                 exchange.input.iter().any(|input| input.is_user_query());
 
             if let Some(output) = exchange.output_status.output() {
-                actions_to_queue.extend(output.get().actions().cloned().collect_vec().into_iter());
+                actions_to_queue.extend(output.get().actions().cloned().collect_vec());
             }
         }
 

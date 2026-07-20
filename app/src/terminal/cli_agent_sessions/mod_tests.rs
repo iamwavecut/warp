@@ -1,4 +1,4 @@
-use super::event::{parse_event, CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventType};
+use super::event::{CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventType, parse_event};
 use super::{
     CLIAgentInputEntrypoint, CLIAgentInputState, CLIAgentSession, CLIAgentSessionContext,
     CLIAgentSessionStatus, CLIAgentSessionsModel,

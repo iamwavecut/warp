@@ -13,7 +13,7 @@ use crate::ai::{
     block_context::BlockContext,
 };
 
-use super::agent_view::{AgentViewController, AgentViewEntryOrigin, EnterAgentViewError};
+use super::agent_view::{AgentViewEntryOrigin, EnterAgentViewError};
 use ai::project_context::model::ProjectContextModel;
 use parking_lot::FairMutex;
 use warp_core::features::FeatureFlag;
@@ -24,26 +24,24 @@ use crate::{
     ai::{
         agent::todos::AIAgentTodoList,
         agent::{
-            conversation::{AIConversation, AIConversationId},
             AIAgentAttachment, AIAgentContext, ImageContext,
+            conversation::{AIConversation, AIConversationId},
         },
         document::ai_document_model::AIDocumentId,
         llms::{LLMPreferences, LLMPreferencesEvent},
         outline::RepoOutlines,
     },
     terminal::{
+        TerminalModel,
         event::{BlockCompletedEvent, BlockType},
         model::{block::BlockId, session::Sessions},
         model_events::{ModelEvent, ModelEventDispatcher},
-        TerminalModel,
     },
     workspaces::user_workspaces::UserWorkspaces,
 };
 
+use super::block::DirectoryContext;
 use super::conversation_selection::{ConversationSelectionEvent, ConversationSelectionHandle};
-use super::{
-    block::DirectoryContext, history_model::BlocklistAIHistoryModel, BlocklistAIHistoryEvent,
-};
 
 /// A non-image file picked via the "attach file" button, stored until query submission.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -415,11 +413,10 @@ impl BlocklistAIContextModel {
             if FeatureFlag::AgentViewBlockContext.is_enabled() {
                 for block_id in &self.auto_attached_agent_view_user_block_ids {
                     // Skip if already in pending_context_block_ids to avoid duplicates
-                    if !self.pending_context_block_ids.contains(block_id) {
-                        if let Some(block_context) = self.transform_block_to_context(block_id, true)
-                        {
-                            context.push(block_context);
-                        }
+                    if !self.pending_context_block_ids.contains(block_id)
+                        && let Some(block_context) = self.transform_block_to_context(block_id, true)
+                    {
+                        context.push(block_context);
                     }
                 }
             }
@@ -695,14 +692,7 @@ impl BlocklistAIContextModel {
     ) -> Option<&'a AIAgentTodoList> {
         self.selected_conversation(ctx)
             .and_then(|c| c.active_todo_list())
-            .and_then(|todo_list| {
-                // Don't show todo list if it's empty or finished
-                if todo_list.is_empty() || todo_list.is_finished() {
-                    None
-                } else {
-                    Some(todo_list)
-                }
-            })
+            .filter(|&todo_list| !(todo_list.is_empty() || todo_list.is_finished()))
     }
 
     pub fn pending_query_autoexecute_override(

@@ -3,9 +3,9 @@ use std::sync::Arc;
 use chrono::Duration;
 use warpui::{App, ModelHandle};
 
+use crate::server::server_api::ServerApiProvider;
 use crate::server::server_api::team::MockTeamClient;
 use crate::server::server_api::workspace::MockWorkspaceClient;
-use crate::server::server_api::ServerApiProvider;
 use crate::workspaces::{
     user_workspaces::UserWorkspaces,
     workspace::{

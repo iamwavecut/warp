@@ -8,24 +8,24 @@ use warp_editor::{
 };
 use warp_util::user_input::UserInput;
 use warpui::{
+    AppContext, Element, Entity, ModelAsRef, ModelContext, ModelHandle, SingletonEntity,
     elements::{
         Align, Border, Container, CrossAxisAlignment, Empty, Flex, MainAxisAlignment,
         MouseStateHandle, ParentElement, Shrinkable,
     },
     platform::Cursor,
     ui_components::{button::ButtonVariant, components::UiComponent},
-    AppContext, Element, Entity, ModelAsRef, ModelContext, ModelHandle, SingletonEntity,
 };
 
 use crate::{
     appearance::Appearance,
-    cloud_object::{model::persistence::CloudModel, CloudObject},
+    cloud_object::{CloudObject, model::persistence::CloudModel},
     completer::SessionAgnosticContext,
     notebooks::styles::block_footer_action_button,
     notebooks::{ActionEntrypoint, BlockInfo},
     server::ids::{HashableId, ToServerId},
     settings::FontSettings,
-    terminal::input::decorations::{parse_current_commands_and_tokens, ParsedTokensSnapshot},
+    terminal::input::decorations::{ParsedTokensSnapshot, parse_current_commands_and_tokens},
     themes::theme::AnsiColorIdentifier,
     ui_components::icons::Icon,
     util::bindings::CustomAction,
@@ -33,13 +33,13 @@ use crate::{
 };
 
 use super::{
+    NotebookWorkflow,
     embedded_item::EmbeddedWorkflow,
-    keys::{custom_action_to_display, NotebookKeybindings},
+    keys::{NotebookKeybindings, custom_action_to_display},
     model::ChildModelHandle,
     notebook_command::{parsed_token_to_color_style_ranges, transform_ansi_color_to_solid_color},
     rich_text_styles,
     view::EditorViewAction,
-    NotebookWorkflow,
 };
 
 #[derive(Default)]
@@ -184,13 +184,7 @@ impl NotebookEmbed {
         cloud_model
             .get_by_uid(&id.to_server_id().uid())
             .and_then(|object| object.as_any().downcast_ref::<CloudWorkflow>())
-            .and_then(|workflow| {
-                if workflow.is_trashed(cloud_model) {
-                    None
-                } else {
-                    Some(workflow)
-                }
-            })
+            .filter(|&workflow| !workflow.is_trashed(cloud_model))
     }
 
     pub fn start_offset(&self, ctx: &impl ModelAsRef) -> Option<CharOffset> {

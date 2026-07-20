@@ -6,6 +6,7 @@ use std::path::Path;
 
 use warp_core::ui::appearance::Appearance;
 use warpui::{
+    AppContext, SingletonEntity, ViewContext, ViewHandle,
     elements::{
         ChildView, ClippedScrollStateHandle, Container, CornerRadius, CrossAxisAlignment, Element,
         Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Radius, Text,
@@ -14,16 +15,15 @@ use warpui::{
         components::{UiComponent, UiComponentStyles},
         switch::SwitchStateHandle,
     },
-    AppContext, SingletonEntity, ViewContext, ViewHandle,
 };
 
 use crate::{
     ai::generate_code_review_content::api::{GenerateCodeReviewContentRequest, OutputType},
     code_review::git_dialog::{
-        interactive_path_future,
+        GitDialog, GitDialogAction, GitDialogEvent, GitDialogMode, interactive_path_future,
         pr::{create_pr_with_ai_content, show_pr_created_toast},
         render_branch_section, render_file_changes_box, should_send_git_ops_ai_request, show_toast,
-        user_facing_git_error, GitDialog, GitDialogAction, GitDialogEvent, GitDialogMode,
+        user_facing_git_error,
     },
     editor::{
         EditorOptions, EditorView, Event as EditorEvent, InteractionState,
@@ -32,8 +32,8 @@ use crate::{
     server::server_api::ServerApiProvider,
     ui_components::icons::Icon,
     util::git::{
-        create_pr, get_diff_for_commit_message, get_file_change_entries, run_commit, run_push,
-        FileChangeEntry, PrInfo,
+        FileChangeEntry, PrInfo, create_pr, get_diff_for_commit_message, get_file_change_entries,
+        run_commit, run_push,
     },
     view_components::action_button::{ActionButton, ButtonSize, SecondaryTheme},
 };

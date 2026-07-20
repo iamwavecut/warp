@@ -129,7 +129,7 @@ impl InlineConversationMenuView {
                 .as_ref(ctx)
                 .is_conversation_menu()
             {
-                let InputBufferUpdateEvent { new_content: _, .. } = event;
+                let InputBufferUpdateEvent { .. } = event;
                 me.rerun_query(ctx);
             }
         });

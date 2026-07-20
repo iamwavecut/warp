@@ -1,7 +1,7 @@
 use super::*;
 use crate::warp_managed_paths_watcher::WarpManagedPathsWatcher;
-use ai::skills::{get_provider_for_path, ParsedSkill, SkillProvider, SkillScope};
-use repo_metadata::{repositories::DetectedRepositories, DirectoryWatcher, RepoMetadataModel};
+use ai::skills::{ParsedSkill, SkillProvider, SkillScope, get_provider_for_path};
+use repo_metadata::{DirectoryWatcher, RepoMetadataModel, repositories::DetectedRepositories};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use tempfile::TempDir;
@@ -469,9 +469,11 @@ Run `{{warp_cli_binary_name}}` to connect to {{warp_server_url}}.
     let skill = skills.get("test-skill").unwrap();
 
     let expected_cli = ChannelState::channel().cli_command_name();
-    assert!(skill
-        .content
-        .contains(&format!("Run `{expected_cli}` to connect to .")));
+    assert!(
+        skill
+            .content
+            .contains(&format!("Run `{expected_cli}` to connect to ."))
+    );
 }
 
 #[test]

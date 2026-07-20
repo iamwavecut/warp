@@ -1,7 +1,7 @@
 use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
     de::{self, MapAccess, Visitor},
     ser::SerializeStruct,
-    Deserialize, Deserializer, Serialize, Serializer,
 };
 use serde_yaml::Value;
 use strum::VariantNames as _;
@@ -113,7 +113,10 @@ impl ExportArgument {
                     }
                     // If we are missing some enum info, use the default type instead
                     Err(_) => {
-                        log::warn!("Tried to deserialize an enum argument without any static variants or dynamic command provided, defaulting to {:?} argument", ArgumentType::default());
+                        log::warn!(
+                            "Tried to deserialize an enum argument without any static variants or dynamic command provided, defaulting to {:?} argument",
+                            ArgumentType::default()
+                        );
                         ArgumentType::default()
                     }
                 }
@@ -218,7 +221,7 @@ where
 /// Macro for deserializing workflow fields, given an associated variant on Field, a string name, a variable name, an expected type, a
 /// and an optional flag, which is true when the field is optional as we deserialize.
 macro_rules! extract_fields {
-    ($map:expr; $(($field:ident, $name:literal, $var:ident, $type:ty, $optional:expr)),* $(,)?) => {{
+    ($map:expr_2021; $(($field:ident, $name:literal, $var:ident, $type:ty, $optional:expr_2021)),* $(,)?) => {{
         $(let mut $var = None;)*
 
         while let Some(key) = $map.next_key()? {

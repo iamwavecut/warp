@@ -13,11 +13,11 @@ use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity};
 use crate::ai::llms::LLMId;
 use crate::ai::mcp::templatable_manager::TemplatableMCPServerManagerEvent;
 
+use crate::LaunchMode;
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::server::ids::ClientId;
 use crate::server::ids::SyncId;
 use crate::settings::AgentModeCommandExecutionPredicate;
-use crate::LaunchMode;
 
 use super::{AIExecutionProfile, ActionPermission, WriteToPtyPermission};
 
@@ -488,10 +488,9 @@ impl AIExecutionProfilesModel {
             sync_id: Some(default_sync_id),
             ..
         } = &self.default_profile_state
+            && *default_sync_id == *sync_id
         {
-            if *default_sync_id == *sync_id {
-                return Some(*id);
-            }
+            return Some(*id);
         }
 
         self.profile_id_to_sync_id
@@ -1014,31 +1013,30 @@ impl AIExecutionProfilesModel {
         ctx: &mut ModelContext<Self>,
     ) -> bool {
         // We don't yet support editing the default profile for the CLI.
-        if let DefaultProfileState::Cli { id, .. } = &self.default_profile_state {
-            if *id == profile_id {
-                log::warn!("Attempted to edit CLI default profile, which is not yet supported.");
-                return false;
-            }
+        if let DefaultProfileState::Cli { id, .. } = &self.default_profile_state
+            && *id == profile_id
+        {
+            log::warn!("Attempted to edit CLI default profile, which is not yet supported.");
+            return false;
         }
 
-        if let DefaultProfileState::Local { id, profile, .. } = &self.default_profile_state {
-            if *id == profile_id {
-                let mut new_profile = profile.clone();
-                let value_changed = edit_fn(&mut new_profile);
-                if !value_changed {
-                    return false;
-                }
-
-                self.ensure_default_profile_local_id();
-                if let DefaultProfileState::Local { profile, .. } = &mut self.default_profile_state
-                {
-                    *profile = new_profile;
-                }
-                self.persist_local_profiles(ctx);
-                log::info!("Edited local default execution profile: {profile_id:?}");
-                ctx.emit(AIExecutionProfilesModelEvent::ProfileUpdated(profile_id));
-                return true;
+        if let DefaultProfileState::Local { id, profile, .. } = &self.default_profile_state
+            && *id == profile_id
+        {
+            let mut new_profile = profile.clone();
+            let value_changed = edit_fn(&mut new_profile);
+            if !value_changed {
+                return false;
             }
+
+            self.ensure_default_profile_local_id();
+            if let DefaultProfileState::Local { profile, .. } = &mut self.default_profile_state {
+                *profile = new_profile;
+            }
+            self.persist_local_profiles(ctx);
+            log::info!("Edited local default execution profile: {profile_id:?}");
+            ctx.emit(AIExecutionProfilesModelEvent::ProfileUpdated(profile_id));
+            return true;
         }
 
         let Some(profile) = self.profile_id_to_profile.get_mut(&profile_id) else {

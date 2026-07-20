@@ -1,5 +1,7 @@
 use crate::{features::FeatureFlag, resource_center::skip_tips_and_write_to_user_defaults};
 use warpui::{
+    AppContext, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
+    ViewHandle, WindowId,
     elements::{
         Align, ClippedScrollStateHandle, ClippedScrollable, Container, Element, Empty, Fill, Flex,
         Hoverable, MouseStateHandle, ParentElement, Shrinkable,
@@ -7,20 +9,18 @@ use warpui::{
     platform::Cursor,
     presenter::ChildView,
     ui_components::components::{UiComponent, UiComponentStyles},
-    AppContext, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
-    ViewHandle, WindowId,
 };
 
 use crate::appearance::Appearance;
 
 use super::{
-    section_views::{
-        feature_section::FeatureSectionEvent, SectionViewHandle, DETAIL_FONT_SIZE,
-        SCROLLBAR_OFFSET, SCROLLBAR_WIDTH, SECTION_SPACING,
-    },
-    sections::sections,
     ContentSectionData, ContentSectionView, FeatureSection, FeatureSectionData, FeatureSectionView,
     Section, TipsCompleted,
+    section_views::{
+        DETAIL_FONT_SIZE, SCROLLBAR_OFFSET, SCROLLBAR_WIDTH, SECTION_SPACING, SectionViewHandle,
+        feature_section::FeatureSectionEvent,
+    },
+    sections::sections,
 };
 
 #[derive(Default)]

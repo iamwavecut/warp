@@ -20,20 +20,21 @@ use crate::global_resource_handles::GlobalResourceHandlesProvider;
 use crate::persistence::ModelEvent;
 use crate::{
     ai::{
-        agent::{conversation::AIConversationId, AIAgentActionId},
+        agent::{AIAgentActionId, conversation::AIConversationId},
         blocklist::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel},
         execution_profiles::profiles::AIExecutionProfilesModel,
     },
     appearance::Appearance,
-    cloud_object::{model::persistence::CloudModel, CloudObjectEventEntrypoint, Owner},
+    cloud_object::{CloudObjectEventEntrypoint, Owner, model::persistence::CloudModel},
     drive::folders::CloudFolder,
     notebooks::{
+        CloudNotebookModel, NotebookId,
         editor::{
             model::{FileLinkResolutionContext, NotebooksEditorModel, RichTextEditorModelEvent},
             rich_text_styles,
         },
         file::MarkdownDisplayMode,
-        post_process_notebook, CloudNotebookModel, NotebookId,
+        post_process_notebook,
     },
     server::{
         cloud_objects::update_manager::{
@@ -43,8 +44,8 @@ use crate::{
     },
     settings::FontSettings,
     terminal::{
-        model::session::{active_session::ActiveSession, Session},
         TerminalView,
+        model::session::{Session, active_session::ActiveSession},
     },
     throttle::throttle,
     workspaces::user_workspaces::UserWorkspaces,
@@ -771,7 +772,9 @@ impl AIDocumentModel {
             return;
         }
 
-        log::info!("Applying persisted SQLite content for document {id} (content differs from conversation restoration)");
+        log::info!(
+            "Applying persisted SQLite content for document {id} (content differs from conversation restoration)"
+        );
         doc.editor.update(ctx, |editor, editor_ctx| {
             let processed = post_process_notebook(persisted_content);
             editor.reset_with_markdown(&processed, editor_ctx);

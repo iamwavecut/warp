@@ -6,8 +6,9 @@ use warp_cli::agent::Harness;
 use warp_errors::report_error;
 use warpui::{EntityId, SingletonEntity, ViewContext, ViewHandle};
 
-use crate::ai::agent::conversation::{AIConversationId, ConversationStatus};
+use crate::AIExecutionProfilesModel;
 use crate::ai::agent::RenderableAIError;
+use crate::ai::agent::conversation::{AIConversationId, ConversationStatus};
 use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::ai::attachment_utils::attachments_download_dir;
 use crate::ai::blocklist::agent_view::AgentViewEntryOrigin;
@@ -15,7 +16,6 @@ use crate::ai::blocklist::{BlocklistAIHistoryModel, StartAgentRequestId};
 use crate::ai::llms::LLMPreferences;
 use crate::pane_group::{PaneGroup, PaneId};
 use crate::terminal::TerminalView;
-use crate::AIExecutionProfilesModel;
 
 pub(crate) struct HiddenChildAgentConversation {
     pub terminal_view: ViewHandle<TerminalView>,

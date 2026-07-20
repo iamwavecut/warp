@@ -6,9 +6,9 @@ pub mod trigger_state;
 use channel_versions::overrides::TargetOS;
 use warpui::AssetProvider;
 
+use crate::ASSETS;
 use crate::terminal::model::terminal_model::SubshellInitializationInfo;
 use crate::terminal::shell::ShellType;
-use crate::ASSETS;
 
 #[derive(Debug)]
 pub enum WarpificationSource {
@@ -110,12 +110,12 @@ fn replace_template_chars_with_arguments(
     for argument in arguments {
         let template_i = templated_bytes.iter().position(|b| b == &TEMPLATE_CHAR);
         if let Some(template_i) = template_i {
-            templated_bytes.splice(
-                template_i..template_i + 1,
-                argument.into_bytes().into_iter(),
-            );
+            templated_bytes.splice(template_i..template_i + 1, argument.into_bytes());
         } else {
-            debug_assert!(false, "Number of arguments does not match number of template chars (%) in hardcoded subshell block bytes.");
+            debug_assert!(
+                false,
+                "Number of arguments does not match number of template chars (%) in hardcoded subshell block bytes."
+            );
         }
     }
     templated_bytes

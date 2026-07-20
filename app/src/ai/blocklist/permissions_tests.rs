@@ -10,6 +10,7 @@ use warp_core::execution_mode::ExecutionMode;
 use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::{
+    AgentNotificationsModel, GlobalResourceHandles, GlobalResourceHandlesProvider, LaunchMode,
     ai::{
         agent::conversation::AIConversationId,
         blocklist::permissions::{
@@ -19,7 +20,7 @@ use crate::{
             FileWritePermissionAllowedReason, FileWritePermissionDeniedReason,
         },
         execution_profiles::{
-            profiles::AIExecutionProfilesModel, ActionPermission, WriteToPtyPermission,
+            ActionPermission, WriteToPtyPermission, profiles::AIExecutionProfilesModel,
         },
         mcp::templatable_manager::TemplatableMCPServerManager,
     },
@@ -33,7 +34,6 @@ use crate::{
         team_tester::TeamTesterStatus, user_workspaces::UserWorkspaces,
         workspace::SandboxedAgentSettings,
     },
-    AgentNotificationsModel, GlobalResourceHandles, GlobalResourceHandlesProvider, LaunchMode,
 };
 
 use super::{BlocklistAIHistoryModel, BlocklistAIPermissions};
@@ -627,11 +627,9 @@ fn test_can_autoexecute_command_denylist_precedence() {
             model.setup_test_workspace(ctx);
             model.update_ai_autonomy_settings(
                 |settings| {
-                    settings.execute_commands_denylist =
-                        Some(vec![AgentModeCommandExecutionPredicate::new_regex(
-                            "git .*",
-                        )
-                        .unwrap()]);
+                    settings.execute_commands_denylist = Some(vec![
+                        AgentModeCommandExecutionPredicate::new_regex("git .*").unwrap(),
+                    ]);
                 },
                 ctx,
             );
@@ -1333,11 +1331,9 @@ fn test_sandboxed_denylist_used_in_sandboxed_mode() {
             // Regular workspace denylist blocks "git .*".
             model.update_ai_autonomy_settings(
                 |settings| {
-                    settings.execute_commands_denylist =
-                        Some(vec![AgentModeCommandExecutionPredicate::new_regex(
-                            "git .*",
-                        )
-                        .unwrap()]);
+                    settings.execute_commands_denylist = Some(vec![
+                        AgentModeCommandExecutionPredicate::new_regex("git .*").unwrap(),
+                    ]);
                 },
                 ctx,
             );
@@ -1459,11 +1455,9 @@ fn test_get_org_execute_commands_denylist() {
             model.setup_test_workspace(ctx);
             model.update_ai_autonomy_settings(
                 |settings| {
-                    settings.execute_commands_denylist =
-                        Some(vec![AgentModeCommandExecutionPredicate::new_regex(
-                            "git .*",
-                        )
-                        .unwrap()]);
+                    settings.execute_commands_denylist = Some(vec![
+                        AgentModeCommandExecutionPredicate::new_regex("git .*").unwrap(),
+                    ]);
                 },
                 ctx,
             );

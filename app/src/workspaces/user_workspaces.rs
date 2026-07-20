@@ -8,7 +8,7 @@ use super::{
 use crate::{
     ai::llms::LLMModelHost,
     auth::AuthStateProvider,
-    cloud_object::{model::persistence::CloudModel, ObjectType, Owner, Space},
+    cloud_object::{ObjectType, Owner, Space, model::persistence::CloudModel},
     server::{
         experiments::ServerExperiment,
         ids::ServerId,

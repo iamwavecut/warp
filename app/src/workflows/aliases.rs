@@ -11,8 +11,8 @@ use warpui::{AppContext, ModelContext, SingletonEntity};
 
 use crate::{
     cloud_object::{
-        model::persistence::{CloudModel, CloudModelEvent},
         CloudObject as _,
+        model::persistence::{CloudModel, CloudModelEvent},
     },
     drive::CloudObjectTypeAndId,
     server::ids::SyncId,

@@ -1,5 +1,5 @@
 use parking_lot::FairMutex;
-use serde::{de, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, OnceLock},
@@ -617,14 +617,13 @@ impl LLMPreferences {
     ) -> &LLMInfo {
         if let Some(terminal_view_id) = terminal_view_id {
             let raw_override = self.base_llm_for_terminal_view.get(&terminal_view_id);
-            if let Some(llm_id) = raw_override {
-                if let Some(llm_info) = self
+            if let Some(llm_id) = raw_override
+                && let Some(llm_info) = self
                     .models_by_feature
                     .agent_mode
                     .usable_info_for_id(llm_id, app)
-                {
-                    return llm_info;
-                }
+            {
+                return llm_info;
             }
         }
 
@@ -947,14 +946,13 @@ impl LLMPreferences {
     }
 
     pub fn mark_new_choices_popup_as_shown(&self, view_id: EntityId) {
-        if let Some(update) = self.last_update.as_ref() {
-            if matches!(
+        if let Some(update) = self.last_update.as_ref()
+            && matches!(
                 &*update.popup_visibility_state.lock(),
                 UpdatePopupVisibilityState::WaitingToBeShown
-            ) {
-                *update.popup_visibility_state.lock() =
-                    UpdatePopupVisibilityState::Visible(view_id);
-            }
+            )
+        {
+            *update.popup_visibility_state.lock() = UpdatePopupVisibilityState::Visible(view_id);
         }
     }
 
@@ -1056,10 +1054,10 @@ impl LLMPreferences {
         ctx.spawn(
             async move { Ok::<_, anyhow::Error>(update) },
             |me, result, ctx| {
-                if let Ok(update) = result {
-                    if update != me.models_by_feature {
-                        me.on_server_update(update, ctx);
-                    }
+                if let Ok(update) = result
+                    && update != me.models_by_feature
+                {
+                    me.on_server_update(update, ctx);
                 }
             },
         );
@@ -1140,8 +1138,8 @@ impl LLMPreferences {
                     {
                         profiles.set_context_window_limit(profile_id, None, ctx);
                     }
-                    if let Some(preferred_llm_id) = &profile.data().coding_model {
-                        if self
+                    if let Some(preferred_llm_id) = &profile.data().coding_model
+                        && self
                             .models_by_feature
                             .coding
                             .usable_info_for_id(preferred_llm_id, ctx)
@@ -1149,30 +1147,27 @@ impl LLMPreferences {
                                 self.custom_llm_info_for_id_if_enabled(preferred_llm_id, ctx)
                             })
                             .is_none()
-                        {
-                            profiles.set_coding_model(profile_id, None, ctx);
-                        }
+                    {
+                        profiles.set_coding_model(profile_id, None, ctx);
                     }
-                    if let Some(preferred_llm_id) = &profile.data().cli_agent_model {
-                        if self
+                    if let Some(preferred_llm_id) = &profile.data().cli_agent_model
+                        && self
                             .get_cli_agent_available()
                             .usable_info_for_id(preferred_llm_id, ctx)
                             .or_else(|| {
                                 self.custom_llm_info_for_id_if_enabled(preferred_llm_id, ctx)
                             })
                             .is_none()
-                        {
-                            profiles.set_cli_agent_model(profile_id, None, ctx);
-                        }
+                    {
+                        profiles.set_cli_agent_model(profile_id, None, ctx);
                     }
-                    if let Some(preferred_llm_id) = &profile.data().computer_use_model {
-                        if self
+                    if let Some(preferred_llm_id) = &profile.data().computer_use_model
+                        && self
                             .get_computer_use_available()
                             .usable_info_for_id(preferred_llm_id, ctx)
                             .is_none()
-                        {
-                            profiles.set_computer_use_model(profile_id, None, ctx);
-                        }
+                    {
+                        profiles.set_computer_use_model(profile_id, None, ctx);
                     }
                 }
             }

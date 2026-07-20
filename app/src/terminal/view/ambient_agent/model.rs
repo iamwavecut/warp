@@ -5,15 +5,15 @@ use warp_core::features::FeatureFlag;
 use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity};
 
 use crate::ai::agent::{conversation::AIConversationId, extract_user_query_mode};
-use crate::ai::ambient_agents::task::HarnessConfig;
 use crate::ai::ambient_agents::AmbientAgentTaskId;
+use crate::ai::ambient_agents::task::HarnessConfig;
 use crate::ai::execution_profiles::{AgentComputerUseState, ComputerUsePermission};
 use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::llms::{LLMId, LLMPreferences};
 use crate::server::ids::{ServerId, SyncId};
 use crate::server::server_api::ai::{AgentConfigSnapshot, AttachmentInput, SpawnAgentRequest};
-use crate::terminal::view::ambient_agent::{SetupCommandGroupId, SetupCommandState};
 use crate::terminal::CLIAgent;
+use crate::terminal::view::ambient_agent::{SetupCommandGroupId, SetupCommandState};
 
 use super::AmbientAgentProgressUIState;
 
@@ -294,10 +294,10 @@ impl AmbientAgentViewModel {
     /// Resets to the first enabled harness if the current selection is no longer enabled.
     fn validate_selected_harness(&mut self, ctx: &mut ModelContext<Self>) {
         let model = HarnessAvailabilityModel::as_ref(ctx);
-        if !model.is_harness_enabled(self.harness) {
-            if let Some(first_enabled) = model.available_harnesses().iter().find(|h| h.enabled) {
-                self.set_harness(first_enabled.harness, ctx);
-            }
+        if !model.is_harness_enabled(self.harness)
+            && let Some(first_enabled) = model.available_harnesses().iter().find(|h| h.enabled)
+        {
+            self.set_harness(first_enabled.harness, ctx);
         }
     }
 

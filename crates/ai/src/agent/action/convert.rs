@@ -8,6 +8,7 @@ use warp_util::local_or_remote_path::LocalOrRemotePath;
 
 use crate::{
     agent::{
+        FileLocations,
         action::{
             AIAgentActionType, AIAgentPtyWriteMode, CommentSide, FileEdit, InsertReviewComment,
             InsertedCommentLine, InsertedCommentLocation, ReadFilesRequest, ReadSkillRequest,
@@ -15,7 +16,6 @@ use crate::{
         },
         action_result::{AnyFileContent, FileContext},
         convert::ToolToAIAgentActionError,
-        FileLocations,
     },
     diff_validation::{ParsedDiff, V4AHunk},
     document::AIDocumentId,

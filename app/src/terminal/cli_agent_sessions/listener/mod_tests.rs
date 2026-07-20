@@ -41,9 +41,11 @@ fn codex_ignores_empty_body() {
 #[test]
 fn codex_try_parse_ignores_titled_notifications() {
     let handler = CodexSessionHandler;
-    assert!(handler
-        .try_parse(Some("some-title"), "Agent turn complete")
-        .is_none());
+    assert!(
+        handler
+            .try_parse(Some("some-title"), "Agent turn complete")
+            .is_none()
+    );
 }
 
 #[test]

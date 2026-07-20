@@ -27,11 +27,11 @@ use warp::{
     terminal::warpify::settings::AddedSubshellCommands,
 };
 use warpui::integration::{AssertionOutcome, TestStep};
-use warpui::windowing::state::ApplicationStage;
 use warpui::windowing::WindowManager;
-use warpui::{async_assert, UpdateModel};
+use warpui::windowing::state::ApplicationStage;
+use warpui::{UpdateModel, async_assert};
 
-use super::{new_builder, Builder};
+use super::{Builder, new_builder};
 use crate::util::skip_if_powershell_core_2303;
 
 /// Generates an integration test that asserts that a local subshell of the given shell type can be

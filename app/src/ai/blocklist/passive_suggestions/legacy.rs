@@ -9,9 +9,9 @@ use crate::ai::agent::CancellationReason;
 #[cfg(not(target_family = "wasm"))]
 use crate::ai::agent::PassiveSuggestionTrigger;
 use crate::ai::blocklist::controller::{
-    response_stream::ResponseStreamId, BlocklistAIController, BlocklistAIControllerEvent,
+    BlocklistAIController, BlocklistAIControllerEvent, response_stream::ResponseStreamId,
 };
-use crate::ai::blocklist::{read_local_file_context, BlocklistAIPermissions};
+use crate::ai::blocklist::{BlocklistAIPermissions, read_local_file_context};
 use crate::ai::paths::host_native_absolute_path;
 use crate::ai::predict::generate_am_query_suggestions::{
     GenerateAMQuerySuggestionsRequest, GenerateAMQuerySuggestionsResponse, Suggestion,
@@ -23,7 +23,7 @@ use crate::server::server_api::ServerApiProvider;
 use crate::settings::AISettings;
 use crate::terminal::event::{BlockType, UserBlockCompleted};
 use crate::terminal::model::block::BlockId;
-use crate::terminal::model::session::{active_session::ActiveSession, SessionType};
+use crate::terminal::model::session::{SessionType, active_session::ActiveSession};
 use crate::terminal::model::terminal_model::TerminalModel;
 use crate::terminal::model_events::{ModelEvent, ModelEventDispatcher};
 use crate::terminal::view::{AgentModePromptSuggestion, PromptSuggestion};

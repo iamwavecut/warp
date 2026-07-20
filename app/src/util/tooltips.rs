@@ -246,8 +246,8 @@ pub fn should_show_open_in_warp_link(path: &Path, app: &AppContext) -> bool {
     use warpui::SingletonEntity;
 
     use crate::code::view::is_binary_file;
-    use crate::util::file::external_editor::settings::EditorChoice;
     use crate::util::file::external_editor::EditorSettings;
+    use crate::util::file::external_editor::settings::EditorChoice;
     use crate::util::openable_file_type::renders_in_warp_notebook_viewer;
 
     let settings = EditorSettings::as_ref(app);

@@ -11,8 +11,8 @@ use crate::elements::tui::{
     TuiBuffer, TuiChildView, TuiConstraint, TuiElement, TuiEventHandler, TuiLayoutContext,
     TuiPaintContext, TuiStyle, TuiText,
 };
-use crate::keymap::macros::*;
 use crate::keymap::FixedBinding;
+use crate::keymap::macros::*;
 use crate::platform::WindowStyle;
 use crate::{AddWindowOptions, AppContext, Entity, TypedActionView, ViewContext};
 

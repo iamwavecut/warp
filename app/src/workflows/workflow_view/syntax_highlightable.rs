@@ -14,7 +14,7 @@ use crate::appearance::Appearance;
 use crate::completer::SessionAgnosticContext;
 use crate::editor::{EditorView, TextStyleOperation};
 use crate::terminal::input::decorations::{
-    parse_current_commands_and_tokens, ParsedTokenData, ParsedTokensSnapshot,
+    ParsedTokenData, ParsedTokensSnapshot, parse_current_commands_and_tokens,
 };
 use warp_core::r#async::debounce;
 

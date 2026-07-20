@@ -6,7 +6,7 @@ use crate::terminal::model::ansi::{
 };
 use crate::terminal::model::block::BlockId;
 use crate::terminal::model::test_utils::block_size;
-use crate::terminal::model::{session::Session, TerminalModel};
+use crate::terminal::model::{TerminalModel, session::Session};
 use crate::terminal::{
     color::{self, Colors},
     event_listener::ChannelEventListener,

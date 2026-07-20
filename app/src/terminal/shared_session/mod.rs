@@ -4,7 +4,7 @@ use session_sharing_protocol::common::{Role, SessionId};
 #[cfg(test)]
 use session_sharing_protocol::common::{Scrollback, ScrollbackBlock};
 use session_sharing_protocol::sharer::SessionSourceType;
-use warpui::{id, keymap::ContextPredicate, AppContext};
+use warpui::{AppContext, id, keymap::ContextPredicate};
 
 use crate::{
     channel::ChannelState,
@@ -13,7 +13,7 @@ use crate::{
 
 #[cfg(test)]
 use super::model::block::SerializedBlock;
-use super::{model::terminal_model::BlockIndex, GridType, TerminalModel};
+use super::{GridType, TerminalModel, model::terminal_model::BlockIndex};
 
 pub mod ai_agent;
 pub mod manager;

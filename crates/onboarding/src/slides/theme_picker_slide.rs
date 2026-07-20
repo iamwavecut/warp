@@ -1,13 +1,14 @@
 use super::OnboardingSlide;
+use crate::OnboardingIntention;
 use crate::model::{OnboardingStateEvent, OnboardingStateModel};
 use crate::slides::{bottom_nav, layout, slide_content};
 use crate::visuals::theme_picker_visual;
-use crate::OnboardingIntention;
 use pathfinder_color::ColorU;
-use ui_components::{button, Component as _, Options as _};
+use ui_components::{Component as _, Options as _, button};
 use warp_core::features::FeatureFlag;
-use warp_core::ui::{appearance::Appearance, theme::color::internal_colors, theme::WarpTheme};
+use warp_core::ui::{appearance::Appearance, theme::WarpTheme, theme::color::internal_colors};
 use warpui::{
+    AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
     elements::{
         Border, ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius,
         CrossAxisAlignment, Empty, Flex, FormattedTextElement, Hoverable, MainAxisAlignment,
@@ -18,7 +19,6 @@ use warpui::{
     platform::Cursor,
     text_layout::TextAlignment,
     ui_components::components::{UiComponent, UiComponentStyles},
-    AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
 };
 
 #[derive(Debug, Clone)]
@@ -273,11 +273,7 @@ impl ThemePickerSlide {
                 self.onboarding_state.as_ref(app).intention(),
                 OnboardingIntention::Terminal
             );
-            if is_terminal {
-                (3, 4)
-            } else {
-                (4, 5)
-            }
+            if is_terminal { (3, 4) } else { (4, 5) }
         } else {
             (0, 4)
         };

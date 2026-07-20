@@ -9,7 +9,7 @@
 use ai::agent::action::RunAgentsExecutionMode;
 use ai::agent::orchestration_config::{OrchestrationConfig, OrchestrationExecutionMode};
 use pathfinder_color::ColorU;
-use pathfinder_geometry::vector::{vec2f, Vector2F};
+use pathfinder_geometry::vector::{Vector2F, vec2f};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use warpui::elements::{
@@ -28,6 +28,7 @@ use warp_cli::agent::Harness;
 use warp_core::features::FeatureFlag;
 use warp_core::ui::theme::Fill;
 
+use crate::LLMPreferences;
 use crate::ai::execution_profiles::model_menu_items::available_model_menu_items;
 use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::harness_display;
@@ -38,11 +39,10 @@ use crate::ai::local_child_harnesses::{
 use crate::appearance::Appearance;
 use crate::menu::{MenuItem, MenuItemFields};
 use crate::ui_components::blended_colors;
+use crate::view_components::FilterableDropdown;
 use crate::view_components::dropdown::{
     Dropdown, DropdownAction, DropdownItemAction, DropdownStyle,
 };
-use crate::view_components::FilterableDropdown;
-use crate::LLMPreferences;
 
 // ── Shared constants ────────────────────────────────────────────────
 
@@ -277,10 +277,10 @@ pub fn new_standard_filterable_picker_dropdown<A: OrchestrationControlAction, V:
 }
 
 /// Returns Warp base-model choices for orchestration.
-fn get_base_model_choices<'a>(
-    llm_prefs: &'a LLMPreferences,
+fn get_base_model_choices(
+    llm_prefs: &LLMPreferences,
     is_local: bool,
-) -> impl Iterator<Item = &'a LLMInfo> {
+) -> impl Iterator<Item = &LLMInfo> {
     llm_prefs
         .get_base_llm_choices_for_agent_mode()
         .filter(move |llm| is_local || !matches!(&llm.provider, LLMProvider::Custom(_)))
@@ -514,10 +514,10 @@ pub fn populate_harness_picker<A: OrchestrationControlAction, V: View>(
             if selected_name.is_none() {
                 if harness_str.eq_ignore_ascii_case(&initial_harness) {
                     selected_name = Some(entry.display_name.clone());
-                } else if let Some(target_display) = target_display {
-                    if entry.display_name == target_display {
-                        selected_name = Some(entry.display_name.clone());
-                    }
+                } else if let Some(target_display) = target_display
+                    && entry.display_name == target_display
+                {
+                    selected_name = Some(entry.display_name.clone());
                 }
             }
             items.push(MenuItem::Item(fields));
@@ -613,10 +613,10 @@ pub fn repopulate_all_pickers<A: OrchestrationControlAction, V: View>(
     // Revalidate model_id: if the previously selected model is no longer
     // in the catalog (e.g. server removed it), reset to default.
     let is_local = true;
-    if !is_model_in_filtered_choices(&state.model_id, &state.harness_type, is_local, ctx) {
-        if let Some(first_id) = first_filtered_model_id(&state.harness_type, ctx) {
-            state.model_id = first_id;
-        }
+    if !is_model_in_filtered_choices(&state.model_id, &state.harness_type, is_local, ctx)
+        && let Some(first_id) = first_filtered_model_id(&state.harness_type, ctx)
+    {
+        state.model_id = first_id;
     }
     if let Some(handle) = &handles.model_picker {
         populate_model_picker_for_harness(

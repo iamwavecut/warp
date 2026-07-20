@@ -4,6 +4,7 @@ use chrono::{Duration, Utc};
 use settings::manager::SettingsManager;
 use warpui::{App, SingletonEntity};
 
+use crate::NetworkStatus;
 use crate::ai::facts::{AIFact, AIMemory, CloudAIFactModel};
 use crate::auth::AuthStateProvider;
 use crate::cloud_object::model::generic_string_model::GenericStringModel;
@@ -25,7 +26,6 @@ use crate::system::SystemStats;
 use crate::workspaces::team_tester::TeamTesterStatus;
 use crate::workspaces::user_profiles::UserProfiles;
 use crate::workspaces::user_workspaces::UserWorkspaces;
-use crate::NetworkStatus;
 
 use crate::server::server_api::object::MockObjectClient;
 use crate::server::server_api::team::MockTeamClient;

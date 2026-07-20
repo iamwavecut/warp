@@ -17,21 +17,21 @@ use crate::ai::{agent::api::ServerConversationToken, harness_availability::Harne
 use crate::persistence::model::ConversationUsageMetadata;
 use crate::{
     ai_assistant::{
+        AIGeneratedCommand, GenerateCommandsFromNaturalLanguageError,
         execution_context::WarpAiExecutionContext, requests::GenerateDialogueResult,
-        utils::TranscriptPart, AIGeneratedCommand, GenerateCommandsFromNaturalLanguageError,
+        utils::TranscriptPart,
     },
     drive::workflows::ai_assist::{GeneratedCommandMetadata, GeneratedCommandMetadataError},
 };
 use ai::index::full_source_code_embedding::{
-    self,
+    self, CodebaseContextConfig, ContentHash, EmbeddingConfig, NodeHash, RepoMetadata,
     store_client::{IntermediateNode, StoreClient},
-    CodebaseContextConfig, ContentHash, EmbeddingConfig, NodeHash, RepoMetadata,
 };
 
 pub use crate::ai::agent::UserQueryMode;
 // Re-export ambient agent types for backwards compatibility
 pub use crate::ai::ambient_agents::{
-    task::AttachmentInput, AgentConfigSnapshot, AgentSource, AmbientAgentTask,
+    AgentConfigSnapshot, AgentSource, AmbientAgentTask, task::AttachmentInput,
 };
 
 const LOCAL_COMMAND_GENERATION_SYSTEM_PROMPT: &str = "You convert natural language into safe, reusable shell commands. Return only JSON with a commands array. Each item must contain command, description, and parameters. parameters is an array of {id, description}.";

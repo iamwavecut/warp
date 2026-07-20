@@ -20,8 +20,8 @@ use crate::terminal::model::block::SerializedBlock;
 use crate::persistence::agent::read_agent_conversation_by_id;
 
 use super::{
-    agent_id_key_from_persisted_data, AIConversationMetadata, BlocklistAIHistoryModel,
-    MAX_HISTORICAL_CONVERSATIONS,
+    AIConversationMetadata, BlocklistAIHistoryModel, MAX_HISTORICAL_CONVERSATIONS,
+    agent_id_key_from_persisted_data,
 };
 
 /// A conversation transcript from a CLI agent harness (e.g. Claude Code).
@@ -221,12 +221,11 @@ impl BlocklistAIHistoryModel {
             });
 
             // Convert the persisted conversation to an AIConversation
-            if let Some(persisted_conversation) = persisted_ai_conversation {
-                if let Some(conversation) =
+            if let Some(persisted_conversation) = persisted_ai_conversation
+                && let Some(conversation) =
                     convert_persisted_conversation_to_ai_conversation(persisted_conversation)
-                {
-                    return Some(conversation);
-                }
+            {
+                return Some(conversation);
             }
         }
 
@@ -320,19 +319,18 @@ impl BlocklistAIHistoryModel {
                     // later when the hidden pane is materialized via
                     // `restore_conversations`. A subsequent `restore_conversations`
                     // call replaces this entry idempotently.
-                    if let Some(child_conversation) =
-                        convert_persisted_conversation_to_ai_conversation_with_metadata(
+                    match convert_persisted_conversation_to_ai_conversation_with_metadata(
                             agent_conversation.clone(),
                         )
-                    {
+                    { Some(child_conversation) => {
                         self.conversations_by_id
                             .insert(conversation_id, child_conversation);
-                    } else {
+                    } _ => {
                         log::warn!(
                             "Failed to eagerly hydrate orchestration child {conversation_id}; \
                              pill bar / name resolution will fall back to lazy materialization",
                         );
-                    }
+                    }}
                     return None;
                 }
 

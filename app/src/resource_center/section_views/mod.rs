@@ -3,18 +3,18 @@ pub use feature_section::FeatureSectionView;
 pub mod content_section;
 use crate::{
     appearance::Appearance,
-    resource_center::{section_views::feature_section::FeatureSection, TipAction},
+    resource_center::{TipAction, section_views::feature_section::FeatureSection},
 };
 pub use content_section::ContentSectionView;
 use warp_core::features::FeatureFlag;
 use warpui::{
+    AppContext, ViewContext, ViewHandle,
     elements::{
         Align, Border, ConstrainedBox, Container, CrossAxisAlignment, Element, Flex, Hoverable,
         Icon, MouseStateHandle, ParentElement, ScrollbarWidth, Shrinkable,
     },
     platform::Cursor,
     ui_components::components::{UiComponent, UiComponentStyles},
-    AppContext, ViewContext, ViewHandle,
 };
 
 pub const HEADER_FONT_SIZE: f32 = 16.;

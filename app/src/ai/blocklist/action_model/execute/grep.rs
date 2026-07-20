@@ -6,26 +6,26 @@ use std::time::Duration;
 
 use warp_util::standardized_path::StandardizedPath;
 
-use futures::future::BoxFuture;
 use futures::FutureExt;
+use futures::future::BoxFuture;
 use warpui::r#async::FutureExt as AsyncFutureExt;
 use warpui::{AppContext, Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
 use crate::ai::agent::{AIAgentAction, AIAgentActionType, GrepResult};
 use crate::ai::blocklist::BlocklistAIPermissions;
 use crate::ai::paths::{host_native_absolute_path, shell_native_absolute_path};
-use crate::terminal::model::session::{shell_quote_arg, ExecuteCommandOptions};
+use crate::terminal::model::session::{ExecuteCommandOptions, shell_quote_arg};
 use crate::{
     ai::agent::{AIAgentActionResultType, GrepFileMatch, GrepLineMatch},
     terminal::{
-        model::session::active_session::ActiveSession, model::session::Session, shell::ShellType,
-        ShellLaunchData,
+        ShellLaunchData, model::session::Session, model::session::active_session::ActiveSession,
+        shell::ShellType,
     },
 };
 
 use super::{
-    is_file_path, is_git_repository, ActionExecution, AnyActionExecution, ExecuteActionInput,
-    PreprocessActionInput,
+    ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput, is_file_path,
+    is_git_repository,
 };
 
 const GREP_TIMEOUT: Duration = Duration::from_secs(10);
@@ -156,7 +156,7 @@ impl GrepExecutor {
         &mut self,
         input: ExecuteActionInput,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Into<AnyActionExecution> {
+    ) -> impl Into<AnyActionExecution> + use<> {
         let AIAgentAction {
             action: AIAgentActionType::Grep { queries, path },
             ..

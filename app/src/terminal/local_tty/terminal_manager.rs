@@ -1,14 +1,14 @@
 use crate::ai::aws_credentials::AwsCredentialRefresher as _;
 use crate::ai::llms::{LLMPreferences, LLMPreferencesEvent};
-use crate::auth::auth_state::AuthState;
 use crate::auth::AuthStateProvider;
+use crate::auth::auth_state::AuthState;
+use crate::terminal::TerminalManager as _;
 use crate::terminal::model::terminal_model::ExitReason;
 use crate::terminal::shared_session::shared_handlers::{
-    build_selected_conversation_update, RemoteUpdateGuard,
+    RemoteUpdateGuard, build_selected_conversation_update,
 };
 use crate::terminal::shell::ShellName;
 use crate::terminal::warpify::settings::WarpifySettings;
-use crate::terminal::TerminalManager as _;
 use anyhow::Context as _;
 use async_broadcast::InactiveReceiver;
 use std::any::Any;
@@ -21,9 +21,9 @@ use session_sharing_protocol::sharer::{Lifetime, SessionEndedReason, SessionSour
 
 use crate::editor::CrdtOperation;
 use crate::network::{NetworkStatusEvent, NetworkStatusKind};
-use crate::terminal::available_shells::{AvailableShell, AvailableShells};
 use crate::terminal::ShellLaunchData;
 use crate::terminal::ShellLaunchState;
+use crate::terminal::available_shells::{AvailableShell, AvailableShells};
 use crate::view_components::ToastFlavor;
 
 use parking_lot::{FairMutex, Mutex};
@@ -55,11 +55,11 @@ use crate::ai::blocklist::{
 use crate::terminal::view::ConversationRestorationInNewPaneType;
 
 use crate::banner::BannerState;
+use crate::context_chips::ContextChipKind;
 use crate::context_chips::current_prompt::CurrentPrompt;
 use crate::context_chips::prompt::Prompt;
 use crate::context_chips::prompt_snapshot::PromptSnapshot;
 use crate::context_chips::prompt_type::PromptType;
-use crate::context_chips::ContextChipKind;
 use crate::features::FeatureFlag;
 use crate::pane_group::TerminalViewResources;
 use crate::persistence::ModelEvent;
@@ -68,6 +68,7 @@ use crate::settings::SshSettings;
 
 use crate::terminal::model::session::Sessions;
 
+use crate::NetworkStatus;
 use crate::terminal::model_events::ModelEventDispatcher;
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
 use crate::terminal::session_settings::{
@@ -75,7 +76,7 @@ use crate::terminal::session_settings::{
 };
 use crate::terminal::shared_session::manager::Manager;
 use crate::terminal::shared_session::sharer::network::{
-    failed_to_initialize_session_user_error, Network, NetworkEvent,
+    Network, NetworkEvent, failed_to_initialize_session_user_error,
 };
 use crate::terminal::shared_session::{
     IsSharedSessionCreator, SharedSessionActionSource, SharedSessionScrollbackType,
@@ -88,13 +89,12 @@ use crate::terminal::writeable_pty::terminal_manager_util::{
     wire_up_remote_server_controller_with_view,
 };
 use crate::terminal::writeable_pty::{self, Message};
+use crate::terminal::{PTY_READS_BROADCAST_CHANNEL_SIZE, TerminalView, terminal_manager};
 use crate::terminal::{
+    TerminalModel,
     event_listener::ChannelEventListener,
     local_tty::{Pty, PtyOptions},
-    TerminalModel,
 };
-use crate::terminal::{terminal_manager, TerminalView, PTY_READS_BROADCAST_CHANNEL_SIZE};
-use crate::NetworkStatus;
 
 use super::mio_channel;
 use super::recorder;
@@ -188,12 +188,15 @@ impl TerminalManager {
             log::info!("Failed to send Shutdown {e:?}");
         }
 
-        if let Some(join_handle) = self.event_loop_handle.take() {
-            if let Err(e) = join_handle.join() {
-                log::error!("Failed to join event loop handle {e:?}");
+        match self.event_loop_handle.take() {
+            Some(join_handle) => {
+                if let Err(e) = join_handle.join() {
+                    log::error!("Failed to join event loop handle {e:?}");
+                }
             }
-        } else {
-            log::warn!("No event loop handle to join when dropping terminal manager.")
+            _ => {
+                log::warn!("No event loop handle to join when dropping terminal manager.")
+            }
         }
 
         self.inactive_pty_reads_rx.close();
@@ -275,11 +278,7 @@ impl TerminalManager {
                         .collect();
                     // Because there are multiple conversations that may have interleaved timestamps, we need to sort by start_ts
                     items.sort_by_key(|item| item.start_ts());
-                    if items.is_empty() {
-                        None
-                    } else {
-                        Some(items)
-                    }
+                    if items.is_empty() { None } else { Some(items) }
                 }
                 _ => None,
             });
@@ -318,12 +317,14 @@ impl TerminalManager {
         // If this session should be a shared-session creator, configure its initial
         // shared-session state before we construct the view, so that bootstrap
         // events can observe the correct pending status and source type.
-        if FeatureFlag::CreatingSharedSessions.is_enabled() {
-            if let IsSharedSessionCreator::Yes { source_type } = is_shared_session_creator {
-                model.lock().set_shared_session_status(
-                    SharedSessionStatus::SharePendingPreBootstrap { source_type },
-                );
-            }
+        if FeatureFlag::CreatingSharedSessions.is_enabled()
+            && let IsSharedSessionCreator::Yes { source_type } = is_shared_session_creator
+        {
+            model
+                .lock()
+                .set_shared_session_status(SharedSessionStatus::SharePendingPreBootstrap {
+                    source_type,
+                });
         }
 
         // Initialize the PtyController.
@@ -579,11 +580,7 @@ impl TerminalManager {
                             );
                         }
                     }
-                    AgentViewControllerEvent::ExitedAgentView {
-                        origin: _,
-                        final_exchange_count: _,
-                        ..
-                    } => {
+                    AgentViewControllerEvent::ExitedAgentView { .. } => {
                         if conversation_remote_update_guard.should_broadcast() {
                             Self::send_selected_conversation_update_for_sharer(
                                 &session_sharer_for_conversation,
@@ -758,7 +755,7 @@ impl TerminalManager {
             session_sharer,
         };
 
-        let terminal_manager_model = ctx.add_model(|ctx| {
+        ctx.add_model(|ctx| {
             let terminal_manager: Box<dyn crate::terminal::TerminalManager> =
                 Box::new(terminal_manager);
 
@@ -794,9 +791,7 @@ impl TerminalManager {
             );
 
             terminal_manager
-        });
-
-        terminal_manager_model
+        })
     }
 
     /// Callback invoked upon determining the shell to be spawned when starting the event loop.
@@ -1200,12 +1195,13 @@ impl TerminalManager {
                     let is_navigated_away_from_window =
                         ctx.windows().active_window() != Some(view.window_id(ctx));
                     let password_notification_setting_on = show_password_notifications(ctx);
-                    if is_navigated_away_from_window && password_notification_setting_on {
-                        if let Some(block_index) = block_index_clone.borrow_mut().take() {
-                            view.update(ctx, |view, ctx| {
-                                view.maybe_send_password_notification(block_index, ctx);
-                            });
-                        }
+                    if is_navigated_away_from_window
+                        && password_notification_setting_on
+                        && let Some(block_index) = block_index_clone.borrow_mut().take()
+                    {
+                        view.update(ctx, |view, ctx| {
+                            view.maybe_send_password_notification(block_index, ctx);
+                        });
                     }
 
                     // TODO: this stops the notification stream for a single command
@@ -1235,14 +1231,13 @@ impl TerminalManager {
         ai_context_model: &ModelHandle<BlocklistAIContextModel>,
         ctx: &mut AppContext,
     ) {
-        if let Some(network) = session_sharer.borrow().as_ref() {
-            if let Some(update) =
+        if let Some(network) = session_sharer.borrow().as_ref()
+            && let Some(update) =
                 build_selected_conversation_update(agent_view_controller, ai_context_model, ctx)
-            {
-                network.update(ctx, |network, _| {
-                    network.send_universal_developer_input_context_update(update)
-                });
-            }
+        {
+            network.update(ctx, |network, _| {
+                network.send_universal_developer_input_context_update(update)
+            });
         }
     }
 

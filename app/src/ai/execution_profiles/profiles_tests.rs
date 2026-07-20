@@ -2,12 +2,12 @@ use serde_json::Value;
 use warp_core::user_preferences::GetUserPreferences;
 use warpui::App;
 
-use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
+use crate::LaunchMode;
 use crate::ai::execution_profiles::ActionPermission;
+use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::settings::PrivacySettings;
 use crate::test_util::settings::initialize_settings_for_tests;
-use crate::LaunchMode;
 
 fn install_singletons(app: &mut App) {
     initialize_settings_for_tests(app);

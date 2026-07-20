@@ -4,8 +4,8 @@
 
 use anyhow::Result;
 use warp_core::{
-    channel::{Channel, ChannelConfig, ChannelState, WarpServerConfig},
     AppId,
+    channel::{Channel, ChannelConfig, ChannelState, WarpServerConfig},
 };
 
 // Simple wrapper around warp::run() for Warp OSS builds.

@@ -6,14 +6,15 @@ use crate::{
     server::ids::SyncId,
     ui_components::blended_colors,
     workflows::{
-        workflow_view::{WorkflowView, WorkflowViewEvent},
         WorkflowSelectionSource, WorkflowSource, WorkflowType,
+        workflow_view::{WorkflowView, WorkflowViewEvent},
     },
     workspaces::user_workspaces::UserWorkspaces,
 };
 use pathfinder_geometry::vector::vec2f;
 use std::{collections::HashMap, default::Default, sync::Arc};
 use warpui::{
+    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
     elements::{
         ChildAnchor, Empty, OffsetPositioning, PositionedElementAnchor,
         PositionedElementOffsetBounds,
@@ -22,7 +23,6 @@ use warpui::{
     keymap::FixedBinding,
     presenter::ChildView,
     ui_components::components::{Coords, UiComponentStyles},
-    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
 const SUGGESTED_PROMPT_MODAL_HEADER: &str = "Prompt";
@@ -182,10 +182,9 @@ impl SuggestedAgentModeWorkflowModal {
                     sync_id,
                     workflow: _,
                 }) = &self.workflow_and_id
+                    && sync_id == created_workflow_id
                 {
-                    if sync_id == created_workflow_id {
-                        ctx.emit(SuggestedAgentModeWorkflowModalEvent::WorkflowCreated);
-                    }
+                    ctx.emit(SuggestedAgentModeWorkflowModalEvent::WorkflowCreated);
                 }
                 self.close(ctx);
             }

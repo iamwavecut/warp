@@ -12,7 +12,7 @@ use crate::{
         local_tty::shell::is_valid_path_or_command_for_supported_shell,
         session_settings::{SessionSettings, SessionSettingsChangedEvent},
     },
-    view_components::{dropdown::TOP_MENU_BAR_HEIGHT, Dropdown, DropdownItem},
+    view_components::{Dropdown, DropdownItem, dropdown::TOP_MENU_BAR_HEIGHT},
 };
 
 /// A view for configuring the initial shell for new sessions. This can be the

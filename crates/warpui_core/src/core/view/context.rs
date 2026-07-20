@@ -8,30 +8,30 @@ use futures::{Future, FutureExt};
 use thiserror::Error;
 use warp_errors::report_error;
 
+use crate::r#async::SpawnableOutput;
 use crate::modals::{AlertDialogWithCallbacks, ModalButton, ViewModalCallback};
 use crate::platform::{
-    file_picker::{FilePickerConfiguration, FilePickerError},
     Cursor, SaveFilePickerConfiguration, TerminationMode,
+    file_picker::{FilePickerConfiguration, FilePickerError},
 };
-use crate::r#async::SpawnableOutput;
 use crate::windowing::WindowManager;
 use crate::{
+    Action, AppContext, Effect, Entity, EntityId, ModelAsRef, ModelContext, ModelHandle,
+    UpdateModel, WindowId,
     accessibility::AccessibilityContent,
+    r#async::{
+        SpawnedFutureHandle, SpawnedLocalStream,
+        executor::{Background, Foreground},
+    },
     core::{Observation, Subscription, SubscriptionKey, TaskCallback},
     fonts::Cache as FontCache,
     notification::{NotificationSendError, RequestPermissionsOutcome, UserNotification},
-    r#async::{
-        executor::{Background, Foreground},
-        SpawnedFutureHandle, SpawnedLocalStream,
-    },
-    Action, AppContext, Effect, Entity, EntityId, ModelAsRef, ModelContext, ModelHandle,
-    UpdateModel, WindowId,
 };
 use crate::{GetSingletonModelHandle, ReadModel};
 
 use super::{
-    handle::{AnyViewHandle, ReadView, UpdateView, ViewAsRef, ViewHandle, WeakViewHandle},
     TypedActionView, View,
+    handle::{AnyViewHandle, ReadView, UpdateView, ViewAsRef, ViewHandle, WeakViewHandle},
 };
 
 impl<'a, T: View> ViewContext<'a, T> {
@@ -321,9 +321,9 @@ impl<'a, T: Entity> ViewContext<'a, T> {
     pub fn open_file_picker(
         &mut self,
         callback: impl FnOnce(Result<Vec<String>, FilePickerError>, &mut ViewContext<T>)
-            + Send
-            + Sync
-            + 'static,
+        + Send
+        + Sync
+        + 'static,
         config: FilePickerConfiguration,
     ) {
         let window_id = self.window_id;
@@ -509,7 +509,11 @@ impl<'a, T: Entity> ViewContext<'a, T> {
     ///
     /// TODO(vorporeal): Determine how best to eliminate this function and move
     ///     the relevant logic into `spawn()`.
-    fn spawn_local<S, F, U>(&mut self, future: S, callback: F) -> impl Future<Output = ()>
+    fn spawn_local<S, F, U>(
+        &mut self,
+        future: S,
+        callback: F,
+    ) -> impl Future<Output = ()> + use<S, F, U, T>
     where
         S: 'static + Future,
         F: 'static + FnOnce(&mut T, S::Output, &mut ViewContext<T>) -> U,

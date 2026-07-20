@@ -14,9 +14,9 @@ use warp_core::features::FeatureFlag;
 use warpui::elements::new_scrollable::{NewScrollable, ScrollableAppearance, SingleAxisConfig};
 use warpui::elements::{
     Border, ChildView, Clipped, ClippedScrollStateHandle, ConstrainedBox, Container, CornerRadius,
-    CrossAxisAlignment, DragAxis, Draggable, DraggableState, Empty, Expanded, Fill, Flex,
-    Hoverable, MinSize, MouseStateHandle, ParentElement, Radius, SavePosition, ScrollbarWidth,
-    Text, DEFAULT_UI_LINE_HEIGHT_RATIO,
+    CrossAxisAlignment, DEFAULT_UI_LINE_HEIGHT_RATIO, DragAxis, Draggable, DraggableState, Empty,
+    Expanded, Fill, Flex, Hoverable, MinSize, MouseStateHandle, ParentElement, Radius,
+    SavePosition, ScrollbarWidth, Text,
 };
 use warpui::fonts::{Properties, Style, Weight};
 use warpui::platform::Cursor;
@@ -346,7 +346,7 @@ impl QueuedPromptsPanelView {
         let Some(conv_id) = self.active_conversation_id else {
             return;
         };
-        let Some(query_id) = self.editing_row_id(ctx) else {
+        let Some(_query_id) = self.editing_row_id(ctx) else {
             return;
         };
         let new_text = self
@@ -587,21 +587,21 @@ fn updated_index_from_vertical_drag(
 ) -> usize {
     let dragged_midpoint_y = (drag_position.min_y() + drag_position.max_y()) / 2.;
 
-    if current_index > 0 {
-        if let Some(neighbor_rect) = item_rect(current_index - 1) {
-            let neighbor_midpoint_y = (neighbor_rect.min_y() + neighbor_rect.max_y()) / 2.;
-            if dragged_midpoint_y < neighbor_midpoint_y {
-                return current_index - 1;
-            }
+    if current_index > 0
+        && let Some(neighbor_rect) = item_rect(current_index - 1)
+    {
+        let neighbor_midpoint_y = (neighbor_rect.min_y() + neighbor_rect.max_y()) / 2.;
+        if dragged_midpoint_y < neighbor_midpoint_y {
+            return current_index - 1;
         }
     }
 
-    if current_index + 1 < item_count {
-        if let Some(neighbor_rect) = item_rect(current_index + 1) {
-            let neighbor_midpoint_y = (neighbor_rect.min_y() + neighbor_rect.max_y()) / 2.;
-            if dragged_midpoint_y > neighbor_midpoint_y {
-                return current_index + 1;
-            }
+    if current_index + 1 < item_count
+        && let Some(neighbor_rect) = item_rect(current_index + 1)
+    {
+        let neighbor_midpoint_y = (neighbor_rect.min_y() + neighbor_rect.max_y()) / 2.;
+        if dragged_midpoint_y > neighbor_midpoint_y {
+            return current_index + 1;
         }
     }
 

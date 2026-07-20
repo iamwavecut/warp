@@ -17,8 +17,8 @@ use pathfinder_color::ColorU;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::Fill;
 use warpui::{
-    elements::{Align, ChildView, Container, ParentElement, SavePosition, Stack},
     AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
+    elements::{Align, ChildView, Container, ParentElement, SavePosition, Stack},
 };
 
 use super::suggested_agent_mode_workflow_modal::SuggestedAgentModeWorkflowAndId;
@@ -267,23 +267,21 @@ impl SuggestionChipView {
 
         if let (ObjectOperation::Create { .. }, OperationSuccessType::Success) =
             (&result.operation, &result.success_type)
+            && self.sync_id.into_client() == result.client_id
+            && let Some(server_id) = result.server_id
         {
-            if self.sync_id.into_client() == result.client_id {
-                if let Some(server_id) = result.server_id {
-                    self.sync_id = SyncId::ServerId(server_id);
-                    // Reload the rule from the cloud model.
-                    match &mut self.suggestion {
-                        Suggestion::Rule { .. } => {
-                            self.load_suggestion(ctx);
-                        }
-                        Suggestion::AgentModeWorkflow { .. } => {
-                            // Loading agent mode workflows is not supported
-                            // as there is no editing flow for them.
-                        }
-                    }
-                    self.on_add_suggestion(ctx);
+            self.sync_id = SyncId::ServerId(server_id);
+            // Reload the rule from the cloud model.
+            match &mut self.suggestion {
+                Suggestion::Rule { .. } => {
+                    self.load_suggestion(ctx);
+                }
+                Suggestion::AgentModeWorkflow { .. } => {
+                    // Loading agent mode workflows is not supported
+                    // as there is no editing flow for them.
                 }
             }
+            self.on_add_suggestion(ctx);
         }
     }
 
@@ -304,13 +302,12 @@ impl SuggestionChipView {
             | CloudModelEvent::ObjectDeleted {
                 type_and_id: CloudObjectTypeAndId::GenericStringObject { id, .. },
                 ..
-            } => {
+            }
                 // If the rule or workflow has been deleted, then we should reset it such that
                 // the suggestion can be added again.
-                if self.sync_id == *id {
+                if self.sync_id == *id => {
                     self.reset_suggestion(ctx);
                 }
-            }
             _ => {}
         }
     }

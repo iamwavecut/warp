@@ -5,10 +5,10 @@
 
 use warp_core::ui::appearance::Appearance;
 use warpui::{
+    AppContext, Element, ViewContext, ViewHandle,
     elements::{MouseStateHandle, ParentElement},
     platform::Cursor,
     ui_components::components::UiComponent,
-    AppContext, Element, ViewContext, ViewHandle,
 };
 
 use warp_core::ui::theme::Fill;
@@ -16,8 +16,8 @@ use warpui::elements::ConstrainedBox;
 
 use crate::{
     drive::sharing::{
-        dialog::{SharingDialog, SharingDialogEvent},
         ContentEditability, ShareableObject,
+        dialog::{SharingDialog, SharingDialogEvent},
     },
     interaction_sources::SharingDialogSource,
     pane_group::BackingView,
@@ -27,8 +27,7 @@ use crate::{
 
 use super::{Event, OpenOverlay, PaneHeader, PaneHeaderAction};
 
-const UNSHARABLE_CONVERSATION_TOOLTIP: &str =
-    "This conversation cannot be shared because it is not \
+const UNSHARABLE_CONVERSATION_TOOLTIP: &str = "This conversation cannot be shared because it is not \
     stored in the cloud.\nTo sync to cloud and share, enable the setting under Settings > Privacy, \
     and then make another request.";
 

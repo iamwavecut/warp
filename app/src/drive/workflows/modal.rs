@@ -7,9 +7,11 @@ use pathfinder_geometry::vector::vec2f;
 use string_offset::CharOffset;
 use warp_core::ui::theme::Fill;
 use warp_editor::editor::NavigationKey;
-use warpui::elements::Clipped;
 use warpui::FocusContext;
+use warpui::elements::Clipped;
 use warpui::{
+    AppContext, Element, Entity, SingletonEntity, TypedActionView, UpdateView, View, ViewContext,
+    ViewHandle,
     clipboard::ClipboardContent,
     elements::{
         Align, Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
@@ -24,20 +26,18 @@ use warpui::{
         button::{ButtonVariant, TextAndIcon, TextAndIconAlignment},
         components::{Coords, UiComponent, UiComponentStyles},
     },
-    AppContext, Element, Entity, SingletonEntity, TypedActionView, UpdateView, View, ViewContext,
-    ViewHandle,
 };
 
 use crate::{
     appearance::Appearance,
     cloud_object::{
+        CloudObject, CloudObjectEventEntrypoint, ObjectType, Owner, Revision,
         breadcrumbs::{ContainingObject, ContainingObjectKind},
         model::persistence::{CloudModel, CloudModelEvent},
-        CloudObject, CloudObjectEventEntrypoint, ObjectType, Owner, Revision,
     },
     drive::{
-        cloud_object_styling::warp_drive_icon_color, items::WarpDriveItemId, CloudObjectTypeAndId,
-        DriveObjectType,
+        CloudObjectTypeAndId, DriveObjectType, cloud_object_styling::warp_drive_icon_color,
+        items::WarpDriveItemId,
     },
     editor::{
         EditorOptions, EditorView, EnterAction, EnterSettings, Event as EditorEvent,
@@ -56,13 +56,13 @@ use crate::{
         blended_colors,
         breadcrumb::{self, BreadcrumbState},
         buttons::icon_button,
-        dialog::{dialog_styles, Dialog},
-        icons::{self, Icon, ICON_DIMENSIONS},
-        menu_button::{icon_button_with_context_menu, MenuDirection},
+        dialog::{Dialog, dialog_styles},
+        icons::{self, ICON_DIMENSIONS, Icon},
+        menu_button::{MenuDirection, icon_button_with_context_menu},
     },
     workflows::{
-        workflow::{Argument, Workflow},
         CloudWorkflow,
+        workflow::{Argument, Workflow},
     },
 };
 
@@ -100,8 +100,7 @@ const SCROLLBAR_WIDTH: ScrollbarWidth = ScrollbarWidth::Auto;
 
 const TITLE_PLACEHOLDER_TEXT: &str = "Untitled workflow";
 const DESCRIPTION_PLACEHOLDER_TEXT: &str = "Add a description";
-const COMMAND_EDITOR_PLACEHOLDER_TEXT: &str =
-    "echo \"Hello {{your_name}}\" # insert arguments with curly braces\n# enter a single-line command or an entire shell script";
+const COMMAND_EDITOR_PLACEHOLDER_TEXT: &str = "echo \"Hello {{your_name}}\" # insert arguments with curly braces\n# enter a single-line command or an entire shell script";
 const ARGUMENT_BUTTON_TEXT: &str = "New argument";
 const ARGUMENT_DESCRIPTION_PLACEHOLDER_TEXT: &str = "Description";
 const ARGUMENT_DEFAULT_VALUE_PLACEHOLDER_TEXT: &str = "Default value (optional)";
@@ -746,7 +745,12 @@ impl WorkflowModal {
         match (self.workflow_id, self.owner) {
             (Some(workflow_id), None) => {
                 UpdateManager::handle(ctx).update(ctx, |update_manager, ctx| {
-                    update_manager.update_workflow(workflow, workflow_id, self.revision_ts.clone(), ctx);
+                    update_manager.update_workflow(
+                        workflow,
+                        workflow_id,
+                        self.revision_ts.clone(),
+                        ctx,
+                    );
                 });
                 ctx.emit(WorkflowModalEvent::UpdatedWorkflow(workflow_id));
             }
@@ -763,7 +767,9 @@ impl WorkflowModal {
                     );
                 });
             }
-            _ => report_error!("Only one of a workflow ID or space can be specified for saving workflows, but both or neither were specified instead")
+            _ => report_error!(
+                "Only one of a workflow ID or space can be specified for saving workflows, but both or neither were specified instead"
+            ),
         }
 
         self.close(true, ctx);
@@ -822,14 +828,14 @@ impl WorkflowModal {
             if let Some(enum_data) = type_selector
                 .get_selected_enum()
                 .and_then(|id| self.all_workflow_enums.get(&id))
+                && enum_data.new_data.is_some()
+                && !sent_requests.contains(&enum_data.id)
             {
-                if enum_data.new_data.is_some() && !sent_requests.contains(&enum_data.id) {
-                    workflow_arg_type_helpers::save_enum(enum_data, owner, ctx);
+                workflow_arg_type_helpers::save_enum(enum_data, owner, ctx);
 
-                    // Make sure we aren't sending duplicate requests
-                    // We choose to do it this way so we don't end up creating/updating enums that aren't used
-                    sent_requests.insert(enum_data.id);
-                }
+                // Make sure we aren't sending duplicate requests
+                // We choose to do it this way so we don't end up creating/updating enums that aren't used
+                sent_requests.insert(enum_data.id);
             }
         });
     }

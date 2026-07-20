@@ -17,9 +17,9 @@ pub use harness_selector::{
 pub use loading_screen::{render_cloud_mode_error_screen, render_cloud_mode_loading_screen};
 pub use model::{AgentProgress, AmbientAgentViewModel, AmbientAgentViewModelEvent, Status};
 pub use model_selector::{ModelSelector, ModelSelectorAction, ModelSelectorEvent};
-pub use progress::{render_progress, ProgressProps, ProgressStep, ProgressStepState};
+pub use progress::{ProgressProps, ProgressStep, ProgressStepState, render_progress};
 pub use progress_ui_state::AmbientAgentProgressUIState;
-pub use tips::{get_agent_loading_tips, AgentLoadingTip};
+pub use tips::{AgentLoadingTip, get_agent_loading_tips};
 
 use warp_core::features::FeatureFlag;
 use warpui::{AppContext, ModelHandle};

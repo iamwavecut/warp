@@ -1,10 +1,10 @@
 use std::borrow::Cow;
 
 use crate::auth::AuthStateProvider;
+use crate::cloud_object::CloudObject;
 use crate::cloud_object::model::persistence::CloudModel;
 use crate::cloud_object::model::persistence::CloudModelEvent;
 use crate::cloud_object::model::view::CloudViewModel;
-use crate::cloud_object::CloudObject;
 use crate::editor::PropagateAndNoOpNavigationKeys;
 use crate::interaction_sources::SharingDialogSource;
 use crate::menu::{self, Menu, MenuItem, MenuItemFields};
@@ -27,6 +27,8 @@ use itertools::Itertools;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::appearance::Appearance;
 use warp_editor::editor::NavigationKey;
+use warpui::FocusContext;
+use warpui::WeakViewHandle;
 use warpui::elements::{
     Align, ChildAnchor, ChildView, Fill, Highlight, MainAxisSize, MouseStateHandle,
     OffsetPositioning, ParentAnchor, PositionedElementAnchor, PositionedElementOffsetBounds,
@@ -37,9 +39,8 @@ use warpui::fonts::{Properties, Weight};
 use warpui::platform::Cursor;
 use warpui::ui_components::button::{ButtonVariant, TextAndIcon, TextAndIconAlignment};
 use warpui::ui_components::components::Coords;
-use warpui::FocusContext;
-use warpui::WeakViewHandle;
 use warpui::{
+    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
     clipboard::ClipboardContent,
     elements::{
         Border, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Dismiss, Empty, Flex,
@@ -47,12 +48,11 @@ use warpui::{
     },
     keymap::FixedBinding,
     ui_components::components::{UiComponent, UiComponentStyles},
-    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
 use super::{
-    style, ContentEditability, LinkSharingSubjectType, ShareableObject, SharingAccessLevel,
-    Subject, SubjectExt, TeamKind, UserKind,
+    ContentEditability, LinkSharingSubjectType, ShareableObject, SharingAccessLevel, Subject,
+    SubjectExt, TeamKind, UserKind, style,
 };
 
 mod inheritance;
@@ -283,7 +283,7 @@ impl SharingDialog {
                 CloudModelEvent::ObjectDeleted { .. } => return,
                 CloudModelEvent::ObjectForceExpanded { .. } => return,
                 CloudModelEvent::ObjectSynced { .. } | CloudModelEvent::InitialLoadCompleted => {
-                    return
+                    return;
                 }
             };
 
@@ -379,7 +379,7 @@ impl SharingDialog {
             Some(ShareableObject::WarpDriveObject(id)) => {
                 CloudViewModel::as_ref(app).access_level(&id.uid(), app)
             }
-            Some(ShareableObject::Session { ref handle, .. }) => {
+            Some(ShareableObject::Session { handle, .. }) => {
                 // Sharer always has Full access.
                 if handle.upgrade(app).is_some_and(|handle| {
                     handle
@@ -392,19 +392,18 @@ impl SharingDialog {
 
                 if let Some(owner) = self.owner(app) {
                     // If we are the user owner, we have Full access.
-                    if let Some(user_uid) = AuthStateProvider::as_ref(app).get().user_id() {
-                        if owner.is_user(user_uid) {
-                            return SharingAccessLevel::Full;
-                        }
+                    if let Some(user_uid) = AuthStateProvider::as_ref(app).get().user_id()
+                        && owner.is_user(user_uid)
+                    {
+                        return SharingAccessLevel::Full;
                     }
                     // Team members of owning team have Full access.
-                    if let Subject::Team(team_kind) = owner {
-                        if UserWorkspaces::as_ref(app)
+                    if let Subject::Team(team_kind) = owner
+                        && UserWorkspaces::as_ref(app)
                             .current_team_uid()
                             .is_some_and(|current| current == team_kind.team_uid())
-                        {
-                            return SharingAccessLevel::Full;
-                        }
+                    {
+                        return SharingAccessLevel::Full;
                     }
                 }
 
@@ -415,28 +414,24 @@ impl SharingDialog {
                     level = level.max(link_level);
                 }
 
-                if let Some(team_level) = self.team_sharing_state.access_level {
-                    if let Some(TeamKind::SharedSessionTeam { ref team_uid, .. }) =
+                if let Some(team_level) = self.team_sharing_state.access_level
+                    && let Some(TeamKind::SharedSessionTeam { ref team_uid, .. }) =
                         self.team_sharing_state.team
-                    {
-                        if UserWorkspaces::as_ref(app)
-                            .current_team_uid()
-                            .is_some_and(|current| current == *team_uid)
-                        {
-                            level = level.max(team_level);
-                        }
-                    }
+                    && UserWorkspaces::as_ref(app)
+                        .current_team_uid()
+                        .is_some_and(|current| current == *team_uid)
+                {
+                    level = level.max(team_level);
                 }
 
-                if let Some(user_uid) = AuthStateProvider::as_ref(app).get().user_id() {
-                    if let Some(guest_level) = self
+                if let Some(user_uid) = AuthStateProvider::as_ref(app).get().user_id()
+                    && let Some(guest_level) = self
                         .guest_states
                         .iter()
                         .find(|guest| guest.subject.is_user(user_uid))
                         .map(|guest| guest.current_access_level)
-                    {
-                        level = level.max(guest_level);
-                    }
+                {
+                    level = level.max(guest_level);
                 }
 
                 level
@@ -469,13 +464,12 @@ impl SharingDialog {
                 // Check if team has Full access - if so, team is the owner.
                 if let Some(TeamKind::SharedSessionTeam { team_uid, name }) =
                     self.team_sharing_state.team.as_ref()
+                    && self.team_sharing_state.access_level == Some(SharingAccessLevel::Full)
                 {
-                    if self.team_sharing_state.access_level == Some(SharingAccessLevel::Full) {
-                        return Some(Subject::Team(TeamKind::SharedSessionTeam {
-                            team_uid: *team_uid,
-                            name: name.clone(),
-                        }));
-                    }
+                    return Some(Subject::Team(TeamKind::SharedSessionTeam {
+                        team_uid: *team_uid,
+                        name: name.clone(),
+                    }));
                 }
 
                 // Otherwise, the sharer is the owner.
@@ -599,14 +593,16 @@ impl SharingDialog {
             let is_session = matches!(self.target, Some(ShareableObject::Session { .. }));
 
             self.guest_menu.update(ctx, |menu, ctx| {
-                let mut items = vec![MenuItemFields::new(SharingAccessLevel::View.label())
-                    .with_on_select_action(SharingDialogAction::SetGuestAccessLevel(
-                        SharingAccessLevel::View,
-                    ))
-                    .with_disabled(
-                        inherited_access && current_access_level >= SharingAccessLevel::View,
-                    )
-                    .into_item()];
+                let mut items = vec![
+                    MenuItemFields::new(SharingAccessLevel::View.label())
+                        .with_on_select_action(SharingDialogAction::SetGuestAccessLevel(
+                            SharingAccessLevel::View,
+                        ))
+                        .with_disabled(
+                            inherited_access && current_access_level >= SharingAccessLevel::View,
+                        )
+                        .into_item(),
+                ];
 
                 items.push(
                     MenuItemFields::new(SharingAccessLevel::Edit.label())
@@ -839,11 +835,13 @@ impl SharingDialog {
     /// Reset the invite access level menu based on the current target.
     fn reset_invite_access_level_menu(&mut self, ctx: &mut ViewContext<Self>) {
         self.invite_form.access_level_menu.update(ctx, |menu, ctx| {
-            let mut items = vec![MenuItemFields::new(SharingAccessLevel::View.label())
-                .with_on_select_action(SharingDialogAction::SetInviteAccessLevel(
-                    SharingAccessLevel::View,
-                ))
-                .into_item()];
+            let mut items = vec![
+                MenuItemFields::new(SharingAccessLevel::View.label())
+                    .with_on_select_action(SharingDialogAction::SetInviteAccessLevel(
+                        SharingAccessLevel::View,
+                    ))
+                    .into_item(),
+            ];
 
             items.push(
                 MenuItemFields::new(SharingAccessLevel::Edit.label())
@@ -1084,7 +1082,9 @@ impl SharingDialog {
             }
             Some(ShareableObject::Session { handle, .. }) => {
                 let Some(handle) = handle.upgrade(ctx) else {
-                    report_error!("Unable to upgrade handle to TerminalView when sending email invitations for session");
+                    report_error!(
+                        "Unable to upgrade handle to TerminalView when sending email invitations for session"
+                    );
                     return;
                 };
 
@@ -1573,10 +1573,10 @@ impl SharingDialog {
         };
         // If this team is the owner of the object, don't render this team sharing ACL since
         // we already rendered the team as the owner (and you can't change ACLs on it).
-        if let Some(Subject::Team(team_owner)) = self.owner(app) {
-            if team_owner.team_uid() == team_kind.team_uid() {
-                return None;
-            }
+        if let Some(Subject::Team(team_owner)) = self.owner(app)
+            && team_owner.team_uid() == team_kind.team_uid()
+        {
+            return None;
         }
 
         let mut subject_row = Flex::row();
@@ -2038,13 +2038,13 @@ impl TypedActionView for SharingDialog {
                     UpdateManager::handle(ctx).update(ctx, move |update_manager, ctx| {
                         update_manager.set_object_link_permissions(*id, *access_level, ctx);
                     });
-                } else if let Some(ShareableObject::Session { handle, .. }) = self.target.as_ref() {
-                    if let Some(view) = handle.upgrade(ctx) {
-                        let role = access_level.map(|access_level| access_level.into());
-                        view.update(ctx, |view, ctx| {
-                            view.update_session_link_permissions(role, ctx)
-                        });
-                    }
+                } else if let Some(ShareableObject::Session { handle, .. }) = self.target.as_ref()
+                    && let Some(view) = handle.upgrade(ctx)
+                {
+                    let role = access_level.map(|access_level| access_level.into());
+                    view.update(ctx, |view, ctx| {
+                        view.update_session_link_permissions(role, ctx)
+                    });
                 }
                 ctx.notify();
             }

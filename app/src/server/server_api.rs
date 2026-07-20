@@ -18,13 +18,13 @@ use auth::AuthClient;
 use object::ObjectClient;
 use team::TeamClient;
 use warp_core::context_flag::ContextFlag;
-use warp_errors::{register_error, AnyhowErrorExt, ErrorExt};
+use warp_errors::{AnyhowErrorExt, ErrorExt, register_error};
 use warpui::ModelContext;
 use workspace::WorkspaceClient;
 
 use crate::settings_view;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{DateTime, FixedOffset};
 use instant::Instant;
 use parking_lot::Mutex;
@@ -184,16 +184,16 @@ where
         return Ok(value);
     }
 
-    if let Some(fenced) = strip_json_code_fence(trimmed) {
-        if let Ok(value) = serde_json::from_str(fenced) {
-            return Ok(value);
-        }
+    if let Some(fenced) = strip_json_code_fence(trimmed)
+        && let Ok(value) = serde_json::from_str(fenced)
+    {
+        return Ok(value);
     }
 
-    if let Some(slice) = json_like_slice(trimmed) {
-        if let Ok(value) = serde_json::from_str(slice) {
-            return Ok(value);
-        }
+    if let Some(slice) = json_like_slice(trimmed)
+        && let Ok(value) = serde_json::from_str(slice)
+    {
+        return Ok(value);
     }
 
     serde_json::from_str(trimmed).map_err(Into::into)

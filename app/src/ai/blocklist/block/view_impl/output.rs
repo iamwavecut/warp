@@ -12,8 +12,8 @@ use crate::util::truncation::truncate_from_end;
 use ai::agent::file_locations::group_file_contexts_for_display;
 
 use crate::ai::blocklist::block::view_impl::common::{
-    MaybeShimmeringText, BLOCKED_ACTION_MESSAGE_FOR_GREP_OR_FILE_GLOB,
-    BLOCKED_ACTION_MESSAGE_FOR_READING_FILES, BLOCKED_ACTION_MESSAGE_FOR_SEARCHING_CODEBASE,
+    BLOCKED_ACTION_MESSAGE_FOR_GREP_OR_FILE_GLOB, BLOCKED_ACTION_MESSAGE_FOR_READING_FILES,
+    BLOCKED_ACTION_MESSAGE_FOR_SEARCHING_CODEBASE, MaybeShimmeringText,
 };
 use crate::ai::blocklist::inline_action::aws_bedrock_credentials_error::AwsBedrockCredentialsErrorView;
 use crate::ai::blocklist::inline_action::create_or_edit_document::CreateOrEditDocumentAction;
@@ -24,13 +24,13 @@ use crate::ai::skills::{
     icon_override_for_skill_name, render_skill_button, skill_path_from_file_path,
 };
 
+use crate::AIAgentTodoList;
 use crate::code::editor_management::CodeSource;
 use crate::terminal::shared_session::SharedSessionStatus;
 use crate::util::time_format::format_elapsed_seconds;
 use crate::view_components::compactible_action_button::{
     CompactibleActionButton, RenderCompactibleActionButton, SMALL_SIZE_SWITCH_THRESHOLD,
 };
-use crate::AIAgentTodoList;
 
 #[allow(unused_imports)]
 use std::path::{Component, Path, PathBuf};
@@ -39,15 +39,15 @@ use ai::agent::action::{RequestComputerUseRequest, SuggestPromptRequest, UseComp
 use ai::skills::SkillReference;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
-use ui_components::{button, Component as _, Options as _};
+use ui_components::{Component as _, Options as _, button};
 use warp_core::ui::theme::color::internal_colors;
 #[allow(unused_imports)]
-use warp_util::path::{common_path, CleanPathResult};
+use warp_util::path::{CleanPathResult, common_path};
+use warpui::EntityId;
 use warpui::elements::new_scrollable::SingleAxisConfig;
 use warpui::elements::{
     ChildAnchor, NewScrollable, OffsetPositioning, ParentAnchor, ParentOffsetBounds, Stack,
 };
-use warpui::EntityId;
 
 use crate::ai::blocklist::block::{
     CollapsibleElementState, CollapsibleExpansionState, FinishReason, ImportedCommentGroup,
@@ -55,36 +55,38 @@ use crate::ai::blocklist::block::{
 use indexmap::IndexMap;
 use std::{cell::OnceCell, collections::HashMap, rc::Rc, sync::Arc};
 
-use crate::util::link_detection::{add_link_detection_mouse_interactions, DetectedLinksState};
+use crate::util::link_detection::{DetectedLinksState, add_link_detection_mouse_interactions};
 use crate::{
+    FeatureFlag,
     ai::{
         agent::{
-            icons::{self, gray_stop_icon, yellow_stop_icon},
             AIAgentAction, AIAgentActionId, AIAgentActionResult, AIAgentActionResultType,
             AIAgentActionType, AIAgentCitation, AIAgentOutputMessage, AIAgentOutputMessageType,
             AIAgentText, AIAgentTextSection, MessageId, ReadFilesRequest,
             RequestCommandOutputResult, SearchCodebaseFailureReason, SearchCodebaseResult,
             SuggestNewConversationResult, SummarizationType,
+            icons::{self, gray_stop_icon, yellow_stop_icon},
         },
         blocklist::{
+            AIBlockResponseRating, BlocklistAIActionModel, SuggestionChipView,
             action_model::AIActionStatus,
             block::{
-                model::{AIBlockModel, AIBlockModelHelper, AIBlockOutputStatus},
                 AIBlock, AIBlockAction, AIBlockStateHandles, ActionButtons,
                 AutonomySettingSpeedbump, EmbeddedCodeEditorView, RequestedEdit, TextLocation,
                 TodoListElementState,
+                model::{AIBlockModel, AIBlockModelHelper, AIBlockOutputStatus},
             },
             history_model::BlocklistAIHistoryModel,
             inline_action::{
                 ask_user_question_view::AskUserQuestionView,
                 inline_action_header::{
-                    HeaderConfig, InteractionMode, INLINE_ACTION_HEADER_VERTICAL_PADDING,
-                    INLINE_ACTION_HORIZONTAL_PADDING,
+                    HeaderConfig, INLINE_ACTION_HEADER_VERTICAL_PADDING,
+                    INLINE_ACTION_HORIZONTAL_PADDING, InteractionMode,
                 },
                 inline_action_icons::{self, icon_size},
                 requested_action::{
-                    render_requested_action_body_text, render_requested_action_row,
-                    render_requested_action_row_for_text, FormattedTextOrElement, RenderableAction,
+                    FormattedTextOrElement, RenderableAction, render_requested_action_body_text,
+                    render_requested_action_row, render_requested_action_row_for_text,
                 },
                 requested_command::RequestedCommand,
                 search_codebase::SearchCodebaseView,
@@ -93,7 +95,6 @@ use crate::{
                 web_search::WebSearchView,
             },
             keyboard_navigable_buttons::KeyboardNavigableButtons,
-            AIBlockResponseRating, BlocklistAIActionModel, SuggestionChipView,
         },
         paths::shell_native_absolute_path,
         skills::SkillManager,
@@ -105,29 +106,29 @@ use crate::{
     ui_components::{blended_colors, buttons::icon_button, icons::Icon},
     view_components::action_button::ActionButton,
     workspace::WorkspaceAction,
-    FeatureFlag,
 };
 use itertools::Itertools;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use warp_core::channel::ChannelState;
 
+use super::CONTENT_HORIZONTAL_PADDING;
 use super::common::{
-    render_debug_footer, render_failed_output, render_informational_footer,
-    render_output_status_text, render_scrollable_collapsible_content, render_text_sections,
-    DebugFooterProps, FailedOutputProps, FindContext, TextSectionsProps,
-    STATUS_FOOTER_VERTICAL_PADDING, STATUS_ICON_SIZE_DELTA,
+    DebugFooterProps, FailedOutputProps, FindContext, STATUS_FOOTER_VERTICAL_PADDING,
+    STATUS_ICON_SIZE_DELTA, TextSectionsProps, render_debug_footer, render_failed_output,
+    render_informational_footer, render_output_status_text, render_scrollable_collapsible_content,
+    render_text_sections,
 };
 use super::imported_comments::render_imported_comments;
 use super::orchestration;
 use super::todos::render_todos;
-use super::CONTENT_HORIZONTAL_PADDING;
 use super::{
-    add_highlights_to_rich_text, render_autonomy_checkbox_setting_speedbump_footer,
-    render_citation_chips, todos::render_completed_todo_items, WithContentItemSpacing,
-    CONTENT_ITEM_VERTICAL_MARGIN,
+    CONTENT_ITEM_VERTICAL_MARGIN, WithContentItemSpacing, add_highlights_to_rich_text,
+    render_autonomy_checkbox_setting_speedbump_footer, render_citation_chips,
+    todos::render_completed_todo_items,
 };
 use crate::ai::blocklist::inline_action::run_agents_card_view::RunAgentsCardView;
 use warpui::{
+    Action, AppContext, Element, ModelHandle, SingletonEntity, View, ViewHandle,
     elements::{
         Align, Border, ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
         Empty, Expanded, Fill, Flex, FormattedTextElement, Hoverable, MainAxisAlignment,
@@ -139,7 +140,6 @@ use warpui::{
         components::{Coords, UiComponent, UiComponentStyles},
         radio_buttons::{RadioButtonItem, RadioButtonLayout},
     },
-    Action, AppContext, Element, ModelHandle, SingletonEntity, View, ViewHandle,
 };
 
 /// Data required to render the AI block output component.
@@ -538,22 +538,23 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                             let is_preprocessing = action_status
                                 .clone()
                                 .is_some_and(|status| status.is_preprocessing());
-                            if !is_preprocessing && !status.is_streaming() {
-                                if let Some(requested_edit) = props.requested_edits.get(id) {
-                                    // Don't render the requested edit if the diffs are empty for passive code diffs.
-                                    if request_type.is_passive_code_diff()
-                                        && requested_edit.view.as_ref(app).is_pending_diffs_empty()
-                                    {
-                                        continue;
-                                    }
-
-                                    output_items.add_child(render_requested_edits_output_message(
-                                        requested_edit,
-                                        action_status,
-                                        request_type.is_passive_code_diff(),
-                                        app,
-                                    ));
+                            if !is_preprocessing
+                                && !status.is_streaming()
+                                && let Some(requested_edit) = props.requested_edits.get(id)
+                            {
+                                // Don't render the requested edit if the diffs are empty for passive code diffs.
+                                if request_type.is_passive_code_diff()
+                                    && requested_edit.view.as_ref(app).is_pending_diffs_empty()
+                                {
+                                    continue;
                                 }
+
+                                output_items.add_child(render_requested_edits_output_message(
+                                    requested_edit,
+                                    action_status,
+                                    request_type.is_passive_code_diff(),
+                                    app,
+                                ));
                             }
                         }
                         AIAgentOutputMessageType::Action(AIAgentAction {
@@ -677,18 +678,17 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                         }
                         AIAgentOutputMessageType::TodoOperation(todo) => match todo {
                             TodoOperation::UpdateTodos { todos } if !todos.is_empty() => {
-                                if let Some(conversation) = props.model.conversation(app) {
-                                    if let Some(state) =
+                                if let Some(conversation) = props.model.conversation(app)
+                                    && let Some(state) =
                                         props.todo_list_states.get(&output_message.id)
-                                    {
-                                        output_items.add_child(render_todos(
-                                            &output_message.id,
-                                            todos,
-                                            conversation,
-                                            state,
-                                            app,
-                                        ));
-                                    }
+                                {
+                                    output_items.add_child(render_todos(
+                                        &output_message.id,
+                                        todos,
+                                        conversation,
+                                        state,
+                                        app,
+                                    ));
                                 }
                             }
                             TodoOperation::MarkAsCompleted { completed_todos } => {
@@ -712,13 +712,12 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                         }) => {
                             if let Some(unit_test_suggestion_view) =
                                 props.unit_test_suggestions.get(id)
+                                && !unit_test_suggestion_view.as_ref(app).is_hidden()
                             {
-                                if !unit_test_suggestion_view.as_ref(app).is_hidden() {
-                                    output_items.add_child(render_unit_test_suggestion(
-                                        unit_test_suggestion_view,
-                                        app,
-                                    ));
-                                }
+                                output_items.add_child(render_unit_test_suggestion(
+                                    unit_test_suggestion_view,
+                                    app,
+                                ));
                             }
                         }
                         AIAgentOutputMessageType::Action(AIAgentAction {
@@ -920,22 +919,22 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                             );
                         }
                         AIAgentOutputMessageType::DebugOutput { text } => {
-                            if ChannelState::enable_debug_features() {
-                                if let Some(element) = render_collapsible_debug_output(
+                            if ChannelState::enable_debug_features()
+                                && let Some(element) = render_collapsible_debug_output(
                                     output_message,
                                     text,
                                     props,
                                     app,
-                                ) {
-                                    output_items.add_child(element);
-                                }
+                                )
+                            {
+                                output_items.add_child(element);
                             }
                         }
                         AIAgentOutputMessageType::Subagent(SubagentCall {
                             subagent_type:
                                 SubagentType::ConversationSearch {
-                                    ref query,
-                                    ref conversation_id,
+                                    query,
+                                    conversation_id,
                                     ..
                                 },
                             task_id: subagent_task_id,
@@ -1077,19 +1076,18 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
                 }
 
                 // Only render suggested rules and prompts if the response is complete.
-                if should_render_suggestions && FeatureFlag::SuggestedRules.is_enabled() {
-                    if let Some(suggestions) = render_suggested_rules_and_prompts_footer(props, app)
-                    {
-                        output_items.add_child(suggestions);
-                    }
+                if should_render_suggestions
+                    && FeatureFlag::SuggestedRules.is_enabled()
+                    && let Some(suggestions) = render_suggested_rules_and_prompts_footer(props, app)
+                {
+                    output_items.add_child(suggestions);
                 }
 
-                if should_render_references_section {
-                    if let Some(references) =
+                if should_render_references_section
+                    && let Some(references) =
                         render_references_footer(&output.citations, props, app)
-                    {
-                        output_items.add_child(references);
-                    }
+                {
+                    output_items.add_child(references);
                 }
 
                 if let Some(footer) = should_render_footer
@@ -1102,59 +1100,56 @@ pub(super) fn render(props: Props, app: &AppContext) -> Box<dyn Element> {
         }
     }
 
-    if request_type.is_active() {
-        if let AIBlockOutputStatus::Failed { error, .. } = &status {
+    if request_type.is_active()
+        && let AIBlockOutputStatus::Failed { error, .. } = &status
+    {
+        output_items.add_child(
+            render_failed_output(
+                FailedOutputProps {
+                    error,
+                    is_ai_input_enabled: props.is_ai_input_enabled,
+                    invalid_api_key_button_handle: &props
+                        .state_handles
+                        .invalid_api_key_button_handle,
+                    aws_bedrock_credentials_error_view: props.aws_bedrock_credentials_error_view,
+                    icon_right_margin: 16.,
+                },
+                app,
+            )
+            .with_content_item_spacing()
+            .finish(),
+        );
+
+        if props.model.is_latest_visible_exchange_in_root_task(app)
+            && !has_expanded_last_requested_command
+            && !props.model.is_restored()
+            && !error.is_invalid_api_key()
+        {
             output_items.add_child(
-                render_failed_output(
-                    FailedOutputProps {
-                        error,
-                        is_ai_input_enabled: props.is_ai_input_enabled,
-                        invalid_api_key_button_handle: &props
-                            .state_handles
-                            .invalid_api_key_button_handle,
-                        aws_bedrock_credentials_error_view: props
-                            .aws_bedrock_credentials_error_view,
-                        icon_right_margin: 16.,
-                    },
+                render_informational_footer(
                     app,
+                    "This response won't count towards your usage.".to_string(),
                 )
-                .with_content_item_spacing()
+                .with_agent_output_item_spacing(app)
                 .finish(),
             );
 
-            if props.model.is_latest_visible_exchange_in_root_task(app)
-                && !has_expanded_last_requested_command
-                && !props.model.is_restored()
-                && !error.is_invalid_api_key()
-            {
-                output_items.add_child(
-                    render_informational_footer(
-                        app,
-                        "This response won't count towards your usage.".to_string(),
-                    )
-                    .with_agent_output_item_spacing(app)
-                    .finish(),
-                );
-
-                output_items.add_child(
-                    render_debug_footer(
-                        DebugFooterProps {
-                            conversation: props.model.conversation(app),
-                            model: props.model,
-                            debug_copy_button_handle: props
-                                .state_handles
-                                .debug_copy_button_handle
-                                .clone(),
-                        },
-                        |debug_id, ctx| {
-                            ctx.dispatch_typed_action(AIBlockAction::CopyDebugId(debug_id))
-                        },
-                        app,
-                    )
-                    .with_agent_output_item_spacing(app)
-                    .finish(),
-                );
-            }
+            output_items.add_child(
+                render_debug_footer(
+                    DebugFooterProps {
+                        conversation: props.model.conversation(app),
+                        model: props.model,
+                        debug_copy_button_handle: props
+                            .state_handles
+                            .debug_copy_button_handle
+                            .clone(),
+                    },
+                    |debug_id, ctx| ctx.dispatch_typed_action(AIBlockAction::CopyDebugId(debug_id)),
+                    app,
+                )
+                .with_agent_output_item_spacing(app)
+                .finish(),
+            );
         }
     }
 
@@ -1382,7 +1377,7 @@ fn render_search_codebase(
                             app,
                             footer,
                             appearance,
-                            Some(&status),
+                            Some(status),
                         )
                         .render(app)
                         .finish()
@@ -1404,7 +1399,7 @@ fn render_search_codebase(
                     app,
                     footer,
                     appearance,
-                    Some(&status),
+                    Some(status),
                 )
                 .with_header(blocked_action_header(
                     id.clone(),
@@ -1432,7 +1427,7 @@ fn render_search_codebase(
                         app,
                         footer,
                         appearance,
-                        Some(&status),
+                        Some(status),
                     )
                     .render(app)
                     .finish()
@@ -1458,7 +1453,7 @@ fn render_search_codebase(
                                     app,
                                     footer,
                                     appearance,
-                                    Some(&status),
+                                    Some(status),
                                 )
                                 .render(app)
                                 .finish()
@@ -1500,7 +1495,7 @@ fn render_search_codebase(
                                 app,
                                 footer,
                                 appearance,
-                                Some(&status),
+                                Some(status),
                             )
                             .render(app)
                             .finish()
@@ -1515,7 +1510,7 @@ fn render_search_codebase(
                                 app,
                                 footer,
                                 appearance,
-                                Some(&status),
+                                Some(status),
                             )
                             .render(app)
                             .finish()
@@ -1708,35 +1703,34 @@ fn render_read_skill(
         renderable_action.with_icon(action_icon(id, props.action_model, props.model, app).finish());
 
     // Renders the 'open skill' button for known, non-bundled skills.
-    if let Some(skill) = skill {
-        if !skill.is_bundled() {
-            if let (Some(skill_path), Some(button_handle)) = (
-                skill.path.to_local_path(),
-                props.state_handles.skill_button_handles.get(id).cloned(),
-            ) {
-                let source = CodeSource::Skill {
-                    reference: skill_reference.clone(),
-                    path: skill_path.to_path_buf(),
-                    origin: SkillOpenOrigin::ReadSkill,
-                };
+    if let Some(skill) = skill
+        && !skill.is_bundled()
+        && let (Some(skill_path), Some(button_handle)) = (
+            skill.path.to_local_path(),
+            props.state_handles.skill_button_handles.get(id).cloned(),
+        )
+    {
+        let source = CodeSource::Skill {
+            reference: skill_reference.clone(),
+            path: skill_path.to_path_buf(),
+            origin: SkillOpenOrigin::ReadSkill,
+        };
 
-                let skill_icon_override = icon_override_for_skill_name(&skill.name);
-                let open_button = render_skill_button(
-                    "Open skill",
-                    button_handle,
-                    appearance,
-                    skill.provider,
-                    skill_icon_override,
-                    move |ctx| {
-                        ctx.dispatch_typed_action(AIBlockAction::OpenCodeInWarp {
-                            source: source.clone(),
-                        });
-                    },
-                );
+        let skill_icon_override = icon_override_for_skill_name(&skill.name);
+        let open_button = render_skill_button(
+            "Open skill",
+            button_handle,
+            appearance,
+            skill.provider,
+            skill_icon_override,
+            move |ctx| {
+                ctx.dispatch_typed_action(AIBlockAction::OpenCodeInWarp {
+                    source: source.clone(),
+                });
+            },
+        );
 
-                renderable_action = renderable_action.with_action_button(open_button);
-            }
-        }
+        renderable_action = renderable_action.with_action_button(open_button);
     }
 
     renderable_action.render(app).finish()
@@ -1920,34 +1914,34 @@ fn render_read_files(
     };
 
     // Renders the 'open skill' button if all files belong to the same skill directory.
-    if let Some(skill) = parsed_skill {
-        if let (Some(skill_path), Some(button_handle)) = (
+    if let Some(skill) = parsed_skill
+        && let (Some(skill_path), Some(button_handle)) = (
             skill.path.to_local_path().map(Path::to_path_buf),
             props.state_handles.skill_button_handles.get(id).cloned(),
-        ) {
-            let reference = SkillManager::handle(app)
-                .as_ref(app)
-                .reference_for_skill_path(&skill.path);
-            let source = CodeSource::Skill {
-                reference,
-                path: skill_path,
-                origin: SkillOpenOrigin::ReadFiles,
-            };
-            let skill_icon_override = icon_override_for_skill_name(&skill.name);
-            let open_button = render_skill_button(
-                &format!("/{}", skill.name),
-                button_handle,
-                appearance,
-                skill.provider,
-                skill_icon_override,
-                move |ctx| {
-                    ctx.dispatch_typed_action(AIBlockAction::OpenCodeInWarp {
-                        source: source.clone(),
-                    });
-                },
-            );
-            renderable_action = renderable_action.with_action_button(open_button);
-        }
+        )
+    {
+        let reference = SkillManager::handle(app)
+            .as_ref(app)
+            .reference_for_skill_path(&skill.path);
+        let source = CodeSource::Skill {
+            reference,
+            path: skill_path,
+            origin: SkillOpenOrigin::ReadFiles,
+        };
+        let skill_icon_override = icon_override_for_skill_name(&skill.name);
+        let open_button = render_skill_button(
+            &format!("/{}", skill.name),
+            button_handle,
+            appearance,
+            skill.provider,
+            skill_icon_override,
+            move |ctx| {
+                ctx.dispatch_typed_action(AIBlockAction::OpenCodeInWarp {
+                    source: source.clone(),
+                });
+            },
+        );
+        renderable_action = renderable_action.with_action_button(open_button);
     }
 
     renderable_action.render(app).finish()
@@ -2042,19 +2036,19 @@ fn render_stopped_output(props: Props, app: &AppContext) -> Box<dyn Element> {
             let history = BlocklistAIHistoryModel::as_ref(app);
             let conversation = history.conversation(&conversation_id)?;
 
-            if let Some(todo_list) = conversation.active_todo_list() {
-                if let Some((item, item_index)) = todo_list.in_progress_item().and_then(|item| {
+            if let Some(todo_list) = conversation.active_todo_list()
+                && let Some((item, item_index)) = todo_list.in_progress_item().and_then(|item| {
                     todo_list
                         .get_item_index(&item.id)
                         .map(|index| (item, index))
-                }) {
-                    return Some(format!(
-                        "Stopped task {}/{}: \"{}\"",
-                        item_index + 1,
-                        todo_list.len(),
-                        item.title
-                    ));
-                }
+                })
+            {
+                return Some(format!(
+                    "Stopped task {}/{}: \"{}\"",
+                    item_index + 1,
+                    todo_list.len(),
+                    item.title
+                ));
             }
 
             conversation

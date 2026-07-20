@@ -17,19 +17,19 @@ use {
     },
     async_channel::Sender,
     repo_metadata::{
+        Repository, RepositoryUpdate,
         repositories::DetectedRepositories,
         repository::{RepositorySubscriber, SubscriberId},
-        Repository, RepositoryUpdate,
     },
     std::{
         collections::{HashMap, HashSet},
         time::Duration,
     },
-    warpui::{r#async::SpawnedFutureHandle, EntityId, ModelHandle, WeakModelHandle},
+    warpui::{EntityId, ModelHandle, WeakModelHandle, r#async::SpawnedFutureHandle},
 };
 
 #[cfg(feature = "local_fs")]
-use super::diff_state::{diff_metadata_against_head, DiffStats};
+use super::diff_state::{DiffStats, diff_metadata_against_head};
 use crate::util::git::{PrInfo, RepositoryInfo};
 #[cfg(feature = "local_fs")]
 const PR_INFO_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -98,10 +98,10 @@ impl GitStatusUpdateModel {
         let repo_path_buf = repo_path.to_path_buf();
 
         // Check the cache for an existing live model.
-        if let Some(weak) = self.repos.get(&repo_path_buf) {
-            if let Some(handle) = weak.upgrade(ctx) {
-                return Ok(handle);
-            }
+        if let Some(weak) = self.repos.get(&repo_path_buf)
+            && let Some(handle) = weak.upgrade(ctx)
+        {
+            return Ok(handle);
         }
 
         // Create a new sub-model.
@@ -343,10 +343,10 @@ impl GitRepoStatusModel {
 
         if self.should_refresh_pr_info() && !was_enabled {
             self.refresh_pr_info(ctx);
-        } else if !self.should_refresh_pr_info() {
-            if let Some(refreshing) = self.refreshing_pr_info.take() {
-                refreshing.abort_handle.abort();
-            }
+        } else if !self.should_refresh_pr_info()
+            && let Some(refreshing) = self.refreshing_pr_info.take()
+        {
+            refreshing.abort_handle.abort();
         }
     }
 
@@ -565,9 +565,11 @@ impl GitRepoStatusModel {
         let current = *SessionSettings::as_ref(ctx).github_pr_chip_default_validation;
         if current != GithubPrPromptChipDefaultValidation::Suppressed {
             SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
-                report_if_error!(settings
-                    .github_pr_chip_default_validation
-                    .set_value(GithubPrPromptChipDefaultValidation::Suppressed, ctx));
+                report_if_error!(
+                    settings
+                        .github_pr_chip_default_validation
+                        .set_value(GithubPrPromptChipDefaultValidation::Suppressed, ctx)
+                );
             });
         }
     }
@@ -576,9 +578,11 @@ impl GitRepoStatusModel {
         let current = *SessionSettings::as_ref(ctx).github_pr_chip_default_validation;
         if current != GithubPrPromptChipDefaultValidation::Validated {
             SessionSettings::handle(ctx).update(ctx, |settings, ctx| {
-                report_if_error!(settings
-                    .github_pr_chip_default_validation
-                    .set_value(GithubPrPromptChipDefaultValidation::Validated, ctx));
+                report_if_error!(
+                    settings
+                        .github_pr_chip_default_validation
+                        .set_value(GithubPrPromptChipDefaultValidation::Validated, ctx)
+                );
             });
         }
     }

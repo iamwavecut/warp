@@ -1,13 +1,13 @@
 #[cfg(feature = "local_fs")]
 use super::features::external_editor::ExternalEditorView;
 use super::{
+    LocalOnlyIconState, SettingsAction, SettingsSection, ToggleSettingActionPair, ToggleState,
     flags,
     settings_page::{
-        build_sub_header, render_body_item, render_separator, Category, MatchData, PageType,
-        SettingsPageMeta, SettingsPageViewHandle, SettingsWidget, HEADER_PADDING,
-        TOGGLE_BUTTON_RIGHT_PADDING,
+        Category, HEADER_PADDING, MatchData, PageType, SettingsPageMeta, SettingsPageViewHandle,
+        SettingsWidget, TOGGLE_BUTTON_RIGHT_PADDING, build_sub_header, render_body_item,
+        render_separator,
     },
-    LocalOnlyIconState, SettingsAction, SettingsSection, ToggleSettingActionPair, ToggleState,
 };
 #[cfg(not(target_family = "wasm"))]
 use crate::remote_server::codebase_index_model::{
@@ -26,21 +26,21 @@ use crate::{
         icons::Icon,
     },
     view_components::{
-        action_button::{ActionButton, SecondaryTheme},
         DismissibleToast,
+        action_button::{ActionButton, SecondaryTheme},
     },
-    workspace::tab_settings::TabSettings,
     workspace::ToastStack,
+    workspace::tab_settings::TabSettings,
     workspaces::{
         update_manager::TeamUpdateManager, user_workspaces::UserWorkspaces,
         workspace::AdminEnablementSetting,
     },
 };
+use ai::index::full_source_code_embedding::SyncProgress;
 use ai::index::full_source_code_embedding::manager::{
     CodebaseIndexFinishedStatus, CodebaseIndexManager, CodebaseIndexManagerEvent,
     CodebaseIndexStatus, CodebaseIndexingError,
 };
-use ai::index::full_source_code_embedding::SyncProgress;
 use ai::project_context::model::{ProjectContextModel, ProjectContextModelEvent};
 use ai::workspace::WorkspaceMetadata;
 use lsp::supported_servers::LSPServerType;
@@ -60,6 +60,8 @@ use warp_core::{
 use warp_util::remote_path::RemotePath;
 use warp_util::{local_or_remote_path::LocalOrRemotePath, path::user_friendly_path};
 use warpui::{
+    Action, AppContext, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
+    ViewHandle,
     elements::{
         ChildView, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment, Element, Empty,
         Expanded, Fill, Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement,
@@ -74,8 +76,6 @@ use warpui::{
         components::{Coords, UiComponent, UiComponentStyles},
         switch::{SwitchStateHandle, TooltipConfig},
     },
-    Action, AppContext, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
-    ViewHandle,
 };
 
 const MAIN_SECTION_MARGIN: f32 = 12.;
@@ -777,9 +777,11 @@ impl TypedActionView for CodeSettingsPageView {
             }
             CodeSettingsPageAction::ToggleShowCodeReviewDiffStats => {
                 TabSettings::handle(ctx).update(ctx, |settings, ctx| {
-                    report_if_error!(settings
-                        .show_code_review_diff_stats
-                        .toggle_and_save_value(ctx));
+                    report_if_error!(
+                        settings
+                            .show_code_review_diff_stats
+                            .toggle_and_save_value(ctx)
+                    );
                 });
                 ctx.notify();
             }
@@ -815,9 +817,11 @@ impl TypedActionView for CodeSettingsPageView {
             }
             CodeSettingsPageAction::ToggleAutoOpenCodeReviewPane => {
                 GeneralSettings::handle(ctx).update(ctx, |settings, ctx| {
-                    report_if_error!(settings
-                        .auto_open_code_review_pane_on_first_agent_change
-                        .toggle_and_save_value(ctx));
+                    report_if_error!(
+                        settings
+                            .auto_open_code_review_pane_on_first_agent_change
+                            .toggle_and_save_value(ctx)
+                    );
                 });
 
                 ctx.notify();
@@ -1896,79 +1900,75 @@ impl CodePageWidget {
             .with_main_axis_size(MainAxisSize::Min)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
             .with_spacing(4.);
-        if let Some(refresh_action) = presentation.refresh_action {
-            if let Some(action_target) = action_target.clone() {
-                buttons_row.add_child(
-                    icon_button(appearance, Icon::Refresh, false, manual_resync_mouse_state)
-                        .with_active_styles(UiComponentStyles {
-                            background: Some(theme.surface_1().into()),
-                            ..Default::default()
-                        })
-                        .build()
-                        .on_click(move |ctx, _, _| match (&action_target, &refresh_action) {
-                            (
-                                LocalOrRemotePath::Local(codebase_path),
-                                IndexingRefreshAction::Resync,
-                            ) => {
-                                ctx.dispatch_typed_action(CodeSettingsPageAction::ManualResync(
-                                    codebase_path.clone(),
-                                ));
-                            }
-                            (LocalOrRemotePath::Local(_), IndexingRefreshAction::RequestRemote) => {
-                            }
-                            #[cfg(not(target_family = "wasm"))]
-                            (
-                                LocalOrRemotePath::Remote(remote_path),
-                                IndexingRefreshAction::Resync,
-                            ) => {
-                                ctx.dispatch_typed_action(
-                                    CodeSettingsPageAction::ManualResyncRemote(remote_path.clone()),
-                                );
-                            }
-                            #[cfg(not(target_family = "wasm"))]
-                            (
-                                LocalOrRemotePath::Remote(remote_path),
-                                IndexingRefreshAction::RequestRemote,
-                            ) => {
-                                ctx.dispatch_typed_action(
-                                    CodeSettingsPageAction::RequestRemoteIndex(remote_path.clone()),
-                                );
-                            }
-                            #[cfg(target_family = "wasm")]
-                            (LocalOrRemotePath::Remote(_), _) => {}
-                        })
-                        .finish(),
-                );
-            }
+        if let Some(refresh_action) = presentation.refresh_action
+            && let Some(action_target) = action_target.clone()
+        {
+            buttons_row.add_child(
+                icon_button(appearance, Icon::Refresh, false, manual_resync_mouse_state)
+                    .with_active_styles(UiComponentStyles {
+                        background: Some(theme.surface_1().into()),
+                        ..Default::default()
+                    })
+                    .build()
+                    .on_click(move |ctx, _, _| match (&action_target, &refresh_action) {
+                        (
+                            LocalOrRemotePath::Local(codebase_path),
+                            IndexingRefreshAction::Resync,
+                        ) => {
+                            ctx.dispatch_typed_action(CodeSettingsPageAction::ManualResync(
+                                codebase_path.clone(),
+                            ));
+                        }
+                        (LocalOrRemotePath::Local(_), IndexingRefreshAction::RequestRemote) => {}
+                        #[cfg(not(target_family = "wasm"))]
+                        (LocalOrRemotePath::Remote(remote_path), IndexingRefreshAction::Resync) => {
+                            ctx.dispatch_typed_action(CodeSettingsPageAction::ManualResyncRemote(
+                                remote_path.clone(),
+                            ));
+                        }
+                        #[cfg(not(target_family = "wasm"))]
+                        (
+                            LocalOrRemotePath::Remote(remote_path),
+                            IndexingRefreshAction::RequestRemote,
+                        ) => {
+                            ctx.dispatch_typed_action(CodeSettingsPageAction::RequestRemoteIndex(
+                                remote_path.clone(),
+                            ));
+                        }
+                        #[cfg(target_family = "wasm")]
+                        (LocalOrRemotePath::Remote(_), _) => {}
+                    })
+                    .finish(),
+            );
         }
 
-        if presentation.show_delete {
-            if let Some(action_target) = action_target {
-                buttons_row.add_child(
-                    icon_button(appearance, Icon::Trash, false, delete_mouse_state)
-                        .with_active_styles(UiComponentStyles {
-                            background: Some(theme.surface_1().into()),
-                            ..Default::default()
-                        })
-                        .build()
-                        .on_click(move |ctx, _, _| match &action_target {
-                            LocalOrRemotePath::Local(codebase_path) => {
-                                ctx.dispatch_typed_action(CodeSettingsPageAction::DeleteIndex(
-                                    codebase_path.clone(),
-                                ));
-                            }
-                            #[cfg(not(target_family = "wasm"))]
-                            LocalOrRemotePath::Remote(remote_path) => {
-                                ctx.dispatch_typed_action(
-                                    CodeSettingsPageAction::DeleteRemoteIndex(remote_path.clone()),
-                                );
-                            }
-                            #[cfg(target_family = "wasm")]
-                            LocalOrRemotePath::Remote(_) => {}
-                        })
-                        .finish(),
-                );
-            }
+        if presentation.show_delete
+            && let Some(action_target) = action_target
+        {
+            buttons_row.add_child(
+                icon_button(appearance, Icon::Trash, false, delete_mouse_state)
+                    .with_active_styles(UiComponentStyles {
+                        background: Some(theme.surface_1().into()),
+                        ..Default::default()
+                    })
+                    .build()
+                    .on_click(move |ctx, _, _| match &action_target {
+                        LocalOrRemotePath::Local(codebase_path) => {
+                            ctx.dispatch_typed_action(CodeSettingsPageAction::DeleteIndex(
+                                codebase_path.clone(),
+                            ));
+                        }
+                        #[cfg(not(target_family = "wasm"))]
+                        LocalOrRemotePath::Remote(remote_path) => {
+                            ctx.dispatch_typed_action(CodeSettingsPageAction::DeleteRemoteIndex(
+                                remote_path.clone(),
+                            ));
+                        }
+                        #[cfg(target_family = "wasm")]
+                        LocalOrRemotePath::Remote(_) => {}
+                    })
+                    .finish(),
+            );
         }
 
         (label_row.finish(), buttons_row.finish())
@@ -2279,31 +2279,29 @@ impl CodePageWidget {
             .with_spacing(8.)
             .with_cross_axis_alignment(CrossAxisAlignment::Center);
 
-        if is_failed {
-            if let Some(server_handle) = server_model.cloned() {
-                let server_for_action = server_handle.clone();
-                let restart_button = ui_builder
-                    .button(ButtonVariant::Secondary, mouse_states.restart)
-                    .with_style(UiComponentStyles {
-                        font_size: Some(12.),
-                        ..Default::default()
-                    })
-                    .with_hovered_styles(UiComponentStyles {
-                        background: Some(theme.surface_3().into()),
-                        ..Default::default()
-                    })
-                    .with_text_label("Restart server".to_owned())
-                    .build()
-                    .with_cursor(Cursor::PointingHand)
-                    .on_click(move |ctx, _, _| {
-                        ctx.dispatch_typed_action(CodeSettingsPageAction::RestartLspServer {
-                            server: server_for_action.clone(),
-                        });
-                    })
-                    .finish();
+        if is_failed && let Some(server_handle) = server_model.cloned() {
+            let server_for_action = server_handle.clone();
+            let restart_button = ui_builder
+                .button(ButtonVariant::Secondary, mouse_states.restart)
+                .with_style(UiComponentStyles {
+                    font_size: Some(12.),
+                    ..Default::default()
+                })
+                .with_hovered_styles(UiComponentStyles {
+                    background: Some(theme.surface_3().into()),
+                    ..Default::default()
+                })
+                .with_text_label("Restart server".to_owned())
+                .build()
+                .with_cursor(Cursor::PointingHand)
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(CodeSettingsPageAction::RestartLspServer {
+                        server: server_for_action.clone(),
+                    });
+                })
+                .finish();
 
-                right_content.add_child(restart_button);
-            }
+            right_content.add_child(restart_button);
         }
 
         // Show "View logs" when the server has been started (Available, Starting/Busy, or Failed)

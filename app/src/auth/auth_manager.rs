@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use warpui::{Entity, ModelContext, SingletonEntity};
 
-use super::auth_state::{AuthState, PersistAction};
 use super::AuthStateProvider;
-use crate::server::server_api::{auth::AuthClient, ServerApi};
+use super::auth_state::{AuthState, PersistAction};
+use crate::server::server_api::{ServerApi, auth::AuthClient};
 use user_persistence::PersistedUser;
 
 /// AuthManager is a singleton model which manages the currently logged-in user's state.

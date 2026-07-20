@@ -6,7 +6,7 @@ use async_stream::stream;
 use chrono::{DateTime, Local};
 use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 use warp_multi_agent_api as api;
 
@@ -16,7 +16,7 @@ use crate::ai::agent::{
 };
 use crate::ai::llms::LLMId;
 use crate::server::server_api::AIApiError;
-use crate::settings::{normalize_custom_provider_env_var, CustomProviderConfig};
+use crate::settings::{CustomProviderConfig, normalize_custom_provider_env_var};
 use ::ai::api_keys::ApiKeys;
 
 use super::ResponseStream;

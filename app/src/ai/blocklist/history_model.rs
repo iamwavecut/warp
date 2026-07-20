@@ -21,26 +21,26 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "local_fs")]
 use diesel::SqliteConnection;
 
+use crate::GlobalResourceHandlesProvider;
+use crate::ai::agent::AIAgentExchangeId;
+use crate::ai::agent::CancellationReason;
 use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::agent::conversation::ConversationStatus;
 use crate::ai::agent::conversation::{ServerAIConversationMetadata, UpdateConversationError};
-use crate::ai::agent::task::helper::{MessageExt, ToolCallExt};
 use crate::ai::agent::task::TaskId;
-use crate::ai::agent::AIAgentExchangeId;
-use crate::ai::agent::CancellationReason;
+use crate::ai::agent::task::helper::{MessageExt, ToolCallExt};
 use crate::ai::artifacts::Artifact;
 use crate::ai::document::ai_document_model::AIDocumentModel;
 use crate::input_suggestions::HistoryOrder;
-use crate::persistence::model::AgentConversationData;
 use crate::persistence::ModelEvent;
+use crate::persistence::model::AgentConversationData;
 use crate::terminal::model::block::BlockId;
 use crate::terminal::view::blocklist_filter;
-use crate::GlobalResourceHandlesProvider;
 use crate::{
     ai::agent::{
-        conversation::{AIConversation, AIConversationId},
         AIAgentActionId, AIAgentExchange, AIAgentInput, AIAgentOutputStatus, FinishedAIAgentOutput,
         MessageId, RenderableAIError, RequestCost, Suggestions,
+        conversation::{AIConversation, AIConversationId},
     },
     persistence::model::AgentConversation,
     ui_components::icons::Icon,
@@ -49,14 +49,14 @@ use crate::{
 #[cfg(feature = "local_fs")]
 use crate::persistence::{database_file_path_for_current_scope, establish_ro_connection};
 
+use super::RequestInput;
 use super::controller::response_stream::ResponseStreamId;
 use super::persistence::{PersistedAIInput, PersistedAIInputType};
-use super::RequestInput;
 
 mod conversation_loader;
 pub use conversation_loader::{
-    convert_persisted_conversation_to_ai_conversation_with_metadata, CLIAgentConversation,
-    CloudConversationData,
+    CLIAgentConversation, CloudConversationData,
+    convert_persisted_conversation_to_ai_conversation_with_metadata,
 };
 use warp_errors::report_error;
 
@@ -585,14 +585,12 @@ impl BlocklistAIHistoryModel {
             // Drop the old entry only if it still points at the given
             // conversation_id, so we don't wrongly remove an entry that's
             // been remapped.
-            if let Some(old_token) = old_token {
-                if let Entry::Occupied(entry) =
+            if let Some(old_token) = old_token
+                && let Entry::Occupied(entry) =
                     self.server_token_to_conversation_id.entry(old_token)
-                {
-                    if *entry.get() == conversation_id {
-                        entry.remove();
-                    }
-                }
+                && *entry.get() == conversation_id
+            {
+                entry.remove();
             }
 
             conversation.set_server_conversation_token(token);
@@ -1589,10 +1587,10 @@ impl BlocklistAIHistoryModel {
         exchange_id: AIAgentExchangeId,
         time_to_first_token_ms: i64,
     ) {
-        if let Some(conversation) = self.conversations_by_id.get_mut(&conversation_id) {
-            if let Ok(exchange) = conversation.get_exchange_to_update(exchange_id) {
-                exchange.time_to_first_token_ms = Some(time_to_first_token_ms);
-            }
+        if let Some(conversation) = self.conversations_by_id.get_mut(&conversation_id)
+            && let Ok(exchange) = conversation.get_exchange_to_update(exchange_id)
+        {
+            exchange.time_to_first_token_ms = Some(time_to_first_token_ms);
         }
     }
 
@@ -1611,10 +1609,12 @@ impl BlocklistAIHistoryModel {
                 {
                     log::warn!("Failed to mark exchange as cancelled: {e}");
                 }
-            } else if let Err(e) =
-                conversation.mark_request_cancelled(stream_id, terminal_surface_id, reason, ctx)
-            {
-                log::warn!("Failed to mark exchange as cancelled: {e}");
+            } else {
+                if let Err(e) =
+                    conversation.mark_request_cancelled(stream_id, terminal_surface_id, reason, ctx)
+                {
+                    log::warn!("Failed to mark exchange as cancelled: {e}");
+                }
             }
         }
         AIDocumentModel::handle(ctx).update(ctx, |model, ctx| {
@@ -1630,15 +1630,15 @@ impl BlocklistAIHistoryModel {
         terminal_surface_id: EntityId,
         ctx: &mut ModelContext<Self>,
     ) {
-        if let Some(conversation) = self.conversations_by_id.get_mut(&conversation_id) {
-            if let Err(e) = conversation.mark_request_completed_with_error(
+        if let Some(conversation) = self.conversations_by_id.get_mut(&conversation_id)
+            && let Err(e) = conversation.mark_request_completed_with_error(
                 stream_id,
                 error.clone(),
                 terminal_surface_id,
                 ctx,
-            ) {
-                log::warn!("Failed to mark exchange as completed with error: {e}");
-            }
+            )
+        {
+            log::warn!("Failed to mark exchange as completed with error: {e}");
         }
     }
 
@@ -1715,14 +1715,18 @@ impl BlocklistAIHistoryModel {
                     if let Err(e) = sender.send(ModelEvent::DeleteAIConversation {
                         conversation_id: conversation_id_string.clone(),
                     }) {
-                        report_error!(anyhow::Error::new(e)
-                            .context("Error sending DeleteAIConversation event"));
+                        report_error!(
+                            anyhow::Error::new(e)
+                                .context("Error sending DeleteAIConversation event")
+                        );
                     }
                     if let Err(e) = sender.send(ModelEvent::DeleteMultiAgentConversations {
                         conversation_ids: vec![conversation_id_string],
                     }) {
-                        report_error!(anyhow::Error::new(e)
-                            .context("Error sending DeleteMultiAgentConversations event"));
+                        report_error!(
+                            anyhow::Error::new(e)
+                                .context("Error sending DeleteMultiAgentConversations event")
+                        );
                     }
                 }
             },
@@ -1764,20 +1768,19 @@ impl BlocklistAIHistoryModel {
             if let Some(key) = agent_id_key(conversation) {
                 self.agent_id_to_conversation_id.remove(&key);
             }
-            if let Some(token) = conversation.server_conversation_token() {
-                if self.server_token_to_conversation_id.get(token) == Some(&conversation_id) {
-                    self.server_token_to_conversation_id.remove(token);
-                }
+            if let Some(token) = conversation.server_conversation_token()
+                && self.server_token_to_conversation_id.get(token) == Some(&conversation_id)
+            {
+                self.server_token_to_conversation_id.remove(token);
             }
         }
         // Also clean up the token index entry that might have been installed
         // via the metadata path (no live conversation present).
-        if let Some(metadata) = self.all_conversations_metadata.get(&conversation_id) {
-            if let Some(token) = &metadata.server_conversation_token {
-                if self.server_token_to_conversation_id.get(token) == Some(&conversation_id) {
-                    self.server_token_to_conversation_id.remove(token);
-                }
-            }
+        if let Some(metadata) = self.all_conversations_metadata.get(&conversation_id)
+            && let Some(token) = &metadata.server_conversation_token
+            && self.server_token_to_conversation_id.get(token) == Some(&conversation_id)
+        {
+            self.server_token_to_conversation_id.remove(token);
         }
 
         self.all_conversations_metadata.remove(&conversation_id);

@@ -9,14 +9,14 @@ use ai::agent::action::{RunAgentsAgentRunConfig, RunAgentsExecutionMode, RunAgen
 use ai::agent::action_result::{RunAgentsAgentOutcomeKind, RunAgentsResult};
 use ai::agent::orchestration_config::{OrchestrationConfig, OrchestrationConfigStatus};
 
-use crate::ai::agent::conversation::AIConversationId;
 use crate::BlocklistAIHistoryModel;
+use crate::ai::agent::conversation::AIConversationId;
 use ai::skills::SkillReference;
 use pathfinder_geometry::vector::vec2f;
 use std::rc::Rc;
 use warpui::elements::{
-    Border, ChildView, Container, CornerRadius, CrossAxisAlignment, Empty, Flex, MainAxisSize,
-    OffsetPositioning, ParentElement, Radius, Stack, Text, Wrap,
+    Border, ChildView, Container, CornerRadius, CrossAxisAlignment, Empty, Flex, OffsetPositioning,
+    ParentElement, Radius, Stack, Text, Wrap,
 };
 use warpui::keymap::FixedBinding;
 use warpui::{
@@ -31,16 +31,16 @@ use crate::ai::blocklist::action_model::{
     RunAgentsExecutorEvent, RunAgentsSpawningSnapshot,
 };
 use crate::ai::blocklist::agent_view::orchestration_pill_bar::render_static_agent_pill;
+use crate::ai::blocklist::block::AIBlock;
 use crate::ai::blocklist::block::model::AIBlockModel;
 use crate::ai::blocklist::block::view_impl::WithContentItemSpacing;
-use crate::ai::blocklist::block::AIBlock;
 use crate::ai::blocklist::inline_action::inline_action_header::{HeaderConfig, InteractionMode};
 use crate::ai::blocklist::inline_action::inline_action_icons;
 use crate::ai::blocklist::inline_action::orchestration_controls::{
     self as oc, OrchestrationControlAction, OrchestrationPickerHandles,
 };
 use crate::ai::blocklist::inline_action::requested_action::{
-    render_requested_action_row_for_text, CTRL_C_KEYSTROKE, ENTER_KEYSTROKE,
+    CTRL_C_KEYSTROKE, ENTER_KEYSTROKE, render_requested_action_row_for_text,
 };
 use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::llms::{LLMPreferences, LLMPreferencesEvent};
@@ -50,7 +50,7 @@ use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
 use crate::view_components::action_button::{ButtonSize, KeystrokeSource, NakedTheme};
 use crate::view_components::compactible_action_button::{
-    CompactibleActionButton, RenderCompactibleActionButton, MEDIUM_SIZE_SWITCH_THRESHOLD,
+    CompactibleActionButton, MEDIUM_SIZE_SWITCH_THRESHOLD, RenderCompactibleActionButton,
 };
 use crate::view_components::compactible_split_action_button::CompactibleSplitActionButton;
 use crate::view_components::dropdown::DropdownEvent;
@@ -191,10 +191,10 @@ fn resolve_interactive_defaults(
     if state.orch.model_id.is_empty() {
         let harness =
             warp_cli::agent::Harness::parse_orchestration_harness(&state.orch.harness_type);
-        if matches!(harness, Some(warp_cli::agent::Harness::Oz) | None) {
-            if let Some(base) = block_model.base_model(ctx).map(|id| id.to_string()) {
-                state.orch.model_id = base;
-            }
+        if matches!(harness, Some(warp_cli::agent::Harness::Oz) | None)
+            && let Some(base) = block_model.base_model(ctx).map(|id| id.to_string())
+        {
+            state.orch.model_id = base;
         }
     }
 }
@@ -297,16 +297,16 @@ impl RunAgentsCardView {
         // Only relevant for Oz harness — non-Oz harnesses get their
         // model catalog from HarnessAvailabilityModel, not LLMPreferences.
         ctx.subscribe_to_model(&LLMPreferences::handle(ctx), |me, _, event, ctx| {
-            if let LLMPreferencesEvent::UpdatedAvailableLLMs = event {
-                if let Some(handle) = &me.handles.pickers.model_picker {
-                    oc::populate_model_picker_for_harness(
-                        handle,
-                        &me.state.orch.model_id,
-                        &me.state.orch.harness_type,
-                        true,
-                        ctx,
-                    );
-                }
+            if let LLMPreferencesEvent::UpdatedAvailableLLMs = event
+                && let Some(handle) = &me.handles.pickers.model_picker
+            {
+                oc::populate_model_picker_for_harness(
+                    handle,
+                    &me.state.orch.model_id,
+                    &me.state.orch.harness_type,
+                    true,
+                    ctx,
+                );
             }
         });
 
@@ -352,18 +352,18 @@ impl RunAgentsCardView {
         }
         let mut new_state = RunAgentsEditState::from_request(request);
         // Resolve empty fields from the active config (same as in new()).
-        if let Some((config, status)) = &self.active_config {
-            if status.is_approved() {
-                new_state.orch.resolve_from_config(config);
-            }
+        if let Some((config, status)) = &self.active_config
+            && status.is_approved()
+        {
+            new_state.orch.resolve_from_config(config);
         }
         if new_state.orch.model_id.is_empty() {
             let harness =
                 warp_cli::agent::Harness::parse_orchestration_harness(&new_state.orch.harness_type);
-            if matches!(harness, Some(warp_cli::agent::Harness::Oz) | None) {
-                if let Some(base) = self.block_model.base_model(ctx).map(|id| id.to_string()) {
-                    new_state.orch.model_id = base;
-                }
+            if matches!(harness, Some(warp_cli::agent::Harness::Oz) | None)
+                && let Some(base) = self.block_model.base_model(ctx).map(|id| id.to_string())
+            {
+                new_state.orch.model_id = base;
             }
         }
         if self.state != new_state {
@@ -407,10 +407,10 @@ impl RunAgentsCardView {
 
         // The confirmation card will be shown. Resolve from config (if any),
         // then apply interactive defaults so the pickers display sensible values.
-        if let Some((config, status)) = &self.active_config {
-            if status.is_approved() {
-                self.state.orch.resolve_from_config(config);
-            }
+        if let Some((config, status)) = &self.active_config
+            && status.is_approved()
+        {
+            self.state.orch.resolve_from_config(config);
         }
         resolve_interactive_defaults(&mut self.state, &*self.block_model, ctx);
         oc::repopulate_all_pickers(&mut self.state.orch, &self.handles.pickers, ctx);

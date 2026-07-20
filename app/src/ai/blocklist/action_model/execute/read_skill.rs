@@ -2,10 +2,10 @@ use super::{ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessA
 use ai::agent::action_result::AnyFileContent;
 use warpui::{ModelContext, SingletonEntity};
 
+use crate::SkillManager;
 use crate::ai::agent::AIAgentActionType;
 use crate::ai::agent::ReadSkillRequest;
 use crate::ai::agent::ReadSkillResult;
-use crate::SkillManager;
 use ai::agent::action_result::FileContext;
 use futures::future::{BoxFuture, FutureExt};
 use warpui::Entity;
@@ -30,7 +30,7 @@ impl ReadSkillExecutor {
         &mut self,
         input: ExecuteActionInput,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Into<AnyActionExecution> {
+    ) -> impl Into<AnyActionExecution> + use<> {
         let ExecuteActionInput { action, .. } = input;
         let AIAgentActionType::ReadSkill(ReadSkillRequest { skill: skill_ref }) = &action.action
         else {

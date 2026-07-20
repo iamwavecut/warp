@@ -1,17 +1,17 @@
-use std::collections::{hash_map::Entry, HashMap};
+use std::collections::{HashMap, hash_map::Entry};
 use std::sync::Arc;
 
 use futures_util::stream::AbortHandle;
 use markdown_parser::markdown_parser::parse_markdown_to_raw_text;
 use warpui::{
-    r#async::SpawnedFutureHandle, Entity, EntityId, ModelContext, SingletonEntity, WeakViewHandle,
-    WindowId,
+    Entity, EntityId, ModelContext, SingletonEntity, WeakViewHandle, WindowId,
+    r#async::SpawnedFutureHandle,
 };
 
 use crate::{
     cloud_object::{
-        model::persistence::{CloudModel, CloudModelEvent},
         Owner,
+        model::persistence::{CloudModel, CloudModelEvent},
     },
     drive::OpenWarpDriveObjectSettings,
     pane_group::{NotebookPane, PaneContent},
@@ -25,7 +25,7 @@ use crate::{
     workspace::PaneViewLocator,
 };
 
-use super::{notebook::NotebookView, CloudNotebook};
+use super::{CloudNotebook, notebook::NotebookView};
 
 #[cfg(test)]
 #[path = "manager_tests.rs"]
@@ -148,10 +148,10 @@ impl NotebookManager {
     }
 
     fn handle_cloud_model_event(&mut self, event: &CloudModelEvent, ctx: &mut ModelContext<Self>) {
-        if let CloudModelEvent::ObjectUpdated { type_and_id, .. } = event {
-            if let Some(notebook_id) = type_and_id.as_notebook_id() {
-                self.update_raw_text_for_notebook(notebook_id, ctx);
-            }
+        if let CloudModelEvent::ObjectUpdated { type_and_id, .. } = event
+            && let Some(notebook_id) = type_and_id.as_notebook_id()
+        {
+            self.update_raw_text_for_notebook(notebook_id, ctx);
         }
     }
 

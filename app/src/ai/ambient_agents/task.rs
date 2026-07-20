@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use warp_cli::agent::Harness;
 use warp_errors::report_error;
 
-use crate::ai::artifacts::{deserialize_artifacts, Artifact};
+use crate::ai::artifacts::{Artifact, deserialize_artifacts};
 use crate::view_components::DismissibleToast;
 use crate::workspace::ToastStack;
 use warpui::{SingletonEntity, View, ViewContext};

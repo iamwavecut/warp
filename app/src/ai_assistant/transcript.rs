@@ -1,5 +1,5 @@
-use markdown_parser::markdown_parser::RUNNABLE_BLOCK_MARKDOWN_LANG;
 use markdown_parser::CodeBlockText;
+use markdown_parser::markdown_parser::RUNNABLE_BLOCK_MARKDOWN_LANG;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::builder::AnimatedButtonOptions;
@@ -7,6 +7,8 @@ use warpui::clipboard::ClipboardContent;
 use warpui::elements::{DispatchEventResult, Stack};
 use warpui::units::Pixels;
 use warpui::{
+    AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
+    WeakViewHandle,
     elements::{
         Align, Border, ChildAnchor, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
         Container, CornerRadius, CrossAxisAlignment, EventHandler, Fill, Flex,
@@ -18,8 +20,6 @@ use warpui::{
     platform::Cursor,
     ui_components::components::{UiComponent, UiComponentStyles},
     units::IntoPixels,
-    AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
-    WeakViewHandle,
 };
 use warpui::{BlurContext, FocusContext};
 
@@ -28,14 +28,14 @@ use crate::{appearance::Appearance, ui_components::blended_colors};
 
 use super::panel::HEADER_HEIGHT;
 use super::{
+    AI_ASSISTANT_SVG_PATH,
     panel::HEXAGON_ALERT_SVG_PATH,
     requests::{RequestStatus, Requests},
     utils::{
-        code_block_position_id, markdown_segments_from_text, render_prepared_response_button,
-        render_request_limit_info, save_as_workflow_position_id, AssistantTranscriptPart,
-        CodeBlockIndex, FormattedTranscriptMessage, MarkdownSegment, TranscriptPartSubType,
+        AssistantTranscriptPart, CodeBlockIndex, FormattedTranscriptMessage, MarkdownSegment,
+        TranscriptPartSubType, code_block_position_id, markdown_segments_from_text,
+        render_prepared_response_button, render_request_limit_info, save_as_workflow_position_id,
     },
-    AI_ASSISTANT_SVG_PATH,
 };
 
 const TRANSCRIPT_POSITION_ID: &str = "ai_assistant::transcript";

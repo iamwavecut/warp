@@ -13,8 +13,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ai::mcp::FileBasedMCPManager;
 use crate::ai::mcp::{
-    templatable::TemplatableMCPServer, templatable_installation::TemplatableMCPServerInstallation,
-    MCPServerState,
+    MCPServerState, templatable::TemplatableMCPServer,
+    templatable_installation::TemplatableMCPServerInstallation,
 };
 use futures_util::stream::AbortHandle;
 use uuid::Uuid;

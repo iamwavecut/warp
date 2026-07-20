@@ -8,10 +8,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use instant::Instant;
-use pathfinder_geometry::vector::{vec2f, Vector2F};
+use pathfinder_geometry::vector::{Vector2F, vec2f};
 
-use super::elements::Axis;
 use super::Event;
+use super::elements::Axis;
 use crate::assets::asset_cache::AssetHandle;
 use crate::elements::{DropTargetPosition, Point, Selection};
 use crate::event::DispatchedEvent;
@@ -21,8 +21,8 @@ use crate::scene::{Scene, ZIndex};
 use crate::text_layout::LayoutCache;
 use crate::zoom::Scale;
 use crate::{
-    fonts, Action, AppContext, ClipBounds, EntityId, EntityIdMap, EntityIdSet, TaskId, View,
-    ViewHandle, WindowId, WindowInvalidation,
+    Action, AppContext, ClipBounds, EntityId, EntityIdMap, EntityIdSet, TaskId, View, ViewHandle,
+    WindowId, WindowInvalidation, fonts,
 };
 
 pub struct Presenter {
@@ -268,7 +268,9 @@ impl<'a> EventContext<'a> {
 
     /// Returns an iterator of `DropTargetPosition`s. Used to determine if a draggable element
     /// was dropped on a `DropTarget`.
-    pub(crate) fn drop_target_data(&self) -> impl Iterator<Item = DropTargetPosition> + 'a {
+    pub(crate) fn drop_target_data(
+        &self,
+    ) -> impl Iterator<Item = DropTargetPosition> + 'a + use<'a> {
         self.position_cache.drop_target_data()
     }
 }
@@ -640,14 +642,15 @@ impl EventContext<'_> {
         event: &DispatchedEvent,
         app: &AppContext,
     ) -> bool {
-        if let Some(mut element) = self.rendered_views.remove(&view_id) {
-            self.view_stack.push(view_id);
-            let handled = element.dispatch_event(event, self, app);
-            self.rendered_views.insert(view_id, element);
-            self.view_stack.pop();
-            handled
-        } else {
-            false
+        match self.rendered_views.remove(&view_id) {
+            Some(mut element) => {
+                self.view_stack.push(view_id);
+                let handled = element.dispatch_event(event, self, app);
+                self.rendered_views.insert(view_id, element);
+                self.view_stack.pop();
+                handled
+            }
+            _ => false,
         }
     }
 

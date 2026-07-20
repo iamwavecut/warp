@@ -6,8 +6,8 @@ mod r#impl;
 pub use ai::agent::convert::ConvertToAPITypeError;
 use ai::api_keys::ApiKeyManager;
 pub use convert_from::{
-    user_inputs_from_messages, ConversionParams, ConvertAPIMessageToClientOutputMessage,
-    MaybeAIAgentOutputMessage, MessageToAIAgentOutputMessageError,
+    ConversionParams, ConvertAPIMessageToClientOutputMessage, MaybeAIAgentOutputMessage,
+    MessageToAIAgentOutputMessageError, user_inputs_from_messages,
 };
 
 pub use r#impl::generate_multi_agent_output;
@@ -27,8 +27,8 @@ use crate::{
 
 use super::{AIAgentInput, MCPContext, MCPServer, RequestMetadata};
 use crate::ai::blocklist::{BlocklistAIPermissions, RequestInput};
-use crate::ai::mcp::templatable_manager::TemplatableMCPServerInfo;
 use crate::ai::mcp::TemplatableMCPServerManager;
+use crate::ai::mcp::templatable_manager::TemplatableMCPServerInfo;
 use crate::settings::AISettings;
 use crate::terminal::safe_mode_settings::get_secret_obfuscation_mode;
 use warpui::{AppContext, EntityId, SingletonEntity as _};

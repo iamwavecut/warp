@@ -1,7 +1,7 @@
 use std::io::{IoSlice, IoSliceMut};
 use std::os::unix::prelude::*;
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use itertools::Itertools;
 use nix::cmsg_space;
 use nix::errno::Errno;
@@ -9,7 +9,6 @@ use nix::sys::socket;
 use serde::{Deserialize, Serialize};
 
 use super::api;
-use crate::terminal::local_tty::PtySpawnResult;
 
 /// The size of a usize, in bytes.
 const USIZE_SIZE: usize = std::mem::size_of::<usize>();
@@ -140,7 +139,7 @@ fn try_receive_message_internal(socket_fd: impl AsRawFd) -> Result<TryReceiveMes
     let (payload_size, cmsgs) = match receive_message_header(&socket_fd)? {
         ReceiveMessageHeaderResult::WouldBlock => return Ok(TryReceiveMessageResult::WouldBlock),
         ReceiveMessageHeaderResult::SocketClosed => {
-            return Ok(TryReceiveMessageResult::SocketClosed)
+            return Ok(TryReceiveMessageResult::SocketClosed);
         }
         ReceiveMessageHeaderResult::Success {
             payload_size,

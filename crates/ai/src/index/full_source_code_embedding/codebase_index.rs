@@ -3,9 +3,9 @@ use async_channel;
 use chrono::{DateTime, Utc};
 use futures::stream::AbortHandle;
 use ignore::gitignore::Gitignore;
+use repo_metadata::Repository;
 #[cfg(feature = "local_fs")]
 use repo_metadata::entry::{BudgetExceededBehavior, IgnoredPathStrategy};
-use repo_metadata::Repository;
 use std::{path::Path, sync::Arc};
 use warp_core::safe_error;
 use warp_errors::report_error;
@@ -14,16 +14,16 @@ use warpui_core::{Entity, ModelContext, ModelHandle};
 #[cfg(feature = "local_fs")]
 use super::search_shaping::build_fragments_from_file_contents;
 use super::{
+    CodebaseContextConfig, ContentHash, EmbeddingConfig, Error, Fragment, NodeHash, RepoMetadata,
     fragment_metadata::{FragmentMetadata, LeafToFragmentMetadata, LeafToFragmentMetadataUpdates},
     manager::{
         CodebaseIndexFinishedStatus, CodebaseIndexStatus, FragmentMetadataLookupError,
         RetrieveFileError,
     },
     merkle_tree::{MerkleTree, SerializedCodebaseIndex},
-    search_shaping::{fragments_to_context_locations, ReadFragmentResult},
+    search_shaping::{ReadFragmentResult, fragments_to_context_locations},
     store_client::StoreClient,
     sync_client::{FlushFragmentResult, SyncOperationError},
-    CodebaseContextConfig, ContentHash, EmbeddingConfig, Error, Fragment, NodeHash, RepoMetadata,
 };
 use crate::{
     index::locations::CodeContextLocation,

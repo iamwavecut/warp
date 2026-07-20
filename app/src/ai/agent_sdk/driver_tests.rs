@@ -10,7 +10,7 @@ use warp_cli::skill::SkillSpec;
 use warp_util::standardized_path::StandardizedPath;
 use warpui::{App, SingletonEntity as _};
 
-use super::{build_secret_env_vars, AgentDriver, IdleTimeoutSender};
+use super::{AgentDriver, IdleTimeoutSender, build_secret_env_vars};
 use crate::ai::agent::{AIAgentOutput, AIAgentOutputMessage, ArtifactCreatedData, MessageId};
 use crate::ai::mcp::parsing::normalize_mcp_json;
 use crate::ai::{agent_sdk::task_env_vars, ambient_agents::AmbientAgentTaskId};
@@ -241,9 +241,11 @@ fn task_env_vars_include_parent_run_id_when_present() {
         env_vars.get(&OsString::from(OZ_HARNESS_ENV)),
         Some(&OsString::from("claude"))
     );
-    assert!(env_vars
-        .get(&OsString::from(OZ_CLI_ENV))
-        .is_some_and(|value| !value.is_empty()));
+    assert!(
+        env_vars
+            .get(&OsString::from(OZ_CLI_ENV))
+            .is_some_and(|value| !value.is_empty())
+    );
 }
 
 #[test]
@@ -311,7 +313,7 @@ fn json_format_output_includes_filename_for_file_artifact_created_event() {
 #[test]
 #[serial_test::serial]
 fn raw_value_only_writes_under_secret_name() {
-    std::env::remove_var("MY_SECRET");
+    unsafe { std::env::remove_var("MY_SECRET") };
     let secrets = HashMap::from([(
         "MY_SECRET".to_string(),
         ManagedSecretValue::raw_value("s3cret"),
@@ -327,7 +329,7 @@ fn raw_value_only_writes_under_secret_name() {
 #[test]
 #[serial_test::serial]
 fn anthropic_api_key_writes_anthropic_env_var() {
-    std::env::remove_var("ANTHROPIC_API_KEY");
+    unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
     let secrets = HashMap::from([(
         "my-custom-name".to_string(),
         ManagedSecretValue::anthropic_api_key("sk-ant-test-key"),
@@ -342,7 +344,7 @@ fn anthropic_api_key_writes_anthropic_env_var() {
 #[test]
 #[serial_test::serial]
 fn typed_secret_overrides_raw_value_with_same_env_name() {
-    std::env::remove_var("ANTHROPIC_API_KEY");
+    unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
     let typed_key = "sk-ant-typed-key-abcdef";
     let raw_key = "sk-ant-raw-key-ghijkl";
     let secrets = HashMap::from([
@@ -369,9 +371,9 @@ fn typed_secret_overrides_raw_value_with_same_env_name() {
 #[test]
 #[serial_test::serial]
 fn bedrock_api_key_writes_all_bedrock_env_vars() {
-    std::env::remove_var("AWS_BEARER_TOKEN_BEDROCK");
-    std::env::remove_var("CLAUDE_CODE_USE_BEDROCK");
-    std::env::remove_var("AWS_REGION");
+    unsafe { std::env::remove_var("AWS_BEARER_TOKEN_BEDROCK") };
+    unsafe { std::env::remove_var("CLAUDE_CODE_USE_BEDROCK") };
+    unsafe { std::env::remove_var("AWS_REGION") };
     let secrets = HashMap::from([
         (
             "bedrock-secret".to_string(),
@@ -401,11 +403,11 @@ fn bedrock_api_key_writes_all_bedrock_env_vars() {
 #[test]
 #[serial_test::serial]
 fn bedrock_access_key_writes_all_aws_env_vars() {
-    std::env::remove_var("AWS_ACCESS_KEY_ID");
-    std::env::remove_var("AWS_SECRET_ACCESS_KEY");
-    std::env::remove_var("AWS_SESSION_TOKEN");
-    std::env::remove_var("CLAUDE_CODE_USE_BEDROCK");
-    std::env::remove_var("AWS_REGION");
+    unsafe { std::env::remove_var("AWS_ACCESS_KEY_ID") };
+    unsafe { std::env::remove_var("AWS_SECRET_ACCESS_KEY") };
+    unsafe { std::env::remove_var("AWS_SESSION_TOKEN") };
+    unsafe { std::env::remove_var("CLAUDE_CODE_USE_BEDROCK") };
+    unsafe { std::env::remove_var("AWS_REGION") };
     let secrets = HashMap::from([(
         "bedrock-access".to_string(),
         ManagedSecretValue::anthropic_bedrock_access_key(
@@ -441,7 +443,7 @@ fn bedrock_access_key_writes_all_aws_env_vars() {
 #[test]
 #[serial_test::serial]
 fn raw_value_skipped_when_process_env_already_set() {
-    std::env::set_var("WORKER_TOKEN", "injected-value");
+    unsafe { std::env::set_var("WORKER_TOKEN", "injected-value") };
     let secrets = HashMap::from([(
         "WORKER_TOKEN".to_string(),
         ManagedSecretValue::raw_value("managed-value"),
@@ -450,13 +452,13 @@ fn raw_value_skipped_when_process_env_already_set() {
     // The worker-injected env var wins; env_vars should NOT contain it
     // because the child inherits the process env directly.
     assert!(!env_vars.contains_key(&OsString::from("WORKER_TOKEN")));
-    std::env::remove_var("WORKER_TOKEN");
+    unsafe { std::env::remove_var("WORKER_TOKEN") };
 }
 
 #[test]
 #[serial_test::serial]
 fn worker_injected_env_wins_over_typed_secret() {
-    std::env::set_var("ANTHROPIC_API_KEY", "worker-key");
+    unsafe { std::env::set_var("ANTHROPIC_API_KEY", "worker-key") };
     let secrets = HashMap::from([(
         "my-auth".to_string(),
         ManagedSecretValue::anthropic_api_key("managed-key"),
@@ -465,7 +467,7 @@ fn worker_injected_env_wins_over_typed_secret() {
     // The typed secret should be skipped entirely; the child inherits
     // ANTHROPIC_API_KEY from the process env.
     assert!(!env_vars.contains_key(&OsString::from("ANTHROPIC_API_KEY")));
-    std::env::remove_var("ANTHROPIC_API_KEY");
+    unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
 }
 
 #[test]
@@ -473,9 +475,9 @@ fn worker_injected_env_wins_over_typed_secret() {
 fn worker_injected_env_skips_entire_bedrock_secret() {
     // Only AWS_REGION is worker-injected; the entire Bedrock secret should
     // be atomically skipped — no partial insertion.
-    std::env::set_var("AWS_REGION", "us-east-1");
-    std::env::remove_var("AWS_BEARER_TOKEN_BEDROCK");
-    std::env::remove_var("CLAUDE_CODE_USE_BEDROCK");
+    unsafe { std::env::set_var("AWS_REGION", "us-east-1") };
+    unsafe { std::env::remove_var("AWS_BEARER_TOKEN_BEDROCK") };
+    unsafe { std::env::remove_var("CLAUDE_CODE_USE_BEDROCK") };
     let secrets = HashMap::from([(
         "bedrock-secret".to_string(),
         ManagedSecretValue::anthropic_bedrock_api_key("token-456", "eu-central-1"),
@@ -487,7 +489,7 @@ fn worker_injected_env_skips_entire_bedrock_secret() {
     );
     assert!(!env_vars.contains_key(&OsString::from("CLAUDE_CODE_USE_BEDROCK")));
     assert!(!env_vars.contains_key(&OsString::from("AWS_REGION")));
-    std::env::remove_var("AWS_REGION");
+    unsafe { std::env::remove_var("AWS_REGION") };
 }
 
 // ── Skill-loading integration test ───────────────────────────────────────────
@@ -751,8 +753,8 @@ fn write_skill_file(repo: &Path, name: &str) {
 fn openai_api_key_exports_only_api_key_not_base_url() {
     // The OpenAI typed secret should only export OPENAI_API_KEY as an env var.
     // base_url is piped through the structured secret to the harness instead.
-    std::env::remove_var("OPENAI_API_KEY");
-    std::env::remove_var("OPENAI_BASE_URL");
+    unsafe { std::env::remove_var("OPENAI_API_KEY") };
+    unsafe { std::env::remove_var("OPENAI_BASE_URL") };
     let secrets = HashMap::from([(
         "openai-key".to_string(),
         ManagedSecretValue::openai_api_key(

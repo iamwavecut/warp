@@ -6,6 +6,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use super::{
+    SettingsSection,
     about_page::AboutPageView,
     ai_page::{AISettingsPageAction, AISettingsPageView},
     appearance_page::AppearanceSettingsPageView,
@@ -17,7 +18,6 @@ use super::{
     privacy_page::PrivacyPageView,
     scripting_page::ScriptingSettingsPageView,
     warpify_page::WarpifyPageView,
-    SettingsSection,
 };
 use crate::{
     appearance::Appearance,
@@ -29,14 +29,15 @@ use pathfinder_geometry::vector::vec2f;
 use settings::Setting;
 use warp_core::{settings::SyncToCloud, ui::theme::color::internal_colors};
 use warpui::{
+    Action, AppContext, SingletonEntity, ViewContext, ViewHandle,
     elements::{
-        new_scrollable::{ClippedAxisConfiguration, DualAxisConfig, SingleAxisConfig},
         Align, Border, ChildAnchor, ChildView, ClippedScrollStateHandle, ConstrainedBox, Container,
         CornerRadius, CrossAxisAlignment, Element, Empty, Expanded, Flex, Hoverable,
         MainAxisAlignment, MainAxisSize, MouseStateHandle, NewScrollable, OffsetPositioning,
         ParentAnchor, ParentElement, ParentOffsetBounds, Radius, SavePosition, ScrollTarget,
         ScrollToPositionMode, Shrinkable, SizeConstraintCondition, SizeConstraintSwitch, Stack,
         Text,
+        new_scrollable::{ClippedAxisConfiguration, DualAxisConfig, SingleAxisConfig},
     },
     fonts::{Properties, Weight},
     platform::Cursor,
@@ -45,7 +46,6 @@ use warpui::{
         components::{Coords, UiComponent, UiComponentStyles},
     },
     units::Pixels,
-    Action, AppContext, SingletonEntity, ViewContext, ViewHandle,
 };
 
 pub const TOGGLE_BUTTON_RIGHT_PADDING: f32 = 5.;
@@ -398,11 +398,7 @@ pub enum ToggleState {
 
 impl From<bool> for ToggleState {
     fn from(value: bool) -> Self {
-        if value {
-            Self::Enabled
-        } else {
-            Self::Disabled
-        }
+        if value { Self::Enabled } else { Self::Disabled }
     }
 }
 
@@ -723,7 +719,8 @@ pub fn render_dropdown_item_label(
                 .into(),
         )
         .finish();
-    let label = if let Some(secondary_text) = secondary_text {
+
+    (if let Some(secondary_text) = secondary_text {
         let warp_theme = appearance.theme();
         let secondary_text_child = appearance
             .ui_builder()
@@ -750,9 +747,7 @@ pub fn render_dropdown_item_label(
             .finish()
     } else {
         label
-    };
-
-    label
+    }) as _
 }
 
 pub(crate) fn render_dropdown_item<T: DropdownItemAction>(
@@ -814,16 +809,18 @@ pub(crate) fn render_settings_info_banner(
     .finish();
 
     let text = {
-        let mut children = vec![Container::new(
-            Text::new(
-                text.to_string(),
-                appearance.ui_font_family(),
-                appearance.ui_font_size(),
+        let mut children = vec![
+            Container::new(
+                Text::new(
+                    text.to_string(),
+                    appearance.ui_font_family(),
+                    appearance.ui_font_size(),
+                )
+                .with_color(appearance.theme().active_ui_text_color().into())
+                .finish(),
             )
-            .with_color(appearance.theme().active_ui_text_color().into())
             .finish(),
-        )
-        .finish()];
+        ];
 
         if let Some(subtext) = subtext {
             children.push(
@@ -1453,16 +1450,16 @@ impl<V: warpui::View> PageType<V> {
         let page = match self.get_filtered() {
             FilteredPageType::Monolith { widget, title, .. } => {
                 let mut page = Empty::new().finish();
-                if let Some(widget) = widget {
-                    if widget.should_render(app) {
-                        if let Some(title) = title {
-                            let col = Flex::column()
-                                .with_child(render_page_title(title, HEADER_FONT_SIZE, appearance))
-                                .with_child(widget.render_widget(view, false, appearance, app));
-                            page = col.finish();
-                        } else {
-                            page = widget.render_widget(view, false, appearance, app);
-                        }
+                if let Some(widget) = widget
+                    && widget.should_render(app)
+                {
+                    if let Some(title) = title {
+                        let col = Flex::column()
+                            .with_child(render_page_title(title, HEADER_FONT_SIZE, appearance))
+                            .with_child(widget.render_widget(view, false, appearance, app));
+                        page = col.finish();
+                    } else {
+                        page = widget.render_widget(view, false, appearance, app);
                     }
                 }
                 page
@@ -1610,12 +1607,11 @@ impl<V: warpui::View> PageType<V> {
     }
 
     pub fn render(&self, view: &V, app: &AppContext) -> Box<dyn Element> {
-        if let (Some(vertical_scroll_state), Some(horizontal_scroll_state)) =
-            self.get_scroll_states()
-        {
-            self.wrap_dual_scrollable(view, horizontal_scroll_state, vertical_scroll_state, app)
-        } else {
-            self.render_page(view, app)
+        match self.get_scroll_states() {
+            (Some(vertical_scroll_state), Some(horizontal_scroll_state)) => {
+                self.wrap_dual_scrollable(view, horizontal_scroll_state, vertical_scroll_state, app)
+            }
+            _ => self.render_page(view, app),
         }
     }
 }

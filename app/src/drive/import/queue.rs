@@ -4,7 +4,7 @@ use warp_errors::report_error;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::{
-    cloud_object::{model::persistence::CloudModel, CloudObjectEventEntrypoint, Owner},
+    cloud_object::{CloudObjectEventEntrypoint, Owner, model::persistence::CloudModel},
     drive::folders::FolderId,
     notebooks::CloudNotebookModel,
     server::{

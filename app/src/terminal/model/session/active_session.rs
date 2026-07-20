@@ -11,10 +11,10 @@ use warpui::{AppContext, Entity, ModelContext, ModelHandle};
 use crate::{
     ai_assistant::execution_context::WarpAiExecutionContext,
     terminal::{
+        ShellLaunchData,
         model::session::SessionsEvent,
         model_events::{ModelEvent, ModelEventDispatcher},
         shell::ShellType,
-        ShellLaunchData,
     },
 };
 
@@ -48,12 +48,11 @@ impl ActiveSession {
         });
 
         ctx.subscribe_to_model(&sessions, |me, _, event, ctx| {
-            if let SessionsEvent::SessionBootstrapped(bootstrap_event) = event {
-                if Some(bootstrap_event.session_id)
+            if let SessionsEvent::SessionBootstrapped(bootstrap_event) = event
+                && Some(bootstrap_event.session_id)
                     == me.model_event_dispatcher.as_ref(ctx).active_session_id()
-                {
-                    ctx.emit(ActiveSessionEvent::Bootstrapped);
-                }
+            {
+                ctx.emit(ActiveSessionEvent::Bootstrapped);
             }
         });
 

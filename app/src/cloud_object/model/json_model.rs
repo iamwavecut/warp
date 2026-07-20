@@ -1,5 +1,5 @@
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use super::generic_string_model::{Serializer, StringModel};
 use crate::cloud_object::JsonObjectType;

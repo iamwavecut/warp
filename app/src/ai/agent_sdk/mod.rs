@@ -4,30 +4,30 @@
 use std::fmt::Write;
 use std::path::Path;
 
-use crate::ai::agent_sdk::driver::harness::{harness_kind, HarnessKind};
+use crate::ai::agent_sdk::driver::harness::{HarnessKind, harness_kind};
 use crate::ai::agent_sdk::driver::{AgentDriverOptions, AgentRunPrompt, Task};
 use crate::ai::agent_sdk::mcp_config::build_mcp_servers_from_specs;
 use crate::ai::llms::LLMId;
 use anyhow::Context;
 use warp_cli::{
-    agent::{AgentCommand, OutputFormat},
     CliCommand, GlobalOptions,
+    agent::{AgentCommand, OutputFormat},
 };
 use warp_core::features::FeatureFlag;
 #[cfg(not(target_family = "wasm"))]
 use warp_logging::log_file_path;
 use warpui::ModelSpawner;
-use warpui::{platform::TerminationMode, AppContext};
+use warpui::{AppContext, platform::TerminationMode};
 
 use crate::{ai::ambient_agents::task::HarnessConfig, server::server_api::ai::AgentConfigSnapshot};
 use driver::AgentDriverError;
 
 use crate::ai::skills::{
-    clone_repo_for_skill, resolve_skill_spec, ResolveSkillError, ResolvedSkill,
+    ResolveSkillError, ResolvedSkill, clone_repo_for_skill, resolve_skill_spec,
 };
 
-pub(crate) use driver::harness::{task_env_vars, validate_cli_installed};
 pub use driver::AgentDriver;
+pub(crate) use driver::harness::{task_env_vars, validate_cli_installed};
 use warp_cli::agent::{Harness, Prompt, RunAgentArgs};
 
 mod admin;

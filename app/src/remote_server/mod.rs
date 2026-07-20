@@ -63,11 +63,13 @@ pub fn run_daemon(_identity_key: String) -> anyhow::Result<()> {
 /// ```
 #[cfg(not(target_family = "wasm"))]
 pub(super) fn run_daemon_app(
-    server_model_init: impl FnOnce(&mut warpui::ModelContext<server_model::ServerModel>) -> server_model::ServerModel
-        + 'static,
+    server_model_init: impl FnOnce(
+        &mut warpui::ModelContext<server_model::ServerModel>,
+    ) -> server_model::ServerModel
+    + 'static,
 ) -> anyhow::Result<()> {
-    use warpui::platform::app::AppCallbacks;
     use warpui::platform::AppBuilder;
+    use warpui::platform::app::AppCallbacks;
 
     AppBuilder::new_headless(AppCallbacks::default(), Box::new(()), None).run(|ctx| {
         // Rotate log files from the previous daemon invocation in the background.
@@ -75,9 +77,9 @@ pub(super) fn run_daemon_app(
             .spawn(warp_logging::rotate_log_files())
             .detach();
 
+        use repo_metadata::RepoMetadataModel;
         use repo_metadata::repositories::DetectedRepositories;
         use repo_metadata::watcher::DirectoryWatcher;
-        use repo_metadata::RepoMetadataModel;
 
         // Order matters: DetectedRepositories must be registered before
         // RepoMetadataModel because LocalRepoMetadataModel::new()

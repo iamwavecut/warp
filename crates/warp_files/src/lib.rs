@@ -12,8 +12,8 @@ use std::rc::Rc;
 use std::time::{Duration, SystemTime};
 
 use async_channel::Sender;
-use futures::io::{AsyncBufReadExt, BufReader};
 use futures::StreamExt;
+use futures::io::{AsyncBufReadExt, BufReader};
 use notify_debouncer_full::notify::{RecursiveMode, WatchFilter};
 use remote_server::manager::RemoteServerManager;
 use repo_metadata::repositories::DetectedRepositories;

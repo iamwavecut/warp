@@ -22,7 +22,7 @@ use context_chip::PromptGenerator;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use warp_core::ui::color::blend::Blend;
-use warp_core::ui::color::contrast::{high_enough_contrast, MinimumAllowedContrast};
+use warp_core::ui::color::contrast::{MinimumAllowedContrast, high_enough_contrast};
 use warp_core::ui::theme::{Fill, WarpTheme};
 use warpui::color::ColorU;
 use warpui::elements::Text;
@@ -589,12 +589,11 @@ pub fn chips_to_string(chips: impl Iterator<Item = ChipResult>) -> String {
         match (chip_kind, next_chip_kind) {
             // Omit the space between adjacent Svn chips.
             (ContextChipKind::SvnBranch, Some(ContextChipKind::SvnDirtyItems)) => (),
-            (_, Some(_)) => {
+            (_, Some(_))
                 // Add padding after non-empty chips.
-                if !chip_display_value.is_empty() {
+                if !chip_display_value.is_empty() => {
                     prompt.push(' ');
                 }
-            }
             _ => (),
         }
     }

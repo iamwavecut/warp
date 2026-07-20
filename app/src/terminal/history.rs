@@ -16,15 +16,15 @@ use super::{
 };
 use crate::{
     cloud_object::{
-        model::{persistence::CloudModel, view::CloudViewModel},
         Space,
+        model::{persistence::CloudModel, view::CloudViewModel},
     },
     server::ids::{ClientId, HashableId as _, SyncId},
     terminal::model::session::{Session, SessionId},
     util::dedupe_from_last,
     workflows::{
-        local_workflows::LocalWorkflows, workflow::Workflow, WorkflowId, WorkflowSource,
-        WorkflowType,
+        WorkflowId, WorkflowSource, WorkflowType, local_workflows::LocalWorkflows,
+        workflow::Workflow,
     },
 };
 
@@ -955,13 +955,13 @@ impl History {
         };
 
         for entry in session_commands.iter_mut().rev() {
-            if let Some(entry_start_ts) = &entry.start_ts {
-                if entry_start_ts.timestamp_millis() == command_start_ts.timestamp_millis() {
-                    let entry = Arc::make_mut(entry);
-                    entry.exit_code = Some(exit_code);
-                    entry.completed_ts = Some(command_completed_ts);
-                    break;
-                }
+            if let Some(entry_start_ts) = &entry.start_ts
+                && entry_start_ts.timestamp_millis() == command_start_ts.timestamp_millis()
+            {
+                let entry = Arc::make_mut(entry);
+                entry.exit_code = Some(exit_code);
+                entry.completed_ts = Some(command_completed_ts);
+                break;
             }
         }
     }

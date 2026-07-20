@@ -3,7 +3,7 @@ use warpui::{App, SingletonEntity};
 
 use crate::{
     terminal::{
-        safe_mode_settings::SafeModeSettings, shared_session::SharedSessionStatus, TerminalModel,
+        TerminalModel, safe_mode_settings::SafeModeSettings, shared_session::SharedSessionStatus,
     },
     test_util::settings::initialize_settings_for_tests,
 };

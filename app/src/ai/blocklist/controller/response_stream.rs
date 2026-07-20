@@ -10,9 +10,9 @@ use warpui::{Entity, ModelContext, SingletonEntity};
 
 use crate::{
     ai::agent::{
-        api::{self, generate_multi_agent_output, ConvertToAPITypeError},
-        conversation::AIConversationId,
         CancellationReason,
+        api::{self, ConvertToAPITypeError, generate_multi_agent_output},
+        conversation::AIConversationId,
     },
     network::NetworkStatus,
     server::server_api::ServerApiProvider,

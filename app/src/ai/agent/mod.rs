@@ -12,7 +12,7 @@ mod task_store;
 pub(super) mod util;
 
 // Re-export types that were moved to the ai crate.
-pub use ai::agent::{action::*, action_result::*, AIAgentCitation, FileLocations};
+pub use ai::agent::{AIAgentCitation, FileLocations, action::*, action_result::*};
 
 use crate::ai::block_context::BlockContext;
 use crate::ai::blocklist::block::view_impl::output::are_all_text_sections_empty;
@@ -38,7 +38,7 @@ use std::ops::{AddAssign, Deref, DerefMut, Range};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
-use warp_multi_agent_api::{diff_hunk as diff_hunk_api, AgentEvent, AgentType};
+use warp_multi_agent_api::{AgentEvent, AgentType, diff_hunk as diff_hunk_api};
 
 pub use self::api::{MaybeAIAgentOutputMessage, MessageToAIAgentOutputMessageError};
 use crate::ai_assistant::execution_context::WarpAiExecutionContext;
@@ -46,7 +46,7 @@ use crate::terminal::model::block::BlockId;
 use crate::terminal::shell::ShellType;
 use crate::terminal::view::block_onboarding::onboarding_agentic_suggestions_block::OnboardingChipType;
 use derivative::Derivative;
-use markdown_parser::{parse_markdown, FormattedTable, FormattedText, FormattedTextInline};
+use markdown_parser::{FormattedTable, FormattedText, FormattedTextInline, parse_markdown};
 use serde::{Deserialize, Serialize};
 use session_sharing_protocol::common::ParticipantId;
 
@@ -604,13 +604,13 @@ impl AIAgentOutput {
                 }
                 AIAgentOutputMessageType::Action(action) => {
                     // Include action results from the action model if available
-                    if let Some(action_model) = action_model {
-                        if let Some(action_result) = action_model.get_action_result(&action.id) {
-                            result.push(format!("{}", MarkdownActionResult(&action_result.result)));
-                            // Add an extra newline after tool call results for readability
-                            result.push(String::new());
-                            last_was_action = true;
-                        }
+                    if let Some(action_model) = action_model
+                        && let Some(action_result) = action_model.get_action_result(&action.id)
+                    {
+                        result.push(format!("{}", MarkdownActionResult(&action_result.result)));
+                        // Add an extra newline after tool call results for readability
+                        result.push(String::new());
+                        last_was_action = true;
                     }
                 }
                 AIAgentOutputMessageType::TodoOperation(operation) => {
@@ -1045,10 +1045,7 @@ impl<'a> std::fmt::Display for MarkdownActionResult<'a> {
         match self.0 {
             AIAgentActionResultType::RequestCommandOutput(result) => match result {
                 RequestCommandOutputResult::Completed {
-                    command,
-                    output,
-                    exit_code: _,
-                    ..
+                    command, output, ..
                 } => {
                     write!(
                         f,
@@ -1107,10 +1104,10 @@ impl<'a> std::fmt::Display for MarkdownActionResult<'a> {
                     for file in files {
                         writeln!(f, "**{}**", file.file_name)?;
                         let content = &file.content;
-                        if let AnyFileContent::StringContent(text) = content {
-                            if !text.trim().is_empty() {
-                                writeln!(f, "```\n{text}\n```\n")?;
-                            }
+                        if let AnyFileContent::StringContent(text) = content
+                            && !text.trim().is_empty()
+                        {
+                            writeln!(f, "```\n{text}\n```\n")?;
                         }
                     }
                     if !failed_files.is_empty() {
@@ -1130,10 +1127,10 @@ impl<'a> std::fmt::Display for MarkdownActionResult<'a> {
                     for file in files {
                         writeln!(f, "- **{}**", file.file_name)?;
                         let content = &file.content;
-                        if let AnyFileContent::StringContent(text) = content {
-                            if !text.trim().is_empty() {
-                                writeln!(f, "```\n{text}\n```\n")?;
-                            }
+                        if let AnyFileContent::StringContent(text) = content
+                            && !text.trim().is_empty()
+                        {
+                            writeln!(f, "```\n{text}\n```\n")?;
                         }
                     }
                     Ok(())

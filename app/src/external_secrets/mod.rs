@@ -123,7 +123,7 @@ impl SecretManager {
                         ONE_PASSWORD_INSTALLED_COMMAND.join(" ").as_str(),
                     )
                     .await
-                    .is_ok()
+                    .is_ok();
                 }
                 SecretManager::LastPass => {
                     return execute_command(
@@ -133,7 +133,7 @@ impl SecretManager {
                         LASTPASS_INSTALLED_COMMAND.join(" ").as_str(),
                     )
                     .await
-                    .is_ok()
+                    .is_ok();
                 }
             }
         }
@@ -159,7 +159,7 @@ impl SecretManager {
                     )
                     .await
                     .ok()
-                    .and_then(|output| parse_onepassword_secrets(&output).ok())
+                    .and_then(|output| parse_onepassword_secrets(&output).ok());
                 }
                 SecretManager::LastPass => {
                     let lastpass_command: Vec<&str> = LASTPASS_LIST_SECRETS_COMMAND
@@ -218,14 +218,14 @@ impl SecretManager {
     ) -> ErrorMessageAndCommand {
         match error_type {
             SecretErrorType::NotInstalled => {
-                let message = format!("{} CLI is not installed", &self);
+                let message = format!("{} CLI is not installed", self);
 
                 let (link, link_message) = (
                     match self {
                         SecretManager::OnePassword => Some(ONEPASSWORD_DOCS_LINK.to_owned()),
                         SecretManager::LastPass => Some(LASTPASS_DOCS_LINK.to_owned()),
                     },
-                    Some(format!("View {} CLI installation documentation", &self)),
+                    Some(format!("View {} CLI installation documentation", self)),
                 );
 
                 ErrorMessageAndCommand {
@@ -245,7 +245,7 @@ impl SecretManager {
                 ErrorMessageAndCommand {
                     message: format!(
                         "{} didn't return secrets (likely not configured or authenticated)",
-                        &self
+                        self
                     ),
                     link,
                     link_message,

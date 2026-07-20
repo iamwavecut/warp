@@ -242,7 +242,7 @@ impl FileUpload {
         //"put -r path/to/local/file pwd/on/remote"
         if let Some(pwd) = remote_dest_path {
             command += " ";
-            command += &format!("\\\"{}\\\"", &pwd);
+            command += &format!("\\\"{}\\\"", pwd);
         }
 
         command

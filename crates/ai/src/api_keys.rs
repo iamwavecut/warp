@@ -193,8 +193,10 @@ impl ApiKeyManager {
             Ok(json) => json,
             Err(e) => {
                 if !matches!(e, secure_storage::Error::NotFound) {
-                    report_error!(anyhow::Error::new(e)
-                        .context("Failed to read API keys from secure storage"));
+                    report_error!(
+                        anyhow::Error::new(e)
+                            .context("Failed to read API keys from secure storage")
+                    );
                 }
                 return ApiKeys::default();
             }

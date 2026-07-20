@@ -40,10 +40,10 @@ pub fn evaluate_warpify_ssh_host(
         return SshInteractiveSessionDetected::FeatureDisabled;
     }
 
-    if let Some(ssh_host) = ssh_host {
-        if warpify_settings.is_ssh_host_denylisted(ssh_host) {
-            return SshInteractiveSessionDetected::HostDenylisted;
-        }
+    if let Some(ssh_host) = ssh_host
+        && warpify_settings.is_ssh_host_denylisted(ssh_host)
+    {
+        return SshInteractiveSessionDetected::HostDenylisted;
     }
 
     SshInteractiveSessionDetected::ShouldPromptWarpification {

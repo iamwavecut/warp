@@ -1,8 +1,8 @@
 use crate::ai::agent::SuggestedRule;
 use crate::ai::facts::CloudAIFactModel;
+use crate::cloud_object::Owner;
 use crate::cloud_object::model::generic_string_model::GenericStringObjectId;
 use crate::cloud_object::model::persistence::{CloudModel, CloudModelEvent};
-use crate::cloud_object::Owner;
 use crate::drive::CloudObjectTypeAndId;
 use crate::editor::{
     EditorOptions, EditorView, EnterAction, EnterSettings, Event as EditorEvent, InteractionState,
@@ -30,17 +30,17 @@ use warpui::elements::{
 use warpui::fonts::Weight;
 use warpui::keymap::FixedBinding;
 use warpui::{
-    elements::ClippedScrollStateHandle,
-    ui_components::components::{Coords, UiComponentStyles},
-};
-use warpui::{
+    AppContext, Element, Entity, FocusContext, SingletonEntity, TypedActionView, View, ViewContext,
+    ViewHandle,
     elements::{
         Align, Border, ChildView, ClippedScrollable, ConstrainedBox, Container, CornerRadius, Flex,
         ParentElement, Radius, ScrollbarWidth,
     },
     ui_components::components::UiComponent,
-    AppContext, Element, Entity, FocusContext, SingletonEntity, TypedActionView, View, ViewContext,
-    ViewHandle,
+};
+use warpui::{
+    elements::ClippedScrollStateHandle,
+    ui_components::components::{Coords, UiComponentStyles},
 };
 
 const HEADER_TEXT: &str = "Suggested rule";
@@ -401,19 +401,16 @@ impl SuggestedRuleView {
 
         if let (ObjectOperation::Create { .. }, OperationSuccessType::Success) =
             (&result.operation, &result.success_type)
+            && let Some(rule_and_id) = &self.rule_and_id
+            && rule_and_id.sync_id.into_client() == result.client_id
+            && let Some(server_id) = result.server_id
         {
-            if let Some(rule_and_id) = &self.rule_and_id {
-                if rule_and_id.sync_id.into_client() == result.client_id {
-                    if let Some(server_id) = result.server_id {
-                        self.rule_and_id = Some(SuggestedRuleAndId {
-                            rule: rule_and_id.rule.clone(),
-                            sync_id: SyncId::ServerId(server_id),
-                        });
-                        // Reload the rule from the cloud model.
-                        self.load_rule(ctx);
-                    }
-                }
-            }
+            self.rule_and_id = Some(SuggestedRuleAndId {
+                rule: rule_and_id.rule.clone(),
+                sync_id: SyncId::ServerId(server_id),
+            });
+            // Reload the rule from the cloud model.
+            self.load_rule(ctx);
         }
     }
 
@@ -423,10 +420,10 @@ impl SuggestedRuleView {
                 type_and_id: CloudObjectTypeAndId::GenericStringObject { id, .. },
                 ..
             } => {
-                if let Some(rule_and_id) = &self.rule_and_id {
-                    if rule_and_id.sync_id.into_client() == id.into_client() {
-                        self.load_rule(ctx);
-                    }
+                if let Some(rule_and_id) = &self.rule_and_id
+                    && rule_and_id.sync_id.into_client() == id.into_client()
+                {
+                    self.load_rule(ctx);
                 }
             }
             CloudModelEvent::ObjectTrashed {
@@ -439,10 +436,10 @@ impl SuggestedRuleView {
             } => {
                 // If the rule has been deleted, then we should reset the rule such that
                 // the suggestion can be added again.
-                if let Some(rule_and_id) = &self.rule_and_id {
-                    if rule_and_id.sync_id == *id {
-                        self.reset_rule(ctx);
-                    }
+                if let Some(rule_and_id) = &self.rule_and_id
+                    && rule_and_id.sync_id == *id
+                {
+                    self.reset_rule(ctx);
                 }
             }
             _ => {}

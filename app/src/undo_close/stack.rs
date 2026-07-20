@@ -14,7 +14,7 @@ use crate::{
     workspace::Workspace,
 };
 
-use super::{settings::UndoCloseSettingsChangedEvent, UndoCloseSettings};
+use super::{UndoCloseSettings, settings::UndoCloseSettingsChangedEvent};
 
 /// A unique identifier for an item in the undo close stack.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

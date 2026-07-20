@@ -11,11 +11,11 @@ use tempfile::NamedTempFile;
 use warp_cli::agent::Harness;
 use warpui::{ModelHandle, ModelSpawner, SingletonEntity};
 
-use crate::ai::ambient_agents::{task::HarnessModelConfig, AmbientAgentTaskId};
+use crate::ai::ambient_agents::{AmbientAgentTaskId, task::HarnessModelConfig};
 use crate::ai::mcp::JSONMCPServer;
 use crate::server::server_api::ServerApi;
-use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
 use crate::terminal::CLIAgent;
+use crate::terminal::cli_agent_sessions::{CLIAgentSessionStatus, CLIAgentSessionsModel};
 use crate::util::path::resolve_executable;
 use warp_cli::{OZ_CLI_ENV, OZ_HARNESS_ENV, OZ_PARENT_RUN_ID_ENV, OZ_RUN_ID_ENV};
 use warp_managed_secrets::ManagedSecretValue;

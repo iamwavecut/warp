@@ -257,12 +257,12 @@ pub fn transfer_file_sftp_command(
     }
 
     // "sftp -P 2222 sshuser@127.0.0.1 <<< "put -r \"path/to/local/file\""
-    command += &format!("\\\"{}\\\"", &local_file_path);
+    command += &format!("\\\"{}\\\"", local_file_path);
 
     // "sftp -P 2222 sshuser@127.0.0.1 <<< "put -r path/to/local/file pwd/on/remote"
     if let Some(pwd) = pwd {
         command += " ";
-        command += &format!("\\\"{}\\\"", &pwd);
+        command += &format!("\\\"{}\\\"", pwd);
     }
 
     // "sftp -P 2222 sshuser@127.0.0.1 <<< "put -r path/to/local/file pwd/on/remote""

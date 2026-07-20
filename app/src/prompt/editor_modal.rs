@@ -16,19 +16,19 @@ use crate::chip_configurator::{ChipConfigurator, ChipConfiguratorAction, ChipCon
 use crate::context_chips::prompt::{Prompt, PromptConfiguration, PromptSelection};
 use crate::context_chips::renderer::Renderer as ContextChipRenderer;
 use crate::context_chips::{
-    available_chips, ChipAvailability, ChipRuntimeCapabilities, ContextChipKind,
+    ChipAvailability, ChipRuntimeCapabilities, ContextChipKind, available_chips,
 };
 
 use crate::settings::{FontSettings, WarpPromptSeparator};
-use crate::terminal::blockgrid_element::BlockGridElement;
 use crate::terminal::SizeInfo;
+use crate::terminal::blockgrid_element::BlockGridElement;
 use settings::Setting as _;
 
-use crate::terminal::model::blockgrid::BlockGrid;
+use crate::Appearance;
 use crate::terminal::model::ObfuscateSecrets;
+use crate::terminal::model::blockgrid::BlockGrid;
 use crate::terminal::session_settings::SessionSettings;
 use crate::view_components::{Dropdown, DropdownItem};
-use crate::Appearance;
 use warpui::elements::{
     Align, Border, ChildAnchor, ChildView, Clipped, ConstrainedBox, Container, CornerRadius,
     CrossAxisAlignment, Empty, Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle,
@@ -347,9 +347,8 @@ impl EditorModal {
                         .filter_map(|r| r.chip_kind().cloned());
 
                     let session_settings = SessionSettings::as_ref(ctx);
-                    let current_same_line_prompt_enabled =
+                    let _current_same_line_prompt_enabled =
                         session_settings.saved_prompt.same_line_prompt_enabled();
-                    if self.same_line_prompt_enabled != current_same_line_prompt_enabled {}
 
                     // Updating the `Prompt` handles turning off PS1.
                     Prompt::handle(ctx).update(ctx, |prompt, ctx| {

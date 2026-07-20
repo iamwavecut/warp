@@ -10,7 +10,7 @@ use crate::ai::blocklist::agent_view::agent_input_footer::{
 };
 use crate::terminal::cli_agent_sessions::listener::agent_supports_rich_status;
 use crate::terminal::cli_agent_sessions::{CLIAgentInputEntrypoint, CLIAgentSessionsModel};
-use crate::util::image::{infer_mime_type, MAX_IMAGE_SIZE_BYTES_FOR_CLI_AGENT, MIME_SNIFF_BYTES};
+use crate::util::image::{MAX_IMAGE_SIZE_BYTES_FOR_CLI_AGENT, MIME_SNIFF_BYTES, infer_mime_type};
 use base64::Engine;
 use warpui::clipboard::{ClipboardContent, ImageData};
 mod warpify_footer;
@@ -24,9 +24,8 @@ use std::time::Duration;
 
 use warpui::r#async::Timer;
 
-use crate::code_review::diff_state::GitDeltaPreference;
 use crate::code_review::CodeReviewPaneEntrypoint;
-use anyhow::anyhow;
+use crate::code_review::diff_state::GitDeltaPreference;
 use parking_lot::FairMutex;
 use pathfinder_color::ColorU;
 use warp_core::{
@@ -35,24 +34,24 @@ use warp_core::{
     ui::{
         appearance::Appearance,
         color::contrast::{
-            high_enough_contrast, pick_best_foreground_color, MinimumAllowedContrast,
+            MinimumAllowedContrast, high_enough_contrast, pick_best_foreground_color,
         },
-        theme::{color::internal_colors, Fill as ThemeFill},
+        theme::{Fill as ThemeFill, color::internal_colors},
     },
 };
 
 use warpui::{
+    AppContext, Element, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View,
+    ViewContext, ViewHandle,
     elements::{
         ChildView, Container, CrossAxisAlignment, Empty, Expanded, Flex, MainAxisSize,
         ParentElement,
     },
     keymap::Keystroke,
-    AppContext, Element, Entity, EntityId, ModelHandle, SingletonEntity, TypedActionView, View,
-    ViewContext, ViewHandle,
 };
 
 use crate::{
-    ai::blocklist::{agent_view::agent_view_bg_fill, block::cli_controller::CLISubagentEvent},
+    ai::blocklist::block::cli_controller::CLISubagentEvent,
     cmd_or_ctrl_shift,
     interaction_sources::CLIAgentType,
     settings::{
@@ -61,8 +60,8 @@ use crate::{
     },
     terminal::cli_agent_sessions::CLIAgentRichInputCloseReason,
     terminal::{
-        model_events::{ModelEvent, ModelEventDispatcher},
         TerminalModel,
+        model_events::{ModelEvent, ModelEventDispatcher},
     },
     ui_components::{blended_colors, icons::Icon},
     view_components::action_button::{
@@ -1265,10 +1264,10 @@ impl View for UseAgentToolbar {
             // the horizontal padding area as well, preventing a visible color mismatch
             // between the padding and the footer content.
             let terminal_model = self.terminal_model.lock();
-            if terminal_model.is_alt_screen_active() {
-                if let Some(bg_color) = terminal_model.alt_screen().inferred_bg_color() {
-                    container = container.with_background(bg_color);
-                }
+            if terminal_model.is_alt_screen_active()
+                && let Some(bg_color) = terminal_model.alt_screen().inferred_bg_color()
+            {
+                container = container.with_background(bg_color);
             }
 
             return container.finish();
@@ -1308,10 +1307,10 @@ impl View for UseAgentToolbar {
             .with_horizontal_padding(*super::PADDING_LEFT)
             .with_vertical_padding(4.);
 
-        if terminal_model.is_alt_screen_active() {
-            if let Some(bg_color) = terminal_model.alt_screen().inferred_bg_color() {
-                container = container.with_background(bg_color);
-            }
+        if terminal_model.is_alt_screen_active()
+            && let Some(bg_color) = terminal_model.alt_screen().inferred_bg_color()
+        {
+            container = container.with_background(bg_color);
         }
 
         container.finish()

@@ -8,14 +8,14 @@ use warpui::{
     AppContext, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
 };
 
+use crate::BlocklistAIHistoryModel;
 use crate::ai::agent::conversation::{AIConversationId, ConversationStatus, StatusColorStyle};
+use crate::ai::blocklist::BlocklistAIHistoryEvent;
 use crate::ai::blocklist::agent_view::orchestration_conversation_links::conversation_navigation_card_with_icon;
 use crate::ai::blocklist::agent_view::{AgentViewController, AgentViewControllerEvent};
-use crate::ai::blocklist::BlocklistAIHistoryEvent;
 use crate::appearance::Appearance;
 use crate::terminal::view::TerminalAction;
 use crate::ui_components::buttons::close_button;
-use crate::BlocklistAIHistoryModel;
 
 #[derive(Debug, Clone)]
 pub enum ChildAgentStatusCardAction {

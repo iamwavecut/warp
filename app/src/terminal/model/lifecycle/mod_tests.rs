@@ -2,8 +2,8 @@ use instant::Instant;
 
 use super::diagnostics::{LifecycleDiagnosticsLimiter, LifecycleRecoveryRecord};
 use super::transition::{
-    plan, reconcile_phase, IgnoreReason, LifecycleAction, LifecycleInput, LifecycleInputKind,
-    LifecyclePhase, LifecycleSnapshot, NextBlockIdDisposition,
+    IgnoreReason, LifecycleAction, LifecycleInput, LifecycleInputKind, LifecyclePhase,
+    LifecycleSnapshot, NextBlockIdDisposition, plan, reconcile_phase,
 };
 use crate::terminal::model::block::BlockState;
 
@@ -449,9 +449,11 @@ fn lifecycle_diagnostics_are_rate_limited_per_transition_key() {
     );
 
     assert!(limiter.record_at(record.clone(), now).is_some());
-    assert!(limiter
-        .record_at(record.clone(), now + std::time::Duration::from_secs(1))
-        .is_none());
+    assert!(
+        limiter
+            .record_at(record.clone(), now + std::time::Duration::from_secs(1))
+            .is_none()
+    );
     let emitted = limiter
         .record_at(record, now + std::time::Duration::from_secs(61))
         .expect("The rate-limit interval should emit an aggregate.");

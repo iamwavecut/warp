@@ -2,22 +2,23 @@ use settings::Setting;
 use warp_core::ui::Icon;
 use warp_errors::report_if_error;
 use warpui::{
+    AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
     elements::{
         ChildAnchor, Container, CrossAxisAlignment, Flex, MainAxisSize, OffsetPositioning,
         ParentAnchor, ParentElement, ParentOffsetBounds, Shrinkable, Stack, Text,
     },
     fonts::{Properties, Weight},
     keymap::Keystroke,
-    prelude::{vec2f, ConstrainedBox, Cursor, Empty, Hoverable, MouseStateHandle},
+    prelude::{ConstrainedBox, Cursor, Empty, Hoverable, MouseStateHandle, vec2f},
     scene::{Border, CornerRadius, Radius},
     ui_components::{
         checkbox::Checkbox,
         components::{UiComponent, UiComponentStyles},
     },
-    AppContext, Element, Entity, ModelHandle, SingletonEntity, TypedActionView, View, ViewContext,
 };
 
 use crate::{
+    WorkspaceAction,
     ai::blocklist::agent_view::{
         AgentViewController, AgentViewControllerEvent, ENTER_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE,
         ENTER_AMBIENT_AGENT_VIEW_NEW_CONVERSATION_KEYSTROKE,
@@ -27,7 +28,7 @@ use crate::{
     terminal::{
         self,
         event::BlockType,
-        input::message_bar::{common::render_standard_message, Message, MessageItem},
+        input::message_bar::{Message, MessageItem, common::render_standard_message},
         model_events::{ModelEvent, ModelEventDispatcher},
         settings::{TerminalSettings, TerminalSettingsChangedEvent},
         view::TerminalAction,
@@ -37,7 +38,6 @@ use crate::{
     workspace::tab_settings::TabSettings,
     workspace::tab_settings::TabSettingsChangedEvent,
     workspace::view::TOGGLE_RIGHT_PANEL_BINDING_NAME,
-    WorkspaceAction,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,13 +72,13 @@ impl TerminalViewZeroStateBlock {
         ctx.subscribe_to_model(
             model_events_dispatcher,
             move |me, model_events_dispatcher, event, ctx| {
-                if let ModelEvent::BlockCompleted(block_completed) = event {
-                    if matches!(block_completed.block_type, BlockType::User(..)) {
-                        me.should_hide = true;
-                        ctx.unsubscribe_to_model(&model_events_dispatcher);
-                        ctx.unsubscribe_to_model(&controller_clone);
-                        ctx.notify();
-                    }
+                if let ModelEvent::BlockCompleted(block_completed) = event
+                    && matches!(block_completed.block_type, BlockType::User(..))
+                {
+                    me.should_hide = true;
+                    ctx.unsubscribe_to_model(&model_events_dispatcher);
+                    ctx.unsubscribe_to_model(&controller_clone);
+                    ctx.notify();
                 }
             },
         );
@@ -90,13 +90,12 @@ impl TerminalViewZeroStateBlock {
                 final_exchange_count,
                 ..
             } = event
+                && original_exchange_count != final_exchange_count
             {
-                if original_exchange_count != final_exchange_count {
-                    me.should_hide = true;
-                    ctx.unsubscribe_to_model(&model_events_clone);
-                    ctx.unsubscribe_to_model(&controller);
-                    ctx.notify()
-                }
+                me.should_hide = true;
+                ctx.unsubscribe_to_model(&model_events_clone);
+                ctx.unsubscribe_to_model(&controller);
+                ctx.notify()
             }
         });
 
@@ -233,24 +232,23 @@ impl View for TerminalViewZeroStateBlock {
             ),
         ];
 
-        if *TabSettings::as_ref(app).show_code_review_button {
-            if let Some(keystroke) =
+        if *TabSettings::as_ref(app).show_code_review_button
+            && let Some(keystroke) =
                 keybinding_name_to_keystroke(TOGGLE_RIGHT_PANEL_BINDING_NAME, app)
-            {
-                items.push(render_standard_message(
-                    Message::new(vec![MessageItem::clickable(
-                        vec![
-                            MessageItem::keystroke(keystroke),
-                            MessageItem::text("open code review"),
-                        ],
-                        |ctx| {
-                            ctx.dispatch_typed_action(WorkspaceAction::ToggleRightPanel);
-                        },
-                        self.state_handles.open_code_review.clone(),
-                    )]),
-                    app,
-                ));
-            }
+        {
+            items.push(render_standard_message(
+                Message::new(vec![MessageItem::clickable(
+                    vec![
+                        MessageItem::keystroke(keystroke),
+                        MessageItem::text("open code review"),
+                    ],
+                    |ctx| {
+                        ctx.dispatch_typed_action(WorkspaceAction::ToggleRightPanel);
+                    },
+                    self.state_handles.open_code_review.clone(),
+                )]),
+                app,
+            ));
         }
 
         if InputModeSettings::handle(app)
@@ -343,9 +341,11 @@ impl TypedActionView for TerminalViewZeroStateBlock {
             TerminalViewZeroStateAction::Dismiss => {
                 self.should_hide = true;
                 TerminalSettings::handle(ctx).update(ctx, |settings, ctx| {
-                    report_if_error!(settings
-                        .show_terminal_zero_state_block
-                        .set_value(false, ctx));
+                    report_if_error!(
+                        settings
+                            .show_terminal_zero_state_block
+                            .set_value(false, ctx)
+                    );
                 });
                 ctx.notify();
             }
@@ -353,9 +353,11 @@ impl TypedActionView for TerminalViewZeroStateBlock {
                 let ai_settings = AISettings::handle(ctx);
                 let new_value = !*ai_settings.as_ref(ctx).nld_in_terminal_enabled_internal;
                 ai_settings.update(ctx, |settings, ctx| {
-                    report_if_error!(settings
-                        .nld_in_terminal_enabled_internal
-                        .set_value(new_value, ctx));
+                    report_if_error!(
+                        settings
+                            .nld_in_terminal_enabled_internal
+                            .set_value(new_value, ctx)
+                    );
                 });
                 ctx.notify();
             }

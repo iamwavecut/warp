@@ -16,13 +16,13 @@ use warpui::fonts::{Properties, Weight};
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{
+    AppContext, Element, Entity, FocusContext, TypedActionView, View, ViewHandle,
     elements::{
         Align, Border, ChildView, ConstrainedBox, Container, CrossAxisAlignment, Empty, Flex,
         FormattedTextElement, HighlightedHyperlink, Hoverable, MainAxisAlignment, MouseStateHandle,
         ParentElement, Text,
     },
     platform::Cursor,
-    AppContext, Element, Entity, FocusContext, TypedActionView, View, ViewHandle,
 };
 use warpui::{SingletonEntity, ViewContext};
 
@@ -575,13 +575,13 @@ impl View for InstallationModalBody {
                 self.close_button_mouse_state.clone(),
             ));
 
-            if let Some(instructions) = &self.instructions_in_markdown {
-                if !instructions.is_empty() {
-                    let instructions_result =
-                        Self::render_markdown_instructions(instructions, appearance);
-                    if let Ok(rendered_instructions) = instructions_result {
-                        form_column.add_child(rendered_instructions);
-                    }
+            if let Some(instructions) = &self.instructions_in_markdown
+                && !instructions.is_empty()
+            {
+                let instructions_result =
+                    Self::render_markdown_instructions(instructions, appearance);
+                if let Ok(rendered_instructions) = instructions_result {
+                    form_column.add_child(rendered_instructions);
                 }
             }
 

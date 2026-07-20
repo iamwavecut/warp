@@ -2,10 +2,11 @@ use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::vec2f;
 use regex_automata::hybrid::BuildError;
 use warp_editor::editor::NavigationKey;
+use warpui::FocusContext;
 use warpui::elements::{Align, Dash};
 use warpui::ui_components::components::UiComponent;
-use warpui::FocusContext;
 use warpui::{
+    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
     accessibility::{AccessibilityContent, WarpA11yRole},
     elements::{
         Border, ChildAnchor, Clipped, ConstrainedBox, Container, CornerRadius, CrossAxisAlignment,
@@ -13,7 +14,6 @@ use warpui::{
         ParentAnchor, ParentElement, ParentOffsetBounds, Radius, Rect, Shrinkable, Stack, Text,
     },
     presenter::ChildView,
-    AppContext, Element, Entity, SingletonEntity, TypedActionView, View, ViewContext, ViewHandle,
 };
 
 use crate::terminal::model::terminal_model::BlockIndex;
@@ -347,9 +347,9 @@ impl BlockFilterEditor {
 
                 // If the previous editor event was selecting all text and
                 // the user now types in a non-empty query, then we should count this as an `UpdateBlockFilterQuery` event.
-                if self.previous_editor_event_was_select_all
-                    && !self.query_editor_text(ctx).is_empty()
-                {}
+                if self.previous_editor_event_was_select_all {
+                    !self.query_editor_text(ctx).is_empty();
+                }
                 self.previous_editor_event_was_select_all = false;
             }
             EditorEvent::Escape => self.close(ctx),

@@ -3,12 +3,12 @@ use std::sync::Arc;
 use string_offset::CharOffset;
 use warp_editor::model::CoreEditorModel;
 use warpui::{
-    async_assert, integration::TestStep, windowing::WindowManager, App, SingletonEntity,
-    ViewHandle, WindowId,
+    App, SingletonEntity, ViewHandle, WindowId, async_assert, integration::TestStep,
+    windowing::WindowManager,
 };
 
 use crate::{
-    cloud_object::{model::persistence::CloudModel, CloudObjectEventEntrypoint, Space},
+    cloud_object::{CloudObjectEventEntrypoint, Space, model::persistence::CloudModel},
     drive::OpenWarpDriveObjectSettings,
     integration_testing::view_getters::{notebook_view, workspace_view},
     notebooks::manager::NotebookSource,

@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
-use futures::future::{ready, Either};
+use futures::future::{Either, ready};
 #[cfg(test)]
 use virtual_fs::{Stub, VirtualFS};
 use warp_util::host_id::HostId;
@@ -66,7 +66,7 @@ impl DetectedRepositories {
         source: RepoDetectionSource,
         remote_detect: Option<F>,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = Option<LocalOrRemotePath>> {
+    ) -> impl Future<Output = Option<LocalOrRemotePath>> + use<F> {
         match remote_detect {
             None => {
                 // Local detection path.
@@ -93,7 +93,7 @@ impl DetectedRepositories {
         active_directory: &str,
         source: RepoDetectionSource,
         ctx: &mut ModelContext<Self>,
-    ) -> impl Future<Output = Option<PathBuf>> {
+    ) -> impl Future<Output = Option<PathBuf>> + use<> {
         #[cfg(feature = "local_fs")]
         {
             use futures::channel::oneshot;
@@ -155,25 +155,27 @@ impl DetectedRepositories {
                             // Only treat as external if it's outside the working tree.
                             .filter(|p| !p.starts_with(&repo_root_path));
 
-                            if let Some(repository) =
-                                DirectoryWatcher::handle(ctx).update(ctx, |watcher, ctx| {
-                                    watcher
-                                        .add_directory_with_git_dir(
-                                            repo_root_path,
-                                            external_git_dir,
-                                            ctx,
-                                        )
-                                        .ok()
-                                })
-                            {
-                                let repo_path = repository.as_ref(ctx).root_dir().to_local_path();
-                                ctx.emit(DetectedRepositoriesEvent::DetectedGitRepo {
-                                    repository,
-                                    source,
-                                });
-                                let _ = tx.send(repo_path);
-                            } else {
-                                let _ = tx.send(None);
+                            match DirectoryWatcher::handle(ctx).update(ctx, |watcher, ctx| {
+                                watcher
+                                    .add_directory_with_git_dir(
+                                        repo_root_path,
+                                        external_git_dir,
+                                        ctx,
+                                    )
+                                    .ok()
+                            }) {
+                                Some(repository) => {
+                                    let repo_path =
+                                        repository.as_ref(ctx).root_dir().to_local_path();
+                                    ctx.emit(DetectedRepositoriesEvent::DetectedGitRepo {
+                                        repository,
+                                        source,
+                                    });
+                                    let _ = tx.send(repo_path);
+                                }
+                                _ => {
+                                    let _ = tx.send(None);
+                                }
                             }
                         } else {
                             // No working tree path; do not treat git_dir_path as a repository path.

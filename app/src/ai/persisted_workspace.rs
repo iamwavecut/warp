@@ -10,12 +10,12 @@ use lsp::{LspManagerModel, LspServerConfig};
 use repo_metadata::repositories::{DetectedRepositories, DetectedRepositoriesEvent};
 use serde::{Deserialize, Serialize};
 
+use crate::ai::AIRequestUsageModel;
 use crate::ai::blocklist::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel};
 #[cfg(feature = "local_fs")]
 use crate::ai::codebase_auto_indexing::{
-    auto_index_candidate_roots, should_auto_index_codebase, CodebaseAutoIndexingSurface,
+    CodebaseAutoIndexingSurface, auto_index_candidate_roots, should_auto_index_codebase,
 };
-use crate::ai::AIRequestUsageModel;
 use crate::persistence::ModelEvent;
 use crate::report_if_error;
 use crate::settings::CodeSettings;
@@ -240,7 +240,7 @@ impl PersistedWorkspace {
             ctx.subscribe_to_model(&CodebaseIndexManager::handle(ctx), |me, _, event, ctx| {
                 match event {
                     CodebaseIndexManagerEvent::IndexMetadataUpdated { root_path, event } => {
-                        me.handle_index_metadata_event(root_path, event.clone());
+                        me.handle_index_metadata_event(root_path, *event);
                     }
                     CodebaseIndexManagerEvent::NewIndexCreated { .. } => {}
                     CodebaseIndexManagerEvent::RemoveExpiredIndexMetadata { expired_metadata } => {
@@ -525,18 +525,17 @@ impl PersistedWorkspace {
         // When skip_cached is true (initial startup), always scan to pick up new server types.
         let mut paths_to_scan = Vec::new();
         for workspace_path in workspace_paths {
-            if !skip_cached {
-                if let Some(workspace) = self.workspaces.get(&workspace_path) {
-                    if !workspace.language_servers.is_empty() {
-                        let servers: Vec<LSPServerType> =
-                            workspace.language_servers.keys().copied().collect();
-                        ctx.emit(PersistedWorkspaceEvent::AvailableServersDetected {
-                            workspace_path,
-                            servers,
-                        });
-                        continue;
-                    }
-                }
+            if !skip_cached
+                && let Some(workspace) = self.workspaces.get(&workspace_path)
+                && !workspace.language_servers.is_empty()
+            {
+                let servers: Vec<LSPServerType> =
+                    workspace.language_servers.keys().copied().collect();
+                ctx.emit(PersistedWorkspaceEvent::AvailableServersDetected {
+                    workspace_path,
+                    servers,
+                });
+                continue;
             }
             paths_to_scan.push(workspace_path);
         }
@@ -893,9 +892,11 @@ impl PersistedWorkspace {
         let model_event_sender = self.model_event_sender.clone();
         if let Some(model_event_sender) = &model_event_sender {
             for event in events {
-                report_if_error!(model_event_sender
-                    .send(event)
-                    .with_context(|| "Unable to save codebase index metadata to sqlite"));
+                report_if_error!(
+                    model_event_sender
+                        .send(event)
+                        .with_context(|| "Unable to save codebase index metadata to sqlite")
+                );
             }
         }
     }
