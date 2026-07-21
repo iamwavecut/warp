@@ -1452,6 +1452,12 @@ fn create_window(
         .create_window(window_attributes)
         .map_err(Into::into);
 
+    #[cfg(target_os = "linux")]
+    if let Ok(window) = created_window.as_ref() {
+        window.set_ime_allowed(true);
+        log::debug!("IME allowed on newly created Linux window");
+    }
+
     #[cfg(windows)]
     {
         use super::windows::WindowExt;

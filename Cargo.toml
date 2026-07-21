@@ -186,6 +186,7 @@ jsonschema = { version = "0.45", default-features = false }
 lasso = { version = "0.7.3", features = ["multi-threaded"] }
 lazy_static = "1.4.0"
 libc = "0.2.81"
+libtest-mimic = "0.8.2"
 line-ending = "1.4.0"
 log = { version = "0.4", features = ["serde", "std"] }
 mermaid_to_svg = { git = "https://github.com/warpdotdev/mermaid-to-svg.git", rev = "8d3f789c2eb49335d7bf247a06bb649f59b6d4ed" }
@@ -331,7 +332,7 @@ web-sys = { version = "0.3.69", features = [
 # Disable default features to disable support for WebGPU, which does not yet
 # have wide browser support.  We enable all other default feature of wgpu,
 # though.
-wgpu = { version = "29.0.1", default-features = false, features = [
+wgpu = { version = "30.0.0", default-features = false, features = [
   "dx12",
   "gles",
   "metal",
