@@ -26,7 +26,7 @@ use crate::{
 
 use super::{
     ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput,
-    read_local_file_context,
+    describe_failed_files, read_local_file_context,
 };
 
 pub struct SearchCodebaseExecutor {
@@ -93,14 +93,11 @@ impl SearchCodebaseExecutor {
                             {
                                 Ok(result) => {
                                     if !result.failed_files.is_empty() {
-                                        let missing_files = result
-                                            .failed_files
-                                            .into_iter()
-                                            .map(|f| f.path)
-                                            .join(", ");
+                                        let failed_files =
+                                            describe_failed_files(&result.failed_files);
                                         SearchCodebaseResult::Failed {
                                             message: format!(
-                                                "These files do not exist: {missing_files}"
+                                                "Failed to read files: {failed_files}"
                                             ),
                                             reason: SearchCodebaseFailureReason::InvalidFilePaths,
                                         }
