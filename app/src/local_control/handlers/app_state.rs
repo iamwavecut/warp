@@ -24,7 +24,7 @@ use crate::code::editor_management::CodeSource;
 use crate::interaction_sources::PaletteSource;
 use crate::local_control::LocalControlBridge;
 use crate::local_control::handlers::ack;
-use crate::local_control::handlers::layout::{create_tab, resolve_shell};
+use crate::local_control::handlers::layout::create_tab;
 use crate::local_control::handlers::metadata::{SurfaceDestination, surface_unavailable_reason};
 use crate::local_control::resolver::{
     activate_target, active_target_pane_group, decode_params, focus_explicit_pane_target,
@@ -231,13 +231,7 @@ fn window_create(
             ));
         }
     }
-    match params.shell.as_deref() {
-        Some(shell_name) => {
-            let shell = resolve_shell(shell_name, ctx)?;
-            ctx.dispatch_global_action("root_view:open_new_with_shell", Some(shell));
-        }
-        None => ctx.dispatch_global_action("root_view:open_new", ()),
-    }
+    ctx.dispatch_global_action("root_view:open_new", ());
     Ok(ack(instance_id, ActionKind::WindowCreate))
 }
 

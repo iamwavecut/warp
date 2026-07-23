@@ -14,8 +14,6 @@ fn parses_typed_create_and_setting_list_params() {
         "create",
         "--type",
         "agent",
-        "--shell",
-        "zsh",
         "--session",
         "session_1",
     ])
@@ -24,8 +22,11 @@ fn parses_typed_create_and_setting_list_params() {
         panic!("expected tab create command");
     };
     assert_eq!(args.tab_type, Some(CliTabType::Agent));
-    assert_eq!(args.shell.as_deref(), Some("zsh"));
     assert_eq!(args.target.session.as_deref(), Some("session_1"));
+
+    let err = ControlArgs::try_parse_from(["warpctrl", "tab", "create", "--shell", "zsh"])
+        .expect_err("shell is not an accepted tab create flag");
+    assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
 
     let args =
         ControlArgs::try_parse_from(["warpctrl", "setting", "list", "--namespace", "editor"])
@@ -258,7 +259,6 @@ fn generated_bash_completions_include_mutating_command_groups() {
         generate_completion_string(Shell::Bash).expect("bash completions render to UTF-8");
     assert!(completions.contains("surface"));
     assert!(completions.contains("command-palette"));
-    assert!(completions.contains("warp-drive"));
     assert!(completions.contains("resource-center"));
     assert!(completions.contains("activate"));
     assert!(completions.contains("split"));
@@ -521,14 +521,6 @@ fn retained_action_examples() -> Vec<(ActionKind, Vec<&'static str>)> {
             vec!["warpctrl", "surface", "keybindings", "open"],
         ),
         (
-            ActionKind::SurfaceWarpDriveOpen,
-            vec!["warpctrl", "surface", "warp-drive", "open"],
-        ),
-        (
-            ActionKind::SurfaceWarpDriveToggle,
-            vec!["warpctrl", "surface", "warp-drive", "toggle"],
-        ),
-        (
             ActionKind::SurfaceResourceCenterToggle,
             vec!["warpctrl", "surface", "resource-center", "toggle"],
         ),
@@ -695,10 +687,6 @@ fn parsed_action_kind(command: &ControlCommand) -> Option<ActionKind> {
             },
             SurfaceCommand::Keybindings(command) => match command {
                 SurfaceOpenCommand::Open(_) => Some(ActionKind::SurfaceKeybindingsOpen),
-            },
-            SurfaceCommand::WarpDrive(command) => match command {
-                SurfaceOpenToggleCommand::Open(_) => Some(ActionKind::SurfaceWarpDriveOpen),
-                SurfaceOpenToggleCommand::Toggle(_) => Some(ActionKind::SurfaceWarpDriveToggle),
             },
             SurfaceCommand::ResourceCenter(command) => match command {
                 SurfaceToggleCommand::Toggle(_) => Some(ActionKind::SurfaceResourceCenterToggle),

@@ -519,6 +519,7 @@ default = [
     "ask_user_question",
     "bundled_skills",
     "agent_mode_computer_use",
+    "background_computer_use",
     "agent_view",
     "agent_view_block_context",
     "agent_view_conversation_list_view",
