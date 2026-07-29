@@ -105,6 +105,7 @@ use crate::{
             block::status_bar::BlocklistAIStatusBarAction, history_model::BlocklistAIHistoryModel,
         },
         loading::shimmering_warp_loading_text,
+        mcp::TemplatableMCPServerManager,
     },
     terminal::{self, TerminalModel},
     util::link_detection::{DetectedLinksState, add_link_detection_mouse_interactions},
@@ -355,8 +356,16 @@ pub fn render_warping_indicator<V: View>(
                 LOAD_OUTPUT_MESSAGE_FOR_SEARCH_CODEBASE.to_owned()
             }
             Some(AIAgentActionType::Grep { .. }) => LOAD_OUTPUT_MESSAGE_FOR_GREP.to_owned(),
-            Some(AIAgentActionType::CallMCPTool { name, .. }) => {
-                format!("Calling \"{name}\" MCP tool...")
+            Some(AIAgentActionType::CallMCPTool {
+                server_id, name, ..
+            }) => {
+                match server_id
+                    .as_ref()
+                    .and_then(|id| TemplatableMCPServerManager::get_mcp_name(id, app))
+                {
+                    Some(server) => format!("Calling \"{name}\" MCP tool on {server}..."),
+                    None => format!("Calling \"{name}\" MCP tool..."),
+                }
             }
             Some(AIAgentActionType::ReadMCPResource { name, .. }) => {
                 format!("Reading \"{name}\" MCP resource...")

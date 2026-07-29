@@ -399,3 +399,11 @@ fn test_rich_input_submit_strategy_for_oh_my_pi() {
         RichInputSubmitStrategy::BracketedPaste
     );
 }
+
+#[test]
+fn test_rich_input_submit_strategy_for_hermes_uses_bracketed_paste() {
+    assert_eq!(
+        rich_input_submit_strategy(CLIAgent::Hermes),
+        RichInputSubmitStrategy::BracketedPaste
+    );
+}
