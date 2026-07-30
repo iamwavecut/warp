@@ -17,6 +17,8 @@ use crate::ai::mcp::{
     templatable_installation::TemplatableMCPServerInstallation,
 };
 use futures_util::stream::AbortHandle;
+#[cfg(not(target_family = "wasm"))]
+use simple_logger::SimpleLogger;
 use uuid::Uuid;
 #[cfg(not(target_family = "wasm"))]
 use warpui::ModelSpawner;
@@ -77,6 +79,14 @@ pub struct TemplatableMCPServerManager {
     /// UUIDs of MCP servers started via the Oz CLI. We track these so they can be distinguished from
     /// file-based ephemeral MCP servers, which are directory-scoped.
     cli_spawned_server_uuids: HashSet<Uuid>,
+    /// Log-file handles for spawned server instances, keyed by installation
+    /// UUID. `LogManager` reserves one log path per template UUID and rejects
+    /// re-registration while an unclosed logger holds it, so shutdown paths
+    /// close the outgoing instance's logger eagerly instead of waiting for
+    /// async teardown to drop the remaining clones. This keeps reconnects and
+    /// immediate local server respawns from racing for the same log path.
+    #[cfg(not(target_family = "wasm"))]
+    server_loggers: HashMap<Uuid, SimpleLogger>,
 }
 
 /// Information about a spawned server task.

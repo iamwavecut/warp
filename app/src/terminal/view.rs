@@ -377,7 +377,7 @@ use warp_core::user_preferences::GetUserPreferences as _;
 #[cfg(feature = "local_fs")]
 use warp_util::path::LineAndColumnArg;
 use warp_util::path::ShellFamily;
-use warpui::r#async::Timer;
+use warpui::r#async::{SpawnedFutureHandle, Timer};
 use warpui::clipboard::ClipboardContent;
 use warpui::elements::new_scrollable::{
     AxisConfiguration, ClippedAxisConfiguration, DualAxisConfig, NewScrollableElement,
@@ -650,6 +650,8 @@ const BOOTSTRAP_FAILED_DURATION: Duration = Duration::from_secs(7);
 /// a user needing to type in one or many secret manager passwords
 /// during the bootstrap period.
 const ENV_VAR_BOOTSTRAP_FAILED_DURATION: Duration = Duration::from_secs(60);
+/// How long the slow-bootstrap banner stays visible after it first appears.
+const SLOW_BOOTSTRAP_BANNER_AUTO_DISMISS_DURATION: Duration = Duration::from_secs(30);
 const KNOWN_ISSUES_URL: &str = "about:blank";
 
 /// Link to instructions on how to update p10k.
@@ -2497,6 +2499,13 @@ pub struct TerminalView {
     enter_agent_view_after_pending_commands: bool,
     slow_bootstrap_banner: ViewHandle<Banner<TerminalAction>>,
     is_slow_bootstrap_banner_open: bool,
+    /// Timer that auto-dismisses the slow-bootstrap banner after
+    /// [`SLOW_BOOTSTRAP_BANNER_AUTO_DISMISS_DURATION`]. Held so it can be
+    /// aborted when the banner is hidden for any other reason (manual
+    /// dismissal, successful bootstrap completion) — letting an in-flight
+    /// timer fire afterwards would be a no-op since `hide_slow_bootstrap_banner`
+    /// is idempotent, but aborting avoids spurious work.
+    slow_bootstrap_banner_auto_dismiss_handle: Option<SpawnedFutureHandle>,
 
     /// The handle to any currently hovered secret. Used to determine whether the
     /// secret gets a special hovered treatment.
@@ -4114,6 +4123,7 @@ impl TerminalView {
             enter_agent_view_after_pending_commands: false,
             slow_bootstrap_banner,
             is_slow_bootstrap_banner_open: false,
+            slow_bootstrap_banner_auto_dismiss_handle: None,
             incompatible_configuration_banner,
             is_incompatible_configuration_banner_open: false,
             emacs_bindings_banner,
@@ -14075,10 +14085,32 @@ impl TerminalView {
     }
 
     fn hide_slow_bootstrap_banner(&mut self, ctx: &mut ViewContext<Self>) {
+        if let Some(handle) = self.slow_bootstrap_banner_auto_dismiss_handle.take() {
+            handle.abort();
+        }
         if self.is_slow_bootstrap_banner_open {
             self.is_slow_bootstrap_banner_open = false;
             ctx.notify();
         }
+    }
+
+    /// Schedule a timer that auto-dismisses the slow-bootstrap banner after
+    /// `duration`. Exposed as a method (rather than inlined) so tests can
+    /// trigger the same scheduling path with a short duration.
+    fn start_slow_bootstrap_banner_auto_dismiss_timer(
+        &self,
+        duration: Duration,
+        ctx: &mut ViewContext<Self>,
+    ) -> SpawnedFutureHandle {
+        ctx.spawn(
+            async move {
+                Timer::after(duration).await;
+            },
+            |me, _, ctx| {
+                me.slow_bootstrap_banner_auto_dismiss_handle = None;
+                me.hide_slow_bootstrap_banner(ctx);
+            },
+        )
     }
 
     #[cfg(not(target_family = "wasm"))]
@@ -14197,6 +14229,17 @@ impl TerminalView {
         if !self.is_login_shell_bootstrapped {
             log::warn!("Showing bootstrap slow toast");
             self.is_slow_bootstrap_banner_open = true;
+            // Replace any prior auto-dismiss timer (defensive — the banner
+            // should only open once per session, but if the path is ever
+            // exercised twice we don't want to leak a SpawnedFutureHandle).
+            if let Some(handle) = self.slow_bootstrap_banner_auto_dismiss_handle.take() {
+                handle.abort();
+            }
+            self.slow_bootstrap_banner_auto_dismiss_handle =
+                Some(self.start_slow_bootstrap_banner_auto_dismiss_timer(
+                    SLOW_BOOTSTRAP_BANNER_AUTO_DISMISS_DURATION,
+                    ctx,
+                ));
             ctx.notify();
         }
 
