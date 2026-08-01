@@ -9,7 +9,7 @@ use super::{
     agent_display_name_from_id, child_conversation_card_data_for_result, participant_for_agent_id,
     render_conversation_navigation_card_row, start_agent_cancelled_prefix,
     start_agent_error_prefix, start_agent_in_progress_prefix, start_agent_success_suffix,
-    transcript_metadata,
+    transcript_avatar_tooltip, transcript_metadata,
 };
 use crate::BlocklistAIHistoryModel;
 use crate::ai::agent::conversation::{AIConversationId, ConversationStatus};
@@ -400,6 +400,27 @@ fn participant_for_restored_child_run_id_resolves_to_agent_name() {
             OrchestrationAvatar::agent("Agent 1".to_string()),
         );
     });
+}
+
+/// The clickable letter avatar is otherwise indistinguishable from
+/// decoration, so the hover tooltip must name the child agent and the
+/// action taken on click.
+#[test]
+fn transcript_avatar_tooltip_describes_opening_a_new_pane() {
+    assert_eq!(
+        transcript_avatar_tooltip("Scout", false),
+        "Open Scout in a new pane"
+    );
+}
+
+/// Clicking the avatar focuses the existing pane when the child is
+/// already open elsewhere, so the tooltip must not promise a new pane.
+#[test]
+fn transcript_avatar_tooltip_describes_focusing_an_open_pane() {
+    assert_eq!(
+        transcript_avatar_tooltip("Scout", true),
+        "Focus Scout's pane"
+    );
 }
 
 #[test]
