@@ -2406,7 +2406,7 @@ impl PaneGroup {
         text.filter(|text: &String| !text.is_empty())
     }
 
-    /// Returns the path to copy for the currently focused pane.
+    /// Returns the path from the focused file, code editor, or terminal pane.
     pub fn path_from_focused_pane(&self, ctx: &AppContext) -> Option<String> {
         let focused_pane_id = self.focused_pane_id(ctx);
 
@@ -2416,6 +2416,15 @@ impl PaneGroup {
                 .as_ref(ctx)
                 .local_path()
                 .map(|path| path.display().to_string());
+        }
+
+        if let Some(code_pane) = self.downcast_pane_by_id::<CodePane>(focused_pane_id) {
+            let code_view = code_pane.file_view(ctx);
+            let code_view = code_view.as_ref(ctx);
+            return code_view
+                .tab_at(code_view.active_tab_index())
+                .and_then(|tab| tab.location())
+                .map(|path| path.display_path());
         }
 
         let terminal_view = self.focused_session_view(ctx)?;
