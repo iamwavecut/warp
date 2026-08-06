@@ -736,6 +736,15 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
 
     timer.mark_interval_end("LOG_FILE_SETUP_COMPLETE");
 
+    // Claim a background-only process type before anything else can reach
+    // AppKit, so a headless launch never acquires a Dock tile.
+    #[cfg(target_os = "macos")]
+    if launch_mode.is_headless()
+        && let Err(err) = platform::mac::mark_process_as_background_only()
+    {
+        log::warn!("Failed to mark process as background-only: {err:#}");
+    }
+
     #[cfg(windows)]
     platform::windows::check_redirection_guard();
 
@@ -872,7 +881,7 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
     };
 
     #[cfg(target_os = "macos")]
-    {
+    if !launch_mode.is_headless() {
         use warpui::AssetProvider as _;
         use warpui::platform::mac::AppExt;
 

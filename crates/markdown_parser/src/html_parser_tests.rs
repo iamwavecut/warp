@@ -46,7 +46,7 @@ fn test_parse_text_styles() {
         ),
         vec![FormattedTextLine::Line(vec![
             FormattedTextFragment::plain_text("So"),
-            FormattedTextFragment::bold("me"),
+            FormattedTextFragment::weighted("me", Some(CustomWeight::Semibold)),
         ])]
     );
 
@@ -137,9 +137,56 @@ fn test_parse_text_styles() {
         ),
         vec![FormattedTextLine::Line(vec![
             FormattedTextFragment::strikethrough("Strike"),
-            FormattedTextFragment::bold("Bold"),
+            FormattedTextFragment::weighted("Bold", Some(CustomWeight::Semibold)),
         ]),]
     )
+}
+
+#[test]
+fn test_parse_numeric_font_weights_preserve_custom_weight() {
+    let cases = [
+        ("100", Some(CustomWeight::Thin)),
+        ("200", Some(CustomWeight::ExtraLight)),
+        ("300", Some(CustomWeight::Light)),
+        ("400", None),
+        ("500", Some(CustomWeight::Medium)),
+        ("600", Some(CustomWeight::Semibold)),
+        ("700", Some(CustomWeight::Bold)),
+        ("800", Some(CustomWeight::ExtraBold)),
+        ("900", Some(CustomWeight::Black)),
+    ];
+
+    for (css_weight, expected) in cases {
+        let html =
+            format!("<meta charset='utf-8'>So<span style=\"font-weight:{css_weight}\">me</span>");
+        assert_eq!(
+            test_parse_html(&html),
+            vec![FormattedTextLine::Line(vec![
+                FormattedTextFragment::plain_text("So"),
+                FormattedTextFragment::weighted("me", expected),
+            ])],
+            "font-weight:{css_weight} should map to {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn test_parse_keyword_font_weights() {
+    assert_eq!(
+        test_parse_html("<meta charset='utf-8'>So<span style=\"font-weight:bold\">me</span>"),
+        vec![FormattedTextLine::Line(vec![
+            FormattedTextFragment::plain_text("So"),
+            FormattedTextFragment::bold("me"),
+        ])]
+    );
+
+    assert_eq!(
+        test_parse_html("<meta charset='utf-8'>So<span style=\"font-weight:normal\">me</span>"),
+        vec![FormattedTextLine::Line(vec![
+            FormattedTextFragment::plain_text("So"),
+            FormattedTextFragment::plain_text("me"),
+        ])]
+    );
 }
 
 #[test]
