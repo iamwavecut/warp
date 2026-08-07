@@ -7,6 +7,7 @@ use std::sync::LazyLock;
 use async_channel::Sender;
 use futures::Future;
 use regex::Regex;
+use repo_metadata::RepositoryWatchMode;
 use repo_metadata::repositories::{
     DetectedRepositories, DetectedRepositoriesEvent, RepoDetectionSource,
 };
@@ -248,6 +249,7 @@ impl FileMCPWatcher {
 
         let start = repo_handle.update(ctx, |repo, ctx| {
             repo.start_watching(
+                RepositoryWatchMode::FilesystemOnly,
                 Box::new(FileMCPSubscriber {
                     stored_dir: repo_path.clone(),
                     message_tx: file_mcp_tx,
@@ -310,7 +312,9 @@ impl FileMCPWatcher {
             stored_dir: home_dir,
             message_tx: file_mcp_tx,
         });
-        let start = repo_handle.update(ctx, |repo, ctx| repo.start_watching(subscriber, ctx));
+        let start = repo_handle.update(ctx, |repo, ctx| {
+            repo.start_watching(RepositoryWatchMode::FilesystemOnly, subscriber, ctx)
+        });
         let subscriber_id = start.subscriber_id;
         // Store optimistically; removed in the error callback below if registration fails.
         home_provider_watchers.insert(

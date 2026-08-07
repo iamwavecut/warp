@@ -11,7 +11,7 @@ use futures::stream::AbortHandle;
 use instant::Instant;
 use repo_metadata::CanonicalizedPath;
 use repo_metadata::{
-    DirectoryWatcher, Repository, RepositoryUpdate,
+    DirectoryWatcher, Repository, RepositoryUpdate, RepositoryWatchMode,
     repositories::{DetectedRepositories, DetectedRepositoriesEvent},
     repository::{BufferingRepositorySubscriber, RepositorySubscriber, SubscriberId},
 };
@@ -313,7 +313,11 @@ impl RepoOutlines {
             };
             let debounced =
                 BufferingRepositorySubscriber::new(inner, REPO_WATCHER_DEBOUNCE_DURATION);
-            repo.start_watching(Box::new(debounced), ctx)
+            repo.start_watching(
+                RepositoryWatchMode::FilesystemOnly,
+                Box::new(debounced),
+                ctx,
+            )
         });
         let subscriber_id = start.subscriber_id;
 
