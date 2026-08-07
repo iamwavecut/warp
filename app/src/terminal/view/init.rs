@@ -580,7 +580,9 @@ pub fn init(app: &mut AppContext) {
         )
         .with_custom_action(CustomAction::SelectBlockAbove)
         .with_context_predicate(
-            id!("Terminal") & id!("TerminalView_NonEmptyBlockList") & !id!("AltScreen"),
+            (id!("Terminal") | (id!("Input") & id!(flags::ACTIVE_AGENT_VIEW)))
+                & id!("TerminalView_NonEmptyBlockList")
+                & !id!("AltScreen"),
         ),
         EditableBinding::new(
             SELECT_NEXT_BLOCK_ACTION_NAME,
@@ -589,7 +591,9 @@ pub fn init(app: &mut AppContext) {
         )
         .with_custom_action(CustomAction::SelectBlockBelow)
         .with_context_predicate(
-            id!("Terminal") & id!("TerminalView_NonEmptyBlockList") & !id!("AltScreen"),
+            (id!("Terminal") | (id!("Input") & id!(flags::ACTIVE_AGENT_VIEW)))
+                & id!("TerminalView_NonEmptyBlockList")
+                & !id!("AltScreen"),
         ),
         EditableBinding::new(
             "terminal:bookmark_selected_block",

@@ -105,7 +105,7 @@ use crate::code_review::context::{
     convert_file_diffs_to_diffset_hunks, create_attachment_reference_and_key,
     register_diffset_attachment,
 };
-use crate::terminal::model::blocks::RemovableBlocklistItem;
+use crate::terminal::model::blocks::{AgentTranscriptNavigableItem, RemovableBlocklistItem};
 #[cfg(feature = "local_fs")]
 use crate::util::file::external_editor::{EditorSettings, settings::EditorLayout};
 use crate::util::truncation::truncate_from_end;
@@ -314,7 +314,7 @@ use crate::terminal::{AudibleBell, SizeUpdateReason};
 use crate::terminal::{BlockListSettings, BlockListSettingsChangedEvent};
 use crate::terminal::{CellSizeAndWindowPadding, heights_approx_eq};
 use crate::terminal::{HistoryEntry, element_size_at_last_frame};
-use crate::terminal::{SizeUpdate, height_in_range_approx, heights_approx_gt};
+use crate::terminal::{SizeUpdate, height_in_range_approx, heights_approx_gt, heights_approx_gte};
 use crate::themes::theme::WarpTheme;
 use crate::ui_components::icons::{self};
 use crate::util::bindings::{
@@ -2367,6 +2367,12 @@ pub(in crate::terminal::view) enum PendingUserQueryKind {
     CloudMode,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgentTranscriptNavigationDirection {
+    Previous,
+    Next,
+}
+
 #[derive(Debug, Clone)]
 pub struct TerminalDropTargetData {
     pub terminal_view: WeakViewHandle<TerminalView>,
@@ -2439,6 +2445,11 @@ pub struct TerminalView {
     hovered_block_index: Option<BlockIndex>,
 
     selected_blocks: SelectedBlocks,
+
+    /// Focused local Agent transcript prompt or user-executed shell block.
+    agent_transcript_selection: Option<AgentTranscriptNavigableItem>,
+    /// AI block currently drawing the keyboard-navigation target ring.
+    agent_transcript_marked_ai_block: Option<EntityId>,
 
     // Whether any session contains blocks from a remote session. Cached to improve performance.
     // Blocks don't necessarily need to be finished for this to be true (e.g. it's true for
@@ -3140,6 +3151,8 @@ impl TerminalView {
                 } => {
                     // Prompt suggestions should not follow the user back to terminal view.
                     me.clear_prompt_suggestions(ctx);
+                    me.agent_transcript_selection = None;
+                    me.sync_agent_transcript_navigation_target(ctx);
                     // For ambient agent sessions, pop the pane stack to return to the parent terminal.
                     // Skip the pop when this exit is immediately followed by re-entering agent view
                     // for a different conversation (e.g. a restored conversation taking over the
@@ -4102,6 +4115,8 @@ impl TerminalView {
             open_secret_tool_tip: None,
             hovered_block_index: None,
             selected_blocks: Default::default(),
+            agent_transcript_selection: None,
+            agent_transcript_marked_ai_block: None,
             block_list_mouse_states,
             any_session_contains_remote_blocks: false,
             any_session_contains_restored_remote_blocks: false,
@@ -5474,6 +5489,16 @@ impl TerminalView {
                     &ai_block_model,
                     ctx,
                 );
+                if let Some(ai_block) = self.ai_block_for_exchange(exchange_id).cloned() {
+                    let is_user_query = ai_block.as_ref(ctx).has_user_input(ctx);
+                    self.model
+                        .lock()
+                        .block_list_mut()
+                        .set_agent_transcript_user_query_for_rich_content(
+                            ai_block.id(),
+                            is_user_query,
+                        );
+                }
                 self.update_context_blocks_and_exchanges(ctx);
             }
             BlocklistAIHistoryEvent::SetActiveConversation { .. } => {
@@ -18168,6 +18193,11 @@ impl TerminalView {
             self.close_context_menu(ctx, true);
         }
 
+        if !is_shift_down && self.should_use_agent_transcript_navigation(ctx) {
+            self.navigate_agent_transcript(AgentTranscriptNavigationDirection::Previous, ctx);
+            return;
+        }
+
         if let Some(selected_block_index) = self.selected_blocks.tail() {
             let new_block_index = self
                 .model
@@ -18211,6 +18241,10 @@ impl TerminalView {
     ) {
         if self.is_context_menu_open() {
             self.close_context_menu(ctx, true);
+        }
+        if !is_shift_down && self.should_use_agent_transcript_navigation(ctx) {
+            self.navigate_agent_transcript(AgentTranscriptNavigationDirection::Next, ctx);
+            return;
         }
         let input_mode = *InputModeSettings::as_ref(ctx).input_mode.value();
         let is_inverted_blocklist = input_mode.is_inverted_blocklist();
@@ -18327,6 +18361,9 @@ impl TerminalView {
         block_index: BlockIndex,
         ctx: &mut ViewContext<Self>,
     ) {
+        self.agent_transcript_selection =
+            Some(AgentTranscriptNavigableItem::ShellBlock(block_index));
+        self.sync_agent_transcript_navigation_target(ctx);
         self.change_block_selections(
             |selected_blocks| {
                 selected_blocks.reset_to_single(block_index);
@@ -18337,6 +18374,8 @@ impl TerminalView {
     }
 
     fn clear_selected_blocks(&mut self, ctx: &mut ViewContext<Self>) {
+        self.agent_transcript_selection = None;
+        self.sync_agent_transcript_navigation_target(ctx);
         self.change_block_selections(
             |selected_blocks| {
                 selected_blocks.reset();
@@ -18344,6 +18383,152 @@ impl TerminalView {
             ctx,
         );
         ctx.notify();
+    }
+
+    fn should_use_agent_transcript_navigation(&self, app: &AppContext) -> bool {
+        FeatureFlag::AgentView.is_enabled() && self.agent_view_controller.as_ref(app).is_active()
+    }
+
+    fn navigate_agent_transcript(
+        &mut self,
+        direction: AgentTranscriptNavigationDirection,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let navigable_items = self
+            .model
+            .lock()
+            .block_list()
+            .agent_transcript_navigable_items();
+        if navigable_items.is_empty() {
+            return;
+        }
+
+        let current = self.agent_transcript_selection.or_else(|| {
+            self.selected_blocks
+                .tail()
+                .map(AgentTranscriptNavigableItem::ShellBlock)
+        });
+        let target = match direction {
+            AgentTranscriptNavigationDirection::Previous => match current {
+                Some(current) => match navigable_items.iter().position(|item| *item == current) {
+                    Some(0) => Some(current),
+                    Some(index) => Some(navigable_items[index - 1]),
+                    None => navigable_items.last().copied(),
+                },
+                None => navigable_items.last().copied(),
+            },
+            AgentTranscriptNavigationDirection::Next => {
+                let Some(current) = current else {
+                    return;
+                };
+                let next = navigable_items
+                    .iter()
+                    .position(|item| *item == current)
+                    .and_then(|index| navigable_items.get(index + 1).copied());
+                if next.is_none() {
+                    self.scroll_to_end_of_blocklist_if_not_at_end(ctx);
+                    self.clear_selected_blocks(ctx);
+                    ctx.focus(&self.input);
+                    ctx.notify();
+                    return;
+                }
+                next
+            }
+        };
+
+        if let Some(target) = target {
+            self.apply_agent_transcript_selection(target, ctx);
+        }
+    }
+
+    fn apply_agent_transcript_selection(
+        &mut self,
+        target: AgentTranscriptNavigableItem,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.agent_transcript_selection = Some(target);
+        match target {
+            AgentTranscriptNavigableItem::ShellBlock(block_index) => {
+                self.reset_selection_to_single_block(block_index, ctx);
+                self.scroll_to_if_not_visible(block_index, ctx);
+            }
+            AgentTranscriptNavigableItem::AiBlock { view_id } => {
+                self.change_block_selections(|selected_blocks| selected_blocks.reset(), ctx);
+                self.scroll_to_rich_content_view(view_id, ctx);
+            }
+        }
+        self.sync_agent_transcript_navigation_target(ctx);
+        self.tips_completed.update(ctx, |tips, ctx| {
+            mark_feature_used_and_write_to_user_defaults(
+                Tip::Hint(TipHint::BlockSelect),
+                tips,
+                ctx,
+            );
+            ctx.notify();
+        });
+        ctx.notify();
+    }
+
+    fn scroll_to_end_of_blocklist_if_not_at_end(&mut self, ctx: &mut ViewContext<Self>) {
+        let is_at_end = {
+            let input_mode = *InputModeSettings::as_ref(ctx).input_mode.value();
+            let model = self.model.lock();
+            let viewport = self.viewport_state(model.block_list(), input_mode, ctx);
+            heights_approx_gte(
+                viewport.scroll_top_in_lines(),
+                viewport.max_scroll_top_in_lines(),
+            )
+        };
+        if !is_at_end {
+            self.update_scroll_position_locking(ScrollPositionUpdate::AfterEnd, ctx);
+        }
+    }
+
+    fn agent_transcript_navigated_ai_block(&self, app: &AppContext) -> Option<EntityId> {
+        if !self.should_use_agent_transcript_navigation(app) {
+            return None;
+        }
+        match self.agent_transcript_selection {
+            Some(AgentTranscriptNavigableItem::AiBlock { view_id }) => Some(view_id),
+            _ => None,
+        }
+    }
+
+    fn sync_agent_transcript_navigation_target(&mut self, ctx: &mut ViewContext<Self>) {
+        let target = self.agent_transcript_navigated_ai_block(ctx);
+        if target == self.agent_transcript_marked_ai_block {
+            return;
+        }
+        for rich_content in &self.rich_content_views {
+            let Some(ai_metadata) = rich_content.ai_block_metadata() else {
+                continue;
+            };
+            let handle = &ai_metadata.ai_block_handle;
+            let should_mark = Some(handle.id()) == target;
+            let was_marked = Some(handle.id()) == self.agent_transcript_marked_ai_block;
+            if should_mark != was_marked {
+                handle.update(ctx, |ai_block, ctx| {
+                    ai_block.set_agent_transcript_navigation_target(should_mark, ctx);
+                });
+            }
+        }
+        self.agent_transcript_marked_ai_block = target;
+    }
+
+    fn scroll_to_rich_content_view(&mut self, view_id: EntityId, ctx: &mut ViewContext<Self>) {
+        let Some(index) = self
+            .model
+            .lock()
+            .block_list()
+            .removable_blocklist_item_position(&RemovableBlocklistItem::RichContent(view_id))
+            .copied()
+        else {
+            return;
+        };
+        self.update_scroll_position_locking(
+            ScrollPositionUpdate::ScrollToTopOfRichContent { index },
+            ctx,
+        );
     }
 
     /// Clears selected text across all types of blocks and handles side effects (i.e. Agent Mode
@@ -20832,6 +21017,11 @@ impl TerminalView {
     #[cfg(any(test, feature = "integration_tests"))]
     pub fn selected_blocks_tail_index(&self) -> Option<BlockIndex> {
         self.selected_blocks.tail()
+    }
+
+    #[cfg(any(test, feature = "integration_tests"))]
+    pub fn agent_transcript_selection_for_test(&self) -> Option<AgentTranscriptNavigableItem> {
+        self.agent_transcript_selection
     }
 
     #[cfg(any(test, feature = "integration_tests"))]

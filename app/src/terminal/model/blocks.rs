@@ -21,7 +21,7 @@ use warpui::units::{IntoLines, IntoPixels, Lines};
 use warpui::{AppContext, EntityId, ViewHandle, record_trace_event};
 
 use super::ansi::{Handler, InputBufferValue};
-use super::block::{BlockId, BlockSize, BlockState, SerializedAIMetadata};
+use super::block::{BlockId, BlockSize, BlockState, InteractionMode, SerializedAIMetadata};
 use super::early_output::EarlyOutput;
 use super::grid::RespectDisplayedOutput;
 use super::grid::grid_handler::{FragmentBoundary, GridHandler, Link, PossiblePath};
@@ -77,6 +77,9 @@ pub struct RichContentItem {
     /// The conversation ID of the active agent view when this rich content was created, if any.
     pub agent_view_conversation_id: Option<AIConversationId>,
     pub should_hide: bool,
+    /// Whether this AI rich-content item represents a user query that keyboard transcript
+    /// navigation should stop on. Agent replies and tool results leave this false.
+    pub is_agent_transcript_user_query: bool,
 }
 
 impl RichContentItem {
@@ -86,12 +89,29 @@ impl RichContentItem {
         agent_view_conversation_id: Option<AIConversationId>,
         should_hide: bool,
     ) -> Self {
+        Self::new_with_agent_transcript_user_query(
+            content_type,
+            view_id,
+            agent_view_conversation_id,
+            should_hide,
+            false,
+        )
+    }
+
+    pub fn new_with_agent_transcript_user_query(
+        content_type: Option<RichContentType>,
+        view_id: EntityId,
+        agent_view_conversation_id: Option<AIConversationId>,
+        should_hide: bool,
+        is_agent_transcript_user_query: bool,
+    ) -> Self {
         Self {
             content_type,
             view_id,
             last_laid_out_height: BlockHeight::from(1.0),
             agent_view_conversation_id,
             should_hide,
+            is_agent_transcript_user_query,
         }
     }
 
@@ -227,6 +247,12 @@ pub struct BlockScrollPosition {
 pub enum RemovableBlocklistItem {
     InlineBanner(InlineBannerId),
     RichContent(EntityId),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum AgentTranscriptNavigableItem {
+    AiBlock { view_id: EntityId },
+    ShellBlock(BlockIndex),
 }
 
 pub struct BlockList {
@@ -2123,6 +2149,76 @@ impl BlockList {
         None
     }
 
+    /// Returns user prompts and user-executed shell blocks in chronological order for local Agent
+    /// transcript navigation. Agent-run commands, hidden items, replies, and tool results are
+    /// deliberately skipped.
+    pub fn agent_transcript_navigable_items(&self) -> Vec<AgentTranscriptNavigableItem> {
+        let mut items = Vec::new();
+        let mut cursor = self
+            .block_heights
+            .cursor::<TotalIndex, BlockHeightSummary>();
+        cursor.seek(&TotalIndex(0), SeekBias::Left);
+        while let Some(item) = cursor.item() {
+            match item {
+                BlockHeightItem::RichContent(rich_content)
+                    if !rich_content.should_hide
+                        && rich_content.last_laid_out_height > BlockHeight::zero()
+                        && rich_content
+                            .content_type
+                            .is_some_and(|content_type| content_type.is_ai_block())
+                        && rich_content.is_agent_transcript_user_query =>
+                {
+                    items.push(AgentTranscriptNavigableItem::AiBlock {
+                        view_id: rich_content.view_id,
+                    });
+                }
+                BlockHeightItem::Block(_) => {
+                    let block_index = BlockIndex::from(cursor.start().block_count);
+                    if let Some(block) = self.block_at(block_index)
+                        && BlockFilter::commands().matches(block, &self.agent_view_state)
+                        && matches!(block.interaction_mode(), InteractionMode::User(_))
+                    {
+                        items.push(AgentTranscriptNavigableItem::ShellBlock(block_index));
+                    }
+                }
+                _ => {}
+            }
+            cursor.next();
+        }
+        items
+    }
+
+    pub fn set_agent_transcript_user_query_for_rich_content(
+        &mut self,
+        rich_content_view_id: EntityId,
+        is_agent_transcript_user_query: bool,
+    ) {
+        let Some(&index) = self
+            .removable_blocklist_item_positions
+            .get(&RemovableBlocklistItem::RichContent(rich_content_view_id))
+        else {
+            return;
+        };
+
+        self.block_heights = {
+            let mut cursor = self.block_heights.cursor::<TotalIndex, ()>();
+            let mut new_tree = cursor.slice(&index, SeekBias::Right);
+
+            if let Some(BlockHeightItem::RichContent(item)) = cursor.item() {
+                new_tree.push(BlockHeightItem::RichContent(RichContentItem {
+                    is_agent_transcript_user_query,
+                    ..*item
+                }));
+                cursor.next();
+            }
+
+            new_tree.push_tree(cursor.suffix());
+            new_tree
+        };
+
+        self.event_proxy.send_wakeup_event();
+    }
+
     pub fn size(&self) -> &SizeInfo {
         &self.size
     }
@@ -2231,32 +2327,21 @@ impl BlockList {
                             is_hidden: agent_view_state.is_fullscreen(),
                         });
                     }
-                    BlockHeightItem::RichContent(RichContentItem {
-                        content_type,
-                        view_id,
-                        agent_view_conversation_id,
-                        last_laid_out_height,
-                        ..
-                    }) => {
+                    BlockHeightItem::RichContent(item) => {
                         let should_hide = RichContentItem {
-                            content_type: *content_type,
-                            view_id: *view_id,
-                            last_laid_out_height: *last_laid_out_height,
-                            agent_view_conversation_id: *agent_view_conversation_id,
                             should_hide: false,
+                            ..*item
                         }
                         .should_hide_for_agent_view_state(agent_view_state);
                         let updated_height = rich_content_heights
-                            .and_then(|heights| heights.get(view_id))
+                            .and_then(|heights| heights.get(&item.view_id))
                             .copied()
-                            .unwrap_or(*last_laid_out_height);
+                            .unwrap_or(item.last_laid_out_height);
 
                         new_sum_tree.push(BlockHeightItem::RichContent(RichContentItem {
-                            content_type: *content_type,
-                            view_id: *view_id,
                             last_laid_out_height: updated_height,
-                            agent_view_conversation_id: *agent_view_conversation_id,
                             should_hide,
+                            ..*item
                         }));
                     }
                     BlockHeightItem::RestoredBlockSeparator {
