@@ -17,7 +17,7 @@ use {
     },
     async_channel::Sender,
     repo_metadata::{
-        Repository, RepositoryUpdate,
+        Repository, RepositoryUpdate, RepositoryWatchMode,
         repositories::DetectedRepositories,
         repository::{RepositorySubscriber, SubscriberId},
     },
@@ -232,6 +232,7 @@ impl GitRepoStatusModel {
         let (throttled_tx, throttled_rx) = async_channel::unbounded();
         let start = repository_model.update(ctx, |repo, ctx| {
             repo.start_watching(
+                RepositoryWatchMode::GitRepository,
                 Box::new(GitStatusRepositorySubscriber {
                     repository_update_tx,
                 }),
