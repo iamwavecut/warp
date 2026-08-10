@@ -2625,3 +2625,73 @@ fn test_focused_pane_is_synchronized_with_application_focus() {
         });
     });
 }
+
+/// Closing a file pane only hides it while undo-close is available, and the same view is
+/// reattached without reopening its file. The file is released only once the pane is permanently
+/// discarded, so a restored pane keeps receiving local file updates.
+#[cfg(feature = "local_fs")]
+#[test]
+fn test_undo_close_keeps_a_file_pane_watching_its_file() {
+    use warp_files::FileModel;
+
+    let _undo_closed_panes = FeatureFlag::UndoClosedPanes.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        app.add_singleton_model(FileModel::new);
+        let pane_group = mock_pane_group(&mut app, Default::default());
+
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("notes.md");
+        std::fs::write(&path, "# before").expect("write file");
+
+        pane_group.update(&mut app, |panes, ctx| {
+            let pane = FilePane::new(
+                Some(LocalOrRemotePath::Local(path.clone())),
+                None,
+                None,
+                ctx,
+            );
+            panes.add_pane_with_direction(Direction::Right, pane, true, ctx);
+        });
+
+        let (file_pane_id, file_view) = pane_group.read(&app, |panes, ctx| {
+            panes
+                .file_notebook_panes(ctx)
+                .next()
+                .expect("the file pane should exist")
+        });
+
+        let loaded = file_view.update(&mut app, |view, ctx| {
+            let file_id = view.file_id_for_test().expect("the file should be open");
+            let future_handle = FileModel::as_ref(ctx)
+                .get_future_handle(file_id)
+                .expect("loading future should be present");
+            ctx.await_spawned_future(future_handle.future_id())
+        });
+        loaded.await;
+
+        file_view.update(&mut app, BackingView::close);
+        pane_group.update(&mut app, |panes, ctx| {
+            assert!(panes.is_pane_hidden_for_close(file_pane_id));
+            assert!(panes.restore_closed_pane(file_pane_id, ctx));
+        });
+
+        app.read(|ctx| {
+            let file_id = file_view
+                .as_ref(ctx)
+                .file_id_for_test()
+                .expect("a restored pane should still hold its file open");
+            assert!(FileModel::as_ref(ctx).file_path(file_id).is_some());
+        });
+
+        pane_group.update(&mut app, |panes, ctx| {
+            panes.close_pane(file_pane_id, ctx);
+            panes.cleanup_closed_pane(file_pane_id, ctx);
+        });
+
+        app.read(|ctx| {
+            assert!(file_view.as_ref(ctx).file_id_for_test().is_none());
+        });
+    });
+}
