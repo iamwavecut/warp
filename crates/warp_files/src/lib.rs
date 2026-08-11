@@ -699,8 +699,7 @@ impl FileModel {
                         }
                     }
                     WatcherType::Repository => {
-                        if let Some((repo_root, unused_repo)) =
-                            self.repo_path_mapping.remove(path)
+                        if let Some((repo_root, unused_repo)) = self.repo_path_mapping.remove(path)
                         {
                             if unused_repo {
                                 self.unsubscribe_from_repo(&repo_root, ctx);

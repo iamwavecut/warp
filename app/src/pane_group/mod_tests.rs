@@ -2646,12 +2646,7 @@ fn test_undo_close_keeps_a_file_pane_watching_its_file() {
         std::fs::write(&path, "# before").expect("write file");
 
         pane_group.update(&mut app, |panes, ctx| {
-            let pane = FilePane::new(
-                Some(LocalOrRemotePath::Local(path.clone())),
-                None,
-                None,
-                ctx,
-            );
+            let pane = FilePane::new(Some(path.clone()), None, None, ctx);
             panes.add_pane_with_direction(Direction::Right, pane, true, ctx);
         });
 

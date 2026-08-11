@@ -1,8 +1,21 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
-
-use pathfinder_geometry::vector::{vec2f, Vector2F};
+use crate::auth::AuthStateProvider;
+use crate::cloud_object::model::persistence::CloudModel;
+use crate::code::editor::find::view::CodeEditorFind;
+use crate::notebooks::editor::keys::NotebookKeybindings;
+use crate::workspace::ActiveSession;
+use crate::{
+    code::editor::view::{CodeEditorRenderOptions, CodeEditorView, CodeEditorViewAction},
+    editor::{EditorAction, EditorView},
+    server::server_api::{team::MockTeamClient, workspace::MockWorkspaceClient},
+    settings::AppEditorSettings,
+    settings_view::keybindings::KeybindingChangedNotifier,
+    test_util::settings::initialize_settings_for_tests,
+    vim_registers::VimRegisters,
+    workspace::sync_inputs::SyncedInputState,
+    workspaces::user_workspaces::UserWorkspaces,
+};
+use pathfinder_geometry::vector::{Vector2F, vec2f};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 use unindent::Unindent;
 use vim::vim::{MotionType, VimMode};
 use warp_core::{features::FeatureFlag, settings::Setting, ui::appearance::Appearance};
@@ -18,23 +31,6 @@ use warpui::units::IntoPixels;
 use warpui::{
     App, EntityId, EntityIdSet, Event, Presenter, SingletonEntity, TypedActionView, UpdateModel,
     ViewHandle, WindowId, WindowInvalidation, keymap::Keystroke, platform::WindowStyle,
-};
-
-use crate::auth::AuthStateProvider;
-use crate::cloud_object::model::persistence::CloudModel;
-use crate::code::editor::find::view::CodeEditorFind;
-use crate::editor::{EditorAction, EditorView};
-use crate::notebooks::editor::keys::NotebookKeybindings;
-use crate::workspace::ActiveSession;
-use crate::{
-    code::editor::view::{CodeEditorRenderOptions, CodeEditorView, CodeEditorViewAction},
-    server::server_api::{team::MockTeamClient, workspace::MockWorkspaceClient},
-    settings::AppEditorSettings,
-    settings_view::keybindings::KeybindingChangedNotifier,
-    test_util::settings::initialize_settings_for_tests,
-    vim_registers::VimRegisters,
-    workspace::sync_inputs::SyncedInputState,
-    workspaces::user_workspaces::UserWorkspaces,
 };
 
 // Await render/layout completion for a CodeEditorView in tests.

@@ -308,9 +308,12 @@ impl CLIAgent {
         )
     }
 
-    /// Whether Warp should show its CLI-agent footer for this agent.
+    /// Whether the local client should show its footer for this CLI agent.
+    ///
+    /// Every agent represented in this fork is a locally tracked CLI process; hosted Warp TUI
+    /// sessions are intentionally not part of the model.
     pub(crate) fn supports_cli_agent_footer(&self) -> bool {
-        !matches!(self, CLIAgent::WarpTui)
+        true
     }
 
     /// Returns the brand color for this CLI agent, or `None` for unknown/custom agents.
