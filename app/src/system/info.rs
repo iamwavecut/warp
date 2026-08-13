@@ -179,3 +179,7 @@ impl Entity for SystemInfo {
 }
 
 impl SingletonEntity for SystemInfo {}
+
+#[cfg(test)]
+#[path = "info_tests.rs"]
+mod tests;
