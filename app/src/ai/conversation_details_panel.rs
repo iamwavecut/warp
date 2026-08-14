@@ -117,6 +117,7 @@ struct PanelMouseStates {
     copy_conversation_id: MouseStateHandle,
     copy_run_id: MouseStateHandle,
     copy_error: MouseStateHandle,
+    copy_initial_query: MouseStateHandle,
     skill_source_link: MouseStateHandle,
 }
 
@@ -127,6 +128,7 @@ enum CopyButtonKind {
     ConversationId,
     RunId,
     Error,
+    InitialQuery,
 }
 
 /// Information about a principal involved in a conversation.
@@ -546,6 +548,7 @@ pub enum ConversationDetailsPanelAction {
     CopyConversationId,
     CopyRunId,
     CopyError,
+    CopyInitialQuery,
     Focus,
     CopySelectedText,
     #[cfg(not(target_family = "wasm"))]
@@ -581,6 +584,11 @@ pub struct ConversationDetailsPanel {
     /// Selection state for cmd+C copy.
     selection_handle: SelectionHandle,
     selected_text: Arc<RwLock<Option<String>>>,
+}
+
+fn trimmed_initial_query(source_prompt: &Option<String>) -> Option<&str> {
+    let trimmed = source_prompt.as_ref()?.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 impl ConversationDetailsPanel {
@@ -1177,13 +1185,48 @@ impl ConversationDetailsPanel {
         Some(row.finish())
     }
 
-    fn render_source_section(&self, appearance: &Appearance) -> Option<Box<dyn Element>> {
-        let source_prompt = self.data.source_prompt.as_ref()?;
-        let trimmed = source_prompt.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-        Some(self.render_simple_field("Initial query", trimmed, appearance))
+    fn render_source_section(
+        &self,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Option<Box<dyn Element>> {
+        let trimmed = trimmed_initial_query(&self.data.source_prompt)?;
+        let theme = appearance.theme();
+        let ui_font_size = appearance.ui_font_size();
+
+        let label_text = Text::new(
+            "Initial query".to_string(),
+            appearance.ui_font_family(),
+            ui_font_size,
+        )
+        .with_color(blended_colors::text_sub(theme, theme.surface_1()))
+        .finish();
+
+        let value_field = render_copyable_text_field(
+            CopyableTextFieldConfig::new(trimmed)
+                .with_font_size(ui_font_size)
+                .with_text_color(theme.foreground().into())
+                .with_wrap_text(true)
+                .with_icon_size(16.)
+                .with_mouse_state(self.mouse_state_for_copy_button(CopyButtonKind::InitialQuery))
+                .with_last_copied_at(self.copy_feedback_times.get(&CopyButtonKind::InitialQuery)),
+            |ctx| {
+                ctx.dispatch_typed_action(ConversationDetailsPanelAction::CopyInitialQuery);
+            },
+            app,
+        );
+
+        Some(
+            Flex::column()
+                .with_cross_axis_alignment(CrossAxisAlignment::Start)
+                .with_child(
+                    Container::new(label_text)
+                        .with_margin_bottom(LABEL_VALUE_GAP)
+                        .finish(),
+                )
+                .with_child(value_field)
+                .finish(),
+        )
     }
 
     fn render_artifacts_section(&self, appearance: &Appearance) -> Option<Box<dyn Element>> {
@@ -1291,6 +1334,7 @@ impl ConversationDetailsPanel {
             CopyButtonKind::ConversationId => self.mouse_states.copy_conversation_id.clone(),
             CopyButtonKind::RunId => self.mouse_states.copy_run_id.clone(),
             CopyButtonKind::Error => self.mouse_states.copy_error.clone(),
+            CopyButtonKind::InitialQuery => self.mouse_states.copy_initial_query.clone(),
         }
     }
 
@@ -1590,7 +1634,7 @@ impl View for ConversationDetailsPanel {
             );
         }
 
-        if let Some(source_section) = self.render_source_section(appearance) {
+        if let Some(source_section) = self.render_source_section(appearance, app) {
             content.add_child(
                 Container::new(source_section)
                     .with_margin_bottom(FIELD_SPACING)
@@ -1712,6 +1756,13 @@ impl TypedActionView for ConversationDetailsPanel {
                     ctx.clipboard()
                         .write(ClipboardContent::plain_text(error.clone()));
                     self.record_copy(CopyButtonKind::Error, ctx);
+                }
+            }
+            ConversationDetailsPanelAction::CopyInitialQuery => {
+                if let Some(trimmed) = trimmed_initial_query(&self.data.source_prompt) {
+                    ctx.clipboard()
+                        .write(ClipboardContent::plain_text(trimmed.to_string()));
+                    self.record_copy(CopyButtonKind::InitialQuery, ctx);
                 }
             }
             ConversationDetailsPanelAction::Focus => {
