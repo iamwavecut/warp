@@ -195,37 +195,6 @@ where
 {
     let result = apply_edits_internal(edits, session_context, &read_file).await;
 
-    // Send diagnostics for all diff application errors.
-
-    // Count of attempts to edit a file that doesn't exist or create a file that already exists.
-    let mut invalid_file_count = 0;
-
-    for error in result.errors.iter() {
-        match error {
-            DiffApplicationError::UnmatchedDiffs { .. } => {}
-            DiffApplicationError::MissingFile { .. }
-            | DiffApplicationError::ReadFailed { .. }
-            | DiffApplicationError::AlreadyExists { .. }
-            | DiffApplicationError::MultipleFileCreation { .. }
-            | DiffApplicationError::MutatedDeletedFile { .. }
-            | DiffApplicationError::MultipleFileRenames { .. }
-            | DiffApplicationError::RemoteFileOperationsUnsupported => {
-                invalid_file_count += 1;
-            }
-            DiffApplicationError::EmptyDiff => {}
-        }
-    }
-
-    // Send diagnostics for any warnings, which don't necessarily prevent diff application.
-
-    let _total_missing_line_numbers: u8 = result
-        .warnings
-        .iter()
-        .map(|warning| match warning {
-            DiffWarning::MissingLineNumbers { count, .. } => *count,
-        })
-        .sum();
-
     match Vec1::try_from_vec(result.errors) {
         Ok(errors) => Err(errors),
         Err(vec1::Size0Error) => Ok(result.diffs),

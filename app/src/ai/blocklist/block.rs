@@ -1664,9 +1664,6 @@ impl AIBlock {
         self.client_ids.conversation_id = new_conversation_id;
         self.model = new_model;
         self.is_passive = self.model.request_type(ctx).is_passive();
-        let user_avatar_info = user_avatar_info_for_ai_block(self.model.as_ref(), ctx);
-        self.profile_image_path = user_avatar_info.profile_image_path;
-        self.user_display_name = user_avatar_info.display_name;
         self.run_secret_redaction_on_user_query(new_conversation_id, ctx);
 
         // Re-detect all links for the new conversation.
