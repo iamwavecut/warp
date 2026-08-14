@@ -201,25 +201,12 @@ where
     }
 }
 
-/// Warnings are issues that don't necessarily prevent diff application, but indicate an unexpected
-/// response from the LLM.
-///
-/// For example, we expect the search string in a diff to include line numbers, but can rely on
-/// fuzzy matching if they're missing.
-#[derive(Debug, Clone)]
-pub enum DiffWarning {
-    /// Search blocks that are missing line numbers.
-    MissingLineNumbers { count: u8 },
-}
-
 #[derive(Default)]
 struct DiffResult {
     /// All successfully-applied diffs, grouped by file.
     diffs: Vec<AIRequestedCodeDiff>,
     /// All errors that occurred while applying diffs.
     errors: Vec<DiffApplicationError>,
-    /// All warnings that occurred while applying diffs.
-    warnings: Vec<DiffWarning>,
 }
 
 /// You generally want to use `apply_edits`, however, if you don't want to report diagnostics or be as
@@ -590,16 +577,6 @@ async fn apply_search_replace<F, Fut>(
                 full: ("Matching diffs for: {file_path:?}")
             );
             let fuzzy_match_diffs = fuzzy_match_diffs(&file_path, &deltas, file_content);
-
-            // Add warnings from the failure info - the `DiffMatchFailures` type includes both
-            // fatal and non-fatal errors.
-            if let Some(failures) = fuzzy_match_diffs.failures.as_ref()
-                && failures.missing_line_numbers > 0
-            {
-                result.warnings.push(DiffWarning::MissingLineNumbers {
-                    count: failures.missing_line_numbers,
-                });
-            }
 
             if fuzzy_match_diffs.warrants_failure()
                 && let Some(failures) = fuzzy_match_diffs.failures.as_ref()
