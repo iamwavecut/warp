@@ -7,7 +7,7 @@ use warp_core::features::FeatureFlag;
 use warp_multi_agent_api as api;
 use warpui::{App, EntityId, SingletonEntity};
 
-use super::{ConversationDetailsData, PanelMode};
+use super::{ConversationDetailsData, PanelMode, trimmed_initial_query};
 use crate::ai::agent::conversation::{AIConversation, AIConversationId};
 use crate::ai::ambient_agents::task::{AgentConfigSnapshot, HarnessConfig, TaskPrincipalInfo};
 use crate::ai::ambient_agents::{AmbientAgentTask, AmbientAgentTaskState};
@@ -43,6 +43,17 @@ fn create_test_task(task_id: &str) -> AmbientAgentTask {
         last_event_sequence: None,
         children: vec![],
     }
+}
+
+#[test]
+fn trimmed_initial_query_preserves_local_prompt_content() {
+    let query = Some("  inspect the local repository\n  ".to_string());
+    assert_eq!(
+        trimmed_initial_query(&query),
+        Some("inspect the local repository")
+    );
+    assert_eq!(trimmed_initial_query(&Some("  \n".to_string())), None);
+    assert_eq!(trimmed_initial_query(&None), None);
 }
 
 fn create_message_with_directory(id: &str, task_id: &str, directory: &str) -> api::Message {

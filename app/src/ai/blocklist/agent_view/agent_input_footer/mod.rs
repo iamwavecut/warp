@@ -23,7 +23,7 @@ use crate::{
     },
     features::FeatureFlag,
     network::NetworkStatus,
-    settings::{AISettings, AISettingsChangedEvent},
+    settings::{AISettings, AISettingsChangedEvent, CodeSettings, CodeSettingsChangedEvent},
     settings_view::SettingsSection,
     terminal::{
         CLIAgent, TerminalModel,
@@ -177,8 +177,11 @@ pub struct AgentInputFooter {
 
     terminal_model: Arc<FairMutex<TerminalModel>>,
 
-    // CLI agent-specific buttons (rendered when a CLI agent session is active).
+    /// Opens the local file explorer side panel. Available in both footers,
+    /// but only present in the CLI toolbar by default.
     file_explorer_button: ViewHandle<ActionButton>,
+
+    // CLI agent-specific buttons (rendered when a CLI agent session is active).
     rich_input_button: ViewHandle<ActionButton>,
     settings_button: ViewHandle<ActionButton>,
     install_plugin_button: ViewHandle<ActionButton>,
@@ -564,6 +567,11 @@ impl AgentInputFooter {
         ctx.subscribe_to_model(&AISettings::handle(ctx), |_, _, event, ctx| {
             if let AISettingsChangedEvent::AIAutoDetectionEnabled { .. } = event {
                 ctx.notify()
+            }
+        });
+        ctx.subscribe_to_model(&CodeSettings::handle(ctx), |_, _, event, ctx| {
+            if matches!(event, CodeSettingsChangedEvent::ShowProjectExplorer { .. }) {
+                ctx.notify();
             }
         });
         ctx.subscribe_to_model(
@@ -1181,9 +1189,9 @@ impl AgentInputFooter {
             AgentToolbarItemKind::ContextChip(chip_kind) => {
                 self.cli_display_chip(chip_kind.clone(), app)
             }
-            AgentToolbarItemKind::FileExplorer => {
-                Some(ChildView::new(&self.file_explorer_button).finish())
-            }
+            AgentToolbarItemKind::FileExplorer => item
+                .is_available(app)
+                .then(|| ChildView::new(&self.file_explorer_button).finish()),
             AgentToolbarItemKind::RichInput => FeatureFlag::CLIAgentRichInput
                 .is_enabled()
                 .then(|| ChildView::new(&self.rich_input_button).finish()),
@@ -1716,10 +1724,11 @@ impl AgentInputFooter {
             AgentToolbarItemKind::FastForwardToggle => FeatureFlag::FastForwardAutoexecuteButton
                 .is_enabled()
                 .then(|| ChildView::new(&self.fast_forward_button).finish()),
+            AgentToolbarItemKind::FileExplorer => item
+                .is_available(app)
+                .then(|| ChildView::new(&self.file_explorer_button).finish()),
             // Handled by the available_in() guard above; included for exhaustiveness.
-            AgentToolbarItemKind::FileExplorer
-            | AgentToolbarItemKind::RichInput
-            | AgentToolbarItemKind::Settings => None,
+            AgentToolbarItemKind::RichInput | AgentToolbarItemKind::Settings => None,
         }
     }
 
@@ -1908,9 +1917,9 @@ impl TypedActionView for AgentInputFooter {
                 }
             }
             AgentInputFooterAction::ToggleFileExplorer => {
-                if let Some(agent) = self.cli_agent(ctx) {
-                    ctx.emit(AgentInputFooterEvent::ToggleFileExplorer(agent));
-                }
+                ctx.emit(AgentInputFooterEvent::ToggleFileExplorer(
+                    self.cli_agent(ctx),
+                ));
             }
             AgentInputFooterAction::ToggleRichInput => {
                 if self.has_active_cli_agent_input_session(ctx) {
@@ -2012,7 +2021,9 @@ pub enum AgentInputFooterEvent {
     /// Insert text into the CLI agent rich input.
     InsertIntoCLIRichInput(String),
     ToggleCodeReviewPane(CLIAgent),
-    ToggleFileExplorer(CLIAgent),
+    /// Toggle the local file explorer. `None` when the normal Agent view,
+    /// rather than a third-party CLI agent, owns the footer.
+    ToggleFileExplorer(Option<CLIAgent>),
     OpenRichInput,
     HideRichInput,
     ToggledChipMenu {

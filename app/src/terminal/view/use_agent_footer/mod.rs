@@ -246,7 +246,7 @@ impl TerminalView {
                 );
             }
             UseAgentToolbarEvent::ToggleFileExplorer(cli_agent) => {
-                self.toggle_file_tree(Some((*cli_agent).into()), ctx);
+                self.toggle_file_tree(cli_agent.map(Into::into), ctx);
             }
             UseAgentToolbarEvent::OpenRichInput => {
                 if self.has_active_cli_agent_input_session(ctx) {
@@ -1221,8 +1221,8 @@ pub enum UseAgentToolbarEvent {
     InsertIntoRichInput(String),
     /// Toggle the code review pane (from CLI agent view).
     ToggleCodeReviewPane(CLIAgent),
-    /// Toggle the file explorer (from CLI agent view).
-    ToggleFileExplorer(CLIAgent),
+    /// Toggle the local file explorer. `None` when invoked from Agent view.
+    ToggleFileExplorer(Option<CLIAgent>),
     /// Open the rich input editor for composing a prompt.
     OpenRichInput,
     /// Hide the rich input editor (same as Escape).
