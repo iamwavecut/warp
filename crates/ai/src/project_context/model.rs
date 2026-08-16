@@ -170,6 +170,12 @@ pub struct ProjectContextModel {
     rule_refresh_generations: HashMap<PathBuf, u64>,
     #[cfg(feature = "local_fs")]
     next_rule_refresh_generation: u64,
+    /// Project roots with a metadata-backed rule read currently in flight.
+    #[cfg(feature = "local_fs")]
+    rule_refresh_in_flight: HashSet<PathBuf>,
+    /// Project roots that need one coalesced follow-up after their current read completes.
+    #[cfg(feature = "local_fs")]
+    rule_refresh_pending: HashSet<PathBuf>,
     /// File-based global rules and their local watcher state. Kept separate
     /// from `path_to_rules`, which is project-scoped.
     pub(super) global_rules: GlobalRules,
@@ -317,7 +323,11 @@ impl ProjectContextModel {
         let Some(project_root) = repo_path.to_local_path() else {
             return;
         };
-        let id = RepositoryIdentifier::local(repo_path);
+        if !self.begin_rule_refresh(&project_root) {
+            return;
+        }
+
+        let id = RepositoryIdentifier::local(repo_path.clone());
         let rule_paths = RepoMetadataModel::as_ref(ctx)
             .standing_query_results(&id, ctx)
             .into_iter()
@@ -339,35 +349,61 @@ impl ProjectContextModel {
         ctx.spawn(
             async move { Self::read_standing_project_rules(rule_paths, existing_rules).await },
             move |me, rules, ctx| {
+                let refresh_again = me.finish_rule_refresh(&project_root_for_read);
                 if me.rule_refresh_generations.get(&project_root_for_read)
-                    != Some(&refresh_generation)
+                    == Some(&refresh_generation)
                 {
-                    return;
+                    me.rule_refresh_generations.remove(&project_root_for_read);
+                    let new_paths = rules.all_rule_paths().cloned().collect::<Vec<_>>();
+                    let previous = me
+                        .path_to_rules
+                        .insert(project_root_for_read.clone(), rules)
+                        .unwrap_or_default();
+                    let deleted_rules = previous
+                        .all_rule_paths()
+                        .filter(|path| !new_paths.contains(path))
+                        .cloned()
+                        .collect();
+                    let discovered_rules = new_paths
+                        .into_iter()
+                        .map(|path| ProjectRulePath {
+                            path,
+                            project_root: project_root_for_read.clone(),
+                        })
+                        .collect();
+                    ctx.emit(ProjectContextModelEvent::KnownRulesChanged(RulesDelta {
+                        discovered_rules,
+                        deleted_rules,
+                    }));
+                    ctx.emit(ProjectContextModelEvent::PathIndexed);
                 }
-                let new_paths = rules.all_rule_paths().cloned().collect::<Vec<_>>();
-                let previous = me
-                    .path_to_rules
-                    .insert(project_root_for_read.clone(), rules)
-                    .unwrap_or_default();
-                let deleted_rules = previous
-                    .all_rule_paths()
-                    .filter(|path| !new_paths.contains(path))
-                    .cloned()
-                    .collect();
-                let discovered_rules = new_paths
-                    .into_iter()
-                    .map(|path| ProjectRulePath {
-                        path,
-                        project_root: project_root_for_read.clone(),
-                    })
-                    .collect();
-                ctx.emit(ProjectContextModelEvent::KnownRulesChanged(RulesDelta {
-                    discovered_rules,
-                    deleted_rules,
-                }));
-                ctx.emit(ProjectContextModelEvent::PathIndexed);
+                if refresh_again {
+                    me.refresh_project_rules_for_repo(repo_path, ctx);
+                }
             },
         );
+    }
+
+    /// Reserves the single rule read allowed for a project root. Superseding requests are
+    /// collapsed into one pending follow-up because the underlying filesystem read cannot be
+    /// cancelled once it has started on the blocking pool.
+    #[cfg(feature = "local_fs")]
+    fn begin_rule_refresh(&mut self, project_root: &Path) -> bool {
+        let project_root = project_root.to_path_buf();
+        if self.rule_refresh_in_flight.insert(project_root.clone()) {
+            self.rule_refresh_pending.remove(&project_root);
+            true
+        } else {
+            self.rule_refresh_pending.insert(project_root);
+            false
+        }
+    }
+
+    /// Releases an in-flight read and reports whether one coalesced follow-up is pending.
+    #[cfg(feature = "local_fs")]
+    fn finish_rule_refresh(&mut self, project_root: &Path) -> bool {
+        self.rule_refresh_in_flight.remove(project_root);
+        self.rule_refresh_pending.remove(project_root)
     }
 
     #[cfg(feature = "local_fs")]
@@ -400,6 +436,7 @@ impl ProjectContextModel {
             return;
         };
         self.rule_refresh_generations.remove(&project_root);
+        self.rule_refresh_pending.remove(&project_root);
         if let Some(rules) = self.path_to_rules.remove(&project_root) {
             let deleted_rules = rules.all_rule_paths().cloned().collect();
             ctx.emit(ProjectContextModelEvent::KnownRulesChanged(RulesDelta {

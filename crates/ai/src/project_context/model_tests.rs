@@ -328,6 +328,27 @@ fn test_rule_missing_from_standing_results_is_removed_from_cached_content() {
     assert!(rules.all_rule_paths().next().is_none());
 }
 
+#[cfg(feature = "local_fs")]
+#[test]
+fn test_superseding_rule_refresh_coalesces_to_one_follow_up() {
+    let project_root = PathBuf::from("/repo");
+    let mut model = ProjectContextModel::default();
+
+    assert!(model.begin_rule_refresh(&project_root));
+    assert!(!model.begin_rule_refresh(&project_root));
+    assert!(!model.begin_rule_refresh(&project_root));
+    assert_eq!(model.rule_refresh_in_flight.len(), 1);
+    assert_eq!(model.rule_refresh_pending.len(), 1);
+
+    assert!(model.finish_rule_refresh(&project_root));
+    assert!(model.rule_refresh_in_flight.is_empty());
+    assert!(model.rule_refresh_pending.is_empty());
+
+    assert!(model.begin_rule_refresh(&project_root));
+    assert_eq!(model.rule_refresh_in_flight.len(), 1);
+    assert!(model.rule_refresh_pending.is_empty());
+}
+
 // Helper for global-rules tests: inserts a synthetic global rule directly into
 // the model. Bypasses the watcher infrastructure (which requires the warpui
 // runtime) so we can exercise `find_applicable_rules`'s layering logic.
