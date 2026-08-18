@@ -29,6 +29,7 @@ async-fs.workspace = true
 cfg-if = "1.0"
 dirs.workspace = true
 futures-lite.workspace = true
+parking_lot.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 notify-debouncer-full.workspace = true

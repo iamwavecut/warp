@@ -10601,6 +10601,7 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "notify-debouncer-full",
+ "parking_lot",
  "tempfile",
  "thiserror 2.0.17",
  "virtual-fs",

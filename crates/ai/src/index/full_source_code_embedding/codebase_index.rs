@@ -89,7 +89,7 @@ pub enum SyncProgress {
 #[cfg(feature = "local_fs")]
 struct BuildFileTreeResult {
     file_tree: Entry,
-    gitignores: Vec<Gitignore>,
+    gitignores: Vec<Arc<Gitignore>>,
 }
 
 #[cfg(feature = "local_fs")]
@@ -106,7 +106,7 @@ struct SnapshotLoaded {
     tree: Box<MerkleTree>,
     fragment_metadata: LeafToFragmentMetadata,
     changed_files: ChangedFiles,
-    gitignores: Vec<Gitignore>,
+    gitignores: Vec<Arc<Gitignore>>,
 }
 
 /// Error loading a codebase snapshot.
@@ -143,7 +143,7 @@ pub struct CodebaseIndex {
     repository: ModelHandle<Repository>,
     leaf_node_to_fragment_metadatas: LeafToFragmentMetadata,
     embedding_config: EmbeddingConfig,
-    gitignores: Arc<Vec<Gitignore>>,
+    gitignores: Vec<Arc<Gitignore>>,
     tree_sync_state: TreeSourceSyncState,
     retrieval_requests: HashMap<RetrievalID, AbortHandle>,
     store_client: Arc<dyn StoreClient>,
@@ -294,7 +294,7 @@ pub enum CodebaseIndexEvent {
     #[cfg(feature = "local_fs")]
     GitignoresUpdated {
         repo_root_path: PathBuf,
-        gitignores: Arc<Vec<Gitignore>>,
+        gitignores: Vec<Arc<Gitignore>>,
     },
     LocalIndexBuilt {
         repo_root_path: PathBuf,
@@ -384,7 +384,7 @@ impl CodebaseIndex {
             repository,
             ts_metadata: CodebaseIndexTimeStampMetadata::default(),
             embedding_config,
-            gitignores: Arc::new(vec![]),
+            gitignores: vec![],
             tree_sync_state: TreeSourceSyncState::unsynced(),
             leaf_node_to_fragment_metadatas: LeafToFragmentMetadata::default(),
             retrieval_requests: Default::default(),
@@ -842,16 +842,16 @@ impl CodebaseIndex {
         }
     }
 
-    fn construct_initial_ignores(repo_path: &Path) -> Vec<Gitignore> {
+    fn construct_initial_ignores(repo_path: &Path) -> Vec<Arc<Gitignore>> {
         let mut gitignores = vec![];
         let (global_gitignore, _) = Gitignore::global();
-        gitignores.push(global_gitignore);
+        gitignores.push(Arc::new(global_gitignore));
 
         for option in SUPPORTED_IGNORES {
             let gitignore_path = repo_path.join(option);
             if gitignore_path.exists() {
                 let (gitignore, _) = Gitignore::new(gitignore_path);
-                gitignores.push(gitignore);
+                gitignores.push(Arc::new(gitignore));
             }
         }
 
@@ -909,7 +909,7 @@ impl CodebaseIndex {
             gitignores,
         } = build_file_tree_result;
 
-        self.gitignores = Arc::new(gitignores);
+        self.gitignores = gitignores;
         ctx.emit(CodebaseIndexEvent::GitignoresUpdated {
             repo_root_path: repo_path.clone(),
             gitignores: self.gitignores.clone(),
@@ -1735,7 +1735,7 @@ impl CodebaseIndex {
                                             }
                                         };
 
-                                    me.gitignores = Arc::new(gitignores);
+                                    me.gitignores = gitignores;
                                     ctx.emit(CodebaseIndexEvent::GitignoresUpdated {
                                         repo_root_path: me.repo_path.clone(),
                                         gitignores: me.gitignores.clone(),
@@ -1792,7 +1792,7 @@ impl CodebaseIndex {
         repo_path: PathBuf,
         tree: &MerkleTree,
         max_files_repo_limit: usize,
-    ) -> Result<(ChangedFiles, Vec<Gitignore>), Error> {
+    ) -> Result<(ChangedFiles, Vec<Arc<Gitignore>>), Error> {
         let mut gitignores = Self::construct_initial_ignores(&repo_path);
 
         let mut changed_files = ChangedFiles::default();
@@ -1832,7 +1832,7 @@ impl CodebaseIndex {
         changed_files: &mut ChangedFiles,
         node: &NodeLens<'_>,
         curr_path: PathBuf,
-        gitignores: &mut Vec<Gitignore>,
+        gitignores: &mut Vec<Arc<Gitignore>>,
         mut remaining_file_quota: Option<&mut usize>,
         max_depth: usize,
         current_depth: usize,
@@ -1955,7 +1955,7 @@ impl CodebaseIndex {
                 let gitignore_path = curr_path.join(".gitignore");
                 if gitignore_path.exists() {
                     let (gitignore, _) = Gitignore::new(gitignore_path);
-                    gitignores.push(gitignore);
+                    gitignores.push(Arc::new(gitignore));
                 }
 
                 let entries = std::fs::read_dir(&curr_path)?;
@@ -2079,7 +2079,7 @@ impl CodebaseIndex {
     fn add_merkle_node(
         changed_files: &mut ChangedFiles,
         path: &PathBuf,
-        gitignores: &mut Vec<Gitignore>,
+        gitignores: &mut Vec<Arc<Gitignore>>,
         remaining_file_quota: Option<&mut usize>,
         max_depth: usize,
         current_depth: usize,
@@ -2087,7 +2087,7 @@ impl CodebaseIndex {
         fn add_merkle_node_internal(
             changed_files: &mut ChangedFiles,
             path: &PathBuf,
-            gitignores: &mut Vec<Gitignore>,
+            gitignores: &mut Vec<Arc<Gitignore>>,
             mut remaining_file_quota: Option<&mut usize>,
             max_depth: usize,
             current_depth: usize,
@@ -2102,7 +2102,7 @@ impl CodebaseIndex {
                 let gitignore_path = path.join(".gitignore");
                 if gitignore_path.exists() {
                     let (gitignore, _) = Gitignore::new(gitignore_path);
-                    gitignores.push(gitignore);
+                    gitignores.push(Arc::new(gitignore));
                 }
 
                 let entries = std::fs::read_dir(path)?;
