@@ -14744,7 +14744,7 @@ impl TerminalView {
                 Some(highlighted_link),
                 _,
             ) => {
-                match highlighted_link {
+                let mut items = match highlighted_link {
                     GridHighlightedLink::Url(url) => {
                         let url_content =
                             Some(model.link_at_range(url, RespectObfuscatedSecrets::Yes));
@@ -14824,7 +14824,14 @@ impl TerminalView {
                                 .into_item(),
                         ]
                     }
+                };
+
+                if !items.is_empty() {
+                    items.push(MenuItem::Separator);
                 }
+                items.push(self.paste_menu_item(ctx));
+
+                items
             }
             (
                 BlockListMenuSource::RegularTextRightClick { .. }
@@ -14926,6 +14933,14 @@ impl TerminalView {
                 let is_copy_both_disabled =
                     is_copy_commands_disabled && tail_block.output_to_string().trim().is_empty();
 
+                // Only right-click sources offer general terminal actions like "Paste";
+                // the overflow-button and keybinding menus are scoped to the selected block(s).
+                let is_right_click_source = matches!(
+                    menu_source,
+                    BlockListMenuSource::RegularBlockRightClick { .. }
+                        | BlockListMenuSource::RichContentBlockRightClick { .. }
+                        | BlockListMenuSource::OutsideBlockRightClick { .. }
+                );
                 let mut items = vec![
                     MenuItemFields::new(copy_str)
                         .with_on_select_action(TerminalAction::ContextMenu(
@@ -14948,6 +14963,9 @@ impl TerminalView {
                         .with_disabled(is_copy_commands_disabled)
                         .into_item(),
                 ];
+                if is_right_click_source {
+                    items.push(self.paste_menu_item(ctx));
+                }
 
                 if FeatureFlag::CreatingSharedSessions.is_enabled()
                     && ContextFlag::CreateSharedSession.is_enabled()
@@ -15011,45 +15029,6 @@ impl TerminalView {
                                 .into_item(),
                         ]);
                     }
-                }
-
-                if is_single_selection {
-                    let mut copy_output_menu_item = MenuItemFields::new("Copy output")
-                        .with_on_select_action(TerminalAction::ContextMenu(
-                            ContextMenuAction::CopyBlockOutputs,
-                        ))
-                        .with_disabled(tail_block.output_grid().is_empty());
-
-                    // If there is an active filter on a block, then we want to display a
-                    // Copy filtered output option and assign the "terminal:copy_outputs" keybinding to it.
-                    if tail_block.has_active_filter() {
-                        items.insert(
-                            1,
-                            MenuItemFields::new("Copy filtered output")
-                                .with_on_select_action(TerminalAction::ContextMenu(
-                                    ContextMenuAction::CopyBlockFilteredOutputs,
-                                ))
-                                .with_key_shortcut_label(keybinding_name_to_display_string(
-                                    "terminal:copy_outputs",
-                                    ctx,
-                                ))
-                                .into_item(),
-                        );
-                        items.insert(2, copy_output_menu_item.into_item());
-                    } else {
-                        copy_output_menu_item = copy_output_menu_item.with_key_shortcut_label(
-                            keybinding_name_to_display_string("terminal:copy_outputs", ctx),
-                        );
-                        items.insert(2, copy_output_menu_item.into_item());
-                    }
-
-                    let mut prompt_items = self.copy_prompt_menu_items(
-                        self.input_is_on_git_branch(&model),
-                        self.is_rprompt_shown(&model),
-                        PromptPosition::Block(tail_block_index),
-                    );
-                    items.push(MenuItem::Separator);
-                    items.append(&mut prompt_items);
                 }
 
                 items.append(&mut vec![
@@ -15313,6 +15292,15 @@ impl TerminalView {
         }
 
         items
+    }
+
+    fn paste_menu_item(&self, ctx: &mut ViewContext<Self>) -> MenuItem<TerminalAction> {
+        let is_clipboard_empty = ctx.clipboard().read().is_empty();
+        MenuItemFields::new("Paste")
+            .with_on_select_action(TerminalAction::Paste)
+            .with_key_shortcut_label(keybinding_name_to_display_string("terminal:paste", ctx))
+            .with_disabled(is_clipboard_empty)
+            .into_item()
     }
 
     /// Builds the "Clear Blocks" entry for the terminal right-click context
