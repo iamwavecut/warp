@@ -365,6 +365,7 @@ use warpui::elements::{
     CacheOption, DispatchEventResult, DragAxis, Draggable, DraggableState, DropTarget,
     EventHandler, Image, MouseInBehavior, Rect, SizeConstraintCondition, SizeConstraintSwitch,
 };
+use warpui::event::KeyState;
 use warpui::ui_components::button::Button;
 use warpui::windowing::{StateEvent, WindowManager};
 use warpui::{elements::MouseStateHandle, fonts::Properties};
@@ -423,6 +424,7 @@ use crate::tab::{
     COMPACT_TAB_WIDTH_THRESHOLD, ColorPickerTarget, MOVE_TO_GROUP_LABEL, NewSessionMenuItem,
     PaneNameMenuTarget, SelectedTabColor, TAB_BAR_BORDER_HEIGHT, TAB_INDICATOR_HEIGHT,
     TAB_PIN_INDICATOR_ICON_SIZE, TAB_PIN_VANISH_THRESHOLD, TabBarState, TabComponent, TabData,
+    TabShortcutModifierState,
     color_picker_menu_items, next_tab_color, tab_position_id,
 };
 use crate::terminal::view::ssh_file_upload::FileUploadId;
@@ -2539,6 +2541,9 @@ impl Workspace {
         let state_handle = WindowManager::handle(ctx);
         ctx.subscribe_to_model(&state_handle, |me, _, event, ctx| {
             me.handle_window_state_change(event, ctx);
+        });
+        ctx.observe(&TabShortcutModifierState::handle(ctx), |_, _, ctx| {
+            ctx.notify();
         });
 
         let (welcome_tips_view, welcome_tips_view_state) =
@@ -15195,6 +15200,17 @@ impl Workspace {
     fn handle_window_state_change(&mut self, event: &StateEvent, ctx: &mut ViewContext<Self>) {
         match &event {
             StateEvent::ValueChanged { current, previous } => {
+                let window_lost_focus = previous.active_window == Some(self.window_id)
+                    && current.active_window != Some(self.window_id);
+                let app_lost_focus = previous.stage == ApplicationStage::Active
+                    && current.stage != ApplicationStage::Active;
+                if window_lost_focus || app_lost_focus {
+                    TabShortcutModifierState::handle(ctx).update(ctx, |state, ctx| {
+                        if state.clear_held_keys() {
+                            ctx.notify();
+                        }
+                    });
+                }
                 // Re-render if fullscreen state for active window has changed.
                 if current.is_active_window_fullscreen != previous.is_active_window_fullscreen {
                     ctx.notify();
@@ -19187,6 +19203,11 @@ impl TypedActionView for Workspace {
         match action {
             ActivateTab(index) => self.activate_tab(*index, ctx),
             ActivateTabByNumber(num) => self.activate_tab(num.saturating_sub(1), ctx),
+            SetTabShortcutModifierKey { key_code, pressed } => {
+                TabShortcutModifierState::handle(ctx).update(ctx, |state, ctx| {
+                    state.set_key_held(*key_code, *pressed, ctx);
+                });
+            }
             ActivatePrevTab => self.activate_prev_tab(ctx),
             OpenLaunchConfigSaveModal => self.open_launch_config_save_modal(ctx),
             ActivateNextTab => self.activate_next_tab(ctx),
@@ -22315,6 +22336,15 @@ impl View for Workspace {
                     DispatchEventResult::StopPropagation
                 });
         }
+
+        let event_handler =
+            event_handler.on_modifier_state_changed(|ctx, _app, key_code, state| {
+                ctx.dispatch_typed_action(WorkspaceAction::SetTabShortcutModifierKey {
+                    key_code: *key_code,
+                    pressed: matches!(state, KeyState::Pressed),
+                });
+                DispatchEventResult::PropagateToParent
+            });
 
         event_handler.finish()
     }
