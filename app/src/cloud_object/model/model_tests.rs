@@ -288,7 +288,12 @@ fn folder_from_cloud_model(model: &CloudModel, id: SyncId) -> &CloudFolder {
 
 fn receive_notebook_update(notebook: ServerNotebook, app: &mut App) {
     CloudModel::handle(app).update(app, |cloud_model, ctx| {
-        cloud_model.update_objects_from_initial_load(vec![notebook], false, true, ctx);
+        cloud_model.update_objects_from_initial_load::<NotebookId, CloudNotebookModel>(
+            vec![notebook],
+            false,
+            true,
+            ctx,
+        );
     });
 }
 
