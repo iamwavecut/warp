@@ -1225,10 +1225,10 @@ fn category_whose_sole_widget_cannot_render_has_no_visible_content_before_any_fi
         app.update(|ctx| {
             let children: Vec<Box<dyn SettingsWidget<View = TestSettingsView>>> =
                 vec![Box::new(NeverRendersWidget {
-                    terms: "cloud handoff",
+                    terms: "local terminal behavior",
                 })];
             let page =
-                PageType::new_categorized(vec![Category::new("Cloud Handoff", children)], None);
+                PageType::new_categorized(vec![Category::new("Terminal Behavior", children)], None);
 
             let FilteredPageType::Categorized { categories, .. } = page.get_filtered() else {
                 panic!("expected Categorized page");
@@ -1252,10 +1252,10 @@ fn category_whose_sole_widget_cannot_render_has_no_visible_content_after_an_empt
         app.update(|ctx| {
             let children: Vec<Box<dyn SettingsWidget<View = TestSettingsView>>> =
                 vec![Box::new(NeverRendersWidget {
-                    terms: "cloud handoff",
+                    terms: "local terminal behavior",
                 })];
             let mut page =
-                PageType::new_categorized(vec![Category::new("Cloud Handoff", children)], None);
+                PageType::new_categorized(vec![Category::new("Terminal Behavior", children)], None);
             page.update_filter("", ctx);
 
             let FilteredPageType::Categorized { categories, .. } = page.get_filtered() else {
