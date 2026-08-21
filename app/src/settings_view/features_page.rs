@@ -48,13 +48,12 @@ use crate::settings::{
     AutocompleteSymbols, AutosuggestionKeybindingHint, CodeSettings, CommandCorrections,
     CompletionsOpenWhileTyping, CopyOnSelect, CtrlTabBehavior, DEFAULT_QUAKE_MODE_SIZE_PERCENTAGES,
     DefaultSessionMode, EnableAiCommandSearchHashTrigger, EnableSlashCommandsInTerminal,
-    EnableSshWrapper, ErrorUnderliningEnabled,
-    ExtraMetaKeys, GPUSettings, GlobalHotkeyMode, InputSettings, InputSettingsChangedEvent,
-    LinuxSelectionClipboard, MiddleClickPasteEnabled, MouseScrollMultiplier,
-    OutlineCodebaseSymbolsForAtContextMenu, PreferLowPowerGPU, PreferredGraphicsBackend,
-    QUAKE_WINDOW_AUTOHIDE_SUPPORTED, QuakeModeSettings, ScrollSettings, SelectionSettings,
-    ShowAutosuggestionIgnoreButton, ShowTerminalInputMessageBar, SshSettings, SyntaxHighlighting,
-    TabBehavior, VimModeEnabled, VimStatusBar, VimUnnamedSystemClipboard,
+    EnableSshWrapper, ErrorUnderliningEnabled, ExtraMetaKeys, GPUSettings, GlobalHotkeyMode,
+    InputSettings, InputSettingsChangedEvent, LinuxSelectionClipboard, MiddleClickPasteEnabled,
+    MouseScrollMultiplier, OutlineCodebaseSymbolsForAtContextMenu, PreferLowPowerGPU,
+    PreferredGraphicsBackend, QUAKE_WINDOW_AUTOHIDE_SUPPORTED, QuakeModeSettings, ScrollSettings,
+    SelectionSettings, ShowAutosuggestionIgnoreButton, ShowTerminalInputMessageBar, SshSettings,
+    SyntaxHighlighting, TabBehavior, VimModeEnabled, VimStatusBar, VimUnnamedSystemClipboard,
 };
 use crate::terminal::alt_screen_reporting::{
     AltScreenReporting, FocusReportingEnabled, MouseReportingEnabled, ScrollReportingEnabled,
@@ -5523,9 +5522,7 @@ impl SettingsWidget for AiCommandSearchHashTriggerWidget {
                 )
                 .build()
                 .on_click(move |ctx, _, _| {
-                    ctx.dispatch_typed_action(
-                        FeaturesPageAction::ToggleAiCommandSearchHashTrigger,
-                    );
+                    ctx.dispatch_typed_action(FeaturesPageAction::ToggleAiCommandSearchHashTrigger);
                 })
                 .finish(),
             None,

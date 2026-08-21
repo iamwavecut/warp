@@ -801,9 +801,7 @@ impl<C: SearchSchemaConfig> SimpleFullTextSearcher<C> {
                 let Some(highlights) =
                     C::SearchHighlight::from_match_result_highlights(search_match.highlights)
                 else {
-                    log::error!(
-                        "Failed to convert search result highlights into structured data"
-                    );
+                    log::error!("Failed to convert search result highlights into structured data");
                     return None;
                 };
                 Some(FullTextSearchMatch {
@@ -833,9 +831,7 @@ impl<C: SearchSchemaConfig> SimpleFullTextSearcher<C> {
                 let Some(highlights) =
                     C::SearchHighlight::from_match_result_highlights(search_match.highlights)
                 else {
-                    log::error!(
-                        "Failed to convert search result highlights into structured data"
-                    );
+                    log::error!("Failed to convert search result highlights into structured data");
                     return None;
                 };
                 Some(FullTextSearchMatch {
