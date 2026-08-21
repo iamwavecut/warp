@@ -2883,6 +2883,11 @@ impl TerminalView {
             .is_some_and(|index| index > 0)
     }
 
+    fn can_enter_local_agent_view_from_input(&self, app: &AppContext) -> bool {
+        !self.model.lock().shared_session_status().is_reader()
+            && !(self.is_ambient_agent_session(app) && !self.is_nested_cloud_mode(app))
+    }
+
     /// Create a SyncEvent for other terminals to use based on
     /// the state of this terminal. If this terminal view has an active input
     /// editor, other terminals should match those contents.
@@ -19804,23 +19809,29 @@ impl TerminalView {
                 initial_prompt,
                 conversation_id,
                 origin,
-            } => match conversation_id {
-                Some(id) => {
-                    self.enter_agent_view_for_conversation(
-                        initial_prompt.clone(),
-                        *origin,
-                        *id,
-                        ctx,
-                    );
+            } => {
+                if !self.can_enter_local_agent_view_from_input(ctx) {
+                    return;
                 }
-                None => {
-                    self.enter_agent_view_for_new_conversation(
-                        initial_prompt.clone(),
-                        *origin,
-                        ctx,
-                    );
+
+                match conversation_id {
+                    Some(id) => {
+                        self.enter_agent_view_for_conversation(
+                            initial_prompt.clone(),
+                            *origin,
+                            *id,
+                            ctx,
+                        );
+                    }
+                    None => {
+                        self.enter_agent_view_for_new_conversation(
+                            initial_prompt.clone(),
+                            *origin,
+                            ctx,
+                        );
+                    }
                 }
-            },
+            }
             InputEvent::EnterCloudAgentView { initial_prompt } => {
                 self.enter_agent_view_for_new_conversation(
                     initial_prompt.clone(),
@@ -25017,6 +25028,20 @@ impl TypedActionView for TerminalView {
                         });
                     }
                     self.tag_in_agent_for_user_long_running_command(ctx);
+                } else if FeatureFlag::AgentView.is_enabled()
+                    && !self.agent_view_controller.as_ref(ctx).is_active()
+                    && self.can_enter_local_agent_view_from_input(ctx)
+                {
+                    // Locked AI input is intentionally rejected outside Agent View. Enter the
+                    // view first so the advertised input-mode keybinding cannot become a no-op.
+                    let mut draft_text = self.input.as_ref(ctx).buffer_text(ctx);
+                    draft_text.truncate(draft_text.trim_end().len());
+                    let initial_prompt = (!draft_text.trim().is_empty()).then_some(draft_text);
+                    self.enter_agent_view_for_new_conversation(
+                        initial_prompt,
+                        AgentViewEntryOrigin::Keybinding,
+                        ctx,
+                    );
                 } else {
                     self.input.update(ctx, |input, ctx| {
                         input.set_input_mode_agent(false, ctx);

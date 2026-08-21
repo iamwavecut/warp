@@ -8746,7 +8746,6 @@ impl Input {
 
                 // If the last buffer didn't start with the AI input prefix and the current buffer does, then enable AI input.
                 if FeatureFlag::AgentMode.is_enabled()
-                    && !FeatureFlag::AgentView.is_enabled()
                     && AISettings::as_ref(ctx).is_any_ai_enabled(ctx)
                     && (!is_ai_input_enabled || !is_input_mode_locked)
                 {
@@ -8767,18 +8766,33 @@ impl Input {
                                     editor_view.buffer_text(ctx).is_empty()
                                 });
 
-                            self.ai_input_model.update(ctx, |ai_input_model, ctx| {
-                                ai_input_model.set_input_config(
-                                    InputConfig {
-                                        input_type: InputType::AI,
-                                        is_locked: true,
+                            if FeatureFlag::AgentView.is_enabled()
+                                && !self.agent_view_controller.as_ref(ctx).is_active()
+                            {
+                                ctx.emit(Event::EnterAgentView {
+                                    initial_prompt: None,
+                                    conversation_id: None,
+                                    origin: AgentViewEntryOrigin::Input {
+                                        was_prompt_autodetected: false,
                                     },
-                                    is_input_buffer_empty,
-                                    ctx,
-                                );
-                            });
+                                });
+                            } else {
+                                self.ai_input_model.update(ctx, |ai_input_model, ctx| {
+                                    ai_input_model.set_input_config(
+                                        InputConfig {
+                                            input_type: InputType::AI,
+                                            is_locked: true,
+                                        },
+                                        is_input_buffer_empty,
+                                        ctx,
+                                    );
+                                });
+                            }
                         }
-                    } else if buffer_text.is_empty() && is_input_mode_locked {
+                    } else if !FeatureFlag::AgentView.is_enabled()
+                        && buffer_text.is_empty()
+                        && is_input_mode_locked
+                    {
                         self.ai_input_model.update(ctx, |input_model, ctx| {
                             input_model.set_input_config_for_classic_mode(
                                 input_model

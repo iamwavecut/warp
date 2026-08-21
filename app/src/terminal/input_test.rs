@@ -6131,6 +6131,30 @@ input_mode_prefix_tests! {
 }
 
 #[test]
+fn ai_input_prefix_enters_agent_view() {
+    App::test((), |mut app| async move {
+        let _agent_mode = FeatureFlag::AgentMode.override_enabled(true);
+        let _agent_view = FeatureFlag::AgentView.override_enabled(true);
+        initialize_app(&mut app);
+
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+
+        for c in super::AI_INPUT_PREFIX.chars() {
+            input.update(&mut app, |input, ctx| {
+                input.user_insert(&c.to_string(), ctx);
+            });
+        }
+
+        terminal.read(&app, |terminal, ctx| {
+            assert!(terminal.agent_view_controller().as_ref(ctx).is_active());
+            assert_eq!(terminal.input().as_ref(ctx).input_type(ctx), InputType::AI);
+            assert!(terminal.input().as_ref(ctx).buffer_text(ctx).is_empty());
+        });
+    });
+}
+
+#[test]
 fn test_image_attachment_preserves_lock_state() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

@@ -1226,6 +1226,54 @@ fn set_input_mode_agent_does_not_enter_local_agent_from_root_cloud_mode_pane() {
 }
 
 #[test]
+fn command_i_switches_focused_command_input_to_agent_mode() {
+    App::test((), |mut app| async move {
+        let _agent_mode = FeatureFlag::AgentMode.override_enabled(true);
+        let _agent_view = FeatureFlag::AgentView.override_enabled(true);
+        initialize_app_for_terminal_view(&mut app);
+        app.add_singleton_model(ImportedConfigModel::new);
+        app.update(|ctx| {
+            crate::terminal::init(ctx);
+            crate::editor::init(ctx);
+        });
+        assert!(app.update(|ctx| AISettings::as_ref(ctx).is_any_ai_enabled(ctx)));
+
+        let (window_id, terminal) = add_window_with_id_and_terminal(&mut app, None);
+        let (input_id, editor_id) = terminal.update(&mut app, |view, ctx| {
+            view.input.update(ctx, |input, ctx| {
+                input.set_input_mode_terminal(true, ctx);
+                input.replace_buffer_content("explain this command", ctx);
+            });
+            let input = view.input.clone();
+            let editor = input.as_ref(ctx).editor().clone();
+            (input.id(), editor.id())
+        });
+
+        let handled = app
+            .dispatch_keystroke(
+                window_id,
+                &[terminal.id(), input_id, editor_id],
+                &warpui::keymap::Keystroke::parse("cmd-i").expect("valid keystroke"),
+                false,
+            )
+            .expect("dispatch should succeed");
+
+        assert!(
+            handled,
+            "cmd-i should be handled from the focused command input"
+        );
+        terminal.read(&app, |view, ctx| {
+            assert!(view.agent_view_controller().as_ref(ctx).is_active());
+            assert_eq!(view.input.as_ref(ctx).input_type(ctx), InputType::AI);
+            assert_eq!(
+                view.input.as_ref(ctx).buffer_text(ctx),
+                "explain this command"
+            );
+        });
+    })
+}
+
+#[test]
 fn pending_cloud_followup_submission_is_disabled() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
