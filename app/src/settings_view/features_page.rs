@@ -47,7 +47,8 @@ use crate::settings::{
     AliasExpansionEnabled, AliasExpansionSettings, AppEditorSettings, AtContextMenuInTerminalMode,
     AutocompleteSymbols, AutosuggestionKeybindingHint, CodeSettings, CommandCorrections,
     CompletionsOpenWhileTyping, CopyOnSelect, CtrlTabBehavior, DEFAULT_QUAKE_MODE_SIZE_PERCENTAGES,
-    DefaultSessionMode, EnableSlashCommandsInTerminal, EnableSshWrapper, ErrorUnderliningEnabled,
+    DefaultSessionMode, EnableAiCommandSearchHashTrigger, EnableSlashCommandsInTerminal,
+    EnableSshWrapper, ErrorUnderliningEnabled,
     ExtraMetaKeys, GPUSettings, GlobalHotkeyMode, InputSettings, InputSettingsChangedEvent,
     LinuxSelectionClipboard, MiddleClickPasteEnabled, MouseScrollMultiplier,
     OutlineCodebaseSymbolsForAtContextMenu, PreferLowPowerGPU, PreferredGraphicsBackend,
@@ -732,6 +733,7 @@ pub enum FeaturesPageAction {
     ToggleSnackbar,
     ToggleLinkTooltip,
     ToggleCompletionsOpenWhileTyping,
+    ToggleAiCommandSearchHashTrigger,
     ToggleCommandCorrections,
     ToggleErrorUnderlining,
     ToggleSyntaxHighlighting,
@@ -1345,6 +1347,18 @@ impl TypedActionView for FeaturesPageView {
                             .completions_open_while_typing
                             .toggle_and_save_value(ctx)
                     );
+                });
+            }
+            ToggleAiCommandSearchHashTrigger => {
+                InputSettings::handle(ctx).update(ctx, |input_settings, ctx| {
+                    if let Err(error) = input_settings
+                        .enable_ai_command_search_hash_trigger
+                        .toggle_and_save_value(ctx)
+                    {
+                        log::error!(
+                            "Failed to save AI Command Search hash trigger setting: {error:?}"
+                        );
+                    }
                 });
             }
             ToggleCommandCorrections => {
@@ -2414,6 +2428,7 @@ impl FeaturesPageView {
         }
 
         editor_widgets.push(Box::new(AutosuggestionKeybindingHintWidget::default()));
+        editor_widgets.push(Box::new(AiCommandSearchHashTriggerWidget::default()));
 
         if FeatureFlag::AllowIgnoringInputSuggestions.is_enabled() {
             editor_widgets.push(Box::new(AutosuggestionIgnoreButtonWidget::default()));
@@ -5459,6 +5474,58 @@ impl SettingsWidget for CompletionsMenuWhileTypingWidget {
                 .build()
                 .on_click(move |ctx, _, _| {
                     ctx.dispatch_typed_action(FeaturesPageAction::ToggleCompletionsOpenWhileTyping);
+                })
+                .finish(),
+            None,
+        )
+    }
+}
+
+#[derive(Default)]
+struct AiCommandSearchHashTriggerWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for AiCommandSearchHashTriggerWidget {
+    type View = FeaturesPageView;
+
+    fn search_terms(&self) -> &str {
+        "AI command search hash trigger shell comments"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let ui_builder = appearance.ui_builder();
+        render_body_item::<FeaturesPageAction>(
+            "Use '#' to open AI Command Search".into(),
+            None,
+            LocalOnlyIconState::for_setting(
+                EnableAiCommandSearchHashTrigger::storage_key(),
+                EnableAiCommandSearchHashTrigger::sync_to_cloud(),
+                &mut view
+                    .button_mouse_states
+                    .local_only_icon_tooltip_states
+                    .borrow_mut(),
+                app,
+            ),
+            ToggleState::Enabled,
+            appearance,
+            ui_builder
+                .switch(self.switch_state.clone())
+                .check(
+                    *InputSettings::as_ref(app)
+                        .enable_ai_command_search_hash_trigger
+                        .value(),
+                )
+                .build()
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(
+                        FeaturesPageAction::ToggleAiCommandSearchHashTrigger,
+                    );
                 })
                 .finish(),
             None,

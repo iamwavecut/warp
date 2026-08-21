@@ -216,6 +216,92 @@ pub fn initialize_app(app: &mut App) {
     app.add_singleton_model(|_| LocalShellState::NotLoaded);
 }
 
+#[test]
+fn hash_trigger_disabled_keeps_hash_literal_and_does_not_open_ai_command_search() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        InputSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .enable_ai_command_search_hash_trigger
+                .set_value(false, ctx)
+                .expect("setting value must succeed");
+        });
+
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+        let open_count = std::rc::Rc::new(std::cell::RefCell::new(0));
+        let subscribed_count = open_count.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&input, move |_, event, _| {
+                if matches!(event, Event::ShowCommandSearch(_)) {
+                    *subscribed_count.borrow_mut() += 1;
+                }
+            });
+        });
+
+        input.update(&mut app, |input, ctx| {
+            input.user_insert("#", ctx);
+            input.user_insert(" local shell comment", ctx);
+        });
+
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "# local shell comment");
+        });
+        assert_eq!(*open_count.borrow(), 0);
+    });
+}
+
+#[test]
+fn hash_trigger_enabled_by_default_opens_ai_command_search() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+        let open_count = std::rc::Rc::new(std::cell::RefCell::new(0));
+        let subscribed_count = open_count.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&input, move |_, event, _| {
+                if matches!(event, Event::ShowCommandSearch(_)) {
+                    *subscribed_count.borrow_mut() += 1;
+                }
+            });
+        });
+
+        input.update(&mut app, |input, ctx| input.user_insert("#", ctx));
+        assert_eq!(*open_count.borrow(), 1);
+    });
+}
+
+#[test]
+fn ai_command_search_hotkey_ignores_hash_trigger_setting() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        InputSettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .enable_ai_command_search_hash_trigger
+                .set_value(false, ctx)
+                .expect("setting value must succeed");
+        });
+
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+        let open_count = std::rc::Rc::new(std::cell::RefCell::new(0));
+        let subscribed_count = open_count.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&input, move |_, event, _| {
+                if matches!(event, Event::ShowCommandSearch(_)) {
+                    *subscribed_count.borrow_mut() += 1;
+                }
+            });
+        });
+
+        input.update(&mut app, |input, ctx| {
+            input.handle_action(&InputAction::ShowAiCommandSearch, ctx);
+        });
+        assert_eq!(*open_count.borrow(), 1);
+    });
+}
+
 fn bootstrap_terminal(
     terminal: &ViewHandle<TerminalView>,
     bootstrapped_event: BootstrappedEvent,

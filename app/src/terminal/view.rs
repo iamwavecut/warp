@@ -15031,6 +15031,43 @@ impl TerminalView {
                     }
                 }
 
+                if is_single_selection {
+                    let mut copy_output_menu_item = MenuItemFields::new("Copy output")
+                        .with_on_select_action(TerminalAction::ContextMenu(
+                            ContextMenuAction::CopyBlockOutputs,
+                        ))
+                        .with_disabled(tail_block.output_grid().is_empty());
+
+                    if tail_block.has_active_filter() {
+                        items.insert(
+                            1,
+                            MenuItemFields::new("Copy filtered output")
+                                .with_on_select_action(TerminalAction::ContextMenu(
+                                    ContextMenuAction::CopyBlockFilteredOutputs,
+                                ))
+                                .with_key_shortcut_label(keybinding_name_to_display_string(
+                                    "terminal:copy_outputs",
+                                    ctx,
+                                ))
+                                .into_item(),
+                        );
+                        items.insert(2, copy_output_menu_item.into_item());
+                    } else {
+                        copy_output_menu_item = copy_output_menu_item.with_key_shortcut_label(
+                            keybinding_name_to_display_string("terminal:copy_outputs", ctx),
+                        );
+                        items.insert(2, copy_output_menu_item.into_item());
+                    }
+
+                    let mut prompt_items = self.copy_prompt_menu_items(
+                        self.input_is_on_git_branch(&model),
+                        self.is_rprompt_shown(&model),
+                        PromptPosition::Block(tail_block_index),
+                    );
+                    items.push(MenuItem::Separator);
+                    items.append(&mut prompt_items);
+                }
+
                 items.append(&mut vec![
                     MenuItem::Separator,
                     MenuItemFields::new(find_str)
