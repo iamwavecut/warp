@@ -46,6 +46,7 @@ fn configurable_model(provider: LLMProvider) -> LLMInfo {
             max: 1_000_000,
             default_max: 272_000,
         },
+        capabilities: None,
     }
 }
 

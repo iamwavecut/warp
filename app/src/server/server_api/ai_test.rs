@@ -12,6 +12,7 @@ fn local_provider_route(base_url: String) -> CustomProviderRoute {
         base_url,
         model: "test-model".to_string(),
         api_key: Some("test-key".to_string()),
+        capabilities: Default::default(),
     }
 }
 

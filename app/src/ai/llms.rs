@@ -9,6 +9,10 @@ use warp_core::user_preferences::GetUserPreferences;
 use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity};
 
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
+use crate::{
+    ai::agent::api::direct_openai::effective_capabilities_for_config,
+    settings::{AISettings, CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS},
+};
 
 use ai::api_keys::{ApiKeyManager, ApiKeyManagerEvent};
 
@@ -151,6 +155,23 @@ pub struct LLMContextWindow {
     pub default_max: u32,
 }
 
+/// Capabilities that the selected transport can actually deliver for a model.
+/// Custom-provider entries use this effective view rather than blindly
+/// mirroring user declarations for adapters that are not implemented yet.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LLMCapabilities {
+    #[serde(default)]
+    pub chat: bool,
+    #[serde(default)]
+    pub tools: bool,
+    #[serde(default)]
+    pub vision: bool,
+    #[serde(default)]
+    pub embeddings: bool,
+    #[serde(default)]
+    pub transcription: bool,
+}
+
 /// Metadata about an LLM.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct LLMInfo {
@@ -166,6 +187,10 @@ pub struct LLMInfo {
     pub provider: LLMProvider,
     pub host_configs: HashMap<LLMModelHost, RoutingHostConfig>,
     pub context_window: LLMContextWindow,
+    /// Effective transport capabilities. `None` preserves the legacy hosted
+    /// metadata shape; custom providers populate this explicitly.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<LLMCapabilities>,
 }
 
 impl<'de> Deserialize<'de> for LLMInfo {
@@ -211,6 +236,8 @@ impl<'de> Deserialize<'de> for LLMInfo {
             host_configs: HostConfigsWire,
             #[serde(default)]
             context_window: LLMContextWindow,
+            #[serde(default)]
+            capabilities: Option<LLMCapabilities>,
         }
 
         let wire = WireLLMInfo::deserialize(deserializer)?;
@@ -245,6 +272,7 @@ impl<'de> Deserialize<'de> for LLMInfo {
             spec: wire.spec,
             host_configs,
             context_window: wire.context_window,
+            capabilities: wire.capabilities,
         })
     }
 }
@@ -311,6 +339,7 @@ impl LLMInfo {
             provider: LLMProvider::Unknown,
             host_configs: HashMap::new(),
             context_window: LLMContextWindow::default(),
+            capabilities: None,
         }
     }
 }
@@ -464,6 +493,7 @@ fn default_computer_use_llms() -> AvailableLLMs {
             provider: LLMProvider::Unknown,
             host_configs: HashMap::new(),
             context_window: LLMContextWindow::default(),
+            capabilities: None,
         }],
         preferred_codex_model_id: None,
     }
@@ -490,6 +520,7 @@ impl Default for ModelsByFeature {
                     provider: LLMProvider::Unknown,
                     host_configs: HashMap::new(),
                     context_window: LLMContextWindow::default(),
+                    capabilities: None,
                 }],
                 preferred_codex_model_id: None,
             },
@@ -511,6 +542,7 @@ impl Default for ModelsByFeature {
                     provider: LLMProvider::Unknown,
                     host_configs: HashMap::new(),
                     context_window: LLMContextWindow::default(),
+                    capabilities: None,
                 }],
                 preferred_codex_model_id: None,
             },
@@ -532,6 +564,7 @@ impl Default for ModelsByFeature {
                     provider: LLMProvider::Unknown,
                     host_configs: HashMap::new(),
                     context_window: LLMContextWindow::default(),
+                    capabilities: None,
                 }],
                 preferred_codex_model_id: None,
             }),
@@ -1154,12 +1187,33 @@ impl SingletonEntity for LLMPreferences {}
 /// Builds the locally configured model catalog, or the explicit local fallback when no custom
 /// provider has models. This is pure settings-to-model transformation and performs no I/O.
 fn models_by_feature_from_custom_providers(app: &AppContext) -> ModelsByFeature {
-    use crate::settings::AISettings;
-
     let mut all_llms = Vec::new();
     for provider_config in AISettings::as_ref(app).custom_providers.iter() {
+        if let Err(error) = provider_config.validate() {
+            log::warn!(
+                "Skipping invalid local custom provider `{}`: {error}",
+                provider_config.name
+            );
+            continue;
+        }
         let provider_name = provider_config.name.clone();
         let provider = LLMProvider::Custom(provider_name.clone());
+        let effective_capabilities =
+            effective_capabilities_for_config(&provider_config.capabilities);
+        let context_window = provider_config
+            .capabilities
+            .context_window_tokens
+            .map(|tokens| LLMContextWindow {
+                // The provider-level limit is consumed by the direct adapter's
+                // context truncation boundary. Execution-profile slider
+                // values are not threaded into RequestParams yet, so do not
+                // advertise a second, non-functional profile control here.
+                is_configurable: false,
+                min: CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS,
+                max: tokens,
+                default_max: tokens,
+            })
+            .unwrap_or_default();
 
         for model_id in &provider_config.models {
             all_llms.push(LLMInfo {
@@ -1173,11 +1227,18 @@ fn models_by_feature_from_custom_providers(app: &AppContext) -> ModelsByFeature 
                 },
                 description: None,
                 disable_reason: None,
-                vision_supported: false,
+                vision_supported: effective_capabilities.vision,
                 spec: None,
                 provider: provider.clone(),
                 host_configs: HashMap::new(),
-                context_window: LLMContextWindow::default(),
+                context_window: context_window.clone(),
+                capabilities: Some(LLMCapabilities {
+                    chat: effective_capabilities.chat,
+                    tools: effective_capabilities.tools,
+                    vision: effective_capabilities.vision,
+                    embeddings: effective_capabilities.embeddings,
+                    transcription: effective_capabilities.transcription,
+                }),
             });
         }
     }

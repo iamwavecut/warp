@@ -3,6 +3,9 @@ use super::{
     derive_agent_attribution_toggle_state, provider_connection_is_valid,
     resolve_provider_connection,
 };
+use crate::settings::{
+    CustomProviderCapabilities, custom_provider_config_from_ui_with_capabilities,
+};
 use crate::workspaces::workspace::AdminEnablementSetting;
 use std::ffi::OsString;
 
@@ -104,6 +107,31 @@ fn provider_connection_with_empty_or_invalid_base_url_is_an_error() {
         resolve_provider_connection("not-a-url", "", "").unwrap_err(),
         "Base URL is not a valid URL."
     );
+}
+
+#[test]
+fn provider_editor_save_preserves_capabilities_when_provider_is_renamed() {
+    let capabilities = CustomProviderCapabilities {
+        chat: true,
+        tools: false,
+        vision: true,
+        embeddings: true,
+        transcription: false,
+        context_window_tokens: Some(32_000),
+    };
+
+    let config = custom_provider_config_from_ui_with_capabilities(
+        "renamed-local",
+        "http://localhost:1234/v1",
+        "model-a\nmodel-b",
+        "$LOCAL_OPENAI_API_KEY",
+        capabilities.clone(),
+    )
+    .unwrap()
+    .expect("complete provider editor values should produce a config");
+
+    assert_eq!(config.name, "renamed-local");
+    assert_eq!(config.capabilities, capabilities);
 }
 
 #[test]

@@ -29,6 +29,111 @@ use serde::{Deserialize, Serialize, de::Deserializer};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
+/// The smallest context window we accept for a custom provider. Smaller values
+/// leave no useful room for the agent system prompt and are almost always a
+/// provider configuration typo.
+pub const CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS: u32 = 256;
+
+/// Capabilities declared by a user for an OpenAI-compatible provider.
+///
+/// This is deliberately provider-wide for now. When a single endpoint exposes
+/// models with different capabilities, configure separate provider entries
+/// with distinct local names. The direct adapter computes effective
+/// capabilities separately so configuring a future adapter never creates a
+/// false UI promise today.
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    settings_value::SettingsValue,
+)]
+#[serde(default)]
+#[schemars(description = "Capabilities declared for a custom LLM provider.")]
+pub struct CustomProviderCapabilities {
+    /// Whether the endpoint accepts chat completion requests.
+    #[serde(default = "default_custom_provider_capability_enabled")]
+    #[schemars(description = "Whether chat completions are supported.")]
+    pub chat: bool,
+    /// Whether the endpoint accepts OpenAI function/tool definitions.
+    #[serde(default = "default_custom_provider_capability_enabled")]
+    #[schemars(description = "Whether tool calling is supported.")]
+    pub tools: bool,
+    /// Whether the provider is declared to accept image input.
+    #[schemars(description = "Whether vision input is declared by the provider.")]
+    pub vision: bool,
+    /// Whether the provider is declared to expose embeddings.
+    #[schemars(description = "Whether embeddings are declared by the provider.")]
+    pub embeddings: bool,
+    /// Whether the provider is declared to expose audio transcription.
+    #[schemars(description = "Whether transcription is declared by the provider.")]
+    pub transcription: bool,
+    /// Optional context window in model tokens.
+    #[schemars(description = "Optional context window size in model tokens.")]
+    pub context_window_tokens: Option<u32>,
+}
+
+fn default_custom_provider_capability_enabled() -> bool {
+    true
+}
+
+impl Default for CustomProviderCapabilities {
+    fn default() -> Self {
+        Self {
+            // Preserve the already-shipped direct provider behavior for legacy
+            // settings that have no capability table.
+            chat: true,
+            tools: true,
+            vision: false,
+            embeddings: false,
+            transcription: false,
+            context_window_tokens: None,
+        }
+    }
+}
+
+impl CustomProviderCapabilities {
+    pub fn validate(&self) -> Result<(), CustomProviderConfigError> {
+        if let Some(tokens) = self.context_window_tokens
+            && tokens < CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS
+        {
+            return Err(CustomProviderConfigError::ContextWindowTooSmall {
+                tokens,
+                minimum: CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS,
+            });
+        }
+
+        Ok(())
+    }
+}
+
+/// A local, user-actionable provider configuration error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CustomProviderConfigError {
+    ContextWindowTooSmall { tokens: u32, minimum: u32 },
+    InvalidContextWindow(String),
+}
+
+impl std::fmt::Display for CustomProviderConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ContextWindowTooSmall { tokens, minimum } => write!(
+                f,
+                "custom provider context window ({tokens} tokens) must be at least {minimum} tokens"
+            ),
+            Self::InvalidContextWindow(value) => write!(
+                f,
+                "custom provider context window must be a positive token count, got `{value}`"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CustomProviderConfigError {}
+
 /// Configuration for a user-defined custom LLM provider (BYOK).
 /// Stored in the settings file and used to populate the model list
 /// in this local-first build.
@@ -63,6 +168,17 @@ pub struct CustomProviderConfig {
     #[serde(default = "CustomApiType::default")]
     #[schemars(description = "The API protocol type for this provider.")]
     pub api_type: CustomApiType,
+    /// Provider capability declarations. Absent in legacy settings, in which
+    /// case `chat` and `tools` remain enabled for compatibility.
+    #[serde(default)]
+    #[schemars(description = "Capabilities declared for this provider.")]
+    pub capabilities: CustomProviderCapabilities,
+}
+
+impl CustomProviderConfig {
+    pub fn validate(&self) -> Result<(), CustomProviderConfigError> {
+        self.capabilities.validate()
+    }
 }
 
 /// The API protocol type for a custom provider.
@@ -201,6 +317,45 @@ pub fn normalize_custom_provider_env_var(input: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+pub fn parse_custom_provider_context_window_tokens(
+    input: &str,
+) -> Result<Option<u32>, CustomProviderConfigError> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Ok(None);
+    }
+
+    let tokens = input
+        .parse::<u32>()
+        .map_err(|_| CustomProviderConfigError::InvalidContextWindow(input.to_string()))?;
+    let capabilities = CustomProviderCapabilities {
+        context_window_tokens: Some(tokens),
+        ..Default::default()
+    };
+    capabilities.validate()?;
+    Ok(Some(tokens))
+}
+
+pub fn custom_provider_capabilities_from_ui(
+    chat: bool,
+    tools: bool,
+    vision: bool,
+    embeddings: bool,
+    transcription: bool,
+    context_window_tokens: &str,
+) -> Result<CustomProviderCapabilities, CustomProviderConfigError> {
+    let capabilities = CustomProviderCapabilities {
+        chat,
+        tools,
+        vision,
+        embeddings,
+        transcription,
+        context_window_tokens: parse_custom_provider_context_window_tokens(context_window_tokens)?,
+    };
+    capabilities.validate()?;
+    Ok(capabilities)
+}
+
 pub fn custom_provider_config_from_ui(
     name: &str,
     base_url: &str,
@@ -219,7 +374,24 @@ pub fn custom_provider_config_from_ui(
         models: parse_custom_provider_models(models),
         api_key_env_var: normalize_custom_provider_env_var(api_key_env_var),
         api_type: CustomApiType::OpenAiCompatible,
+        capabilities: CustomProviderCapabilities::default(),
     })
+}
+
+pub fn custom_provider_config_from_ui_with_capabilities(
+    name: &str,
+    base_url: &str,
+    models: &str,
+    api_key_env_var: &str,
+    capabilities: CustomProviderCapabilities,
+) -> Result<Option<CustomProviderConfig>, CustomProviderConfigError> {
+    let Some(mut config) = custom_provider_config_from_ui(name, base_url, models, api_key_env_var)
+    else {
+        return Ok(None);
+    };
+    capabilities.validate()?;
+    config.capabilities = capabilities;
+    Ok(Some(config))
 }
 
 pub enum FocusedTerminalInfoEvent {

@@ -16,7 +16,9 @@ use crate::ai::agent::{
 };
 use crate::ai::llms::LLMId;
 use crate::server::server_api::AIApiError;
-use crate::settings::{CustomProviderConfig, normalize_custom_provider_env_var};
+use crate::settings::{
+    CustomProviderCapabilities, CustomProviderConfig, normalize_custom_provider_env_var,
+};
 use ::ai::api_keys::ApiKeys;
 
 use super::ResponseStream;
@@ -37,6 +39,48 @@ pub(crate) struct CustomProviderRoute {
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
+    pub capabilities: CustomProviderCapabilities,
+}
+
+/// Capabilities that the current direct OpenAI-compatible adapter can actually
+/// deliver. Configured vision, embeddings, and transcription remain disabled
+/// until their local adapters are implemented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EffectiveCustomProviderCapabilities {
+    pub chat: bool,
+    pub tools: bool,
+    pub vision: bool,
+    pub embeddings: bool,
+    pub transcription: bool,
+}
+
+impl CustomProviderRoute {
+    pub(crate) fn effective_capabilities(&self) -> EffectiveCustomProviderCapabilities {
+        effective_capabilities_for_config(&self.capabilities)
+    }
+
+    /// Convert configured model tokens to a character budget for context
+    /// payloads. This is not whole-request token accounting and reserves no
+    /// output tokens; exact accounting belongs to the future compaction
+    /// boundary. The legacy fixed budget remains the fallback.
+    pub(crate) fn context_char_budget(&self) -> usize {
+        self.capabilities
+            .context_window_tokens
+            .map(|tokens| (tokens as usize).saturating_mul(3))
+            .unwrap_or(MAX_CONTEXT_CHARS)
+    }
+}
+
+pub(crate) fn effective_capabilities_for_config(
+    capabilities: &CustomProviderCapabilities,
+) -> EffectiveCustomProviderCapabilities {
+    EffectiveCustomProviderCapabilities {
+        chat: capabilities.chat,
+        tools: capabilities.tools,
+        vision: false,
+        embeddings: false,
+        transcription: false,
+    }
 }
 
 pub(super) fn parse_custom_model_id(model_id: &str) -> Option<CustomModelId> {
@@ -62,9 +106,9 @@ pub(crate) fn resolve_custom_provider_route(
     api_keys: &ApiKeys,
 ) -> Option<CustomProviderRoute> {
     let custom_model = parse_custom_model_id(model_id)?;
-    let provider = providers
-        .iter()
-        .find(|provider| provider.name == custom_model.provider_name)?;
+    let provider = providers.iter().find(|provider| {
+        provider.name == custom_model.provider_name && provider.validate().is_ok()
+    })?;
 
     Some(route_for_provider_model(
         provider,
@@ -78,6 +122,7 @@ pub(crate) fn default_custom_provider_route(
     api_keys: &ApiKeys,
 ) -> Option<CustomProviderRoute> {
     providers.iter().find_map(|provider| {
+        provider.validate().ok()?;
         let model = provider.models.first()?.clone();
         Some(route_for_provider_model(provider, model, api_keys))
     })
@@ -100,6 +145,7 @@ fn route_for_provider_model(
         base_url: provider.base_url.clone(),
         model,
         api_key: secure_storage_key.or(env_key),
+        capabilities: provider.capabilities.clone(),
     }
 }
 
@@ -414,6 +460,12 @@ pub(crate) async fn complete_text(
     system_prompt: String,
     user_prompt: String,
 ) -> Result<String, AIApiError> {
+    if !route.effective_capabilities().chat {
+        return Err(AIApiError::Other(anyhow::anyhow!(chat_disabled_message(
+            &route.provider_name
+        ))));
+    }
+
     let body = ChatCompletionRequest {
         model: route.model.clone(),
         messages: vec![
@@ -487,6 +539,14 @@ pub(super) async fn generate(
     params: super::RequestParams,
     supported_tools: Vec<api::ToolType>,
 ) -> Result<ResponseStream, super::ConvertToAPITypeError> {
+    let effective_capabilities = route.effective_capabilities();
+    if !effective_capabilities.chat {
+        return Ok(error_stream(chat_disabled_message(&route.provider_name)));
+    }
+    if !effective_capabilities.vision && input_contains_image(&params.input) {
+        return Ok(error_stream(vision_disabled_message(&route.provider_name)));
+    }
+
     let task_id = response_task_id(&params);
     let needs_create_task = should_create_task(&params, &task_id);
     let request_id = Uuid::new_v4().to_string();
@@ -495,9 +555,13 @@ pub(super) async fn generate(
         .as_ref()
         .map(|token| token.as_str().to_string())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let tools = openai_tools_for_supported_tools(&supported_tools);
+    let tools = if effective_capabilities.tools {
+        openai_tools_for_supported_tools(&supported_tools)
+    } else {
+        Vec::new()
+    };
     let input_messages = api_messages_from_inputs(&task_id, &request_id, &params.input);
-    let chat_messages = openai_messages_from_params(&params, &tools);
+    let chat_messages = openai_messages_from_params(&params, &tools, route.context_char_budget());
     log::info!(
         "Using OpenAI-compatible custom provider route: provider={}, model={}, advertised_tools={}, task_count={}, input_count={}, chat_message_count={}",
         route.provider_name,
@@ -553,6 +617,47 @@ pub(super) async fn generate(
     };
 
     Ok(Box::pin(output_stream))
+}
+
+fn chat_disabled_message(provider_name: &str) -> String {
+    format!(
+        "Custom provider `{provider_name}` has chat disabled in its local capability configuration; enable chat or choose another configured model."
+    )
+}
+
+fn vision_disabled_message(provider_name: &str) -> String {
+    format!(
+        "Custom provider `{provider_name}` received image context, but vision is not implemented by the local adapter yet; choose a text-only request or another local model."
+    )
+}
+
+fn input_contains_image(input: &[AIAgentInput]) -> bool {
+    input.iter().any(|item| {
+        let context = match item {
+            AIAgentInput::UserQuery { context, .. }
+            | AIAgentInput::AutoCodeDiffQuery { context, .. }
+            | AIAgentInput::ResumeConversation { context }
+            | AIAgentInput::InitProjectRules { context, .. }
+            | AIAgentInput::CreateEnvironment { context, .. }
+            | AIAgentInput::CreateNewProject { context, .. }
+            | AIAgentInput::CloneRepository { context, .. }
+            | AIAgentInput::CodeReview { context, .. }
+            | AIAgentInput::SummarizeConversation { context, .. }
+            | AIAgentInput::InvokeSkill { context, .. }
+            | AIAgentInput::StartFromAmbientRunPrompt { context, .. }
+            | AIAgentInput::ActionResult { context, .. }
+            | AIAgentInput::PassiveSuggestionResult { context, .. } => Some(context),
+            AIAgentInput::TriggerPassiveSuggestion { .. }
+            | AIAgentInput::MessagesReceivedFromAgents { .. }
+            | AIAgentInput::EventsFromAgents { .. }
+            | AIAgentInput::OrchestrationConfigUpdate { .. } => None,
+        };
+        context.is_some_and(|context| {
+            context
+                .iter()
+                .any(|item| matches!(item, AIAgentContext::Image(_)))
+        })
+    })
 }
 
 fn stream_chat_completion(
@@ -818,11 +923,20 @@ fn take_prefix_actions(prefix_actions: &mut Vec<api::ClientAction>) -> Vec<api::
     std::mem::take(prefix_actions)
 }
 
+/// Builds the direct request messages while bounding context payloads at the
+/// route-derived character budget. System/task messages are not token-counted;
+/// this is intentionally a narrow truncation boundary until compaction has
+/// exact model-token accounting.
 fn openai_messages_from_params(
     params: &super::RequestParams,
     tools: &[OpenAITool],
+    context_char_budget: usize,
 ) -> Vec<ChatMessage> {
-    let mut messages = vec![ChatMessage::system(system_prompt(params, tools))];
+    let mut messages = vec![ChatMessage::system(system_prompt(
+        params,
+        tools,
+        context_char_budget,
+    ))];
 
     for task in &params.tasks {
         for message in &task.messages {
@@ -830,7 +944,10 @@ fn openai_messages_from_params(
         }
     }
 
-    messages.extend(openai_messages_from_inputs(&params.input));
+    messages.extend(openai_messages_from_inputs(
+        &params.input,
+        context_char_budget,
+    ));
     messages
 }
 
@@ -888,21 +1005,24 @@ fn openai_messages_from_api_message(message: &api::Message) -> Vec<ChatMessage> 
     }
 }
 
-fn openai_messages_from_inputs(input: &[AIAgentInput]) -> Vec<ChatMessage> {
+fn openai_messages_from_inputs(
+    input: &[AIAgentInput],
+    context_char_budget: usize,
+) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     for item in input {
         match item {
             AIAgentInput::UserQuery { query, context, .. } => {
                 messages.push(ChatMessage::user(with_context(
                     query.clone(),
-                    context_text(context).as_deref(),
+                    context_text(context, context_char_budget).as_deref(),
                 )));
             }
             AIAgentInput::AutoCodeDiffQuery { query, context }
             | AIAgentInput::CreateNewProject { query, context } => {
                 messages.push(ChatMessage::user(with_context(
                     query.clone(),
-                    context_text(context).as_deref(),
+                    context_text(context, context_char_budget).as_deref(),
                 )));
             }
             AIAgentInput::CloneRepository {
@@ -911,7 +1031,7 @@ fn openai_messages_from_inputs(input: &[AIAgentInput]) -> Vec<ChatMessage> {
             } => {
                 messages.push(ChatMessage::user(with_context(
                     clone_repo_url.clone().into_url(),
-                    context_text(context).as_deref(),
+                    context_text(context, context_char_budget).as_deref(),
                 )));
             }
             AIAgentInput::SummarizeConversation { prompt, .. } => {
@@ -936,7 +1056,7 @@ fn openai_messages_from_inputs(input: &[AIAgentInput]) -> Vec<ChatMessage> {
                         "Invoke Warp skill `{}`.\n\nSkill instructions:\n{}\n\nUser request:\n{}",
                         skill.name, skill.content, query
                     ),
-                    context_text(context).as_deref(),
+                    context_text(context, context_char_budget).as_deref(),
                 )));
             }
             AIAgentInput::ActionResult { result, .. } => {
@@ -1015,7 +1135,7 @@ fn with_context(mut query: String, context: Option<&str>) -> String {
     query
 }
 
-fn context_text(context: &[AIAgentContext]) -> Option<String> {
+fn context_text(context: &[AIAgentContext], context_char_budget: usize) -> Option<String> {
     let mut parts = Vec::new();
     for item in context {
         match item {
@@ -1030,7 +1150,10 @@ fn context_text(context: &[AIAgentContext]) -> Option<String> {
                 are_file_symbols_indexed
             )),
             AIAgentContext::SelectedText(text) => {
-                parts.push(format!("Selected text:\n{}", truncate_context(text)));
+                parts.push(format!(
+                    "Selected text:\n{}",
+                    truncate_context_to(text, context_char_budget)
+                ));
             }
             AIAgentContext::ExecutionEnvironment(env) => {
                 parts.push(format!("Execution environment: {env:?}"));
@@ -1057,7 +1180,7 @@ fn context_text(context: &[AIAgentContext]) -> Option<String> {
                     text.push_str(&format!(
                         "\n\n{}:\n{}",
                         rule.file_name,
-                        file_context_content(rule)
+                        file_context_content(rule, context_char_budget)
                     ));
                 }
                 if !additional_rule_paths.is_empty() {
@@ -1072,7 +1195,7 @@ fn context_text(context: &[AIAgentContext]) -> Option<String> {
                 parts.push(format!(
                     "File {}:\n{}",
                     file.file_name,
-                    file_context_content(file)
+                    file_context_content(file, context_char_budget)
                 ));
             }
             AIAgentContext::Git { head, branch } => {
@@ -1090,7 +1213,7 @@ fn context_text(context: &[AIAgentContext]) -> Option<String> {
                     "Terminal block:\ncommand: {}\nexit_code: {}\noutput:\n{}",
                     block.command,
                     block.exit_code.value(),
-                    truncate_context(&block.output)
+                    truncate_context_to(&block.output, context_char_budget)
                 ));
             }
         }
@@ -1099,34 +1222,45 @@ fn context_text(context: &[AIAgentContext]) -> Option<String> {
     if parts.is_empty() {
         None
     } else {
-        Some(truncate_context(&parts.join("\n\n")))
+        Some(truncate_context_to(
+            &parts.join("\n\n"),
+            context_char_budget,
+        ))
     }
 }
 
-fn file_context_content(file: &crate::ai::agent::FileContext) -> String {
+fn file_context_content(
+    file: &crate::ai::agent::FileContext,
+    context_char_budget: usize,
+) -> String {
     match &file.content {
-        AnyFileContent::StringContent(content) => truncate_context(content),
+        AnyFileContent::StringContent(content) => truncate_context_to(content, context_char_budget),
         AnyFileContent::BinaryContent(_) => "[binary file content omitted]".to_string(),
     }
 }
 
-fn truncate_context(text: &str) -> String {
-    if text.len() <= MAX_CONTEXT_CHARS {
+fn truncate_context_to(text: &str, max_chars: usize) -> String {
+    if text.len() <= max_chars {
         return text.to_string();
     }
     let mut truncated = text
         .char_indices()
-        .take_while(|(idx, _)| *idx < MAX_CONTEXT_CHARS)
+        .take_while(|(idx, _)| *idx < max_chars)
         .map(|(_, ch)| ch)
         .collect::<String>();
     truncated.push_str("\n[truncated]");
     truncated
 }
 
-fn system_prompt(params: &super::RequestParams, tools: &[OpenAITool]) -> String {
+fn system_prompt(
+    params: &super::RequestParams,
+    tools: &[OpenAITool],
+    context_char_budget: usize,
+) -> String {
     let mut prompt = String::from(
         "You are Warp Agent running inside the Warp terminal app. Warp is a real local harness, not a plain chat. \
-Use the provided OpenAI tool-calling interface whenever you need shell access, file access, code search, MCP tools, or Warp skills. \
+When local tool definitions are enabled, use the provided OpenAI tool-calling interface for shell access, file access, code search, MCP tools, or Warp skills. \
+If no tools are listed, do not invent tool calls or claim that an unavailable local tool was run. \
 Do not tell the user that you lack tools if tools are listed. The Warp client executes tool calls and sends their results back to you. \
 After every tool result, inspect the result and continue with another tool call if the user's request is not complete. \
 Only stop with a final answer when the requested work is complete, or when you are blocked and can explain the blocker clearly. \
@@ -1152,7 +1286,7 @@ Avoid wrapping commands in sh, bash, zsh, fish, eval, exec, curl, wget, ssh, scp
     }
 
     if let Some(mcp_context) = &params.mcp_context {
-        let mcp_summary = mcp_context_summary(mcp_context);
+        let mcp_summary = mcp_context_summary(mcp_context, context_char_budget);
         if !mcp_summary.is_empty() {
             prompt.push_str("\n\nMCP context:\n");
             prompt.push_str(&mcp_summary);
@@ -1162,7 +1296,10 @@ Avoid wrapping commands in sh, bash, zsh, fish, eval, exec, curl, wget, ssh, scp
     prompt
 }
 
-fn mcp_context_summary(context: &crate::ai::agent::MCPContext) -> String {
+fn mcp_context_summary(
+    context: &crate::ai::agent::MCPContext,
+    context_char_budget: usize,
+) -> String {
     #[allow(deprecated)]
     let mut lines = context
         .tools
@@ -1205,7 +1342,7 @@ fn mcp_context_summary(context: &crate::ai::agent::MCPContext) -> String {
         }
     }
 
-    truncate_context(&lines.join("\n"))
+    truncate_context_to(&lines.join("\n"), context_char_budget)
 }
 
 fn api_messages_from_inputs(
@@ -2430,6 +2567,8 @@ fn json_schema_object<const N: usize, const M: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::agent::ImageContext;
+    use mockito::Matcher;
 
     #[test]
     fn parses_custom_model_ids_into_provider_and_model() {
@@ -2471,6 +2610,7 @@ mod tests {
             models: vec!["qwen3-coder".to_string()],
             api_key_env_var: Some("LOCAL_OPENAI_API_KEY".to_string()),
             api_type: Default::default(),
+            capabilities: Default::default(),
         }];
         let mut api_keys = ApiKeys::default();
         api_keys
@@ -2483,6 +2623,327 @@ mod tests {
         assert_eq!(route.base_url, "http://localhost:1234/v1");
         assert_eq!(route.model, "qwen3-coder");
         assert_eq!(route.api_key.as_deref(), Some("stored-key"));
+    }
+
+    #[test]
+    fn configured_capabilities_are_retained_but_unimplemented_adapters_stay_disabled() {
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: "http://localhost:1234/v1".to_string(),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: CustomProviderCapabilities {
+                chat: true,
+                tools: true,
+                vision: true,
+                embeddings: true,
+                transcription: true,
+                context_window_tokens: Some(32_000),
+            },
+        };
+
+        assert!(route.capabilities.vision);
+        assert!(route.capabilities.embeddings);
+        assert!(route.capabilities.transcription);
+        assert_eq!(
+            route.effective_capabilities(),
+            EffectiveCustomProviderCapabilities {
+                chat: true,
+                tools: true,
+                vision: false,
+                embeddings: false,
+                transcription: false,
+            }
+        );
+    }
+
+    #[test]
+    fn configured_context_window_uses_conservative_character_budget() {
+        let mut route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: "http://localhost:1234/v1".to_string(),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: Default::default(),
+        };
+        assert_eq!(route.context_char_budget(), MAX_CONTEXT_CHARS);
+
+        route.capabilities.context_window_tokens = Some(1_000);
+        assert_eq!(route.context_char_budget(), 3_000);
+    }
+
+    #[tokio::test]
+    async fn disabled_chat_returns_local_error_without_http_request() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .expect(0)
+            .create_async()
+            .await;
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: CustomProviderCapabilities {
+                chat: false,
+                ..Default::default()
+            },
+        };
+
+        let mut response = generate(
+            route,
+            super::super::RequestParams::new_for_test(),
+            vec![api::ToolType::RunShellCommand],
+        )
+        .await
+        .expect("unsupported chat should degrade to a local response stream");
+        let error = response
+            .next()
+            .await
+            .expect("local error stream should produce one event")
+            .expect_err("unsupported chat must be reported as a local error");
+
+        assert!(error.to_string().contains("chat disabled"));
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn unimplemented_vision_returns_local_error_without_http_request() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .expect(0)
+            .create_async()
+            .await;
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: CustomProviderCapabilities {
+                vision: true,
+                ..Default::default()
+            },
+        };
+        let mut params = super::super::RequestParams::new_for_test();
+        params.input = vec![AIAgentInput::AutoCodeDiffQuery {
+            query: "Describe this image".to_string(),
+            context: std::sync::Arc::from(vec![AIAgentContext::Image(ImageContext {
+                data: "redacted-test-image".to_string(),
+                mime_type: "image/png".to_string(),
+                file_name: "local.png".to_string(),
+                is_figma: false,
+            })]),
+        }];
+
+        let mut response = generate(route, params, vec![])
+            .await
+            .expect("unsupported vision should degrade to a local response stream");
+        let error = response
+            .next()
+            .await
+            .expect("local error stream should produce one event")
+            .expect_err("unsupported vision must be reported as a local error");
+
+        assert!(error.to_string().contains("vision is not implemented"));
+        mock.assert_async().await;
+    }
+
+    #[test]
+    fn disabled_tools_omit_openai_tool_request_fields() {
+        let body = ChatCompletionRequest {
+            model: "model".to_string(),
+            messages: vec![ChatMessage::user("hello".to_string())],
+            stream: true,
+            tools: vec![],
+            tool_choice: None,
+            parallel_tool_calls: None,
+        };
+        let encoded = serde_json::to_value(body).expect("request should serialize");
+
+        assert_eq!(encoded.get("model").and_then(Value::as_str), Some("model"));
+        assert!(encoded.get("tools").is_none());
+        assert!(encoded.get("tool_choice").is_none());
+        assert!(encoded.get("parallel_tool_calls").is_none());
+    }
+
+    #[tokio::test]
+    async fn disabled_tools_omit_fields_in_http_request() {
+        let mut server = mockito::Server::new_async().await;
+        let params = super::super::RequestParams::new_for_test();
+        let expected_body = serde_json::to_value(ChatCompletionRequest {
+            model: "model".to_string(),
+            messages: openai_messages_from_params(&params, &[], MAX_CONTEXT_CHARS),
+            stream: true,
+            tools: vec![],
+            tool_choice: None,
+            parallel_tool_calls: None,
+        })
+        .expect("request should serialize");
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_body(Matcher::Json(expected_body))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [
+                        {
+                            "message": { "content": "local answer" },
+                            "finish_reason": "stop"
+                        }
+                    ]
+                }"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: CustomProviderCapabilities {
+                tools: false,
+                ..Default::default()
+            },
+        };
+
+        let mut response = generate(route, params, vec![api::ToolType::RunShellCommand])
+            .await
+            .expect("supported chat should produce a response stream");
+        while let Some(event) = response.next().await {
+            event.expect("mock response should decode");
+        }
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn configured_context_budget_bounds_http_message_context() {
+        let mut server = mockito::Server::new_async().await;
+        let mut params = super::super::RequestParams::new_for_test();
+        params.input = vec![AIAgentInput::AutoCodeDiffQuery {
+            query: "Review the selected text".to_string(),
+            context: std::sync::Arc::from(vec![AIAgentContext::SelectedText("x".repeat(2_000))]),
+        }];
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: CustomProviderCapabilities {
+                context_window_tokens: Some(256),
+                ..Default::default()
+            },
+        };
+        let context_budget = route.context_char_budget();
+        let tools = openai_tools_for_supported_tools(&[api::ToolType::RunShellCommand]);
+        let expected_body = serde_json::to_value(ChatCompletionRequest {
+            model: route.model.clone(),
+            messages: openai_messages_from_params(&params, &tools, context_budget),
+            stream: true,
+            tools,
+            tool_choice: Some("auto"),
+            parallel_tool_calls: Some(true),
+        })
+        .expect("request should serialize");
+        let expected_messages = expected_body
+            .get("messages")
+            .expect("request should include messages")
+            .to_string();
+        assert!(expected_messages.contains("[truncated]"));
+        assert!(!expected_messages.contains(&"x".repeat(MAX_CONTEXT_CHARS)));
+
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_body(Matcher::Json(expected_body))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [
+                        {
+                            "message": { "content": "bounded" },
+                            "finish_reason": "stop"
+                        }
+                    ]
+                }"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+
+        let mut response = generate(route, params, vec![api::ToolType::RunShellCommand])
+            .await
+            .expect("configured context should produce a response stream");
+        while let Some(event) = response.next().await {
+            event.expect("mock response should decode");
+        }
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn legacy_context_budget_preserves_http_fallback() {
+        let mut server = mockito::Server::new_async().await;
+        let mut params = super::super::RequestParams::new_for_test();
+        params.input = vec![AIAgentInput::AutoCodeDiffQuery {
+            query: "Review the selected text".to_string(),
+            context: std::sync::Arc::from(vec![AIAgentContext::SelectedText(
+                "x".repeat(MAX_CONTEXT_CHARS + 1_000),
+            )]),
+        }];
+        let route = CustomProviderRoute {
+            provider_name: "legacy".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: Default::default(),
+        };
+        let expected_body = serde_json::to_value(ChatCompletionRequest {
+            model: route.model.clone(),
+            messages: openai_messages_from_params(&params, &[], MAX_CONTEXT_CHARS),
+            stream: true,
+            tools: vec![],
+            tool_choice: None,
+            parallel_tool_calls: None,
+        })
+        .expect("request should serialize");
+        let expected_messages = expected_body
+            .get("messages")
+            .expect("request should include messages")
+            .to_string();
+        assert!(expected_messages.contains("[truncated]"));
+
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_body(Matcher::Json(expected_body))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [
+                        {
+                            "message": { "content": "legacy bounded" },
+                            "finish_reason": "stop"
+                        }
+                    ]
+                }"#,
+            )
+            .expect(1)
+            .create_async()
+            .await;
+
+        let mut response = generate(route, params, vec![])
+            .await
+            .expect("legacy route should produce a response stream");
+        while let Some(event) = response.next().await {
+            event.expect("mock response should decode");
+        }
+
+        mock.assert_async().await;
     }
 
     #[tokio::test]
@@ -2511,6 +2972,7 @@ mod tests {
             base_url: format!("{}/v1", server.url()),
             model: "test-model".to_string(),
             api_key: Some("test-key".to_string()),
+            capabilities: Default::default(),
         };
 
         let content = complete_text(
@@ -2675,6 +3137,7 @@ data: [DONE]
             base_url: format!("{}/v1", server.url()),
             model: "test-model".to_string(),
             api_key: None,
+            capabilities: Default::default(),
         };
         let body = ChatCompletionRequest {
             model: route.model.clone(),
@@ -2758,6 +3221,7 @@ data: [DONE]
             base_url: format!("{}/v1", server.url()),
             model: "test-model".to_string(),
             api_key: None,
+            capabilities: Default::default(),
         };
         let body = ChatCompletionRequest {
             model: route.model.clone(),

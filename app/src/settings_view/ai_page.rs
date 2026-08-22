@@ -23,12 +23,14 @@ use crate::settings::{
     AgentModeCodingPermissionsType, AgentModeCommandExecutionDenylist,
     AgentModeCommandExecutionPredicate, AgentModeQuerySuggestionsEnabled, AwsBedrockAutoLogin,
     AwsBedrockCredentialsEnabled, CodeSettings, CodebaseContextEnabled, CustomApiType,
-    CustomProviderConfig, FileBasedMcpEnabled, GitOperationsAutogenEnabled,
-    IncludeAgentCommandsInHistory, IntelligentAutosuggestionsEnabled, MemoryEnabled,
-    NLDInTerminalEnabled, NaturalLanguageAutosuggestionsEnabled, RuleSuggestionsEnabled,
-    ShouldRenderCLIAgentToolbar, ShouldRenderUseAgentToolbarForUserCommands, ShowAgentTips,
-    ShowConversationHistory, ShowHintText, ThinkingDisplayMode, custom_provider_config_from_ui,
-    normalize_custom_provider_env_var, ranked_custom_provider_model_suggestions,
+    CustomProviderCapabilities, CustomProviderConfig, FileBasedMcpEnabled,
+    GitOperationsAutogenEnabled, IncludeAgentCommandsInHistory, IntelligentAutosuggestionsEnabled,
+    MemoryEnabled, NLDInTerminalEnabled, NaturalLanguageAutosuggestionsEnabled,
+    RuleSuggestionsEnabled, ShouldRenderCLIAgentToolbar,
+    ShouldRenderUseAgentToolbarForUserCommands, ShowAgentTips, ShowConversationHistory,
+    ShowHintText, ThinkingDisplayMode, custom_provider_capabilities_from_ui,
+    custom_provider_config_from_ui_with_capabilities, normalize_custom_provider_env_var,
+    ranked_custom_provider_model_suggestions,
 };
 use crate::terminal::CLIAgent;
 use crate::terminal::session_settings::{SessionSettings, SessionSettingsChangedEvent};
@@ -2171,6 +2173,15 @@ pub enum AISettingsPageEvent {
     OpenExecutionProfileEditor(ClientProfileId),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditableCustomProviderCapability {
+    Chat,
+    Tools,
+    Vision,
+    Embeddings,
+    Transcription,
+}
+
 impl Entity for AISettingsPageView {
     type Event = AISettingsPageEvent;
 }
@@ -2232,6 +2243,10 @@ pub enum AISettingsPageAction {
     RefreshAwsBedrockCredentials,
     AddLLMProvider,
     RemoveLLMProvider(usize),
+    ToggleLLMProviderCapability {
+        index: usize,
+        capability: EditableCustomProviderCapability,
+    },
     ToggleCloudAgentComputerUse,
     ToggleFileBasedMcp,
     ToggleIncludeAgentCommandsInHistory,
@@ -2747,6 +2762,7 @@ impl TypedActionView for AISettingsPageView {
                     models: Vec::new(),
                     api_key_env_var: None,
                     api_type: CustomApiType::OpenAiCompatible,
+                    capabilities: Default::default(),
                 });
                 persist_custom_provider_configs(providers, ctx);
                 self.page = Self::build_page(self.active_subpage, ctx);
@@ -2760,6 +2776,38 @@ impl TypedActionView for AISettingsPageView {
                     ApiKeyManager::handle(ctx).update(ctx, |manager, ctx| {
                         manager.set_custom_key(removed.name, None, ctx);
                     });
+                    self.page = Self::build_page(self.active_subpage, ctx);
+                    ctx.notify();
+                }
+            }
+            AISettingsPageAction::ToggleLLMProviderCapability { index, capability } => {
+                let mut providers = AISettings::as_ref(ctx).custom_providers.clone();
+                if let Some(provider) = providers.get_mut(*index) {
+                    match capability {
+                        EditableCustomProviderCapability::Chat => {
+                            provider.capabilities.chat = !provider.capabilities.chat;
+                        }
+                        EditableCustomProviderCapability::Tools => {
+                            provider.capabilities.tools = !provider.capabilities.tools;
+                        }
+                        EditableCustomProviderCapability::Vision => {
+                            provider.capabilities.vision = !provider.capabilities.vision;
+                        }
+                        EditableCustomProviderCapability::Embeddings => {
+                            provider.capabilities.embeddings = !provider.capabilities.embeddings;
+                        }
+                        EditableCustomProviderCapability::Transcription => {
+                            provider.capabilities.transcription =
+                                !provider.capabilities.transcription;
+                        }
+                    }
+                    if let Err(error) = provider.validate() {
+                        log::warn!(
+                            "Refusing invalid local custom provider capability change: {error}"
+                        );
+                        return;
+                    }
+                    persist_custom_provider_configs(providers, ctx);
                     self.page = Self::build_page(self.active_subpage, ctx);
                     ctx.notify();
                 }
@@ -5522,11 +5570,18 @@ impl SettingsWidget for CloudAgentComputerUseWidget {
 #[derive(Clone)]
 struct LLMProviderEditorHandles {
     original_name: String,
+    capabilities: CustomProviderCapabilities,
     name_editor: ViewHandle<EditorView>,
     base_url_editor: ViewHandle<EditorView>,
     models_picker: ViewHandle<LLMProviderModelsPicker>,
     api_key_editor: ViewHandle<EditorView>,
     api_key_env_var_editor: ViewHandle<EditorView>,
+    context_window_editor: ViewHandle<EditorView>,
+    chat_toggle: SwitchStateHandle,
+    tools_toggle: SwitchStateHandle,
+    vision_toggle: SwitchStateHandle,
+    embeddings_toggle: SwitchStateHandle,
+    transcription_toggle: SwitchStateHandle,
     remove_button: ViewHandle<ActionButton>,
 }
 
@@ -6145,11 +6200,51 @@ fn sync_llm_provider_editors_to_settings(
             .join("\n");
         let api_key_env_var = provider.api_key_env_var_editor.as_ref(ctx).buffer_text(ctx);
         let api_key = provider.api_key_editor.as_ref(ctx).buffer_text(ctx);
+        let context_window_tokens = provider.context_window_editor.as_ref(ctx).buffer_text(ctx);
+        let capabilities = match custom_provider_capabilities_from_ui(
+            provider.capabilities.chat,
+            provider.capabilities.tools,
+            provider.capabilities.vision,
+            provider.capabilities.embeddings,
+            provider.capabilities.transcription,
+            &context_window_tokens,
+        ) {
+            Ok(capabilities) => capabilities,
+            Err(error) => {
+                log::warn!(
+                    "Keeping existing local custom provider after invalid capability input: {error}"
+                );
+                if let Some(existing) = AISettings::as_ref(ctx)
+                    .custom_providers
+                    .iter()
+                    .find(|existing| existing.name == provider.original_name)
+                {
+                    configs.push(existing.clone());
+                }
+                continue;
+            }
+        };
 
-        let Some(config) =
-            custom_provider_config_from_ui(&name, &base_url, &models, &api_key_env_var)
-        else {
-            continue;
+        let config = match custom_provider_config_from_ui_with_capabilities(
+            &name,
+            &base_url,
+            &models,
+            &api_key_env_var,
+            capabilities,
+        ) {
+            Ok(Some(config)) => config,
+            Ok(None) => continue,
+            Err(error) => {
+                log::warn!("Keeping invalid local custom provider unchanged: {error}");
+                if let Some(existing) = AISettings::as_ref(ctx)
+                    .custom_providers
+                    .iter()
+                    .find(|existing| existing.name == provider.original_name)
+                {
+                    configs.push(existing.clone());
+                }
+                continue;
+            }
         };
 
         if configs
@@ -6220,6 +6315,22 @@ impl LLMProvidersWidget {
                     false,
                     ctx,
                 );
+                let context_window_editor = create_llm_provider_editor(
+                    provider
+                        .capabilities
+                        .context_window_tokens
+                        .map(|tokens| tokens.to_string())
+                        .unwrap_or_default(),
+                    "e.g. 32768 (optional)",
+                    false,
+                    false,
+                    ctx,
+                );
+                let chat_toggle = SwitchStateHandle::default();
+                let tools_toggle = SwitchStateHandle::default();
+                let vision_toggle = SwitchStateHandle::default();
+                let embeddings_toggle = SwitchStateHandle::default();
+                let transcription_toggle = SwitchStateHandle::default();
                 let models_picker = {
                     let base_url_editor = base_url_editor.clone();
                     let api_key_editor = api_key_editor.clone();
@@ -6248,11 +6359,18 @@ impl LLMProvidersWidget {
 
                 LLMProviderEditorHandles {
                     original_name: provider.name.clone(),
+                    capabilities: provider.capabilities.clone(),
                     name_editor,
                     base_url_editor,
                     models_picker,
                     api_key_editor,
                     api_key_env_var_editor,
+                    context_window_editor,
+                    chat_toggle,
+                    tools_toggle,
+                    vision_toggle,
+                    embeddings_toggle,
+                    transcription_toggle,
                     remove_button,
                 }
             })
@@ -6264,6 +6382,7 @@ impl LLMProvidersWidget {
                 provider.base_url_editor.clone(),
                 provider.api_key_editor.clone(),
                 provider.api_key_env_var_editor.clone(),
+                provider.context_window_editor.clone(),
             ] {
                 let providers = editor_handles.clone();
                 ctx.subscribe_to_view(&editor, move |_, _, event, ctx| {
@@ -6326,6 +6445,59 @@ impl LLMProvidersWidget {
                     .build()
                     .finish(),
             )
+            .finish()
+    }
+
+    fn render_capability_toggle(
+        appearance: &Appearance,
+        label: &'static str,
+        description: &'static str,
+        checked: bool,
+        state: SwitchStateHandle,
+        action: AISettingsPageAction,
+    ) -> Box<dyn Element> {
+        let switch = appearance
+            .ui_builder()
+            .switch(state)
+            .check(checked)
+            .build()
+            .on_click(move |ctx, _, _| {
+                ctx.dispatch_typed_action(action.clone());
+            })
+            .finish();
+
+        Flex::row()
+            .with_main_axis_size(MainAxisSize::Max)
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_child(
+                Expanded::new(
+                    1.,
+                    Flex::column()
+                        .with_spacing(2.)
+                        .with_child(
+                            Text::new_inline(label, appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                                .with_color(appearance.theme().active_ui_text_color().into())
+                                .finish(),
+                        )
+                        .with_child(
+                            Text::new_inline(
+                                description,
+                                appearance.ui_font_family(),
+                                CONTENT_FONT_SIZE,
+                            )
+                            .with_color(
+                                appearance
+                                    .theme()
+                                    .sub_text_color(appearance.theme().surface_1())
+                                    .into(),
+                            )
+                            .finish(),
+                        )
+                        .finish(),
+                )
+                .finish(),
+            )
+            .with_child(switch)
             .finish()
     }
 
@@ -6403,6 +6575,80 @@ impl LLMProvidersWidget {
                     appearance,
                     "API key environment variable",
                     provider.api_key_env_var_editor.clone(),
+                ))
+                .with_child(Self::render_editor_input(
+                    appearance,
+                    "Context window (tokens)",
+                    provider.context_window_editor.clone(),
+                ))
+                .with_child(
+                    Text::new_inline(
+                        "Configured capabilities are saved locally. Vision, embeddings, and transcription remain unavailable until their local adapters are implemented.",
+                        appearance.ui_font_family(),
+                        CONTENT_FONT_SIZE,
+                    )
+                    .with_color(
+                        appearance
+                            .theme()
+                            .sub_text_color(appearance.theme().surface_1())
+                            .into(),
+                    )
+                    .finish(),
+                )
+                .with_child(Self::render_capability_toggle(
+                    appearance,
+                    "Chat completions",
+                    "Used by the local direct adapter.",
+                    provider.capabilities.chat,
+                    provider.chat_toggle.clone(),
+                    AISettingsPageAction::ToggleLLMProviderCapability {
+                        index,
+                        capability: EditableCustomProviderCapability::Chat,
+                    },
+                ))
+                .with_child(Self::render_capability_toggle(
+                    appearance,
+                    "Tool calling",
+                    "Used by the local shell, file, and MCP tool bridge.",
+                    provider.capabilities.tools,
+                    provider.tools_toggle.clone(),
+                    AISettingsPageAction::ToggleLLMProviderCapability {
+                        index,
+                        capability: EditableCustomProviderCapability::Tools,
+                    },
+                ))
+                .with_child(Self::render_capability_toggle(
+                    appearance,
+                    "Vision (adapter pending)",
+                    "Stored as provider intent; not advertised by this build yet.",
+                    provider.capabilities.vision,
+                    provider.vision_toggle.clone(),
+                    AISettingsPageAction::ToggleLLMProviderCapability {
+                        index,
+                        capability: EditableCustomProviderCapability::Vision,
+                    },
+                ))
+                .with_child(Self::render_capability_toggle(
+                    appearance,
+                    "Embeddings (adapter pending)",
+                    "Stored as provider intent; not advertised by this build yet.",
+                    provider.capabilities.embeddings,
+                    provider.embeddings_toggle.clone(),
+                    AISettingsPageAction::ToggleLLMProviderCapability {
+                        index,
+                        capability: EditableCustomProviderCapability::Embeddings,
+                    },
+                ))
+                .with_child(Self::render_capability_toggle(
+                    appearance,
+                    "Transcription (adapter pending)",
+                    "Stored as provider intent; not advertised by this build yet.",
+                    provider.capabilities.transcription,
+                    provider.transcription_toggle.clone(),
+                    AISettingsPageAction::ToggleLLMProviderCapability {
+                        index,
+                        capability: EditableCustomProviderCapability::Transcription,
+                    },
                 ))
                 .finish(),
         )

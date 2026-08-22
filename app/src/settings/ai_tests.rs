@@ -38,8 +38,105 @@ fn builds_openai_compatible_custom_provider_from_ui_fields() {
             models: vec!["qwen3-coder".to_string(), "llama-local".to_string()],
             api_key_env_var: Some("LOCAL_OPENAI_API_KEY".to_string()),
             api_type: CustomApiType::OpenAiCompatible,
+            capabilities: CustomProviderCapabilities::default(),
         }
     );
+}
+
+#[test]
+fn legacy_custom_provider_config_uses_compatible_capability_defaults() {
+    let provider: CustomProviderConfig = serde_json::from_value(serde_json::json!({
+        "name": "legacy",
+        "base_url": "http://localhost:1234/v1",
+        "models": ["local-model"],
+        "api_type": "open_ai_compatible"
+    }))
+    .expect("legacy provider config should remain valid");
+
+    assert_eq!(provider.capabilities, CustomProviderCapabilities::default());
+    assert!(provider.capabilities.chat);
+    assert!(provider.capabilities.tools);
+    assert!(!provider.capabilities.vision);
+    assert!(!provider.capabilities.embeddings);
+    assert!(!provider.capabilities.transcription);
+    assert!(provider.validate().is_ok());
+
+    let partial_capabilities: CustomProviderCapabilities =
+        serde_json::from_value(serde_json::json!({"vision": true}))
+            .expect("missing chat/tool fields should use compatibility defaults");
+    assert!(partial_capabilities.chat);
+    assert!(partial_capabilities.tools);
+    assert!(partial_capabilities.vision);
+}
+
+#[test]
+fn custom_provider_capabilities_round_trip_explicit_values() {
+    let capabilities = CustomProviderCapabilities {
+        chat: false,
+        tools: false,
+        vision: true,
+        embeddings: true,
+        transcription: true,
+        context_window_tokens: Some(32_000),
+    };
+    let provider = CustomProviderConfig {
+        name: "local".to_string(),
+        base_url: "http://localhost:1234/v1".to_string(),
+        models: vec!["model".to_string()],
+        api_key_env_var: None,
+        api_type: CustomApiType::OpenAiCompatible,
+        capabilities: capabilities.clone(),
+    };
+
+    let encoded = serde_json::to_value(&provider).expect("provider should serialize");
+    let decoded: CustomProviderConfig =
+        serde_json::from_value(encoded).expect("provider should deserialize");
+
+    assert_eq!(decoded.capabilities, capabilities);
+    assert!(decoded.validate().is_ok());
+}
+
+#[test]
+fn custom_provider_context_window_validation_rejects_zero_and_tiny_values() {
+    for tokens in [0, 1, CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS - 1] {
+        let provider = CustomProviderConfig {
+            capabilities: CustomProviderCapabilities {
+                context_window_tokens: Some(tokens),
+                ..Default::default()
+            },
+            ..CustomProviderConfig::default()
+        };
+
+        let error = provider
+            .validate()
+            .expect_err("invalid context window should return a local configuration error");
+        assert!(error.to_string().contains("context window"));
+    }
+
+    let provider = CustomProviderConfig {
+        capabilities: CustomProviderCapabilities {
+            context_window_tokens: Some(CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS),
+            ..Default::default()
+        },
+        ..CustomProviderConfig::default()
+    };
+    assert!(provider.validate().is_ok());
+}
+
+#[test]
+fn custom_provider_capabilities_from_ui_rejects_invalid_context_window() {
+    let error = custom_provider_capabilities_from_ui(true, true, false, false, false, "1")
+        .expect_err("tiny context window should be rejected before saving settings");
+    assert!(error.to_string().contains("context window"));
+
+    let capabilities = custom_provider_capabilities_from_ui(true, false, true, true, true, "")
+        .expect("empty context window means use the adapter fallback");
+    assert!(capabilities.chat);
+    assert!(!capabilities.tools);
+    assert!(capabilities.vision);
+    assert!(capabilities.embeddings);
+    assert!(capabilities.transcription);
+    assert_eq!(capabilities.context_window_tokens, None);
 }
 
 #[test]
