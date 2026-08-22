@@ -267,7 +267,7 @@ async fn run_grep(
     let is_grep_in_git_repo = is_git_repository(&execute_directory, &session)
         .await
         .unwrap_or_else(|e| {
-            report_error!(e.context("Failed to run command to check if in git repository"));
+            log::warn!("Failed to check whether Grep is running in a git repository: {e:#}");
             false
         });
     let shell_type = session.shell().shell_type();
@@ -392,12 +392,7 @@ async fn run_git_grep_command(
     shell_type: ShellType,
     execute_directory: &str,
 ) -> Result<GrepResult, GrepError> {
-    // This command works on all the shells we support (even PowerShell).
-    let mut grep_command = "git --no-pager grep --color=never --untracked -nIE".to_string();
-    for query in queries {
-        grep_command.push_str(format!(" -e {}", shell_quote_arg(query, shell_type)).as_str());
-    }
-    grep_command.push_str(format!(" {}", shell_quote_arg(target_path, shell_type)).as_str());
+    let grep_command = build_git_grep_command(queries, target_path, shell_type);
 
     match execute_grep_command(&grep_command, session, execute_directory).await? {
         GrepCommandOutcome::NoMatches => Ok(GrepResult::Success {
@@ -425,18 +420,7 @@ async fn run_grep_command(
     shell_type: ShellType,
     execute_directory: &str,
 ) -> Result<GrepResult, GrepError> {
-    // Summary of the options we use:
-    // * "--color=never" ensures we don't get colorized output which is harder to parse due to escape sequences
-    // * "-n" includes line numbers
-    // * "-r" performs a recursive search
-    // * "-I" ignores binary files
-    // * "-H" prints file name headers
-    // * "-E" uses extended regex expressions
-    let mut grep_command = "grep --color=never -nrIHE --devices=skip".to_string();
-    for query in queries {
-        grep_command.push_str(format!(" -e {}", shell_quote_arg(query, shell_type)).as_str());
-    }
-    grep_command.push_str(format!(" {}", shell_quote_arg(target_path, shell_type)).as_str());
+    let grep_command = build_grep_command(queries, target_path, shell_type);
 
     match execute_grep_command(&grep_command, session, execute_directory).await {
         Ok(GrepCommandOutcome::NoMatches) => Ok(GrepResult::Success {
@@ -651,17 +635,7 @@ async fn run_select_string_command(
     shell_launch_data: Option<ShellLaunchData>,
     execute_directory: &str,
 ) -> Result<GrepResult, GrepError> {
-    // We enable the `-CaseSensitive` flag to match the default behavior of grep.
-    // TODO(CODE-239): Make this command more efficient when searching a file.
-    let select_string_command = format!(
-        "Get-ChildItem -Path {} -Recurse -File | Select-String -NoEmphasis -CaseSensitive -Pattern {}",
-        shell_quote_arg(target_path, ShellType::PowerShell),
-        queries
-            .iter()
-            .map(|q| shell_quote_arg(q, ShellType::PowerShell))
-            .collect::<Vec<_>>()
-            .join(",")
-    );
+    let select_string_command = build_select_string_command(queries, target_path);
 
     let command_output = session
         .execute_command(
@@ -901,3 +875,7 @@ fn parse_single_file_grep_output(output: &str) -> Vec<usize> {
 impl Entity for GrepExecutor {
     type Event = ();
 }
+
+#[cfg(test)]
+#[path = "grep_tests.rs"]
+mod tests;

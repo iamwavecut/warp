@@ -5,8 +5,6 @@ use std::sync::Arc;
 use async_channel::{Receiver, Sender};
 use parking_lot::FairMutex;
 use thiserror::Error;
-#[cfg(feature = "local_fs")]
-use warp_errors::report_error;
 use warp_util::path::ShellFamily;
 use warpui::r#async::block_on;
 use warpui::{Entity, ModelContext, ModelHandle, SingletonEntity};
@@ -466,7 +464,7 @@ impl<T: EventLoopSender> PtyController<T> {
                         self.source_bootstrap_script(path, shell_type, ctx);
                     } else {
                         self.write_terminating_bootstrap_bytes(ctx);
-                        report_error!("Could not convert bootstrap script file path to str");
+                        log::warn!("Could not convert bootstrap script file path to bytes");
                     }
 
                     self.bootstrap_file = Some(file);
@@ -682,57 +680,52 @@ impl<T: EventLoopSender> PtyController<T> {
     /// If the write corresponds to a command, this also calls
     /// [`LineEditorStatus::did_execute_command()`].
     fn send_write_to_event_loop(&mut self, write: PtyWrite, ctx: &mut ModelContext<Self>) -> bool {
-        let (
-            bytes_to_write,
-            is_for_command,
-            on_write_fn,
-            raw_tmux_command,
-            shell_type_for_split,
-        ) = match write {
-            PtyWrite::Command {
-                command,
-                shell_type,
-                before_write_fn: on_write_fn,
-                ..
-            } => (
-                Cow::Owned(bytes_to_execute_command(
-                    command.as_str(),
+        let (bytes_to_write, is_for_command, on_write_fn, raw_tmux_command, shell_type_for_split) =
+            match write {
+                PtyWrite::Command {
+                    command,
                     shell_type,
-                    self.is_bracketed_paste_enabled,
-                )),
-                true,
-                on_write_fn,
-                false,
-                Some(shell_type),
-            ),
-            PtyWrite::AgentInput { bytes, mode } => {
-                let decorated_bytes =
-                    mode.decorate_bytes(bytes.into_owned(), self.is_bracketed_paste_enabled);
-                (decorated_bytes.into(), false, None, false, None)
-            }
-            PtyWrite::Bytes { bytes } => (bytes, false, None, false, None),
-            PtyWrite::TmuxCommand(command) => {
-                let command = command.get_command_string();
-                debug_assert!(
-                    command.ends_with('\n'),
-                    "Tmux commands must end in a newlines so they are executed"
-                );
-                debug_assert!(
-                    self.tmux_control_mode.is_some(),
-                    "Received tmux command outside of control mode."
-                );
-                (command.into_bytes().into(), false, None, true, None)
-            }
-            PtyWrite::RunNativeShellCompletions(state) => {
-                self.in_flight_native_completions_state = Some(state);
+                    before_write_fn: on_write_fn,
+                    ..
+                } => (
+                    Cow::Owned(bytes_to_execute_command(
+                        command.as_str(),
+                        shell_type,
+                        self.is_bracketed_paste_enabled,
+                    )),
+                    true,
+                    on_write_fn,
+                    false,
+                    Some(shell_type),
+                ),
+                PtyWrite::AgentInput { bytes, mode } => {
+                    let decorated_bytes =
+                        mode.decorate_bytes(bytes.into_owned(), self.is_bracketed_paste_enabled);
+                    (decorated_bytes.into(), false, None, false, None)
+                }
+                PtyWrite::Bytes { bytes } => (bytes, false, None, false, None),
+                PtyWrite::TmuxCommand(command) => {
+                    let command = command.get_command_string();
+                    debug_assert!(
+                        command.ends_with('\n'),
+                        "Tmux commands must end in a newlines so they are executed"
+                    );
+                    debug_assert!(
+                        self.tmux_control_mode.is_some(),
+                        "Received tmux command outside of control mode."
+                    );
+                    (command.into_bytes().into(), false, None, true, None)
+                }
+                PtyWrite::RunNativeShellCompletions(state) => {
+                    self.in_flight_native_completions_state = Some(state);
 
-                // Send a ^Y control code to trigger the right bindkey.  We
-                // then wait for an OSC-based signal from the shell before we
-                // send the text that needs to be completed.
-                let bytes = vec![0x19_u8];
-                (bytes.into(), false, None, false, None)
-            }
-        };
+                    // Send a ^Y control code to trigger the right bindkey.  We
+                    // then wait for an OSC-based signal from the shell before we
+                    // send the text that needs to be completed.
+                    let bytes = vec![0x19_u8];
+                    (bytes.into(), false, None, false, None)
+                }
+            };
 
         // The terminal hangs if we send 0 bytes through.
         if bytes_to_write.is_empty() {
@@ -761,10 +754,7 @@ impl<T: EventLoopSender> PtyController<T> {
                         Message::Input(Cow::Owned(kill_buffer.to_vec())),
                         ctx,
                     );
-                    self.send_message_to_event_loop(
-                        Message::Input(Cow::Owned(rest.to_vec())),
-                        ctx,
-                    );
+                    self.send_message_to_event_loop(Message::Input(Cow::Owned(rest.to_vec())), ctx);
                     return true;
                 }
                 Some(TmuxControlMode::Pending { buffer }) => {
@@ -773,10 +763,8 @@ impl<T: EventLoopSender> PtyController<T> {
                     return true;
                 }
                 Some(TmuxControlMode::Active { primary_pane }) => {
-                    let kill_buffer = crate::terminal::model::tmux::format_input(
-                        *primary_pane,
-                        kill_buffer,
-                    );
+                    let kill_buffer =
+                        crate::terminal::model::tmux::format_input(*primary_pane, kill_buffer);
                     let rest = crate::terminal::model::tmux::format_input(*primary_pane, rest);
                     self.send_message_to_event_loop(
                         Message::Input(Cow::Owned(kill_buffer.into_bytes())),
