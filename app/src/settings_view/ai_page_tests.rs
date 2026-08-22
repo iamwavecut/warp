@@ -74,17 +74,9 @@ fn provider_connection_with_unset_environment_variable_is_an_error() {
         "WARP_OSS_TEST_UNSET_PROVIDER_API_KEY_{}",
         uuid::Uuid::new_v4().simple()
     );
-    let error = resolve_provider_connection(
-        "http://localhost:1234/v1",
-        "",
-        &env_var,
-    )
-    .unwrap_err();
+    let error = resolve_provider_connection("http://localhost:1234/v1", "", &env_var).unwrap_err();
 
-    assert_eq!(
-        error,
-        format!("Environment variable {env_var} is not set.")
-    );
+    assert_eq!(error, format!("Environment variable {env_var} is not set."));
 }
 
 #[test]
@@ -96,12 +88,8 @@ fn provider_connection_with_empty_environment_variable_is_an_error() {
     );
     let _env_var_guard = EnvVarGuard::set(env_var.clone(), "");
 
-    let error = resolve_provider_connection(
-        "http://localhost:1234/v1",
-        "",
-        &format!("${env_var}"),
-    )
-    .unwrap_err();
+    let error = resolve_provider_connection("http://localhost:1234/v1", "", &format!("${env_var}"))
+        .unwrap_err();
 
     assert_eq!(error, "API key is empty.");
 }

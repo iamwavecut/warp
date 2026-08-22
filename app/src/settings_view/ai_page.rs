@@ -6024,7 +6024,10 @@ fn resolve_provider_connection(
     } else {
         Some(direct_key.to_string())
     };
-    if api_key.as_deref().is_some_and(|api_key| api_key.trim().is_empty()) {
+    if api_key
+        .as_deref()
+        .is_some_and(|api_key| api_key.trim().is_empty())
+    {
         return Err("API key is empty.".to_string());
     }
 
