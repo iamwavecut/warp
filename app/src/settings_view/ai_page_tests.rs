@@ -1,8 +1,32 @@
 use super::{
-    AgentAttributionToggleState, ProviderConnectionSignature, derive_agent_attribution_toggle_state,
+    AgentAttributionToggleState, ProviderConnectionSignature, ProviderModelsValidationState,
+    derive_agent_attribution_toggle_state, provider_connection_is_valid,
     resolve_provider_connection,
 };
 use crate::workspaces::workspace::AdminEnablementSetting;
+use std::ffi::OsString;
+
+struct EnvVarGuard {
+    name: String,
+    previous: Option<OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(name: String, value: &str) -> Self {
+        let previous = std::env::var_os(&name);
+        unsafe { std::env::set_var(&name, value) };
+        Self { name, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => unsafe { std::env::set_var(&self.name, value) },
+            None => unsafe { std::env::remove_var(&self.name) },
+        }
+    }
+}
 
 #[test]
 fn provider_connection_without_key_is_valid_and_unsigned() {
@@ -21,6 +45,16 @@ fn provider_connection_without_key_is_valid_and_unsigned() {
 }
 
 #[test]
+fn keyless_provider_validation_enables_model_selection() {
+    let (signature, _, api_key) =
+        resolve_provider_connection("http://localhost:1234/v1", "", "").unwrap();
+    let validation_state = ProviderModelsValidationState::Valid(signature.clone());
+
+    assert_eq!(api_key, None);
+    assert!(provider_connection_is_valid(&validation_state, &signature));
+}
+
+#[test]
 fn provider_connection_with_direct_key_has_stable_signature() {
     let (first_signature, _, first_api_key) =
         resolve_provider_connection("http://localhost:1234/v1", " direct-key ", "").unwrap();
@@ -34,18 +68,42 @@ fn provider_connection_with_direct_key_has_stable_signature() {
 }
 
 #[test]
+#[serial_test::serial]
 fn provider_connection_with_unset_environment_variable_is_an_error() {
+    let env_var = format!(
+        "WARP_OSS_TEST_UNSET_PROVIDER_API_KEY_{}",
+        uuid::Uuid::new_v4().simple()
+    );
     let error = resolve_provider_connection(
         "http://localhost:1234/v1",
         "",
-        "WARP_OSS_TEST_UNSET_PROVIDER_API_KEY",
+        &env_var,
     )
     .unwrap_err();
 
     assert_eq!(
         error,
-        "Environment variable WARP_OSS_TEST_UNSET_PROVIDER_API_KEY is not set."
+        format!("Environment variable {env_var} is not set.")
     );
+}
+
+#[test]
+#[serial_test::serial]
+fn provider_connection_with_empty_environment_variable_is_an_error() {
+    let env_var = format!(
+        "WARP_OSS_TEST_EMPTY_PROVIDER_API_KEY_{}",
+        uuid::Uuid::new_v4().simple()
+    );
+    let _env_var_guard = EnvVarGuard::set(env_var.clone(), "");
+
+    let error = resolve_provider_connection(
+        "http://localhost:1234/v1",
+        "",
+        &format!("${env_var}"),
+    )
+    .unwrap_err();
+
+    assert_eq!(error, "API key is empty.");
 }
 
 #[test]

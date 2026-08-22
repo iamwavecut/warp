@@ -5792,10 +5792,7 @@ impl LLMProviderModelsPicker {
         let Ok((signature, _, _)) = self.current_connection(ctx) else {
             return false;
         };
-        matches!(
-            &self.validation_state,
-            ProviderModelsValidationState::Valid(valid) if valid == &signature
-        )
+        provider_connection_is_valid(&self.validation_state, &signature)
     }
 
     fn current_suggestions(&self, query: String) -> Vec<String> {
@@ -6037,6 +6034,16 @@ fn resolve_provider_connection(
     };
 
     Ok((signature, base_url, api_key))
+}
+
+fn provider_connection_is_valid(
+    validation_state: &ProviderModelsValidationState,
+    signature: &ProviderConnectionSignature,
+) -> bool {
+    matches!(
+        validation_state,
+        ProviderModelsValidationState::Valid(valid) if valid == signature
+    )
 }
 
 struct LLMProvidersWidget {
