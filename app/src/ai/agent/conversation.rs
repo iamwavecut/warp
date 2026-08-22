@@ -2427,9 +2427,10 @@ impl AIConversation {
             }) => {
                 let task_id = TaskId::new(task_id);
                 self.checkpoint_task(&task_id);
-                self.task_store
+                let _ = self
+                    .task_store
                     .modify_task(&task_id, |task| task.update_description(description))
-                    .ok_or(UpdateConversationError::TaskNotFound)??;
+                    .ok_or(UpdateConversationError::TaskNotFound)?;
             }
             Action::AddMessagesToTask(AddMessagesToTask { task_id, messages }) => {
                 for message in messages.iter() {

@@ -3,8 +3,8 @@ use warpui::{AppContext, Entity, ModelContext, ModelHandle, SingletonEntity};
 
 use crate::ai::agent_conversations_model::{
     AgentConversationEntry, AgentConversationEntryId, AgentConversationsModel,
-    AgentConversationsModelEvent, AgentManagementFilters, ArtifactFilter, CreatedOnFilter,
-    CreatorFilter, OwnerFilter, SourceFilter, StatusFilter,
+    AgentConversationsModelEvent, AgentManagementFilters, ArtifactFilter, ConversationUpdateKind,
+    CreatedOnFilter, CreatorFilter, OwnerFilter, SourceFilter, StatusFilter,
 };
 
 pub struct ConversationListViewModelEvent;
@@ -38,8 +38,15 @@ impl ConversationListViewModel {
                 | AgentConversationsModelEvent::TasksUpdated => {
                     me.refresh_cached_items(ctx);
                 }
-                // Status changes don't affect the set of IDs (status is read
-                // at render time via get_item_by_id); just signal a re-render.
+                // Title changes affect the cached search matches and highlight indices,
+                // but not the underlying set of IDs.
+                AgentConversationsModelEvent::ConversationUpdated {
+                    kind: ConversationUpdateKind::MetadataChanged,
+                } => {
+                    me.apply_search_filter(ctx);
+                    ctx.emit(ConversationListViewModelEvent);
+                }
+                // Other per-item changes are read at render time and only need a re-render.
                 AgentConversationsModelEvent::ConversationUpdated { .. } => {
                     ctx.emit(ConversationListViewModelEvent);
                 }
@@ -63,8 +70,8 @@ impl ConversationListViewModel {
     /// The cache stores only `AgentConversationEntryId`s; per-item fields like
     /// status, title, and last-updated are read fresh at render time via
     /// `get_item_by_id`. Callers should therefore avoid invoking this on
-    /// events that only mutate per-item state (e.g. `ConversationUpdated`);
-    /// emitting `ConversationListViewModelEvent` is sufficient there.
+    /// events that only mutate per-item state. Title metadata changes still
+    /// need `apply_search_filter` because search matches are cached separately.
     fn refresh_cached_items(&mut self, ctx: &mut ModelContext<Self>) {
         let model = self.conversations_model.as_ref(ctx);
         self.cached_entry_ids = model

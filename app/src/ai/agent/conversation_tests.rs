@@ -2,12 +2,15 @@ use std::collections::HashMap;
 
 use warp_core::features::FeatureFlag;
 use warp_multi_agent_api as api;
+use warpui::{App, EntityId};
 
 use super::{
     AIConversation, AIConversationAutoexecuteMode, AIConversationId, ConversationStatus,
     RestoreConversationError, artifact_from_fork_proto,
 };
 use crate::ai::artifacts::Artifact;
+use crate::ai::blocklist::ResponseStreamId;
+use crate::ai::blocklist::history_model::BlocklistAIHistoryModel;
 use crate::persistence::model::AgentConversationData;
 
 fn restored_conversation(conversation_data: Option<AgentConversationData>) -> AIConversation {
@@ -182,6 +185,39 @@ fn restored_conversation_with_empty_task_list_creates_in_progress_optimistic_roo
     );
     assert_eq!(conversation.status(), &ConversationStatus::InProgress);
     assert!(conversation.status_error_message().is_none());
+}
+
+#[test]
+fn optimistic_update_task_description_action_is_best_effort_noop() {
+    App::test((), |mut app| async move {
+        let history_model = app.add_model(|_| BlocklistAIHistoryModel::new_for_test());
+        let result = history_model.update(&mut app, |_, ctx| {
+            let mut conversation = AIConversation::new_restored_synthesizing_on_empty(
+                AIConversationId::new(),
+                vec![],
+                None,
+            )
+            .expect("empty task list should synthesize an optimistic root");
+            let task_id = conversation.get_root_task_id().to_string();
+
+            conversation.apply_client_action(
+                &ResponseStreamId::new_for_test(),
+                EntityId::new(),
+                api::client_action::Action::UpdateTaskDescription(
+                    api::client_action::UpdateTaskDescription {
+                        task_id,
+                        description: "Best effort title".to_owned(),
+                    },
+                ),
+                ctx,
+            )
+        });
+
+        assert!(
+            result.is_ok(),
+            "source-less optimistic description update should remain a successful no-op: {result:?}",
+        );
+    });
 }
 
 #[test]
