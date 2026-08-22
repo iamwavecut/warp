@@ -11,10 +11,10 @@ use crate::terminal::input::buffer_model::InputBufferModel;
 use crate::terminal::input::inline_menu::{InlineMenuEvent, InlineMenuPositioner, InlineMenuView};
 use crate::terminal::input::slash_command_model::SlashCommandEntryState;
 use crate::terminal::input::slash_command_model::SlashCommandModel;
-use crate::terminal::input::slash_commands::UpdatedActiveCommands;
 use crate::terminal::input::slash_commands::{
     AcceptSlashCommandOrLocalPrompt, GuiSlashCommandDataSource, GuiZeroStateDataSource,
 };
+use crate::terminal::input::slash_commands::{UpdatedActiveCommands, UpdatedZeroState};
 use crate::terminal::input::suggestions_mode_model::{
     InputSuggestionsModeEvent, InputSuggestionsModeModel,
 };
@@ -95,7 +95,7 @@ impl InlineSlashCommandView {
             },
         );
         let zero_state_source =
-            ctx.add_model(|_| GuiZeroStateDataSource::new(&slash_commands_source));
+            ctx.add_model(|ctx| GuiZeroStateDataSource::new(&slash_commands_source, ctx));
 
         let mixer = ctx.add_model(|ctx| {
             let mut mixer = SearchMixer::<AcceptSlashCommandOrLocalPrompt>::new();
@@ -109,6 +109,16 @@ impl InlineSlashCommandView {
             );
             mixer.run_query(slash_command_query(""), ctx);
             mixer
+        });
+
+        ctx.subscribe_to_model(&zero_state_source, |me, _, _: &UpdatedZeroState, ctx| {
+            me.mixer.update(ctx, |mixer, ctx| {
+                // Local workflows and skills can change while this menu is open. Re-run the
+                // current query so the existing mixer reflects the new zero-state source.
+                if let Some(query) = mixer.current_query().cloned() {
+                    mixer.run_query(query, ctx);
+                }
+            });
         });
 
         let menu_view = ctx.add_typed_action_view(|ctx| {

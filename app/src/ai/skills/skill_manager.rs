@@ -15,7 +15,7 @@ use warp_errors::report_error;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::{AppContext, Entity, ModelContext, ModelHandle, SingletonEntity};
 
-use super::{SkillDescriptor, SkillPathQuery};
+use super::{SkillDescriptor, SkillManagerEvent, SkillPathQuery};
 use crate::ai::mcp::{McpIntegration, TemplatableMCPServerManager};
 use crate::ai::skills::skill_utils::unique_skills;
 use crate::keyboard::keybinding_file_path;
@@ -86,8 +86,10 @@ impl SkillManager {
 
         ctx.spawn_stream_local(
             skill_watcher_rx,
-            |me, message, _ctx| {
-                me.handle_skill_watcher_event(message);
+            |me, message, ctx| {
+                if me.handle_skill_watcher_event(message) {
+                    ctx.emit(SkillManagerEvent::SkillsChanged);
+                }
             },
             |_, _| {}, // No cleanup needed when stream ends
         );
@@ -96,11 +98,13 @@ impl SkillManager {
         let skill_watcher = ctx.add_model(|ctx| SkillWatcher::new(ctx, skill_watcher_tx));
 
         if FeatureFlag::BundledSkills.is_enabled() {
-            ctx.spawn(Self::load_bundled_skills(), |me, result, _| {
+            ctx.spawn(Self::load_bundled_skills(), |me, result, ctx| {
                 me.bundled_skills = result;
+                ctx.emit(SkillManagerEvent::SkillsChanged);
             });
-            ctx.spawn(Self::load_figma_skills(), |me, figma_skills, _| {
+            ctx.spawn(Self::load_figma_skills(), |me, figma_skills, ctx| {
                 me.bundled_skills.extend(figma_skills);
+                ctx.emit(SkillManagerEvent::SkillsChanged);
             });
         }
 
@@ -401,31 +405,37 @@ impl SkillManager {
         bundled.activation.is_enabled(ctx).then_some(&bundled.skill)
     }
 
-    fn handle_skill_watcher_event(&mut self, event: SkillWatcherEvent) {
+    fn handle_skill_watcher_event(&mut self, event: SkillWatcherEvent) -> bool {
         match event {
-            SkillWatcherEvent::SkillsAdded { skills } => {
-                self.handle_skills_added(skills);
-            }
-            SkillWatcherEvent::SkillsDeleted { paths } => {
-                self.handle_skills_deleted(paths);
-            }
+            SkillWatcherEvent::SkillsAdded { skills } => self.handle_skills_added(skills),
+            SkillWatcherEvent::SkillsDeleted { paths } => self.handle_skills_deleted(paths),
         }
     }
 
-    pub fn handle_skills_added(&mut self, skills: Vec<ParsedSkill>) {
+    pub fn handle_skills_added(&mut self, skills: Vec<ParsedSkill>) -> bool {
+        let mut changed = false;
         for skill in skills {
             match extract_skill_parent_directory(&skill.path) {
                 Ok(parent_dir) => {
-                    self.directory_skills
+                    let skill_path = skill.path.clone();
+                    changed |= self
+                        .directory_skills
                         .entry(parent_dir)
                         .or_default()
-                        .insert(skill.path.clone());
+                        .insert(skill_path.clone());
 
-                    self.skills_by_name
+                    changed |= self
+                        .skills_by_name
                         .entry(skill.name.clone())
                         .or_default()
-                        .insert(skill.path.clone());
-                    self.skills_by_path.insert(skill.path.clone(), skill);
+                        .insert(skill_path.clone());
+                    let previous = self.skills_by_path.insert(skill_path.clone(), skill);
+                    changed |= match previous {
+                        None => true,
+                        Some(previous) => {
+                            previous != *self.skills_by_path.get(&skill_path).unwrap()
+                        }
+                    };
                 }
                 _ => {
                     log::warn!(
@@ -435,15 +445,19 @@ impl SkillManager {
                 }
             }
         }
+        changed
     }
 
-    fn handle_skills_deleted(&mut self, paths: Vec<LocalOrRemotePath>) {
+    fn handle_skills_deleted(&mut self, paths: Vec<LocalOrRemotePath>) -> bool {
+        let mut changed = false;
         for path in paths {
-            self.handle_path_deleted(&path);
+            changed |= self.handle_path_deleted(&path);
         }
+        changed
     }
 
-    fn handle_path_deleted(&mut self, path: &LocalOrRemotePath) {
+    fn handle_path_deleted(&mut self, path: &LocalOrRemotePath) -> bool {
+        let mut changed = false;
         // Delete all skills that are affected by this deleted path
         for (dir, skill_paths) in &self.directory_skills.clone() {
             if dir.starts_with(path) {
@@ -451,25 +465,28 @@ impl SkillManager {
                 for skill_path in skill_paths {
                     let skill = self.skills_by_path.remove(skill_path);
                     if let Some(skill) = skill {
+                        changed = true;
                         self.skills_by_name
                             .entry(skill.name.clone())
                             .or_default()
                             .remove(skill_path);
                     }
                 }
-                self.directory_skills.remove(dir);
+                changed |= self.directory_skills.remove(dir).is_some();
             } else if path.starts_with(dir) {
                 // Remove all skills under this directory that is a child of the deleted path
                 for skill_path in skill_paths {
                     if skill_path.starts_with(path) {
                         let skill = self.skills_by_path.remove(skill_path);
                         if let Some(skill) = skill {
+                            changed = true;
                             self.skills_by_name
                                 .entry(skill.name.clone())
                                 .or_default()
                                 .remove(skill_path);
                         }
-                        self.directory_skills
+                        changed |= self
+                            .directory_skills
                             .entry(dir.clone())
                             .or_default()
                             .remove(skill_path);
@@ -477,6 +494,7 @@ impl SkillManager {
                 }
             }
         }
+        changed
     }
 
     /// Load skill definitions bundled with Warp.
@@ -676,7 +694,7 @@ fn is_home_directory(path: &LocalOrRemotePath) -> bool {
 }
 
 impl Entity for SkillManager {
-    type Event = ();
+    type Event = SkillManagerEvent;
 }
 
 impl SingletonEntity for SkillManager {}

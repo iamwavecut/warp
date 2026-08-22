@@ -28,7 +28,7 @@ use crate::terminal::input::slash_command_model::{SlashCommandEntryState, SlashC
 use crate::terminal::input::slash_commands::view::CloseReason;
 use crate::terminal::input::slash_commands::{
     AcceptSlashCommandOrLocalPrompt, GuiSlashCommandDataSource, GuiZeroStateDataSource,
-    SlashCommandsEvent, UpdatedActiveCommands,
+    SlashCommandsEvent, UpdatedActiveCommands, UpdatedZeroState,
 };
 use crate::terminal::input::suggestions_mode_model::{
     InputSuggestionsModeEvent, InputSuggestionsModeModel,
@@ -221,7 +221,7 @@ impl CloudModeV2SlashCommandView {
         );
 
         let zero_state_source =
-            ctx.add_model(|_| GuiZeroStateDataSource::new(&slash_commands_source));
+            ctx.add_model(|ctx| GuiZeroStateDataSource::new(&slash_commands_source, ctx));
 
         let mixer = ctx.add_model(|ctx| {
             let mut mixer = SearchMixer::<AcceptSlashCommandOrLocalPrompt>::new();
@@ -235,6 +235,14 @@ impl CloudModeV2SlashCommandView {
             );
             mixer.run_query(slash_command_query(""), ctx);
             mixer
+        });
+
+        ctx.subscribe_to_model(&zero_state_source, |me, _, _: &UpdatedZeroState, ctx| {
+            me.mixer.update(ctx, |mixer, ctx| {
+                if let Some(query) = mixer.current_query().cloned() {
+                    mixer.run_query(query, ctx);
+                }
+            });
         });
 
         ctx.subscribe_to_model(&mixer, |me, _, event, ctx| match event {

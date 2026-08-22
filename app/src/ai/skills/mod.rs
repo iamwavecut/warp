@@ -19,6 +19,16 @@ pub enum SkillOpenOrigin {
     OpenSkillCommand,
 }
 
+/// Emitted after the local skill catalog changes.
+///
+/// Consumers use this event to refresh views backed by the filesystem watcher. The event is
+/// shared with the no-filesystem implementation so the surrounding UI keeps the same lifecycle
+/// contract on every supported target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SkillManagerEvent {
+    SkillsChanged,
+}
+
 #[cfg(not(target_family = "wasm"))]
 mod global_skills;
 #[cfg(not(target_family = "wasm"))]

@@ -4,7 +4,7 @@ use ai::skills::{ParsedSkill, SkillProvider, SkillReference};
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
 
-use crate::ai::skills::SkillDescriptor;
+use crate::ai::skills::{SkillDescriptor, SkillManagerEvent};
 
 pub struct SkillManager {}
 
@@ -55,7 +55,7 @@ impl SkillManager {
 }
 
 impl Entity for SkillManager {
-    type Event = ();
+    type Event = SkillManagerEvent;
 }
 
 impl SingletonEntity for SkillManager {}

@@ -8,4 +8,4 @@ pub use core::{
 };
 
 pub use gui::{GuiDataSourceArgs, GuiSlashCommandDataSource};
-pub use zero_state::GuiZeroStateDataSource;
+pub use zero_state::{GuiZeroStateDataSource, UpdatedZeroState};
