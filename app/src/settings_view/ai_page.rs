@@ -5533,7 +5533,7 @@ struct LLMProviderEditorHandles {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ProviderConnectionSignature {
     base_url: String,
-    api_key_fingerprint: u64,
+    api_key_fingerprint: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -5743,7 +5743,7 @@ impl LLMProviderModelsPicker {
         ctx.notify();
 
         ctx.spawn(
-            async move { direct_openai::fetch_models(&base_url, Some(&api_key)).await },
+            async move { direct_openai::fetch_models(&base_url, api_key.as_deref()).await },
             move |me, result, ctx| {
                 if !matches!(
                     &me.validation_state,
@@ -5781,35 +5781,11 @@ impl LLMProviderModelsPicker {
     fn current_connection(
         &self,
         ctx: &AppContext,
-    ) -> Result<(ProviderConnectionSignature, String, String), String> {
+    ) -> Result<(ProviderConnectionSignature, String, Option<String>), String> {
         let base_url = self.base_url_editor.as_ref(ctx).buffer_text(ctx);
-        let base_url = base_url.trim().trim_end_matches('/').to_string();
-        if base_url.is_empty() {
-            return Err("Enter a base URL first.".to_string());
-        }
-        url::Url::parse(&base_url).map_err(|_| "Base URL is not a valid URL.".to_string())?;
-
         let direct_key = self.api_key_editor.as_ref(ctx).buffer_text(ctx);
-        let direct_key = direct_key.trim();
-        let api_key = if direct_key.is_empty() {
-            let env_var = self.api_key_env_var_editor.as_ref(ctx).buffer_text(ctx);
-            let env_var = normalize_custom_provider_env_var(&env_var)
-                .ok_or_else(|| "Enter an API key or API-key environment variable.".to_string())?;
-            std::env::var(&env_var)
-                .map_err(|_| format!("Environment variable {env_var} is not set."))?
-        } else {
-            direct_key.to_string()
-        };
-        if api_key.trim().is_empty() {
-            return Err("API key is empty.".to_string());
-        }
-
-        let signature = ProviderConnectionSignature {
-            base_url: base_url.clone(),
-            api_key_fingerprint: api_key_fingerprint(&api_key),
-        };
-
-        Ok((signature, base_url, api_key))
+        let env_var = self.api_key_env_var_editor.as_ref(ctx).buffer_text(ctx);
+        resolve_provider_connection(&base_url, &direct_key, &env_var)
     }
 
     fn can_add_models(&self, ctx: &AppContext) -> bool {
@@ -6026,6 +6002,41 @@ fn api_key_fingerprint(api_key: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     api_key.hash(&mut hasher);
     hasher.finish()
+}
+
+fn resolve_provider_connection(
+    base_url: &str,
+    direct_key: &str,
+    api_key_env_var: &str,
+) -> Result<(ProviderConnectionSignature, String, Option<String>), String> {
+    let base_url = base_url.trim().trim_end_matches('/').to_string();
+    if base_url.is_empty() {
+        return Err("Enter a base URL first.".to_string());
+    }
+    url::Url::parse(&base_url).map_err(|_| "Base URL is not a valid URL.".to_string())?;
+
+    let direct_key = direct_key.trim();
+    let api_key = if direct_key.is_empty() {
+        match normalize_custom_provider_env_var(api_key_env_var) {
+            Some(env_var) => Some(
+                std::env::var(&env_var)
+                    .map_err(|_| format!("Environment variable {env_var} is not set."))?,
+            ),
+            None => None,
+        }
+    } else {
+        Some(direct_key.to_string())
+    };
+    if api_key.as_deref().is_some_and(|api_key| api_key.trim().is_empty()) {
+        return Err("API key is empty.".to_string());
+    }
+
+    let signature = ProviderConnectionSignature {
+        base_url: base_url.clone(),
+        api_key_fingerprint: api_key.as_deref().map(api_key_fingerprint),
+    };
+
+    Ok((signature, base_url, api_key))
 }
 
 struct LLMProvidersWidget {

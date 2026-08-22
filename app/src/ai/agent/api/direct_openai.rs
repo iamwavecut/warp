@@ -2804,7 +2804,7 @@ data: [DONE]
     }
 
     #[tokio::test]
-    async fn fetches_openai_compatible_model_ids() {
+    async fn fetches_openai_compatible_model_ids_with_key() {
         let mut server = mockito::Server::new_async().await;
         let _mock = server
             .mock("GET", "/v1/models")
@@ -2830,5 +2830,21 @@ data: [DONE]
             models.unwrap(),
             vec!["qwen3-coder".to_string(), "llama-local".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn fetches_openai_compatible_model_ids_without_key() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/v1/models")
+            .match_header("authorization", mockito::Matcher::Missing)
+            .with_status(200)
+            .with_body(r#"{ "object": "list", "data": [{ "id": "local-model" }] }"#)
+            .create_async()
+            .await;
+
+        let models = fetch_models(&format!("{}/v1", server.url()), None).await;
+
+        assert_eq!(models.unwrap(), vec!["local-model".to_string()]);
     }
 }
