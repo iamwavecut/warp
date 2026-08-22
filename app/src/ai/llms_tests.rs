@@ -2,7 +2,7 @@ use super::*;
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::settings::{AISettings, CustomProviderConfig};
-use crate::test_util::{assert_eventually, settings::initialize_settings_for_tests};
+use crate::test_util::settings::initialize_settings_for_tests;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 use crate::LaunchMode;
 use settings::Setting;
@@ -44,15 +44,69 @@ fn startup_loads_existing_custom_provider_models() {
 
         let preferences = app.add_singleton_model(LLMPreferences::new);
 
-        assert_eventually!(
+        assert_eq!(
             preferences.read(&app, |preferences, _| {
                 preferences
                     .get_base_llm_choices_for_agent_mode()
-                    .map(|model| model.id.as_str())
+                    .map(|model| model.id.to_string())
                     .collect::<Vec<_>>()
-                    == vec!["custom/local-keyless/p0-keyless", "custom/local-keyed/p0-keyed"]
             }),
+            vec!["custom/local-keyless/p0-keyless", "custom/local-keyed/p0-keyed"],
             "custom providers configured before startup should populate the Agent Mode catalog"
+        );
+    });
+}
+
+#[test]
+fn startup_without_custom_providers_ignores_stale_cached_models() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(UserWorkspaces::default_mock);
+        app.update(|ctx| {
+            let stale = LLMInfo {
+                display_name: "stale / hosted-model".to_string(),
+                base_model_name: "hosted-model".to_string(),
+                id: "custom/stale/hosted-model".into(),
+                reasoning_level: None,
+                usage_metadata: LLMUsageMetadata {
+                    request_multiplier: 1,
+                    credit_multiplier: None,
+                },
+                description: None,
+                disable_reason: None,
+                vision_supported: false,
+                spec: None,
+                provider: LLMProvider::Custom("stale".to_string()),
+                host_configs: HashMap::new(),
+                context_window: LLMContextWindow::default(),
+            };
+            let stale_models = AvailableLLMs::new(stale.id.clone(), [stale], None)
+                .expect("stale test model should create an available catalog");
+            let cached = ModelsByFeature {
+                agent_mode: stale_models.clone(),
+                coding: stale_models.clone(),
+                cli_agent: Some(stale_models),
+                computer_use: Some(default_computer_use_llms()),
+            };
+            ctx.private_user_preferences()
+                .write_value(
+                    MODELS_BY_FEATURE_CACHE_KEY,
+                    serde_json::to_string(&cached).expect("stale model cache should serialize"),
+                )
+                .expect("stale model cache should persist");
+        });
+
+        let preferences = app.add_singleton_model(LLMPreferences::new);
+
+        assert_eq!(
+            preferences.read(&app, |preferences, _| {
+                preferences
+                    .get_base_llm_choices_for_agent_mode()
+                    .map(|model| model.id.to_string())
+                    .collect::<Vec<_>>()
+            }),
+            vec!["auto"],
+            "without configured providers, startup should use the explicit local fallback catalog"
         );
     });
 }

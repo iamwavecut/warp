@@ -565,7 +565,9 @@ pub struct LLMPreferences {
 
 impl LLMPreferences {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
-        let models_by_feature = get_cached_models(ctx).unwrap_or_default();
+        // Build the startup catalog directly from local settings. Reading the persisted model
+        // cache here could expose stale custom or hosted models before the first Agent Pane opens.
+        let models_by_feature = models_by_feature_from_custom_providers(ctx);
 
         ctx.subscribe_to_model(&UserWorkspaces::handle(ctx), |me, _, event, ctx| {
             if let UserWorkspacesEvent::TeamsChanged = event {
@@ -589,10 +591,6 @@ impl LLMPreferences {
             last_update: None,
             base_llm_for_terminal_view,
         };
-
-        // Populate the initial catalog from local custom-provider settings so it is available when
-        // the first Agent Pane opens. This refresh is settings-only and performs no network I/O.
-        me.refresh_available_models(ctx);
 
         me
     }
@@ -970,80 +968,7 @@ impl LLMPreferences {
     /// Build the model list from custom provider configs stored in AISettings
     /// instead of fetching hosted model metadata from Warp servers.
     fn refresh_custom_provider_models(&self, ctx: &mut ModelContext<Self>) {
-        use crate::settings::AISettings;
-
-        let custom_providers = &AISettings::as_ref(ctx).custom_providers;
-
-        if custom_providers.is_empty() {
-            log::info!("local-first: no custom providers configured, using default models");
-            return;
-        }
-
-        let mut all_llms: Vec<LLMInfo> = Vec::new();
-
-        for provider_config in custom_providers.iter() {
-            let provider_name = provider_config.name.clone();
-            let provider = LLMProvider::Custom(provider_name.clone());
-
-            for model_id in &provider_config.models {
-                all_llms.push(LLMInfo {
-                    display_name: format!("{} / {}", provider_name, model_id),
-                    base_model_name: model_id.clone(),
-                    id: format!("custom/{}/{}", provider_name, model_id).into(),
-                    reasoning_level: None,
-                    usage_metadata: LLMUsageMetadata {
-                        request_multiplier: 1,
-                        credit_multiplier: None,
-                    },
-                    description: None,
-                    disable_reason: None,
-                    vision_supported: false,
-                    spec: None,
-                    provider: provider.clone(),
-                    host_configs: HashMap::new(),
-                    context_window: LLMContextWindow::default(),
-                });
-            }
-        }
-
-        if all_llms.is_empty() {
-            log::info!("local-first: custom providers configured but no models defined");
-            return;
-        }
-
-        let default_id = all_llms.first().unwrap().id.clone();
-
-        let available = AvailableLLMs::new(default_id, all_llms, None).unwrap_or_else(|e| {
-            log::error!("local-first: failed to build AvailableLLMs: {e}");
-            AvailableLLMs {
-                default_id: "auto".to_owned().into(),
-                choices: vec![LLMInfo {
-                    display_name: "auto (cost-efficient)".to_owned(),
-                    base_model_name: "auto (cost-efficient)".to_owned(),
-                    id: "auto".to_owned().into(),
-                    reasoning_level: None,
-                    usage_metadata: LLMUsageMetadata {
-                        request_multiplier: 1,
-                        credit_multiplier: None,
-                    },
-                    description: None,
-                    disable_reason: None,
-                    vision_supported: true,
-                    spec: None,
-                    provider: LLMProvider::Unknown,
-                    host_configs: HashMap::new(),
-                    context_window: LLMContextWindow::default(),
-                }],
-                preferred_codex_model_id: None,
-            }
-        });
-
-        let models_by_feature = ModelsByFeature {
-            agent_mode: available.clone(),
-            coding: available.clone(),
-            cli_agent: Some(available.clone()),
-            computer_use: Some(default_computer_use_llms()),
-        };
+        let models_by_feature = models_by_feature_from_custom_providers(ctx);
 
         // Use ctx.spawn with an immediately-resolving future so we get
         // &mut Self access in the callback.
@@ -1225,6 +1150,53 @@ impl Entity for LLMPreferences {
 }
 
 impl SingletonEntity for LLMPreferences {}
+
+/// Builds the locally configured model catalog, or the explicit local fallback when no custom
+/// provider has models. This is pure settings-to-model transformation and performs no I/O.
+fn models_by_feature_from_custom_providers(app: &AppContext) -> ModelsByFeature {
+    use crate::settings::AISettings;
+
+    let mut all_llms = Vec::new();
+    for provider_config in AISettings::as_ref(app).custom_providers.iter() {
+        let provider_name = provider_config.name.clone();
+        let provider = LLMProvider::Custom(provider_name.clone());
+
+        for model_id in &provider_config.models {
+            all_llms.push(LLMInfo {
+                display_name: format!("{} / {}", provider_name, model_id),
+                base_model_name: model_id.clone(),
+                id: format!("custom/{}/{}", provider_name, model_id).into(),
+                reasoning_level: None,
+                usage_metadata: LLMUsageMetadata {
+                    request_multiplier: 1,
+                    credit_multiplier: None,
+                },
+                description: None,
+                disable_reason: None,
+                vision_supported: false,
+                spec: None,
+                provider: provider.clone(),
+                host_configs: HashMap::new(),
+                context_window: LLMContextWindow::default(),
+            });
+        }
+    }
+
+    let Some(default_id) = all_llms.first().map(|llm| llm.id.clone()) else {
+        log::info!("local-first: no custom provider models configured, using local fallback");
+        return ModelsByFeature::default();
+    };
+
+    let available = AvailableLLMs::new(default_id, all_llms, None)
+        .expect("custom provider model list is non-empty");
+
+    ModelsByFeature {
+        agent_mode: available.clone(),
+        coding: available.clone(),
+        cli_agent: Some(available),
+        computer_use: Some(default_computer_use_llms()),
+    }
+}
 
 fn get_new_agent_mode_choices(
     old_config: &AvailableLLMs,
