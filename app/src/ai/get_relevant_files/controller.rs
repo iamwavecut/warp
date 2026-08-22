@@ -1,4 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fs::File;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -16,18 +18,339 @@ use warpui::{AppContext, Entity, ModelContext, ModelHandle, SingletonEntity};
 
 #[cfg(not(target_family = "wasm"))]
 use crate::ai::agent::SearchCodebaseFailureReason;
-use crate::{
-    ai::{
-        agent::{AIAgentActionId, SearchCodebaseResult},
-        blocklist::SessionContext,
-        get_relevant_files::api::{FileContext as FileContextRequest, GetRelevantFiles},
-        outline::{OutlineStatus, RepoOutlines},
-    },
-    server::server_api::{AIApiError, ServerApiProvider},
+use crate::ai::{
+    agent::{AIAgentActionId, SearchCodebaseResult},
+    blocklist::SessionContext,
+    get_relevant_files::api::FileContext as FileContextRequest,
+    outline::{OutlineStatus, RepoOutlines},
 };
 #[cfg_attr(not(target_family = "wasm"), path = "remote_search/native.rs")]
 #[cfg_attr(target_family = "wasm", path = "remote_search/wasm.rs")]
 mod remote_search;
+
+const LOCAL_OUTLINE_RESULT_LIMIT: usize = 20;
+const LOCAL_CONTENT_SEARCH_MAX_FILES: usize = 128;
+const LOCAL_CONTENT_SEARCH_MAX_BYTES_PER_FILE: usize = 64 * 1024;
+
+// Each query token receives only its strongest outline match. The gaps keep every match in a
+// higher tier stronger than any single match in the next tier while still letting all query tokens
+// contribute to the final score. Content evidence is added below the outline tiers separately.
+const PARTIAL_PATH_OR_PATH_TOKEN_SCORE: u64 = 10_000;
+const FILE_NAME_SCORE: u64 = 1_000;
+const SYMBOL_TOKEN_OR_PREFIX_SCORE: u64 = 100;
+const SYMBOL_SUBSTRING_SCORE: u64 = 10;
+const CONTENT_TOKEN_SCORE: u64 = 2;
+const CONTENT_SUBSTRING_SCORE: u64 = 1;
+
+fn normalized_tokens(value: &str) -> Vec<String> {
+    let normalized = value
+        .chars()
+        .flat_map(char::to_lowercase)
+        .map(|character| {
+            if character.is_alphanumeric() {
+                character
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>();
+    normalized
+        .split_whitespace()
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn normalized_path(path: &str) -> String {
+    normalized_tokens(path).join("/")
+}
+
+fn contains_token_sequence(haystack: &[String], needle: &[String]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
+fn outline_candidate_score(
+    query_tokens: &[String],
+    partial_path_segments: Option<&[String]>,
+    candidate: &FileContextRequest,
+) -> u64 {
+    let path = Path::new(&candidate.path);
+    let path_tokens = normalized_tokens(&candidate.path);
+    let directory_tokens = path
+        .parent()
+        .map(|parent| normalized_tokens(&parent.to_string_lossy()))
+        .unwrap_or_default();
+    let file_name_tokens = path
+        .file_name()
+        .map(|file_name| normalized_tokens(&file_name.to_string_lossy()))
+        .unwrap_or_default();
+    let file_stem_tokens = path
+        .file_stem()
+        .map(|file_stem| normalized_tokens(&file_stem.to_string_lossy()))
+        .unwrap_or_default();
+    let symbol_tokens = normalized_tokens(&candidate.symbols);
+
+    let partial_path_score = partial_path_segments
+        .into_iter()
+        .flatten()
+        .filter(|partial_path| {
+            contains_token_sequence(&path_tokens, &normalized_tokens(partial_path))
+        })
+        .count() as u64
+        * PARTIAL_PATH_OR_PATH_TOKEN_SCORE;
+
+    partial_path_score
+        + query_tokens
+            .iter()
+            .map(|query_token| {
+                if directory_tokens.iter().any(|token| token == query_token) {
+                    PARTIAL_PATH_OR_PATH_TOKEN_SCORE
+                } else if file_name_tokens
+                    .iter()
+                    .chain(&file_stem_tokens)
+                    .any(|token| token.contains(query_token))
+                {
+                    FILE_NAME_SCORE
+                } else if symbol_tokens
+                    .iter()
+                    .any(|token| token == query_token || token.starts_with(query_token))
+                {
+                    SYMBOL_TOKEN_OR_PREFIX_SCORE
+                } else if symbol_tokens
+                    .iter()
+                    .any(|token| token.contains(query_token))
+                {
+                    SYMBOL_SUBSTRING_SCORE
+                } else {
+                    0
+                }
+            })
+            .sum::<u64>()
+}
+
+fn rank_local_outline_candidates(
+    query: &str,
+    partial_path_segments: Option<&[String]>,
+    candidates: Vec<FileContextRequest>,
+    content_scores: &HashMap<String, u64>,
+) -> Vec<FileContextRequest> {
+    let mut candidates = candidates;
+    candidates.sort_by(|left, right| {
+        normalized_path(&left.path)
+            .cmp(&normalized_path(&right.path))
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.symbols.cmp(&right.symbols))
+    });
+    candidates.dedup_by(|left, right| left.path == right.path);
+
+    let query_tokens = normalized_tokens(query);
+    if query_tokens.is_empty() {
+        return if candidates.len() < 2 {
+            candidates
+        } else {
+            Vec::new()
+        };
+    }
+
+    let mut ranked = candidates
+        .into_iter()
+        .filter_map(|candidate| {
+            let score = outline_candidate_score(&query_tokens, partial_path_segments, &candidate)
+                + content_scores.get(&candidate.path).copied().unwrap_or(0);
+            (score > 0).then(|| {
+                (
+                    score,
+                    normalized_path(&candidate.path),
+                    candidate.path.clone(),
+                    candidate,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(
+        |(left_score, left_path, left_raw_path, _),
+         (right_score, right_path, right_raw_path, _)| {
+            right_score
+                .cmp(left_score)
+                .then_with(|| left_path.cmp(right_path))
+                .then_with(|| left_raw_path.cmp(right_raw_path))
+        },
+    );
+    ranked
+        .into_iter()
+        .take(LOCAL_OUTLINE_RESULT_LIMIT)
+        .map(|(_, _, _, candidate)| candidate)
+        .collect()
+}
+
+#[derive(Debug)]
+struct ValidatedLocalCandidate {
+    context: FileContextRequest,
+    absolute_path: PathBuf,
+}
+
+fn validated_local_candidates(
+    base_path: &Path,
+    mut candidates: Vec<FileContextRequest>,
+) -> Vec<ValidatedLocalCandidate> {
+    let Ok(canonical_root) = dunce::canonicalize(base_path) else {
+        return Vec::new();
+    };
+    candidates.sort_by(|left, right| {
+        normalized_path(&left.path)
+            .cmp(&normalized_path(&right.path))
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.symbols.cmp(&right.symbols))
+    });
+
+    let mut by_canonical_path = BTreeMap::new();
+    for context in candidates {
+        let Ok(absolute_path) = dunce::canonicalize(canonical_root.join(&context.path)) else {
+            continue;
+        };
+        if !absolute_path.starts_with(&canonical_root) || !absolute_path.is_file() {
+            continue;
+        }
+        by_canonical_path
+            .entry(absolute_path.clone())
+            .or_insert(ValidatedLocalCandidate {
+                context,
+                absolute_path,
+            });
+    }
+    by_canonical_path.into_values().collect()
+}
+
+fn content_candidate_score(query_tokens: &[String], contents: &[u8]) -> u64 {
+    if contents.contains(&0) {
+        return 0;
+    }
+    let content_tokens = normalized_tokens(&String::from_utf8_lossy(contents));
+    query_tokens
+        .iter()
+        .map(|query_token| {
+            if content_tokens.iter().any(|token| token == query_token) {
+                CONTENT_TOKEN_SCORE
+            } else if content_tokens
+                .iter()
+                .any(|token| token.contains(query_token))
+            {
+                CONTENT_SUBSTRING_SCORE
+            } else {
+                0
+            }
+        })
+        .sum()
+}
+
+/// Builds bounded local content evidence without invoking a shell or child process.
+///
+/// At most 128 already validated outline files are opened, in deterministic outline-score/path
+/// order, and only the first 64 KiB of each file is read (at most 8 MiB per request).
+fn bounded_content_scores(
+    query: &str,
+    partial_path_segments: Option<&[String]>,
+    candidates: &[ValidatedLocalCandidate],
+) -> HashMap<String, u64> {
+    let query_tokens = normalized_tokens(query);
+    if query_tokens.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut search_order = candidates.iter().collect::<Vec<_>>();
+    search_order.sort_by(|left, right| {
+        outline_candidate_score(&query_tokens, partial_path_segments, &right.context)
+            .cmp(&outline_candidate_score(
+                &query_tokens,
+                partial_path_segments,
+                &left.context,
+            ))
+            .then_with(|| {
+                normalized_path(&left.context.path).cmp(&normalized_path(&right.context.path))
+            })
+            .then_with(|| left.context.path.cmp(&right.context.path))
+    });
+
+    search_order
+        .into_iter()
+        .take(LOCAL_CONTENT_SEARCH_MAX_FILES)
+        .filter_map(|candidate| {
+            let file = File::open(&candidate.absolute_path).ok()?;
+            let mut contents = Vec::with_capacity(LOCAL_CONTENT_SEARCH_MAX_BYTES_PER_FILE);
+            file.take(LOCAL_CONTENT_SEARCH_MAX_BYTES_PER_FILE as u64)
+                .read_to_end(&mut contents)
+                .ok()?;
+            let score = content_candidate_score(&query_tokens, &contents);
+            (score > 0).then(|| (candidate.context.path.clone(), score))
+        })
+        .collect()
+}
+
+fn local_outline_locations_from_candidates(
+    base_path: &Path,
+    query: &str,
+    partial_path_segments: Option<&[String]>,
+    candidates: Vec<FileContextRequest>,
+) -> Arc<HashSet<CodeContextLocation>> {
+    let candidates = validated_local_candidates(base_path, candidates);
+    let content_scores = bounded_content_scores(query, partial_path_segments, &candidates);
+    let absolute_paths = candidates
+        .iter()
+        .map(|candidate| {
+            (
+                candidate.context.path.clone(),
+                candidate.absolute_path.clone(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let ranked = rank_local_outline_candidates(
+        query,
+        partial_path_segments,
+        candidates
+            .into_iter()
+            .map(|candidate| candidate.context)
+            .collect(),
+        &content_scores,
+    );
+
+    Arc::new(
+        ranked
+            .into_iter()
+            .filter_map(|candidate| absolute_paths.get(&candidate.path).cloned())
+            .map(CodeContextLocation::WholeFile)
+            .collect(),
+    )
+}
+
+fn local_outline_locations(
+    outline: Option<(&OutlineStatus, PathBuf)>,
+    query: &str,
+    partial_path_segments: Option<&Vec<String>>,
+) -> Result<Arc<HashSet<CodeContextLocation>>, GetRelevantFilesError> {
+    match outline {
+        Some((OutlineStatus::Complete(outline), base_path)) => {
+            let candidates = outline
+                .to_file_symbols(partial_path_segments)
+                .into_iter()
+                .map(|file| FileContextRequest {
+                    path: file.path,
+                    symbols: file.symbols,
+                })
+                .collect();
+            Ok(local_outline_locations_from_candidates(
+                &base_path,
+                query,
+                partial_path_segments.map(Vec::as_slice),
+                candidates,
+            ))
+        }
+        Some((OutlineStatus::Pending, _)) => Err(GetRelevantFilesError::Pending),
+        Some((OutlineStatus::Failed, _)) => Err(GetRelevantFilesError::CreateFailed),
+        None => Err(GetRelevantFilesError::Missing),
+    }
+}
 
 #[derive(Debug)]
 pub enum GetRelevantFilesControllerEvent {
@@ -227,8 +550,6 @@ impl GetRelevantFilesController {
         action_id: AIAgentActionId,
         ctx: &mut ModelContext<Self>,
     ) -> Result<(), GetRelevantFilesError> {
-        const MINIMUM_FILE_COUNT_FOR_API_CALL: usize = 2;
-
         if FeatureFlag::FullSourceCodeEmbedding.is_enabled() {
             let codebase_mgr = CodebaseIndexManager::handle(ctx);
             if let Some(base_path) = codebase_mgr.as_ref(ctx).root_path_for_codebase(directory) {
@@ -258,79 +579,16 @@ impl GetRelevantFilesController {
             }
         }
 
-        match RepoOutlines::as_ref(ctx).get_outline(directory) {
-            Some((OutlineStatus::Complete(outline), base_path)) => {
-                let server_api = ServerApiProvider::as_ref(ctx).get();
-
-                let file_outlines = outline.to_file_symbols(partial_path_segments);
-                if file_outlines.len() < MINIMUM_FILE_COUNT_FOR_API_CALL {
-                    ctx.emit(GetRelevantFilesControllerEvent::Success {
-                        action_id,
-                        result: GetRelevantFilesControllerResult::Locations(Arc::new(
-                            file_outlines
-                                .into_iter()
-                                .map(|file| {
-                                    CodeContextLocation::WholeFile(PathBuf::from(file.path))
-                                })
-                                .collect(),
-                        )),
-                    });
-                } else {
-                    let outline_request = GetRelevantFiles {
-                        query,
-                        files: file_outlines
-                            .into_iter()
-                            .map(|outline| FileContextRequest {
-                                path: outline.path,
-                                symbols: outline.symbols,
-                            })
-                            .collect(),
-                    };
-                    let action_id_clone = action_id.clone();
-                    let request_abort_handle = ctx
-                        .spawn(
-                            async move {
-                                let response =
-                                    server_api.get_relevant_files(&outline_request).await?;
-                                Ok(Arc::new(
-                                    response
-                                        .relevant_file_paths
-                                        .into_iter()
-                                        .filter_map(|path| {
-                                            let file_path = base_path.join(path);
-                                            // Validate the returned file paths.
-                                            if file_path.exists() {
-                                                Some(CodeContextLocation::WholeFile(file_path))
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .collect(),
-                                ))
-                            },
-                            move |me,
-                                  relevant_file_paths: Result<
-                                Arc<HashSet<CodeContextLocation>>,
-                                AIApiError,
-                            >,
-                                  ctx| {
-                                me.handle_relevant_file_paths_result(
-                                    relevant_file_paths.map_err(|e| anyhow!(e)),
-                                    action_id_clone,
-                                    ctx,
-                                )
-                            },
-                        )
-                        .abort_handle();
-                    self.pending_requests
-                        .insert(action_id, RequestHandle::AbortHandle(request_abort_handle));
-                }
-                Ok(())
-            }
-            Some((OutlineStatus::Pending, _)) => Err(GetRelevantFilesError::Pending),
-            Some((OutlineStatus::Failed, _)) => Err(GetRelevantFilesError::CreateFailed),
-            None => Err(GetRelevantFilesError::Missing),
-        }
+        let locations = local_outline_locations(
+            RepoOutlines::as_ref(ctx).get_outline(directory),
+            &query,
+            partial_path_segments,
+        )?;
+        ctx.emit(GetRelevantFilesControllerEvent::Success {
+            action_id,
+            result: GetRelevantFilesControllerResult::Locations(locations),
+        });
+        Ok(())
     }
 
     fn send_remote_request(
@@ -445,3 +703,7 @@ impl GetRelevantFilesController {
 impl Entity for GetRelevantFilesController {
     type Event = GetRelevantFilesControllerEvent;
 }
+
+#[cfg(test)]
+#[path = "controller_tests.rs"]
+mod tests;
