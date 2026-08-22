@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use tempfile::TempDir;
 use warp_core::channel::ChannelState;
+use warp_core::ui::icons::Icon;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::App;
 use watcher::HomeDirectoryWatcher;
@@ -573,6 +574,59 @@ fn test_build_bundled_skill_context() {
 }
 
 #[test]
+fn bundled_skill_catalog_merge_is_deterministic_and_noop_safe() {
+    let bundled = HashMap::from([
+        (
+            "base".to_owned(),
+            make_bundled_skill_for_test("bundled-base", BundledSkillActivation::Always, Icon::File),
+        ),
+        (
+            "shared".to_owned(),
+            make_bundled_skill_for_test(
+                "bundled-shared",
+                BundledSkillActivation::Always,
+                Icon::File,
+            ),
+        ),
+    ]);
+    let figma = HashMap::from([
+        (
+            "figma-only".to_owned(),
+            make_bundled_skill_for_test(
+                "figma-only",
+                BundledSkillActivation::RequiresMcp(crate::ai::mcp::McpIntegration::Figma),
+                Icon::Figma,
+            ),
+        ),
+        (
+            "shared".to_owned(),
+            make_bundled_skill_for_test(
+                "figma-shared",
+                BundledSkillActivation::RequiresMcp(crate::ai::mcp::McpIntegration::Figma),
+                Icon::Figma,
+            ),
+        ),
+    ]);
+
+    // The two async loads are merged by source role, so completion order cannot discard Figma
+    // entries. Figma retains the previous `extend(figma_skills)` precedence for duplicate IDs.
+    let merged = merge_bundled_skill_catalog(bundled.clone(), figma.clone());
+    let merged_again = merge_bundled_skill_catalog(bundled, figma);
+    assert_eq!(merged, merged_again);
+    assert_eq!(merged.len(), 3);
+    assert_eq!(merged["base"].skill.name, "bundled-base");
+    assert_eq!(merged["figma-only"].skill.name, "figma-only");
+    assert_eq!(merged["shared"].skill.name, "figma-shared");
+    assert_eq!(merged["shared"].icon, Icon::Figma);
+
+    let mut current = HashMap::new();
+    assert!(replace_bundled_skill_catalog(&mut current, merged.clone()));
+    assert!(!replace_bundled_skill_catalog(&mut current, merged));
+    assert!(replace_bundled_skill_catalog(&mut current, HashMap::new()));
+    assert!(!replace_bundled_skill_catalog(&mut current, HashMap::new()));
+}
+
+#[test]
 fn same_path_skill_rename_updates_reverse_index_and_provider_eligibility() {
     App::test((), |mut app| async move {
         app.add_singleton_model(DirectoryWatcher::new);
@@ -632,6 +686,26 @@ fn same_path_skill_rename_updates_reverse_index_and_provider_eligibility() {
             Some("renamed-deploy".to_owned())
         );
     });
+}
+
+fn make_bundled_skill_for_test(
+    name: &str,
+    activation: BundledSkillActivation,
+    icon: Icon,
+) -> BundledSkill {
+    BundledSkill {
+        skill: ParsedSkill {
+            path: local(format!("/bundled/{name}/SKILL.md")),
+            name: name.to_owned(),
+            description: name.to_owned(),
+            content: format!("# {name}"),
+            line_range: None,
+            provider: SkillProvider::Warp,
+            scope: SkillScope::Bundled,
+        },
+        activation,
+        icon,
+    }
 }
 
 // ============================================================================

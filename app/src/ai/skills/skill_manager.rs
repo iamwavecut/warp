@@ -98,18 +98,8 @@ impl SkillManager {
         let skill_watcher = ctx.add_model(|ctx| SkillWatcher::new(ctx, skill_watcher_tx));
 
         if FeatureFlag::BundledSkills.is_enabled() {
-            ctx.spawn(Self::load_bundled_skills(), |me, result, ctx| {
-                if me.bundled_skills != result {
-                    me.bundled_skills = result;
-                    ctx.emit(SkillManagerEvent::SkillsChanged);
-                }
-            });
-            ctx.spawn(Self::load_figma_skills(), |me, figma_skills, ctx| {
-                let changed = figma_skills
-                    .iter()
-                    .any(|(id, skill)| me.bundled_skills.get(id) != Some(skill));
-                if changed {
-                    me.bundled_skills.extend(figma_skills);
+            ctx.spawn(Self::load_bundled_skill_catalog(), |me, result, ctx| {
+                if replace_bundled_skill_catalog(&mut me.bundled_skills, result) {
                     ctx.emit(SkillManagerEvent::SkillsChanged);
                 }
             });
@@ -585,6 +575,13 @@ impl SkillManager {
             .collect()
     }
 
+    /// Load both bundled catalogs concurrently and merge them with Figma precedence.
+    async fn load_bundled_skill_catalog() -> HashMap<String, BundledSkill> {
+        let (bundled_skills, figma_skills) =
+            futures::join!(Self::load_bundled_skills(), Self::load_figma_skills());
+        merge_bundled_skill_catalog(bundled_skills, figma_skills)
+    }
+
     /// Adds a skill to the skill manager for testing purposes.
     #[cfg(test)]
     pub fn add_skill_for_testing(&mut self, skill: ParsedSkill) {
@@ -611,6 +608,28 @@ impl SkillManager {
                 icon: icon_for_bundled_skill(&id),
             },
         );
+    }
+}
+
+fn merge_bundled_skill_catalog(
+    mut bundled_skills: HashMap<String, BundledSkill>,
+    figma_skills: HashMap<String, BundledSkill>,
+) -> HashMap<String, BundledSkill> {
+    // Preserve the old `extend(figma_skills)` behavior for duplicate IDs while making the final
+    // catalog independent of which loader future completed first.
+    bundled_skills.extend(figma_skills);
+    bundled_skills
+}
+
+fn replace_bundled_skill_catalog(
+    current: &mut HashMap<String, BundledSkill>,
+    next: HashMap<String, BundledSkill>,
+) -> bool {
+    if *current == next {
+        false
+    } else {
+        *current = next;
+        true
     }
 }
 
