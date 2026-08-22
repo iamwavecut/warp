@@ -1,10 +1,10 @@
 use super::*;
+use crate::LaunchMode;
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::settings::{AISettings, CustomProviderConfig};
 use crate::test_util::settings::initialize_settings_for_tests;
 use crate::workspaces::user_workspaces::UserWorkspaces;
-use crate::LaunchMode;
 use settings::Setting;
 use warpui::{App, SingletonEntity};
 
@@ -51,7 +51,10 @@ fn startup_loads_existing_custom_provider_models() {
                     .map(|model| model.id.to_string())
                     .collect::<Vec<_>>()
             }),
-            vec!["custom/local-keyless/p0-keyless", "custom/local-keyed/p0-keyed"],
+            vec![
+                "custom/local-keyless/p0-keyless",
+                "custom/local-keyed/p0-keyed"
+            ],
             "custom providers configured before startup should populate the Agent Mode catalog"
         );
     });
