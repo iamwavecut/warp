@@ -2184,6 +2184,137 @@ fn test_switch_focus_panels() {
 }
 
 #[test]
+fn conversation_backed_vertical_pane_rename_updates_local_conversation_title() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let _agent_view = FeatureFlag::AgentView.override_enabled(true);
+        let workspace = mock_workspace(&mut app);
+        let pane_group = workspace.read(&app, |workspace, _| {
+            workspace
+                .get_pane_group_view(0)
+                .expect("workspace should have an initial pane group")
+                .clone()
+        });
+        let pane_id = pane_group.read(&app, |panes, _| get_newly_created_pane_id(panes, &[]));
+        let terminal = pane_group.read(&app, |panes, ctx| {
+            panes
+                .terminal_view_from_pane_id(pane_id, ctx)
+                .expect("initial pane should be a terminal")
+        });
+        let conversation_id = AIConversationId::new();
+        let root_task_id = "vertical-pane-local-rename-root";
+        let conversation = AIConversation::new_restored(
+            conversation_id,
+            vec![warp_multi_agent_api::Task {
+                id: root_task_id.to_owned(),
+                messages: vec![warp_multi_agent_api::Message {
+                    id: "vertical-pane-local-rename-message".to_owned(),
+                    task_id: root_task_id.to_owned(),
+                    server_message_data: String::new(),
+                    citations: vec![],
+                    message: Some(warp_multi_agent_api::message::Message::UserQuery(
+                        warp_multi_agent_api::message::UserQuery {
+                            query: "Original prompt remains history".to_owned(),
+                            context: None,
+                            referenced_attachments: HashMap::new(),
+                            mode: None,
+                            intended_agent: Default::default(),
+                        },
+                    )),
+                    request_id: "vertical-pane-local-rename-request".to_owned(),
+                    timestamp: None,
+                }],
+                dependencies: None,
+                description: "Original conversation title".to_owned(),
+                summary: String::new(),
+                server_data: String::new(),
+            }],
+            None,
+        )
+        .expect("source-backed conversation should restore");
+
+        terminal.update(&mut app, |view, ctx| {
+            view.restore_conversation_after_view_creation(
+                RestoredAIConversation::new(conversation),
+                true,
+                RestoreConversationEntryBehavior::EnterRestoredConversation,
+                ctx,
+            );
+        });
+
+        let locator = PaneViewLocator {
+            pane_group_id: pane_group.id(),
+            pane_id,
+        };
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.rename_pane(locator, ctx);
+            workspace.pane_rename_editor.update(ctx, |editor, ctx| {
+                editor.clear_buffer_and_reset_undo_stack(ctx);
+                editor.insert_selected_text("Renamed local conversation", ctx);
+            });
+            workspace.finish_pane_rename(ctx);
+        });
+
+        BlocklistAIHistoryModel::handle(&app).read(&app, |history, _| {
+            let conversation = history
+                .conversation(&conversation_id)
+                .expect("conversation should remain loaded");
+            assert_eq!(
+                conversation.title().as_deref(),
+                Some("Renamed local conversation"),
+            );
+            assert_eq!(
+                conversation.initial_query().as_deref(),
+                Some("Original prompt remains history"),
+            );
+        });
+        pane_group.read(&app, |panes, ctx| {
+            let pane = panes
+                .pane_by_id(pane_id)
+                .expect("renamed pane should still exist");
+            let configuration = pane.pane_configuration();
+            let configuration = configuration.as_ref(ctx);
+            assert_eq!(configuration.title(), "Renamed local conversation");
+            assert_eq!(configuration.custom_vertical_tabs_title(), None);
+        });
+    });
+}
+
+#[test]
+fn non_conversation_vertical_pane_rename_remains_a_custom_pane_title() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let pane_group = workspace.read(&app, |workspace, _| {
+            workspace
+                .get_pane_group_view(0)
+                .expect("workspace should have an initial pane group")
+                .clone()
+        });
+        let pane_id = pane_group.read(&app, |panes, _| get_newly_created_pane_id(panes, &[]));
+        let locator = PaneViewLocator {
+            pane_group_id: pane_group.id(),
+            pane_id,
+        };
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.set_custom_pane_name(locator, "Custom terminal title".to_owned(), ctx);
+        });
+
+        pane_group.read(&app, |panes, ctx| {
+            let pane = panes
+                .pane_by_id(pane_id)
+                .expect("renamed pane should still exist");
+            let configuration = pane.pane_configuration();
+            assert_eq!(
+                configuration.as_ref(ctx).custom_vertical_tabs_title(),
+                Some("Custom terminal title"),
+            );
+        });
+    });
+}
+
+#[test]
 fn test_focus_notebook() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

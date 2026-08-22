@@ -36,10 +36,11 @@ pub(crate) fn rename_conversation<T: View>(
     conversation_id: AIConversationId,
     title: String,
     ctx: &mut ViewContext<T>,
-) {
+) -> bool {
     let result = BlocklistAIHistoryModel::handle(ctx).update(ctx, |history, ctx| {
         history.rename_conversation_locally(conversation_id, title, ctx)
     });
+    let succeeded = result.is_ok();
 
     let toast = match result {
         Ok(LocalConversationRenameOutcome::Renamed { title }) => Some(DismissibleToast::success(
@@ -55,6 +56,8 @@ pub(crate) fn rename_conversation<T: View>(
             toast_stack.add_ephemeral_toast(toast, window_id, ctx);
         });
     }
+
+    succeeded
 }
 
 #[cfg(test)]

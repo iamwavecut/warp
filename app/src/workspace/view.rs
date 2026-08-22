@@ -43,6 +43,7 @@ use crate::ai::blocklist::suggested_agent_mode_workflow_modal::SuggestedAgentMod
 use crate::ai::blocklist::suggested_rule_modal::{
     SuggestedRuleAndId, SuggestedRuleModal, SuggestedRuleModalEvent,
 };
+use crate::ai::conversation_rename::rename_conversation;
 use crate::ai::conversation_utils;
 use crate::ai::document::ai_document_model::{AIDocumentId, AIDocumentModel};
 use crate::ai::llms::LLMPreferences;
@@ -4926,6 +4927,40 @@ impl Workspace {
             log::warn!("Tried to rename pane in a missing pane group");
             return;
         };
+
+        let local_conversation_id = pane_group_view
+            .as_ref(ctx)
+            .terminal_view_from_pane_id(locator.pane_id, ctx)
+            .and_then(|terminal_view| {
+                terminal_view
+                    .as_ref(ctx)
+                    .ai_context_model()
+                    .as_ref(ctx)
+                    .selected_conversation_id(ctx)
+            })
+            .filter(|conversation_id| {
+                BlocklistAIHistoryModel::as_ref(ctx)
+                    .conversation(conversation_id)
+                    .is_some_and(|conversation| {
+                        !conversation.is_viewing_shared_session()
+                            && !conversation.is_cli_agent_transcript()
+                    })
+            });
+        if let Some(conversation_id) = local_conversation_id {
+            if rename_conversation(conversation_id, title, ctx) {
+                pane_group_view.update(ctx, |pane_group, ctx| {
+                    let Some(pane) = pane_group.pane_by_id(locator.pane_id) else {
+                        return;
+                    };
+                    pane.pane_configuration().update(ctx, |configuration, ctx| {
+                        configuration.clear_custom_vertical_tabs_title(ctx);
+                    });
+                    ctx.emit(pane_group::Event::AppStateChanged);
+                });
+            }
+            return;
+        }
+
         pane_group_view.update(ctx, |pane_group, ctx| {
             let Some(pane) = pane_group.pane_by_id(locator.pane_id) else {
                 log::warn!("Tried to rename a missing pane");

@@ -305,7 +305,7 @@ fn enter_agent_view_for_navigation(
 }
 
 #[test]
-fn local_conversation_rename_refreshes_active_pane_title() {
+fn local_conversation_rename_event_refreshes_active_pane_title() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);
         let _agent_view = FeatureFlag::AgentView.override_enabled(true);
@@ -354,28 +354,28 @@ fn local_conversation_rename_refreshes_active_pane_title() {
                 view.pane_configuration.as_ref(ctx).title(),
                 "Original pane title",
             );
+        });
 
-            BlocklistAIHistoryModel::handle(ctx).update(ctx, |history, ctx| {
-                history
-                    .rename_conversation_locally(
-                        conversation_id,
-                        "Local pane title".to_owned(),
-                        ctx,
-                    )
-                    .expect("local conversation should rename");
-            });
-            view.handle_ai_history_model_event(
-                BlocklistAIHistoryModel::handle(ctx),
-                &BlocklistAIHistoryEvent::UpdatedConversationMetadata {
-                    terminal_surface_id: Some(view.view_id),
-                    conversation_id,
-                },
-                ctx,
-            );
+        BlocklistAIHistoryModel::handle(&app).update(&mut app, |history, ctx| {
+            history
+                .rename_conversation_locally(conversation_id, "Local pane title".to_owned(), ctx)
+                .expect("local conversation should rename");
+        });
 
+        terminal.read(&app, |view, ctx| {
             assert_eq!(
                 view.pane_configuration.as_ref(ctx).title(),
                 "Local pane title",
+            );
+        });
+
+        BlocklistAIHistoryModel::handle(&app).read(&app, |history, _| {
+            let conversation = history
+                .conversation(&conversation_id)
+                .expect("renamed conversation should remain loaded");
+            assert_eq!(
+                conversation.initial_query().as_deref(),
+                Some("Original prompt")
             );
         });
     });
