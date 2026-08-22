@@ -34,7 +34,7 @@ use crate::terminal::input::suggestions_mode_model::{
     InputSuggestionsModeEvent, InputSuggestionsModeModel,
 };
 
-use super::mixer::slash_command_query;
+use super::mixer::{rerun_current_slash_command_query, slash_command_query};
 
 const MENU_WIDTH: f32 = 320.;
 
@@ -212,11 +212,7 @@ impl CloudModeV2SlashCommandView {
         ctx.subscribe_to_model(
             &slash_commands_source,
             |me, _, _: &UpdatedActiveCommands, ctx| {
-                me.mixer.update(ctx, |mixer, ctx| {
-                    if let Some(query) = mixer.current_query().cloned() {
-                        mixer.run_query(query, ctx);
-                    }
-                });
+                me.mixer.update(ctx, rerun_current_slash_command_query);
             },
         );
 
@@ -238,11 +234,7 @@ impl CloudModeV2SlashCommandView {
         });
 
         ctx.subscribe_to_model(&zero_state_source, |me, _, _: &UpdatedZeroState, ctx| {
-            me.mixer.update(ctx, |mixer, ctx| {
-                if let Some(query) = mixer.current_query().cloned() {
-                    mixer.run_query(query, ctx);
-                }
-            });
+            me.mixer.update(ctx, rerun_current_slash_command_query);
         });
 
         ctx.subscribe_to_model(&mixer, |me, _, event, ctx| match event {

@@ -572,6 +572,68 @@ fn test_build_bundled_skill_context() {
     );
 }
 
+#[test]
+fn same_path_skill_rename_updates_reverse_index_and_provider_eligibility() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(DirectoryWatcher::new);
+        app.add_singleton_model(|_| DetectedRepositories::default());
+        app.add_singleton_model(RepoMetadataModel::new);
+        app.add_singleton_model(HomeDirectoryWatcher::new_for_test);
+        app.add_singleton_model(WarpManagedPathsWatcher::new_for_testing);
+        let handle = app.add_singleton_model(SkillManager::new);
+
+        let agents_skill = make_skill("deploy", ".agents");
+        let claude_skill = make_skill("deploy", ".claude");
+        let renamed_claude_skill = ParsedSkill {
+            name: "renamed-deploy".to_owned(),
+            description: "renamed-deploy skill".to_owned(),
+            content: "# renamed-deploy".to_owned(),
+            ..claude_skill.clone()
+        };
+
+        handle.update(&mut app, |manager, _| {
+            assert!(manager.handle_skills_added(vec![agents_skill.clone(), claude_skill.clone(),]));
+        });
+
+        let old_descriptor = SkillDescriptor::from(agents_skill.clone());
+        assert_eq!(
+            handle.read(&app, |manager, _| manager.skill_paths_by_name("deploy")),
+            vec![agents_skill.path.clone(), claude_skill.path.clone()]
+        );
+        assert!(handle.read(&app, |manager, _| {
+            manager.skill_exists_for_any_provider(&old_descriptor, &[SkillProvider::Claude])
+        }));
+
+        handle.update(&mut app, |manager, _| {
+            assert!(manager.handle_skills_added(vec![renamed_claude_skill.clone()]));
+        });
+
+        assert_eq!(
+            handle.read(&app, |manager, _| manager.skill_paths_by_name("deploy")),
+            vec![agents_skill.path.clone()]
+        );
+        assert_eq!(
+            handle.read(&app, |manager, _| manager
+                .skill_paths_by_name("renamed-deploy")),
+            vec![claude_skill.path.clone()]
+        );
+        assert!(!handle.read(&app, |manager, _| {
+            manager.skill_exists_for_any_provider(&old_descriptor, &[SkillProvider::Claude])
+        }));
+
+        let renamed_descriptor = SkillDescriptor::from(renamed_claude_skill.clone());
+        assert!(handle.read(&app, |manager, _| {
+            manager.skill_exists_for_any_provider(&renamed_descriptor, &[SkillProvider::Claude])
+        }));
+        assert_eq!(
+            handle.read(&app, |manager, _| manager
+                .skill_by_path(&claude_skill.path)
+                .map(|skill| skill.name.clone())),
+            Some("renamed-deploy".to_owned())
+        );
+    });
+}
+
 // ============================================================================
 // Tests for best_supported_provider
 // ============================================================================

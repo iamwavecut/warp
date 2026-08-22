@@ -52,6 +52,13 @@ impl SkillManager {
     ) -> SkillProvider {
         skill.provider
     }
+
+    pub fn add_agent_environment_skills(
+        &mut self,
+        _skills: Vec<ParsedSkill>,
+        _ctx: &mut ModelContext<Self>,
+    ) {
+    }
 }
 
 impl Entity for SkillManager {

@@ -22,7 +22,7 @@ use crate::keyboard::keybinding_file_path;
 use crate::settings::user_preferences_toml_file_path;
 
 /// Activation condition for a bundled skill.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BundledSkillActivation {
     /// Always active.
     Always,
@@ -45,7 +45,7 @@ impl BundledSkillActivation {
 }
 
 /// A bundled skill with its activation condition and icon.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BundledSkill {
     pub skill: ParsedSkill,
     pub activation: BundledSkillActivation,
@@ -99,12 +99,19 @@ impl SkillManager {
 
         if FeatureFlag::BundledSkills.is_enabled() {
             ctx.spawn(Self::load_bundled_skills(), |me, result, ctx| {
-                me.bundled_skills = result;
-                ctx.emit(SkillManagerEvent::SkillsChanged);
+                if me.bundled_skills != result {
+                    me.bundled_skills = result;
+                    ctx.emit(SkillManagerEvent::SkillsChanged);
+                }
             });
             ctx.spawn(Self::load_figma_skills(), |me, figma_skills, ctx| {
-                me.bundled_skills.extend(figma_skills);
-                ctx.emit(SkillManagerEvent::SkillsChanged);
+                let changed = figma_skills
+                    .iter()
+                    .any(|(id, skill)| me.bundled_skills.get(id) != Some(skill));
+                if changed {
+                    me.bundled_skills.extend(figma_skills);
+                    ctx.emit(SkillManagerEvent::SkillsChanged);
+                }
             });
         }
 
@@ -122,6 +129,21 @@ impl SkillManager {
     /// directory skills to be in scope regardless of the current working directory.
     pub fn set_agent_environment(&mut self, value: bool) {
         self.is_agent_environment = value;
+    }
+
+    /// Add skills loaded by an agent environment and notify local consumers when either the
+    /// environment scope or the effective skill catalog changes.
+    pub fn add_agent_environment_skills(
+        &mut self,
+        skills: Vec<ParsedSkill>,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let environment_changed = !self.is_agent_environment;
+        self.set_agent_environment(true);
+        let skills_changed = self.handle_skills_added(skills);
+        if environment_changed || skills_changed {
+            ctx.emit(SkillManagerEvent::SkillsChanged);
+        }
     }
 
     /// Returns skills available for the given working directory.
@@ -418,18 +440,25 @@ impl SkillManager {
             match extract_skill_parent_directory(&skill.path) {
                 Ok(parent_dir) => {
                     let skill_path = skill.path.clone();
+                    let skill_name = skill.name.clone();
                     changed |= self
                         .directory_skills
                         .entry(parent_dir)
                         .or_default()
                         .insert(skill_path.clone());
 
+                    let previous = self.skills_by_path.insert(skill_path.clone(), skill);
+                    if let Some(previous) = previous.as_ref()
+                        && previous.name != skill_name
+                    {
+                        changed |=
+                            self.remove_skill_path_from_name_index(&previous.name, &skill_path);
+                    }
                     changed |= self
                         .skills_by_name
-                        .entry(skill.name.clone())
+                        .entry(skill_name)
                         .or_default()
                         .insert(skill_path.clone());
-                    let previous = self.skills_by_path.insert(skill_path.clone(), skill);
                     changed |= match previous {
                         None => true,
                         Some(previous) => {
@@ -446,6 +475,26 @@ impl SkillManager {
             }
         }
         changed
+    }
+
+    fn remove_skill_path_from_name_index(
+        &mut self,
+        name: &str,
+        skill_path: &LocalOrRemotePath,
+    ) -> bool {
+        let removed = self
+            .skills_by_name
+            .get_mut(name)
+            .is_some_and(|paths| paths.remove(skill_path));
+        if removed
+            && self
+                .skills_by_name
+                .get(name)
+                .is_some_and(|paths| paths.is_empty())
+        {
+            self.skills_by_name.remove(name);
+        }
+        removed
     }
 
     fn handle_skills_deleted(&mut self, paths: Vec<LocalOrRemotePath>) -> bool {
@@ -466,10 +515,7 @@ impl SkillManager {
                     let skill = self.skills_by_path.remove(skill_path);
                     if let Some(skill) = skill {
                         changed = true;
-                        self.skills_by_name
-                            .entry(skill.name.clone())
-                            .or_default()
-                            .remove(skill_path);
+                        self.remove_skill_path_from_name_index(&skill.name, skill_path);
                     }
                 }
                 changed |= self.directory_skills.remove(dir).is_some();
@@ -480,10 +526,7 @@ impl SkillManager {
                         let skill = self.skills_by_path.remove(skill_path);
                         if let Some(skill) = skill {
                             changed = true;
-                            self.skills_by_name
-                                .entry(skill.name.clone())
-                                .or_default()
-                                .remove(skill_path);
+                            self.remove_skill_path_from_name_index(&skill.name, skill_path);
                         }
                         changed |= self
                             .directory_skills

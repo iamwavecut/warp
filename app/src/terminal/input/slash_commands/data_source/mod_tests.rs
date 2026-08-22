@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use warpui::{App, SingletonEntity};
@@ -8,33 +9,38 @@ use super::super::zero_state::{
     should_show_local_prompts, should_show_local_skills,
 };
 use super::prefix_match_bonus;
+use ai::skills::{ParsedSkill, SkillProvider, SkillScope};
+use warp_util::local_or_remote_path::LocalOrRemotePath;
+
 use crate::ai::skills::{SkillManager, SkillManagerEvent};
 use crate::search::mixer::SearchMixerEvent;
 use crate::search::slash_command_menu::fuzzy_match::SlashCommandFuzzyMatchResult;
-use crate::terminal::input::slash_commands::mixer::build_slash_command_mixer;
+use crate::terminal::input::slash_commands::mixer::{
+    build_slash_command_mixer, rerun_current_slash_command_query,
+};
 use crate::terminal::input::tests::{add_window_with_bootstrapped_terminal, initialize_app};
 use crate::user_config::{WarpConfig, WarpConfigUpdateEvent};
 
 #[test]
 fn local_zero_state_sources_prompts_are_available_without_cloud_mode() {
-    assert!(should_show_local_prompts(false, true));
+    assert!(should_show_local_prompts(true));
 }
 
 #[test]
 fn local_zero_state_sources_skills_are_available_without_cloud_mode() {
-    assert!(should_show_local_skills(false, true, true));
+    assert!(should_show_local_skills(true, true));
 }
 
 #[test]
 fn local_zero_state_sources_actions_require_ai() {
-    assert!(!should_show_local_prompts(false, false));
-    assert!(!should_show_local_skills(false, false, true));
+    assert!(!should_show_local_prompts(false));
+    assert!(!should_show_local_skills(false, true));
 }
 
 #[test]
 fn local_zero_state_sources_list_skills_only_gates_skills() {
-    assert!(should_show_local_prompts(false, true));
-    assert!(!should_show_local_skills(false, true, false));
+    assert!(should_show_local_prompts(true));
+    assert!(!should_show_local_skills(true, false));
 }
 
 #[test]
@@ -65,6 +71,18 @@ fn local_zero_state_sources_requery_when_local_backing_stores_change() {
                 ctx,
             )
         });
+        let agent_skill_path = LocalOrRemotePath::Local(PathBuf::from(
+            "/tmp/warp-task3-agent-environment/.agents/skills/requery/SKILL.md",
+        ));
+        let agent_skill = ParsedSkill {
+            path: agent_skill_path.clone(),
+            name: "requery".to_owned(),
+            description: "Refresh zero-state after agent skill load".to_owned(),
+            content: "# Requery".to_owned(),
+            line_range: None,
+            provider: SkillProvider::Agents,
+            scope: SkillScope::Project,
+        };
         let source_events = Rc::new(Cell::new(0));
         let source_events_for_subscription = source_events.clone();
         let reruns = Rc::new(Cell::new(0));
@@ -75,11 +93,7 @@ fn local_zero_state_sources_requery_when_local_backing_stores_change() {
             ctx.subscribe_to_model(
                 &zero_state_for_requery,
                 move |_, _: &super::super::zero_state::UpdatedZeroState, ctx| {
-                    mixer_for_requery.update(ctx, |mixer, ctx| {
-                        if let Some(query) = mixer.current_query().cloned() {
-                            mixer.run_query(query, ctx);
-                        }
-                    });
+                    mixer_for_requery.update(ctx, rerun_current_slash_command_query);
                 },
             );
             ctx.subscribe_to_model(
@@ -108,8 +122,8 @@ fn local_zero_state_sources_requery_when_local_backing_stores_change() {
         );
 
         let before_skill_update = reruns.get();
-        SkillManager::handle(&app).update(&mut app, |_, ctx| {
-            ctx.emit(SkillManagerEvent::SkillsChanged);
+        SkillManager::handle(&app).update(&mut app, |manager, ctx| {
+            manager.add_agent_environment_skills(vec![agent_skill.clone()], ctx);
         });
         assert!(
             reruns.get() > before_skill_update,
@@ -120,6 +134,20 @@ fn local_zero_state_sources_requery_when_local_backing_stores_change() {
             2,
             "local skill changes should emit one additional zero-state source event"
         );
+        assert!(SkillManager::handle(&app).read(&app, |manager, _| {
+            manager.skill_by_path(&agent_skill_path).is_some()
+        }));
+
+        let before_duplicate_skill = reruns.get();
+        SkillManager::handle(&app).update(&mut app, |manager, ctx| {
+            manager.add_agent_environment_skills(vec![agent_skill.clone()], ctx);
+        });
+        assert_eq!(
+            reruns.get(),
+            before_duplicate_skill,
+            "re-adding an unchanged agent skill must not refresh the menu"
+        );
+        assert_eq!(source_events.get(), 2);
 
         let before_unrelated_update = reruns.get();
         WarpConfig::handle(&app).update(&mut app, |_, ctx| {

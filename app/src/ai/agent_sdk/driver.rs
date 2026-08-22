@@ -1240,9 +1240,8 @@ impl AgentDriver {
                 } else {
                     log::info!("No environment skills found");
                 }
-                SkillManager::handle(ctx).update(ctx, |manager, _| {
-                    manager.set_agent_environment(true);
-                    manager.handle_skills_added(skills);
+                SkillManager::handle(ctx).update(ctx, |manager, ctx| {
+                    manager.add_agent_environment_skills(skills, ctx);
                 });
             })
             .await;
@@ -1304,9 +1303,8 @@ impl AgentDriver {
         log::info!("Loaded {} global skill(s)", skills.len());
         let add_result = foreground
             .spawn(move |_, ctx| {
-                SkillManager::handle(ctx).update(ctx, |manager, _| {
-                    manager.set_agent_environment(true);
-                    manager.handle_skills_added(skills);
+                SkillManager::handle(ctx).update(ctx, |manager, ctx| {
+                    manager.add_agent_environment_skills(skills, ctx);
                 });
             })
             .await;

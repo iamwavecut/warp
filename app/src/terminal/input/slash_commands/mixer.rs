@@ -34,3 +34,16 @@ pub fn slash_command_query(text: &str) -> Query {
         filters: [QueryFilter::StaticSlashCommands].into(),
     }
 }
+
+/// Re-run the mixer's current query after one of its local sources changes.
+///
+/// Slash-command views and focused tests share this callback so every open menu uses the same
+/// refresh contract for local prompts and skills.
+pub fn rerun_current_slash_command_query(
+    mixer: &mut SlashCommandMixer,
+    ctx: &mut ModelContext<SlashCommandMixer>,
+) {
+    if let Some(query) = mixer.current_query().cloned() {
+        mixer.run_query(query, ctx);
+    }
+}

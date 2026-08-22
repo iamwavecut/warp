@@ -20,7 +20,7 @@ use crate::terminal::input::suggestions_mode_model::{
 };
 use crate::workflows::workflow::Workflow;
 
-use super::mixer::slash_command_query;
+use super::mixer::{rerun_current_slash_command_query, slash_command_query};
 
 #[derive(Debug, Clone, Copy)]
 pub enum CloseReason {
@@ -86,12 +86,8 @@ impl InlineSlashCommandView {
         ctx.subscribe_to_model(
             &slash_commands_source,
             |me, _, _: &UpdatedActiveCommands, ctx| {
-                me.mixer.update(ctx, |mixer, ctx| {
-                    // Auto-rerun queries if set of active commands changed.
-                    if let Some(query) = mixer.current_query().cloned() {
-                        mixer.run_query(query, ctx);
-                    }
-                });
+                // Auto-rerun queries if set of active commands changed.
+                me.mixer.update(ctx, rerun_current_slash_command_query);
             },
         );
         let zero_state_source =
@@ -112,13 +108,9 @@ impl InlineSlashCommandView {
         });
 
         ctx.subscribe_to_model(&zero_state_source, |me, _, _: &UpdatedZeroState, ctx| {
-            me.mixer.update(ctx, |mixer, ctx| {
-                // Local workflows and skills can change while this menu is open. Re-run the
-                // current query so the existing mixer reflects the new zero-state source.
-                if let Some(query) = mixer.current_query().cloned() {
-                    mixer.run_query(query, ctx);
-                }
-            });
+            // Local workflows and skills can change while this menu is open. Re-run the
+            // current query so the existing mixer reflects the new zero-state source.
+            me.mixer.update(ctx, rerun_current_slash_command_query);
         });
 
         let menu_view = ctx.add_typed_action_view(|ctx| {

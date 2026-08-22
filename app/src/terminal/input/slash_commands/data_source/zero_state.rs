@@ -16,16 +16,12 @@ use crate::user_config::{WarpConfig, WarpConfigUpdateEvent};
 ///
 /// This gate is intentionally kept separate from the source lookup so the local-first policy is
 /// testable without constructing the full GUI data source.
-pub(super) fn should_show_local_prompts(_is_cloud_mode_v2: bool, is_ai_enabled: bool) -> bool {
+pub(super) fn should_show_local_prompts(is_ai_enabled: bool) -> bool {
     is_ai_enabled
 }
 
 /// Returns whether local skills can be shown in the zero-state menu.
-pub(super) fn should_show_local_skills(
-    _is_cloud_mode_v2: bool,
-    is_ai_enabled: bool,
-    is_list_skills_enabled: bool,
-) -> bool {
+pub(super) fn should_show_local_skills(is_ai_enabled: bool, is_list_skills_enabled: bool) -> bool {
     is_ai_enabled && is_list_skills_enabled
 }
 
@@ -90,7 +86,6 @@ impl SyncDataSource for GuiZeroStateDataSource {
         let mut results = source.ordered_zero_state_commands(app);
 
         if should_show_local_skills(
-            is_cloud_mode_v2,
             AISettings::as_ref(app).is_any_ai_enabled(app),
             FeatureFlag::ListSkills.is_enabled(),
         ) {
@@ -118,10 +113,7 @@ impl SyncDataSource for GuiZeroStateDataSource {
             }
         }
 
-        if should_show_local_prompts(
-            is_cloud_mode_v2,
-            AISettings::as_ref(app).is_any_ai_enabled(app),
-        ) {
+        if should_show_local_prompts(AISettings::as_ref(app).is_any_ai_enabled(app)) {
             let local_prompts: Vec<_> = WarpConfig::as_ref(app)
                 .local_user_workflows()
                 .iter()
