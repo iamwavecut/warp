@@ -1,4 +1,61 @@
 use super::*;
+use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
+use crate::ai::mcp::TemplatableMCPServerManager;
+use crate::settings::{AISettings, CustomProviderConfig};
+use crate::test_util::{assert_eventually, settings::initialize_settings_for_tests};
+use crate::workspaces::user_workspaces::UserWorkspaces;
+use crate::LaunchMode;
+use settings::Setting;
+use warpui::{App, SingletonEntity};
+
+#[test]
+fn startup_loads_existing_custom_provider_models() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(UserWorkspaces::default_mock);
+        app.add_singleton_model(|_| TemplatableMCPServerManager::default());
+        app.add_singleton_model(|ctx| {
+            AIExecutionProfilesModel::new(&LaunchMode::new_for_unit_test(), ctx)
+        });
+        AISettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .custom_providers
+                .set_value(
+                    vec![
+                        CustomProviderConfig {
+                            name: "local-keyless".to_string(),
+                            base_url: "http://localhost:1234/v1".to_string(),
+                            models: vec!["p0-keyless".to_string()],
+                            api_key_env_var: None,
+                            api_type: Default::default(),
+                        },
+                        CustomProviderConfig {
+                            name: "local-keyed".to_string(),
+                            base_url: "http://localhost:5678/v1".to_string(),
+                            models: vec!["p0-keyed".to_string()],
+                            api_key_env_var: Some("P0_LOCAL_API_KEY".to_string()),
+                            api_type: Default::default(),
+                        },
+                    ],
+                    ctx,
+                )
+                .unwrap();
+        });
+
+        let preferences = app.add_singleton_model(LLMPreferences::new);
+
+        assert_eventually!(
+            preferences.read(&app, |preferences, _| {
+                preferences
+                    .get_base_llm_choices_for_agent_mode()
+                    .map(|model| model.id.as_str())
+                    .collect::<Vec<_>>()
+                    == vec!["custom/local-keyless/p0-keyless", "custom/local-keyed/p0-keyed"]
+            }),
+            "custom providers configured before startup should populate the Agent Mode catalog"
+        );
+    });
+}
 
 // -- DisableReason::should_clear_preference tests --
 

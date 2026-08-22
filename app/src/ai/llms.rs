@@ -590,11 +590,8 @@ impl LLMPreferences {
             base_llm_for_terminal_view,
         };
 
-        // In agent mode eval builds, eagerly kick off a fetch of the model list from the server
-        // so that it's available by the time test steps like `set_preferred_agent_mode_llm` run.
-        // In production, this is handled reactively (on auth complete, network online, etc.)
-        // to avoid duplicate requests at startup.
-        #[cfg(feature = "agent_mode_evals")]
+        // Populate the initial catalog from local custom-provider settings so it is available when
+        // the first Agent Pane opens. This refresh is settings-only and performs no network I/O.
         me.refresh_available_models(ctx);
 
         me
