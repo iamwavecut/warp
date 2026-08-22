@@ -611,11 +611,13 @@ impl Task {
             .filter(|pwd| !pwd.is_empty())
     }
 
-    pub(super) fn update_description(&mut self, description: String) {
-        let Ok(source) = self.try_get_source_mut() else {
-            return;
-        };
+    pub(super) fn update_description(
+        &mut self,
+        description: String,
+    ) -> Result<(), UpdateTaskError> {
+        let source = self.try_get_source_mut()?;
         source.description = description;
+        Ok(())
     }
 
     pub(super) fn update_task_server_data(&mut self, new_server_data: String) {

@@ -30,6 +30,9 @@ use crate::ai::agent::conversation::{ServerAIConversationMetadata, UpdateConvers
 use crate::ai::agent::task::TaskId;
 use crate::ai::agent::task::helper::{MessageExt, ToolCallExt};
 use crate::ai::artifacts::Artifact;
+use crate::ai::conversation_rename::{
+    ConversationTitleValidationError, validate_conversation_title,
+};
 use crate::ai::document::ai_document_model::AIDocumentModel;
 use crate::input_suggestions::HistoryOrder;
 use crate::persistence::ModelEvent;
@@ -147,6 +150,24 @@ pub enum UpdateHistoryError {
     Conversation(#[from] UpdateConversationError),
     #[error("Failed to find conversation with ID {0:?}")]
     ConversationNotFound(AIConversationId),
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub(crate) enum RenameConversationLocallyError {
+    #[error(transparent)]
+    InvalidTitle(#[from] ConversationTitleValidationError),
+    #[error("Conversation not found")]
+    ConversationNotFound,
+    #[error("You can't rename an empty conversation")]
+    EmptyConversation,
+    #[error("Conversation is not ready to rename yet")]
+    ConversationNotReady,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LocalConversationRenameOutcome {
+    Renamed { title: String },
+    Unchanged,
 }
 
 /// Responsible for managing the history of user and AI exchanges.
@@ -487,6 +508,40 @@ impl BlocklistAIHistoryModel {
             return;
         };
         conversation.write_updated_conversation_state(ctx);
+    }
+
+    /// Renames an already-loaded, source-backed conversation entirely locally.
+    pub(crate) fn rename_conversation_locally(
+        &mut self,
+        conversation_id: AIConversationId,
+        title: String,
+        ctx: &mut ModelContext<Self>,
+    ) -> Result<LocalConversationRenameOutcome, RenameConversationLocallyError> {
+        let title = validate_conversation_title(title)?;
+        {
+            let conversation = self
+                .conversations_by_id
+                .get_mut(&conversation_id)
+                .ok_or(RenameConversationLocallyError::ConversationNotFound)?;
+            if conversation.is_empty() {
+                return Err(RenameConversationLocallyError::EmptyConversation);
+            }
+            if conversation.title().as_deref() == Some(title.as_str()) {
+                return Ok(LocalConversationRenameOutcome::Unchanged);
+            }
+            conversation
+                .update_conversation_title(title.clone(), ctx)
+                .map_err(|_| RenameConversationLocallyError::ConversationNotReady)?;
+        }
+
+        if let Some(metadata) = self.all_conversations_metadata.get_mut(&conversation_id) {
+            metadata.title = title.clone();
+        }
+        ctx.emit(BlocklistAIHistoryEvent::UpdatedConversationMetadata {
+            terminal_surface_id: self.terminal_surface_id_for_conversation(&conversation_id),
+            conversation_id,
+        });
+        Ok(LocalConversationRenameOutcome::Renamed { title })
     }
 
     fn update_cached_metadata_for_conversation(&mut self, conversation_id: AIConversationId) {

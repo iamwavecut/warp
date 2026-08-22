@@ -26,6 +26,7 @@ use crate::ai::blocklist::agent_view::{
 use crate::ai::blocklist::{
     BlocklistAIHistoryModel, QueuedQuery, QueuedQueryModel, QueuedQueryOrigin,
 };
+use crate::ai::conversation_rename::rename_conversation;
 use crate::search::slash_command_menu::static_commands::Availability;
 use crate::search::slash_command_menu::static_commands::commands::{self, COMMAND_REGISTRY};
 use crate::search::slash_command_menu::{SlashCommandId, StaticCommand};
@@ -427,6 +428,20 @@ impl Input {
                 };
 
                 ctx.dispatch_typed_action(&WorkspaceAction::SetActiveTabName(name.to_owned()));
+            }
+            _ if command.name == commands::RENAME_CONVERSATION.name => {
+                let Some(conversation_id) = self
+                    .ai_context_model
+                    .as_ref(ctx)
+                    .selected_conversation_id(ctx)
+                else {
+                    show_error_toast(
+                        "/rename-conversation requires an active conversation".to_owned(),
+                        ctx,
+                    );
+                    return true;
+                };
+                rename_conversation(conversation_id, argument.cloned().unwrap_or_default(), ctx);
             }
             _ if command.name == commands::SET_TAB_COLOR.name => {
                 let supported_options = || {
@@ -968,3 +983,7 @@ pub(crate) fn slash_command_is_submitted_as_prompt(command: &StaticCommand) -> b
 }
 
 use crate::code_review::CodeReviewPaneEntrypoint;
+
+#[cfg(test)]
+#[path = "conversation_rename_tests.rs"]
+mod conversation_rename_tests;

@@ -5536,6 +5536,9 @@ impl TerminalView {
                 // is selected, update the title to reflect that change.
                 self.update_pane_configuration(ctx);
             }
+            BlocklistAIHistoryEvent::UpdatedConversationMetadata { .. } => {
+                self.update_pane_configuration(ctx);
+            }
             BlocklistAIHistoryEvent::UpdatedConversationStatus {
                 conversation_id,
                 update,
@@ -5660,7 +5663,6 @@ impl TerminalView {
             | BlocklistAIHistoryEvent::UpdatedTodoList { .. }
             | BlocklistAIHistoryEvent::RestoredConversations { .. }
             | BlocklistAIHistoryEvent::UpgradedTask { .. }
-            | BlocklistAIHistoryEvent::UpdatedConversationMetadata { .. }
             | BlocklistAIHistoryEvent::UpdatedConversationArtifacts { .. }
             | BlocklistAIHistoryEvent::ConversationServerTokenAssigned { .. }
             | BlocklistAIHistoryEvent::NewConversationRequestComplete { .. }

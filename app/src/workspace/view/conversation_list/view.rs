@@ -9,6 +9,7 @@ use crate::ai::agent_conversations_model::{
     AgentConversationEntryId, AgentConversationNavigationSubject, AgentConversationsModel,
 };
 use crate::ai::blocklist::history_model::BlocklistAIHistoryModel;
+use crate::ai::conversation_rename::rename_conversation;
 use crate::appearance::Appearance;
 use crate::editor::{
     EditorView, Event as EditorEvent, PropagateAndNoOpNavigationKeys,
@@ -95,6 +96,29 @@ enum ListItem {
     ToggleViewAllButton,
 }
 
+#[derive(Clone, Copy, Default)]
+struct InlineConversationRenameState {
+    conversation_id: Option<AIConversationId>,
+}
+
+impl InlineConversationRenameState {
+    fn start(&mut self, conversation_id: AIConversationId) {
+        self.conversation_id = Some(conversation_id);
+    }
+
+    fn is_renaming(&self, conversation_id: AIConversationId) -> bool {
+        self.conversation_id == Some(conversation_id)
+    }
+
+    fn finish(&mut self) -> Option<AIConversationId> {
+        self.conversation_id.take()
+    }
+
+    fn cancel(&mut self) {
+        self.conversation_id = None;
+    }
+}
+
 #[derive(Clone, Copy)]
 struct OverflowMenuState {
     conversation_id: AgentConversationEntryId,
@@ -133,6 +157,11 @@ pub enum ConversationListViewAction {
         conversation_id: AgentConversationEntryId,
         destination: ForkedConversationDestination,
     },
+    StartRename {
+        id: AgentConversationEntryId,
+    },
+    FinishRename,
+    CancelRename,
 }
 
 pub enum Event {
@@ -153,6 +182,8 @@ pub struct ConversationListView {
     item_overflow_menu: ViewHandle<Menu<ConversationListViewAction>>,
     /// Tracks the overflow menu state (which item it's open for and where to position it).
     overflow_menu_state: Option<OverflowMenuState>,
+    rename_editor: ViewHandle<EditorView>,
+    inline_rename: InlineConversationRenameState,
     selected_index: Option<usize>,
     collapsed_sections: HashSet<ConversationSection>,
     /// Cached flat list of items (headers + conversations) for rendering and navigation.
@@ -221,6 +252,26 @@ impl ConversationListView {
         ctx.subscribe_to_view(&query_editor, |me, _handle, event, ctx| {
             me.handle_query_editor_event(event, ctx);
         });
+        let rename_editor = ctx.add_typed_action_view(|ctx| {
+            let appearance = Appearance::as_ref(ctx);
+            EditorView::single_line(
+                SingleLineEditorOptions {
+                    text: TextOptions::ui_text(Some(appearance.ui_font_size() + 2.), appearance),
+                    select_all_on_focus: true,
+                    clear_selections_on_blur: true,
+                    propagate_and_no_op_vertical_navigation_keys:
+                        PropagateAndNoOpNavigationKeys::Always,
+                    propagate_horizontal_navigation_keys: PropagateHorizontalNavigationKeys::Always,
+                    ..Default::default()
+                },
+                ctx,
+            )
+        });
+        ctx.subscribe_to_view(&rename_editor, |me, _, event, ctx| match event {
+            EditorEvent::Blurred | EditorEvent::Enter => me.finish_rename(ctx),
+            EditorEvent::Escape => me.cancel_rename(ctx),
+            _ => {}
+        });
 
         // We use this as both the "view all" and "show less" button
         // (switching out the text on-toggle).
@@ -257,6 +308,8 @@ impl ConversationListView {
             toggle_view_all_button,
             item_overflow_menu,
             overflow_menu_state: None,
+            rename_editor,
+            inline_rename: InlineConversationRenameState::default(),
             selected_index: None,
             collapsed_sections: HashSet::new(),
             list_items: Arc::new(Vec::new()),
@@ -588,6 +641,54 @@ impl ConversationListView {
                 self.selected_index = (index..self.item_count()).find(|&i| self.is_selectable(i));
             }
         }
+        ctx.notify();
+    }
+
+    fn start_rename(&mut self, id: AgentConversationEntryId, ctx: &mut ViewContext<Self>) {
+        let Some(entry) = self.view_model.as_ref(ctx).get_item_by_id(&id, ctx) else {
+            return;
+        };
+        let Some(conversation_id) = entry.identity.local_conversation_id else {
+            return;
+        };
+        if BlocklistAIHistoryModel::as_ref(ctx)
+            .conversation(&conversation_id)
+            .is_none()
+        {
+            return;
+        }
+
+        self.overflow_menu_state = None;
+        self.inline_rename.start(conversation_id);
+        self.selected_index = self.get_index_of_conversation_id(id);
+        self.rename_editor.update(ctx, |editor, ctx| {
+            editor.clear_buffer_and_reset_undo_stack(ctx);
+            editor.insert_selected_text(&entry.display.title, ctx);
+        });
+        ctx.focus(&self.rename_editor);
+        ctx.notify();
+    }
+
+    fn finish_rename(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(conversation_id) = self.inline_rename.finish() else {
+            return;
+        };
+        let title = self.rename_editor.as_ref(ctx).buffer_text(ctx);
+        self.rename_editor.update(ctx, |editor, ctx| {
+            editor.clear_buffer_and_reset_undo_stack(ctx);
+        });
+        rename_conversation(conversation_id, title, ctx);
+        ctx.notify();
+    }
+
+    fn cancel_rename(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.inline_rename.conversation_id.is_none() {
+            return;
+        }
+        self.inline_rename.cancel();
+        self.rename_editor.update(ctx, |editor, ctx| {
+            editor.clear_buffer_and_reset_undo_stack(ctx);
+        });
         ctx.notify();
     }
 
@@ -1065,6 +1166,15 @@ impl TypedActionView for ConversationListView {
                     destination: *destination,
                 });
             }
+            ConversationListViewAction::StartRename { id } => {
+                self.start_rename(*id, ctx);
+            }
+            ConversationListViewAction::FinishRename => {
+                self.finish_rename(ctx);
+            }
+            ConversationListViewAction::CancelRename => {
+                self.cancel_rename(ctx);
+            }
         }
     }
 }
@@ -1115,6 +1225,8 @@ impl View for ConversationListView {
             let list_items = self.list_items.clone();
             let overflow_menu = self.item_overflow_menu.clone();
             let overflow_menu_state = self.overflow_menu_state;
+            let rename_editor = self.rename_editor.clone();
+            let inline_rename = self.inline_rename;
             let focused_conversation = ActiveAgentViewsModel::as_ref(app)
                 .get_focused_conversation(self.window_id)
                 .map(AgentConversationEntryId::from);
@@ -1184,6 +1296,15 @@ impl View for ConversationListView {
                                         }
                                         _ => OverflowMenuDisplay::Closed,
                                     };
+                                    let local_conversation_id =
+                                        conversation.identity.local_conversation_id;
+                                    let is_renaming = local_conversation_id
+                                        .is_some_and(|id| inline_rename.is_renaming(id));
+                                    let can_rename = local_conversation_id.is_some_and(|id| {
+                                        BlocklistAIHistoryModel::as_ref(app)
+                                            .conversation(&id)
+                                            .is_some()
+                                    });
                                     Some(render_item(
                                         ItemProps {
                                             conversation: &conversation,
@@ -1195,6 +1316,9 @@ impl View for ConversationListView {
                                             overflow_menu: &overflow_menu,
                                             overflow_menu_display,
                                             conversation_id: entry.id,
+                                            is_renaming,
+                                            can_rename,
+                                            rename_editor: is_renaming.then_some(&rename_editor),
                                             list_position_id: &list_position_id,
                                             tooltip_opens_right,
                                         },
@@ -1272,3 +1396,7 @@ impl View for ConversationListView {
         stack.finish()
     }
 }
+
+#[cfg(test)]
+#[path = "view_tests.rs"]
+mod tests;

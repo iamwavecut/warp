@@ -24,6 +24,7 @@ use crate::ai::blocklist::history_model::{
 use crate::ai::conversation_navigation::ConversationNavigationData;
 use crate::auth::AuthStateProvider;
 use crate::test_util::ai_agent_tasks::{create_api_task, create_message};
+use crate::test_util::settings::initialize_history_persistence_for_tests;
 
 use super::entry::{
     AgentConversationEntryId, AgentConversationNavigationSubject, AgentConversationProvenance,
@@ -159,6 +160,84 @@ fn test_status_transition_emits_status_set_with_filter_buckets() {
                 new_filter: StatusFilter::Done,
             }),
         );
+    });
+}
+
+#[test]
+fn local_conversation_rename_refreshes_conversation_list_entry_title() {
+    App::test((), |mut app| async move {
+        let _interactive_management_guard =
+            FeatureFlag::InteractiveConversationManagementView.override_enabled(true);
+        initialize_history_persistence_for_tests(&mut app);
+        add_entry_projection_test_models(&mut app);
+
+        let conversation_id = AIConversationId::new();
+        let terminal_view_id = EntityId::new();
+        let conversation = create_restored_conversation(
+            conversation_id,
+            "local-rename-root",
+            AgentConversationData {
+                server_conversation_token: None,
+                conversation_usage_metadata: None,
+                reverted_action_ids: None,
+                forked_from_server_conversation_token: None,
+                artifacts_json: None,
+                parent_agent_id: None,
+                agent_name: None,
+                orchestration_harness_type: None,
+                parent_conversation_id: None,
+                is_remote_child: false,
+                root_task_is_optimistic: None,
+                run_id: None,
+                autoexecute_override: None,
+                last_event_sequence: None,
+                pinned: false,
+            },
+        );
+        BlocklistAIHistoryModel::handle(&app).update(&mut app, |history, ctx| {
+            history.restore_conversations(terminal_view_id, vec![conversation], ctx);
+        });
+
+        let agent_model = app.add_singleton_model(|_| {
+            let mut model = create_test_model();
+            model.conversations.insert(
+                conversation_id,
+                create_test_conversation_metadata(conversation_id, "Original list title"),
+            );
+            model
+        });
+        let captured = subscribe_to_conversation_updated(&mut app, &agent_model);
+
+        BlocklistAIHistoryModel::handle(&app).update(&mut app, |history, ctx| {
+            history
+                .rename_conversation_locally(conversation_id, "Local list title".to_owned(), ctx)
+                .expect("local conversation should rename");
+        });
+        agent_model.update(&mut app, |model, ctx| {
+            model.handle_history_event(
+                &BlocklistAIHistoryEvent::UpdatedConversationMetadata {
+                    terminal_surface_id: Some(terminal_view_id),
+                    conversation_id,
+                },
+                ctx,
+            );
+        });
+
+        assert_eq!(
+            *captured.lock(),
+            Some(ConversationUpdateKind::MetadataChanged),
+        );
+        agent_model.read(&app, |model, ctx| {
+            assert_eq!(
+                model
+                    .get_entry_by_id(
+                        &AgentConversationEntryId::Conversation(conversation_id),
+                        ctx,
+                    )
+                    .map(|entry| entry.display.title),
+                Some("Local list title".to_owned()),
+            );
+        });
     });
 }
 

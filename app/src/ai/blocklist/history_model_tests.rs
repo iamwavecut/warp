@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, Local, Utc};
@@ -33,7 +34,9 @@ use crate::{
 };
 
 use super::{
-    AIQueryHistoryOutputStatus, BlocklistAIHistoryModel, PersistedAIInput, PersistedAIInputType,
+    AIQueryHistoryOutputStatus, BlocklistAIHistoryEvent, BlocklistAIHistoryModel,
+    LocalConversationRenameOutcome, PersistedAIInput, PersistedAIInputType,
+    RenameConversationLocallyError,
 };
 use uuid::Uuid;
 
@@ -177,6 +180,296 @@ fn persisted_agent_conversation_from_update_event(event: ModelEvent) -> AgentCon
         },
         tasks: updated_tasks,
     }
+}
+
+fn local_rename_conversation_data() -> AgentConversationData {
+    AgentConversationData {
+        server_conversation_token: None,
+        conversation_usage_metadata: None,
+        reverted_action_ids: None,
+        forked_from_server_conversation_token: None,
+        artifacts_json: None,
+        parent_agent_id: None,
+        agent_name: None,
+        orchestration_harness_type: None,
+        parent_conversation_id: None,
+        is_remote_child: false,
+        root_task_is_optimistic: None,
+        run_id: None,
+        autoexecute_override: None,
+        last_event_sequence: None,
+        pinned: false,
+    }
+}
+
+#[test]
+fn local_conversation_rename_updates_memory_metadata_event_and_persisted_root_task() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let mut global_resource_handles = GlobalResourceHandles::mock(&mut app);
+        global_resource_handles.model_event_sender = Some(sender);
+        app.add_singleton_model(|_| GlobalResourceHandlesProvider::new(global_resource_handles));
+
+        let conversation_id = AIConversationId::new();
+        let persisted = persisted_agent_conversation(
+            conversation_id,
+            local_rename_conversation_data(),
+            Utc::now().naive_utc(),
+            Some("Original title"),
+        );
+        let restored = super::convert_persisted_conversation_to_ai_conversation_with_metadata(
+            persisted.clone(),
+        )
+        .expect("persisted conversation should restore");
+        let history_model =
+            app.add_singleton_model(|_| BlocklistAIHistoryModel::new(vec![], &[persisted]));
+        let terminal_view_id = EntityId::new();
+        let legacy_server_token = ServerConversationToken::new("legacy-hosted-token".to_owned());
+        history_model.update(&mut app, |model, ctx| {
+            model.restore_conversations(terminal_view_id, vec![restored], ctx);
+            let metadata = model
+                .all_conversations_metadata
+                .get_mut(&conversation_id)
+                .expect("restored conversation should have cached metadata");
+            metadata.server_conversation_token = Some(legacy_server_token.clone());
+            metadata.has_cloud_data = true;
+        });
+
+        let emitted_events = Arc::new(Mutex::new(Vec::new()));
+        app.update({
+            let history_model = history_model.clone();
+            let emitted_events = emitted_events.clone();
+            move |ctx| {
+                ctx.subscribe_to_model(&history_model, move |_, event, _| {
+                    emitted_events.lock().unwrap().push(event.clone());
+                });
+            }
+        });
+
+        let result = history_model.update(&mut app, |model, ctx| {
+            model.rename_conversation_locally(conversation_id, "  Renamed 🦀  ".to_owned(), ctx)
+        });
+
+        assert_eq!(
+            result,
+            Ok(LocalConversationRenameOutcome::Renamed {
+                title: "Renamed 🦀".to_owned(),
+            }),
+        );
+        history_model.read(&app, |model, _| {
+            assert_eq!(
+                model
+                    .conversation(&conversation_id)
+                    .and_then(|conversation| conversation.title())
+                    .as_deref(),
+                Some("Renamed 🦀"),
+            );
+            assert_eq!(
+                model
+                    .get_conversation_metadata(&conversation_id)
+                    .map(|metadata| metadata.title.as_str()),
+                Some("Renamed 🦀"),
+            );
+            let metadata = model
+                .get_conversation_metadata(&conversation_id)
+                .expect("renamed conversation should keep cached metadata");
+            assert_eq!(
+                metadata.server_conversation_token.as_ref(),
+                Some(&legacy_server_token),
+            );
+            assert!(metadata.has_local_data);
+            assert!(metadata.has_cloud_data);
+            assert!(metadata.server_conversation_metadata.is_none());
+        });
+        assert_eq!(
+            emitted_events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    BlocklistAIHistoryEvent::UpdatedConversationMetadata {
+                        conversation_id: event_conversation_id,
+                        terminal_surface_id: Some(event_terminal_view_id),
+                    } if *event_conversation_id == conversation_id
+                        && *event_terminal_view_id == terminal_view_id
+                ))
+                .count(),
+            1,
+        );
+
+        let event = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("rename should persist the conversation snapshot");
+        let ModelEvent::UpdateMultiAgentConversation { updated_tasks, .. } = &event else {
+            panic!("expected UpdateMultiAgentConversation event");
+        };
+        assert_eq!(updated_tasks.len(), 1);
+        assert_eq!(updated_tasks[0].description, "Renamed 🦀");
+
+        let restored = super::convert_persisted_conversation_to_ai_conversation_with_metadata(
+            persisted_agent_conversation_from_update_event(event),
+        )
+        .expect("renamed persistence record should restore");
+        assert_eq!(restored.title().as_deref(), Some("Renamed 🦀"));
+    });
+}
+
+#[test]
+fn local_conversation_rename_unchanged_trimmed_title_emits_no_churn() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let mut global_resource_handles = GlobalResourceHandles::mock(&mut app);
+        global_resource_handles.model_event_sender = Some(sender);
+        app.add_singleton_model(|_| GlobalResourceHandlesProvider::new(global_resource_handles));
+
+        let conversation_id = AIConversationId::new();
+        let persisted = persisted_agent_conversation(
+            conversation_id,
+            local_rename_conversation_data(),
+            Utc::now().naive_utc(),
+            Some("Same title"),
+        );
+        let restored = super::convert_persisted_conversation_to_ai_conversation_with_metadata(
+            persisted.clone(),
+        )
+        .expect("persisted conversation should restore");
+        let history_model =
+            app.add_singleton_model(|_| BlocklistAIHistoryModel::new(vec![], &[persisted]));
+        history_model.update(&mut app, |model, ctx| {
+            model.restore_conversations(EntityId::new(), vec![restored], ctx);
+        });
+
+        let emitted_events = Arc::new(Mutex::new(Vec::new()));
+        app.update({
+            let history_model = history_model.clone();
+            let emitted_events = emitted_events.clone();
+            move |ctx| {
+                ctx.subscribe_to_model(&history_model, move |_, event, _| {
+                    emitted_events.lock().unwrap().push(event.clone());
+                });
+            }
+        });
+
+        let result = history_model.update(&mut app, |model, ctx| {
+            model.rename_conversation_locally(conversation_id, " \tSame title\n".to_owned(), ctx)
+        });
+
+        assert_eq!(result, Ok(LocalConversationRenameOutcome::Unchanged));
+        assert!(emitted_events.lock().unwrap().is_empty());
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+    });
+}
+
+#[test]
+fn local_conversation_rename_returns_validation_not_found_and_empty_errors() {
+    use crate::ai::agent::conversation::AIConversation;
+    use crate::ai::conversation_rename::ConversationTitleValidationError;
+
+    App::test((), |mut app| async move {
+        initialize_history_persistence_for_tests(&mut app);
+        let history_model = app.add_singleton_model(|_| BlocklistAIHistoryModel::new_for_test());
+        let missing_id = AIConversationId::new();
+
+        let invalid = history_model.update(&mut app, |model, ctx| {
+            model.rename_conversation_locally(missing_id, "  ".to_owned(), ctx)
+        });
+        assert_eq!(
+            invalid,
+            Err(RenameConversationLocallyError::InvalidTitle(
+                ConversationTitleValidationError::Empty,
+            )),
+        );
+
+        let missing = history_model.update(&mut app, |model, ctx| {
+            model.rename_conversation_locally(missing_id, "Valid title".to_owned(), ctx)
+        });
+        assert_eq!(
+            missing,
+            Err(RenameConversationLocallyError::ConversationNotFound),
+        );
+
+        let empty = AIConversation::new_restored(
+            AIConversationId::new(),
+            vec![warp_multi_agent_api::Task {
+                id: "empty-root".to_owned(),
+                messages: vec![],
+                dependencies: None,
+                description: "Empty".to_owned(),
+                summary: String::new(),
+                server_data: String::new(),
+            }],
+            None,
+        )
+        .expect("source-backed empty conversation should restore");
+        let empty_id = empty.id();
+        history_model.update(&mut app, |model, ctx| {
+            model.restore_conversations(EntityId::new(), vec![empty], ctx);
+        });
+        let empty_result = history_model.update(&mut app, |model, ctx| {
+            model.rename_conversation_locally(empty_id, "Valid title".to_owned(), ctx)
+        });
+        assert_eq!(
+            empty_result,
+            Err(RenameConversationLocallyError::EmptyConversation),
+        );
+    });
+}
+
+#[test]
+fn local_conversation_rename_rejects_nonempty_optimistic_root_as_not_ready() {
+    App::test((), |mut app| async move {
+        initialize_history_persistence_for_tests(&mut app);
+        let history_model = app.add_singleton_model(|_| BlocklistAIHistoryModel::new_for_test());
+        let terminal_view_id = EntityId::new();
+        let conversation_id = history_model.update(&mut app, |model, ctx| {
+            model.start_new_conversation(terminal_view_id, false, false, false, ctx)
+        });
+        let exchange = create_exchange_with_query("Local prompt", Local::now(), None);
+        let root_task_id = history_model.read(&app, |model, _| {
+            model
+                .conversation(&conversation_id)
+                .expect("conversation should exist")
+                .get_root_task_id()
+                .clone()
+        });
+        history_model.update(&mut app, |model, ctx| {
+            model
+                .update_conversation_for_new_request_input(
+                    RequestInput {
+                        conversation_id,
+                        input_messages: HashMap::from([(root_task_id, exchange.input)]),
+                        working_directory: exchange.working_directory,
+                        model_id: exchange.model_id,
+                        coding_model_id: exchange.coding_model_id,
+                        cli_agent_model_id: exchange.cli_agent_model_id,
+                        computer_use_model_id: exchange.computer_use_model_id,
+                        shared_session_response_initiator: exchange.response_initiator,
+                        request_start_ts: exchange.start_time,
+                        supported_tools_override: None,
+                    },
+                    ResponseStreamId::new_for_test(),
+                    terminal_view_id,
+                    ctx,
+                )
+                .expect("request input should make optimistic conversation nonempty");
+        });
+
+        let result = history_model.update(&mut app, |model, ctx| {
+            model.rename_conversation_locally(conversation_id, "Valid title".to_owned(), ctx)
+        });
+        assert_eq!(
+            result,
+            Err(RenameConversationLocallyError::ConversationNotReady),
+        );
+    });
 }
 
 #[test]

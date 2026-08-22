@@ -1,4 +1,4 @@
-use crate::ai::agent::conversation::ConversationStatus;
+use crate::ai::agent::conversation::{AIConversation, AIConversationId, ConversationStatus};
 use crate::ai::agent::task::TaskId;
 use crate::ai::agent::{
     AIAgentActionId, AIAgentExchange, AIAgentExchangeId, AIAgentInput, AIAgentOutput,
@@ -9,7 +9,7 @@ use chrono::Local;
 use parking_lot::FairMutex;
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::pin::pin;
 use std::rc::Rc;
 use std::str::FromStr;
@@ -302,6 +302,83 @@ fn enter_agent_view_for_navigation(
             )
             .expect("agent view entry should succeed")
     })
+}
+
+#[test]
+fn local_conversation_rename_refreshes_active_pane_title() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let _agent_view = FeatureFlag::AgentView.override_enabled(true);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let conversation_id = AIConversationId::new();
+        let root_task_id = "local-pane-rename-root";
+        let conversation = AIConversation::new_restored(
+            conversation_id,
+            vec![warp_multi_agent_api::Task {
+                id: root_task_id.to_owned(),
+                messages: vec![warp_multi_agent_api::Message {
+                    id: "local-pane-rename-message".to_owned(),
+                    task_id: root_task_id.to_owned(),
+                    server_message_data: String::new(),
+                    citations: vec![],
+                    message: Some(warp_multi_agent_api::message::Message::UserQuery(
+                        warp_multi_agent_api::message::UserQuery {
+                            query: "Original prompt".to_owned(),
+                            context: None,
+                            referenced_attachments: HashMap::new(),
+                            mode: None,
+                            intended_agent: Default::default(),
+                        },
+                    )),
+                    request_id: "local-pane-rename-request".to_owned(),
+                    timestamp: None,
+                }],
+                dependencies: None,
+                description: "Original pane title".to_owned(),
+                summary: String::new(),
+                server_data: String::new(),
+            }],
+            None,
+        )
+        .expect("source-backed conversation should restore");
+
+        terminal.update(&mut app, |view, ctx| {
+            view.restore_conversation_after_view_creation(
+                RestoredAIConversation::new(conversation),
+                true,
+                RestoreConversationEntryBehavior::EnterRestoredConversation,
+                ctx,
+            );
+            view.update_pane_configuration(ctx);
+            assert_eq!(
+                view.pane_configuration.as_ref(ctx).title(),
+                "Original pane title",
+            );
+
+            BlocklistAIHistoryModel::handle(ctx).update(ctx, |history, ctx| {
+                history
+                    .rename_conversation_locally(
+                        conversation_id,
+                        "Local pane title".to_owned(),
+                        ctx,
+                    )
+                    .expect("local conversation should rename");
+            });
+            view.handle_ai_history_model_event(
+                BlocklistAIHistoryModel::handle(ctx),
+                &BlocklistAIHistoryEvent::UpdatedConversationMetadata {
+                    terminal_surface_id: Some(view.view_id),
+                    conversation_id,
+                },
+                ctx,
+            );
+
+            assert_eq!(
+                view.pane_configuration.as_ref(ctx).title(),
+                "Local pane title",
+            );
+        });
+    });
 }
 
 fn append_inputs_to_conversation_and_handle_event(

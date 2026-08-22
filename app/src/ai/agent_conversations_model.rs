@@ -815,6 +815,12 @@ impl AgentConversationsModel {
                 ctx.emit(AgentConversationsModelEvent::ConversationUpdated { kind });
             }
 
+            BlocklistAIHistoryEvent::UpdatedConversationMetadata { .. } => {
+                ctx.emit(AgentConversationsModelEvent::ConversationUpdated {
+                    kind: ConversationUpdateKind::MetadataChanged,
+                });
+            }
+
             // Artifact changes - sync live artifacts into the cached task and notify.
             BlocklistAIHistoryEvent::UpdatedConversationArtifacts {
                 conversation_id, ..
@@ -846,7 +852,6 @@ impl AgentConversationsModel {
             | BlocklistAIHistoryEvent::ReassignedExchange { .. }
             | BlocklistAIHistoryEvent::UpdatedTodoList { .. }
             | BlocklistAIHistoryEvent::UpdatedAutoexecuteOverride { .. }
-            | BlocklistAIHistoryEvent::UpdatedConversationMetadata { .. }
             // UpdatedStreamingExchange covers streaming and other exchange-level updates but
             // doesn't change any ConversationNavigationData fields (title comes from
             // UpdateTaskDescription, last_updated uses exchange.start_time which is set at append time).

@@ -126,6 +126,10 @@ pub enum RestoreConversationError {
 #[error("Subagent task not found")]
 pub struct SubagentTaskNotFound;
 
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("Conversation root task is not ready")]
+pub(crate) struct UpdateConversationTitleError;
+
 /// An Agent Mode conversation.
 #[derive(Debug, Clone)]
 pub struct AIConversation {
@@ -1343,6 +1347,20 @@ impl AIConversation {
             .or_else(|| self.fallback_display_title.clone())
     }
 
+    /// Updates the source-backed root task title and persists the full local snapshot.
+    pub(crate) fn update_conversation_title(
+        &mut self,
+        title: String,
+        ctx: &mut ModelContext<BlocklistAIHistoryModel>,
+    ) -> Result<(), UpdateConversationTitleError> {
+        self.task_store
+            .modify_root_task(|root_task| root_task.update_description(title))
+            .ok_or(UpdateConversationTitleError)?
+            .map_err(|_| UpdateConversationTitleError)?;
+        self.write_updated_conversation_state(ctx);
+        Ok(())
+    }
+
     /// Set a fallback title used when no task description or initial query exists.
     pub fn set_fallback_display_title(&mut self, title: String) {
         self.fallback_display_title = Some(title);
@@ -2411,7 +2429,7 @@ impl AIConversation {
                 self.checkpoint_task(&task_id);
                 self.task_store
                     .modify_task(&task_id, |task| task.update_description(description))
-                    .ok_or(UpdateConversationError::TaskNotFound)?;
+                    .ok_or(UpdateConversationError::TaskNotFound)??;
             }
             Action::AddMessagesToTask(AddMessagesToTask { task_id, messages }) => {
                 for message in messages.iter() {
