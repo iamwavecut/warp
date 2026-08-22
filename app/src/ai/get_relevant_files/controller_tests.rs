@@ -1,18 +1,28 @@
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use ai::index::build_outline;
 use ai::index::locations::CodeContextLocation;
+use repo_metadata::DirectoryWatcher;
 use tempfile::TempDir;
+use warp_core::features::FeatureFlag;
+use warp_util::standardized_path::StandardizedPath;
+use warpui::{App, SingletonEntity};
 
+use crate::ai::agent::AIAgentActionId;
 use crate::ai::get_relevant_files::api::FileContext;
-use crate::ai::outline::OutlineStatus;
+use crate::ai::outline::{OutlineStatus, RepoOutlines, insert_outline_for_test};
 
 use super::{
-    GetRelevantFilesError, LOCAL_CONTENT_SEARCH_MAX_BYTES_PER_FILE, LOCAL_CONTENT_SEARCH_MAX_FILES,
-    LOCAL_OUTLINE_RESULT_LIMIT, local_outline_locations, local_outline_locations_from_candidates,
+    GetRelevantFilesController, GetRelevantFilesControllerEvent, GetRelevantFilesControllerResult,
+    GetRelevantFilesError, GetRelevantFilesRequestTarget, LOCAL_CONTENT_SEARCH_MAX_BYTES_PER_FILE,
+    LOCAL_CONTENT_SEARCH_MAX_FILES, LOCAL_OUTLINE_RESULT_LIMIT, LocalCandidateScore,
+    local_outline_locations, local_outline_locations_from_candidates,
     rank_local_outline_candidates as rank_local_outline_candidates_with_content,
+    revalidate_local_candidate,
 };
 
 fn file(path: &str, symbols: &str) -> FileContext {
@@ -147,6 +157,87 @@ fn ranks_local_outline_candidates_without_inventing_or_repeating_paths() {
     );
 }
 
+#[test]
+fn ranks_local_outline_candidates_without_cross_tier_inversion() {
+    let query = "one two three four five six seven eight nine ten eleven twelve";
+    let partial_paths = vec!["src/high".to_owned()];
+    let path_match = file("src/high/unrelated.rs", "");
+    let many_filename_matches = file(
+        "src/one-two-three-four-five-six-seven-eight-nine-ten-eleven-twelve.rs",
+        "",
+    );
+    assert_eq!(
+        paths(rank_local_outline_candidates(
+            query,
+            Some(&partial_paths),
+            vec![many_filename_matches, path_match],
+        )),
+        [
+            "src/high/unrelated.rs",
+            "src/one-two-three-four-five-six-seven-eight-nine-ten-eleven-twelve.rs",
+        ]
+    );
+
+    let filename_match = file("src/one.rs", "");
+    let many_symbol_matches = file(
+        "src/symbols.rs",
+        "fn two three four five six seven eight nine ten eleven twelve",
+    );
+    assert_eq!(
+        paths(rank_local_outline_candidates(
+            query,
+            None,
+            vec![many_symbol_matches, filename_match],
+        )),
+        ["src/one.rs", "src/symbols.rs"]
+    );
+
+    let symbol_token_match = file("src/symbol_token.rs", "fn one");
+    let many_symbol_substrings = file(
+        "src/symbol_substrings.rs",
+        "fn xtwox xthreex xfourx xfivex xsixx xsevenx xeightx xninex xtenx xelevenx xtwelvex",
+    );
+    assert_eq!(
+        paths(rank_local_outline_candidates(
+            query,
+            None,
+            vec![many_symbol_substrings, symbol_token_match],
+        )),
+        ["src/symbol_token.rs", "src/symbol_substrings.rs"]
+    );
+
+    let symbol_substring = file("src/symbol_substring.rs", "fn prefixneedle_suffix");
+    let content_only = file("src/content_only.rs", "");
+    let content_scores = HashMap::from([(
+        content_only.path.clone(),
+        LocalCandidateScore {
+            content_token_matches: 100,
+            ..LocalCandidateScore::default()
+        },
+    )]);
+    assert_eq!(
+        paths(rank_local_outline_candidates_with_content(
+            "needle",
+            None,
+            vec![content_only, symbol_substring],
+            &content_scores,
+        )),
+        ["src/symbol_substring.rs", "src/content_only.rs"]
+    );
+}
+
+#[test]
+fn ranks_local_outline_candidates_with_canonically_equivalent_unicode() {
+    let decomposed_query = "cafe\u{301}";
+    let ranked = rank_local_outline_candidates(
+        decomposed_query,
+        None,
+        vec![file("src/caf\u{e9}.rs", "fn unrelated")],
+    );
+
+    assert_eq!(paths(ranked), ["src/caf\u{e9}.rs"]);
+}
+
 #[tokio::test]
 async fn local_outline_search_returns_existing_whole_files_from_content_evidence() {
     let repo = TempDir::new().unwrap();
@@ -185,6 +276,82 @@ async fn local_outline_search_returns_existing_whole_files_from_content_evidence
     assert_eq!(whole_file_paths(&first), expected);
     assert_eq!(whole_file_paths(&second), expected);
     assert!(first.iter().all(|location| location.path().is_file()));
+}
+
+#[test]
+fn local_outline_controller_dispatch_is_synchronous_and_keeps_no_pending_request() {
+    App::test((), |mut app| async move {
+        let repo = TempDir::new().unwrap();
+        let matching = write_file(
+            repo.path(),
+            "src/controller_needle.rs",
+            b"fn unrelated() {}\n",
+        );
+        write_file(repo.path(), "src/irrelevant.rs", b"fn unrelated() {}\n");
+        let repo_root = dunce::canonicalize(repo.path()).unwrap();
+        let outline = build_outline(&repo_root, Some(100)).await.unwrap();
+
+        app.add_singleton_model(DirectoryWatcher::new_for_testing);
+        let repository = DirectoryWatcher::handle(&app).update(&mut app, |watcher, ctx| {
+            watcher
+                .add_directory(
+                    StandardizedPath::from_local_canonicalized(&repo_root).unwrap(),
+                    ctx,
+                )
+                .unwrap()
+        });
+        let outlines = app.add_singleton_model(RepoOutlines::new_for_test);
+        outlines.update(&mut app, |outlines, _| {
+            insert_outline_for_test(
+                outlines,
+                repo_root.clone(),
+                repository,
+                OutlineStatus::Complete(outline),
+            );
+        });
+
+        let _embedding_flag = FeatureFlag::FullSourceCodeEmbedding.override_enabled(false);
+        let controller = app.add_model(|_| GetRelevantFilesController::default());
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        app.update(|ctx| {
+            let observed = observed.clone();
+            ctx.subscribe_to_model(&controller, move |_, event, _| {
+                if let GetRelevantFilesControllerEvent::Success {
+                    action_id,
+                    result: GetRelevantFilesControllerResult::Locations(locations),
+                } = event
+                {
+                    observed
+                        .borrow_mut()
+                        .push((action_id.clone(), whole_file_paths(locations)));
+                }
+            });
+        });
+
+        let action_id = AIAgentActionId::from("local-controller-search".to_owned());
+        controller.update(&mut app, |controller, ctx| {
+            controller
+                .send_request(
+                    GetRelevantFilesRequestTarget::Local {
+                        directory: repo_root,
+                    },
+                    "controller needle".to_owned(),
+                    None,
+                    action_id.clone(),
+                    ctx,
+                )
+                .unwrap();
+            assert!(controller.pending_requests.is_empty());
+        });
+
+        assert_eq!(
+            observed.borrow().as_slice(),
+            [(
+                action_id,
+                BTreeSet::from([dunce::canonicalize(matching).unwrap()]),
+            )]
+        );
+    });
 }
 
 #[test]
@@ -269,4 +436,30 @@ fn search_codebase_local_outline_rejects_missing_and_outside_paths() {
         whole_file_paths(&locations),
         BTreeSet::from([dunce::canonicalize(valid).unwrap()])
     );
+}
+
+#[test]
+fn search_codebase_local_outline_revalidates_a_selected_path() {
+    let repo = TempDir::new().unwrap();
+    let candidate = file("src/replace_me.rs", "fn safequery");
+    let candidate_path = write_file(repo.path(), &candidate.path, b"// safequery\n");
+    let canonical_root = dunce::canonicalize(repo.path()).unwrap();
+
+    assert!(revalidate_local_candidate(&canonical_root, &candidate).is_some());
+    fs::remove_file(&candidate_path).unwrap();
+    assert_eq!(
+        revalidate_local_candidate(&canonical_root, &candidate),
+        None
+    );
+
+    #[cfg(unix)]
+    {
+        let outside = TempDir::new().unwrap();
+        let outside_file = write_file(outside.path(), "outside.rs", b"// safequery\n");
+        std::os::unix::fs::symlink(outside_file, candidate_path).unwrap();
+        assert_eq!(
+            revalidate_local_candidate(&canonical_root, &candidate),
+            None
+        );
+    }
 }

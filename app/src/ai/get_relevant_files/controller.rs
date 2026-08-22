@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,6 +12,7 @@ use ai::index::locations::CodeContextLocation;
 use anyhow::{Context as _, anyhow};
 use futures_util::stream::AbortHandle;
 use instant::Instant;
+use unicode_normalization_alignments::UnicodeNormalization as _;
 use warp_core::features::FeatureFlag;
 use warp_errors::report_error;
 use warpui::{AppContext, Entity, ModelContext, ModelHandle, SingletonEntity};
@@ -32,19 +33,31 @@ const LOCAL_OUTLINE_RESULT_LIMIT: usize = 20;
 const LOCAL_CONTENT_SEARCH_MAX_FILES: usize = 128;
 const LOCAL_CONTENT_SEARCH_MAX_BYTES_PER_FILE: usize = 64 * 1024;
 
-// Each query token receives only its strongest outline match. The gaps keep every match in a
-// higher tier stronger than any single match in the next tier while still letting all query tokens
-// contribute to the final score. Content evidence is added below the outline tiers separately.
-const PARTIAL_PATH_OR_PATH_TOKEN_SCORE: u64 = 10_000;
-const FILE_NAME_SCORE: u64 = 1_000;
-const SYMBOL_TOKEN_OR_PREFIX_SCORE: u64 = 100;
-const SYMBOL_SUBSTRING_SCORE: u64 = 10;
-const CONTENT_TOKEN_SCORE: u64 = 2;
-const CONTENT_SUBSTRING_SCORE: u64 = 1;
+// Derived ordering is deliberately lexicographic: one match in a higher field dominates every
+// possible sum of all lower fields, while counts within a field still let every query token
+// contribute. Content evidence stays below every outline tier.
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+struct LocalCandidateScore {
+    path_or_partial_matches: u64,
+    filename_matches: u64,
+    symbol_token_or_prefix_matches: u64,
+    symbol_substring_matches: u64,
+    content_token_matches: u64,
+    content_substring_matches: u64,
+}
+
+impl LocalCandidateScore {
+    fn add_content(mut self, content: Self) -> Self {
+        self.content_token_matches += content.content_token_matches;
+        self.content_substring_matches += content.content_substring_matches;
+        self
+    }
+}
 
 fn normalized_tokens(value: &str) -> Vec<String> {
     let normalized = value
-        .chars()
+        .nfc()
+        .map(|(character, _)| character)
         .flat_map(char::to_lowercase)
         .map(|character| {
             if character.is_alphanumeric() {
@@ -75,7 +88,7 @@ fn outline_candidate_score(
     query_tokens: &[String],
     partial_path_segments: Option<&[String]>,
     candidate: &FileContextRequest,
-) -> u64 {
+) -> LocalCandidateScore {
     let path = Path::new(&candidate.path);
     let path_tokens = normalized_tokens(&candidate.path);
     let directory_tokens = path
@@ -92,49 +105,46 @@ fn outline_candidate_score(
         .unwrap_or_default();
     let symbol_tokens = normalized_tokens(&candidate.symbols);
 
-    let partial_path_score = partial_path_segments
-        .into_iter()
-        .flatten()
-        .filter(|partial_path| {
-            contains_token_sequence(&path_tokens, &normalized_tokens(partial_path))
-        })
-        .count() as u64
-        * PARTIAL_PATH_OR_PATH_TOKEN_SCORE;
-
-    partial_path_score
-        + query_tokens
-            .iter()
-            .map(|query_token| {
-                if directory_tokens.iter().any(|token| token == query_token) {
-                    PARTIAL_PATH_OR_PATH_TOKEN_SCORE
-                } else if file_name_tokens
-                    .iter()
-                    .chain(&file_stem_tokens)
-                    .any(|token| token.contains(query_token))
-                {
-                    FILE_NAME_SCORE
-                } else if symbol_tokens
-                    .iter()
-                    .any(|token| token == query_token || token.starts_with(query_token))
-                {
-                    SYMBOL_TOKEN_OR_PREFIX_SCORE
-                } else if symbol_tokens
-                    .iter()
-                    .any(|token| token.contains(query_token))
-                {
-                    SYMBOL_SUBSTRING_SCORE
-                } else {
-                    0
-                }
+    let mut score = LocalCandidateScore {
+        path_or_partial_matches: partial_path_segments
+            .into_iter()
+            .flatten()
+            .filter(|partial_path| {
+                contains_token_sequence(&path_tokens, &normalized_tokens(partial_path))
             })
-            .sum::<u64>()
+            .count() as u64,
+        ..LocalCandidateScore::default()
+    };
+
+    for query_token in query_tokens {
+        if directory_tokens.iter().any(|token| token == query_token) {
+            score.path_or_partial_matches += 1;
+        } else if file_name_tokens
+            .iter()
+            .chain(&file_stem_tokens)
+            .any(|token| token.contains(query_token))
+        {
+            score.filename_matches += 1;
+        } else if symbol_tokens
+            .iter()
+            .any(|token| token == query_token || token.starts_with(query_token))
+        {
+            score.symbol_token_or_prefix_matches += 1;
+        } else if symbol_tokens
+            .iter()
+            .any(|token| token.contains(query_token))
+        {
+            score.symbol_substring_matches += 1;
+        }
+    }
+    score
 }
 
 fn rank_local_outline_candidates(
     query: &str,
     partial_path_segments: Option<&[String]>,
     candidates: Vec<FileContextRequest>,
-    content_scores: &HashMap<String, u64>,
+    content_scores: &HashMap<String, LocalCandidateScore>,
 ) -> Vec<FileContextRequest> {
     let mut candidates = candidates;
     candidates.sort_by(|left, right| {
@@ -158,8 +168,13 @@ fn rank_local_outline_candidates(
         .into_iter()
         .filter_map(|candidate| {
             let score = outline_candidate_score(&query_tokens, partial_path_segments, &candidate)
-                + content_scores.get(&candidate.path).copied().unwrap_or(0);
-            (score > 0).then(|| {
+                .add_content(
+                    content_scores
+                        .get(&candidate.path)
+                        .copied()
+                        .unwrap_or_default(),
+                );
+            (score != LocalCandidateScore::default()).then(|| {
                 (
                     score,
                     normalized_path(&candidate.path),
@@ -188,7 +203,58 @@ fn rank_local_outline_candidates(
 #[derive(Debug)]
 struct ValidatedLocalCandidate {
     context: FileContextRequest,
-    absolute_path: PathBuf,
+}
+
+fn canonical_candidate_path(
+    canonical_root: &Path,
+    candidate: &FileContextRequest,
+) -> Option<PathBuf> {
+    let path = dunce::canonicalize(canonical_root.join(&candidate.path)).ok()?;
+    (path.starts_with(canonical_root) && path.is_file()).then_some(path)
+}
+
+#[cfg(unix)]
+fn opened_file_matches_path(file: &File, path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let (Ok(opened), Ok(current)) = (file.metadata(), path.metadata()) else {
+        return false;
+    };
+    opened.dev() == current.dev() && opened.ino() == current.ino()
+}
+
+#[cfg(not(unix))]
+fn opened_file_matches_path(file: &File, path: &Path) -> bool {
+    file.metadata().is_ok() && path.metadata().is_ok()
+}
+
+fn open_local_candidate(
+    canonical_root: &Path,
+    candidate: &FileContextRequest,
+) -> Option<(File, PathBuf)> {
+    // Canonicalization enforces containment. On Unix, O_NOFOLLOW rejects a last-component symlink;
+    // the second canonicalization plus device/inode comparison also detects a path-component swap
+    // that made the opened handle differ from the path currently selected for return.
+    let path = canonical_candidate_path(canonical_root, candidate)?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options.open(&path).ok()?;
+
+    let revalidated_path = canonical_candidate_path(canonical_root, candidate)?;
+    (revalidated_path == path && opened_file_matches_path(&file, &revalidated_path))
+        .then_some((file, revalidated_path))
+}
+
+fn revalidate_local_candidate(
+    canonical_root: &Path,
+    candidate: &FileContextRequest,
+) -> Option<PathBuf> {
+    open_local_candidate(canonical_root, candidate).map(|(_, path)| path)
 }
 
 fn validated_local_candidates(
@@ -207,42 +273,33 @@ fn validated_local_candidates(
 
     let mut by_canonical_path = BTreeMap::new();
     for context in candidates {
-        let Ok(absolute_path) = dunce::canonicalize(canonical_root.join(&context.path)) else {
+        let Some(absolute_path) = canonical_candidate_path(&canonical_root, &context) else {
             continue;
         };
-        if !absolute_path.starts_with(&canonical_root) || !absolute_path.is_file() {
-            continue;
-        }
         by_canonical_path
-            .entry(absolute_path.clone())
-            .or_insert(ValidatedLocalCandidate {
-                context,
-                absolute_path,
-            });
+            .entry(absolute_path)
+            .or_insert(ValidatedLocalCandidate { context });
     }
     by_canonical_path.into_values().collect()
 }
 
-fn content_candidate_score(query_tokens: &[String], contents: &[u8]) -> u64 {
+fn content_candidate_score(query_tokens: &[String], contents: &[u8]) -> LocalCandidateScore {
     if contents.contains(&0) {
-        return 0;
+        return LocalCandidateScore::default();
     }
     let content_tokens = normalized_tokens(&String::from_utf8_lossy(contents));
-    query_tokens
-        .iter()
-        .map(|query_token| {
-            if content_tokens.iter().any(|token| token == query_token) {
-                CONTENT_TOKEN_SCORE
-            } else if content_tokens
-                .iter()
-                .any(|token| token.contains(query_token))
-            {
-                CONTENT_SUBSTRING_SCORE
-            } else {
-                0
-            }
-        })
-        .sum()
+    let mut score = LocalCandidateScore::default();
+    for query_token in query_tokens {
+        if content_tokens.iter().any(|token| token == query_token) {
+            score.content_token_matches += 1;
+        } else if content_tokens
+            .iter()
+            .any(|token| token.contains(query_token))
+        {
+            score.content_substring_matches += 1;
+        }
+    }
+    score
 }
 
 /// Builds bounded local content evidence without invoking a shell or child process.
@@ -250,10 +307,11 @@ fn content_candidate_score(query_tokens: &[String], contents: &[u8]) -> u64 {
 /// At most 128 already validated outline files are opened, in deterministic outline-score/path
 /// order, and only the first 64 KiB of each file is read (at most 8 MiB per request).
 fn bounded_content_scores(
+    canonical_root: &Path,
     query: &str,
     partial_path_segments: Option<&[String]>,
     candidates: &[ValidatedLocalCandidate],
-) -> HashMap<String, u64> {
+) -> HashMap<String, LocalCandidateScore> {
     let query_tokens = normalized_tokens(query);
     if query_tokens.is_empty() {
         return HashMap::new();
@@ -277,13 +335,14 @@ fn bounded_content_scores(
         .into_iter()
         .take(LOCAL_CONTENT_SEARCH_MAX_FILES)
         .filter_map(|candidate| {
-            let file = File::open(&candidate.absolute_path).ok()?;
+            let (file, _) = open_local_candidate(canonical_root, &candidate.context)?;
             let mut contents = Vec::with_capacity(LOCAL_CONTENT_SEARCH_MAX_BYTES_PER_FILE);
             file.take(LOCAL_CONTENT_SEARCH_MAX_BYTES_PER_FILE as u64)
                 .read_to_end(&mut contents)
                 .ok()?;
             let score = content_candidate_score(&query_tokens, &contents);
-            (score > 0).then(|| (candidate.context.path.clone(), score))
+            (score != LocalCandidateScore::default())
+                .then(|| (candidate.context.path.clone(), score))
         })
         .collect()
 }
@@ -294,17 +353,12 @@ fn local_outline_locations_from_candidates(
     partial_path_segments: Option<&[String]>,
     candidates: Vec<FileContextRequest>,
 ) -> Arc<HashSet<CodeContextLocation>> {
-    let candidates = validated_local_candidates(base_path, candidates);
-    let content_scores = bounded_content_scores(query, partial_path_segments, &candidates);
-    let absolute_paths = candidates
-        .iter()
-        .map(|candidate| {
-            (
-                candidate.context.path.clone(),
-                candidate.absolute_path.clone(),
-            )
-        })
-        .collect::<HashMap<_, _>>();
+    let Ok(canonical_root) = dunce::canonicalize(base_path) else {
+        return Arc::new(HashSet::new());
+    };
+    let candidates = validated_local_candidates(&canonical_root, candidates);
+    let content_scores =
+        bounded_content_scores(&canonical_root, query, partial_path_segments, &candidates);
     let ranked = rank_local_outline_candidates(
         query,
         partial_path_segments,
@@ -318,7 +372,7 @@ fn local_outline_locations_from_candidates(
     Arc::new(
         ranked
             .into_iter()
-            .filter_map(|candidate| absolute_paths.get(&candidate.path).cloned())
+            .filter_map(|candidate| revalidate_local_candidate(&canonical_root, &candidate))
             .map(CodeContextLocation::WholeFile)
             .collect(),
     )

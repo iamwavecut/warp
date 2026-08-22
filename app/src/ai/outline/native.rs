@@ -408,6 +408,23 @@ impl Entity for RepoOutlines {
 
 impl SingletonEntity for RepoOutlines {}
 
+#[cfg(test)]
+pub(crate) fn insert_outline_for_test(
+    outlines: &mut RepoOutlines,
+    repo_path: PathBuf,
+    repository: ModelHandle<Repository>,
+    status: OutlineStatus,
+) {
+    outlines.outlines.insert(
+        repo_path,
+        OutlineState {
+            repository,
+            status,
+            subscriber_id: None,
+        },
+    );
+}
+
 struct OutlineRepositorySubscriber {
     repository_update_tx: Sender<RepositoryUpdate>,
 }
