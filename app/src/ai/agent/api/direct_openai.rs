@@ -829,7 +829,14 @@ fn stream_chat_completion_with_tool_policy(
                 return;
             }
         };
-        match events_from_non_streaming_response(response, &task_id, &request_id, prefix_actions) {
+        match events_from_non_streaming_response(
+            response,
+            &task_id,
+            &request_id,
+            prefix_actions,
+            &supported_tools,
+            long_running_shell_controls_advertised,
+        ) {
             Ok(events) => {
                 for event in events {
                     yield Ok(event);
@@ -974,6 +981,8 @@ fn events_from_non_streaming_response(
     task_id: &str,
     request_id: &str,
     mut prefix_actions: Vec<api::ClientAction>,
+    supported_tools: &[api::ToolType],
+    long_running_shell_controls_advertised: bool,
 ) -> Result<Vec<api::ResponseEvent>, AIApiError> {
     let mut events = Vec::new();
     let Some(choice) = response.choices.into_iter().next() else {
@@ -1000,7 +1009,13 @@ fn events_from_non_streaming_response(
         ));
     }
     for tool_call in message.tool_calls {
-        messages.push(api_tool_call_message(task_id, request_id, tool_call)?);
+        messages.push(api_tool_call_message_for_supported_tools(
+            task_id,
+            request_id,
+            tool_call,
+            supported_tools,
+            long_running_shell_controls_advertised,
+        )?);
     }
 
     let mut actions = take_prefix_actions(&mut prefix_actions);
@@ -2031,7 +2046,8 @@ fn long_running_shell_mode_to_json(
     match mode.and_then(|mode| mode.mode.as_ref()) {
         Some(Mode::Line(())) => json!("line"),
         Some(Mode::Block(())) => json!("block"),
-        Some(Mode::Raw(())) | None => json!("raw"),
+        Some(Mode::Raw(())) => json!("raw"),
+        None => Value::Null,
     }
 }
 
@@ -2043,6 +2059,7 @@ fn shell_command_delay_to_json(
         Some(Delay::Duration(duration)) => json!({
             "kind": "duration",
             "seconds": duration.seconds,
+            "nanos": duration.nanos,
         }),
         Some(Delay::OnCompletion(())) => json!("on_completion"),
         None => Value::Null,
@@ -2152,7 +2169,10 @@ fn use_computer_action_to_json(action: &api::message::tool_call::use_computer::A
         }),
         Some(Type::Wait(wait)) => json!({
             "type": "wait",
-            "seconds": wait.duration.as_ref().map(|duration| duration.seconds).unwrap_or_default(),
+            "seconds": wait.duration.as_ref().map(|duration| json!({
+                "seconds": duration.seconds,
+                "nanos": duration.nanos,
+            })),
         }),
         Some(Type::TypeText(type_text)) => json!({
             "type": "type_text",
@@ -2266,7 +2286,10 @@ fn api_tool_call_message_inner(
 fn api_tool_from_openai_tool_call(
     tool_call: &OpenAIToolCall,
 ) -> Result<api::message::tool_call::Tool, AIApiError> {
-    api_tool_from_openai_tool_call_inner(tool_call, None, false)
+    // This helper is also used for persisted history round-trips.  It has no
+    // request capability context, so preserve an explicit asynchronous wait;
+    // the request-boundary callers use the policy-aware helper below.
+    api_tool_from_openai_tool_call_inner(tool_call, None, true)
 }
 
 fn api_tool_from_openai_tool_call_with_supported_tools(
@@ -2313,7 +2336,7 @@ fn api_tool_from_openai_tool_call_inner(
             let command = required_string(&args, "command")?;
             let inferred_flags = infer_shell_command_flags(&command);
             let requested_wait_until_completion =
-                optional_bool(&args, "wait_until_completion").unwrap_or(true);
+                optional_bool_strict(&args, "wait_until_completion")?.unwrap_or(true);
             let wait_until_completion = if long_running_shell_controls_advertised {
                 requested_wait_until_completion
             } else {
@@ -2332,11 +2355,12 @@ fn api_tool_from_openai_tool_call_inner(
             Ok(api::message::tool_call::Tool::RunShellCommand(
                 api::message::tool_call::RunShellCommand {
                     command,
-                    is_read_only: optional_bool(&args, "is_read_only")
+                    is_read_only: optional_bool_strict(&args, "is_read_only")?
                         .unwrap_or(inferred_flags.is_read_only),
-                    uses_pager: optional_bool(&args, "uses_pager").unwrap_or(false),
+                    uses_pager: optional_bool_strict(&args, "uses_pager")?.unwrap_or(false),
                     citations: vec![],
-                    is_risky: optional_bool(&args, "is_risky").unwrap_or(inferred_flags.is_risky),
+                    is_risky: optional_bool_strict(&args, "is_risky")?
+                        .unwrap_or(inferred_flags.is_risky),
                     wait_until_complete_value: Some(
                         api::message::tool_call::run_shell_command::WaitUntilCompleteValue::WaitUntilComplete(
                             wait_until_completion,
@@ -2567,7 +2591,7 @@ fn create_documents_arg(
             .map(|document| {
                 Ok(api::message::tool_call::create_documents::NewDocument {
                     content: required_string(document, "content")?,
-                    title: optional_string(document, "title").unwrap_or_default(),
+                    title: optional_string_strict(document, "title")?.unwrap_or_default(),
                 })
             })
             .collect::<Result<Vec<_>, AIApiError>>()?,
@@ -2575,7 +2599,7 @@ fn create_documents_arg(
 }
 
 fn line_ranges_arg(value: &Value) -> Result<Vec<api::FileContentLineRange>, AIApiError> {
-    let Some(line_ranges) = value.get("line_ranges") else {
+    let Some(line_ranges) = optional_value_strict(value, "line_ranges")? else {
         return Ok(Vec::new());
     };
     let line_ranges = line_ranges.as_array().ok_or_else(|| {
@@ -2609,9 +2633,9 @@ fn read_shell_command_output_arg(
     args: &Value,
 ) -> Result<api::message::tool_call::ReadShellCommandOutput, AIApiError> {
     let command_id = required_string(args, "command_id")?;
-    let delay = if let Some(delay) = args.get("delay").filter(|value| !value.is_null()) {
+    let delay = if let Some(delay) = optional_value_strict(args, "delay")? {
         parse_shell_command_delay(delay)?
-    } else if let Some(seconds) = optional_i64(args, "delay_seconds") {
+    } else if let Some(seconds) = optional_i64_strict(args, "delay_seconds")? {
         if seconds < 0 {
             return Err(AIApiError::Other(anyhow::anyhow!(
                 "delay_seconds must not be negative"
@@ -2641,31 +2665,35 @@ fn parse_shell_command_delay(
             ))),
         };
     }
-    let object = value.as_object().ok_or_else(|| {
+    value.as_object().ok_or_else(|| {
         AIApiError::Other(anyhow::anyhow!(
             "argument `delay` must be `on_completion` or an object with kind and seconds"
         ))
     })?;
-    let kind = optional_string(value, "kind")
-        .or_else(|| optional_string(value, "type"))
+    let kind = optional_string_strict(value, "kind")?
+        .or(optional_string_strict(value, "type")?)
         .unwrap_or_else(|| "duration".to_string());
     match kind.as_str() {
         "duration" | "seconds" => {
-            let seconds = object
-                .get("seconds")
-                .or_else(|| object.get("duration_seconds"))
-                .and_then(Value::as_i64)
+            let seconds = optional_i64_strict(value, "seconds")?
+                .or(optional_i64_strict(value, "duration_seconds")?)
                 .ok_or_else(|| {
                     AIApiError::Other(anyhow::anyhow!("duration delay requires integer `seconds`"))
                 })?;
+            let nanos = optional_i32_strict(value, "nanos")?.unwrap_or_default();
             if seconds < 0 {
                 return Err(AIApiError::Other(anyhow::anyhow!(
                     "duration delay seconds must not be negative"
                 )));
             }
+            if !(0..1_000_000_000).contains(&nanos) {
+                return Err(AIApiError::Other(anyhow::anyhow!(
+                    "duration delay nanos must be between 0 and 999999999"
+                )));
+            }
             Ok(Some(
                 api::message::tool_call::read_shell_command_output::Delay::Duration(
-                    prost_types::Duration { seconds, nanos: 0 },
+                    prost_types::Duration { seconds, nanos },
                 ),
             ))
         }
@@ -2708,35 +2736,39 @@ fn write_to_long_running_shell_command_arg(
             "missing string argument `input`"
         )));
     };
-    let mode = match optional_string(args, "mode")
-        .unwrap_or_else(|| "raw".to_string())
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "raw" => api::message::tool_call::write_to_long_running_shell_command::Mode {
-            mode: Some(
-                api::message::tool_call::write_to_long_running_shell_command::mode::Mode::Raw(()),
-            ),
-        },
-        "line" => api::message::tool_call::write_to_long_running_shell_command::Mode {
-            mode: Some(
-                api::message::tool_call::write_to_long_running_shell_command::mode::Mode::Line(()),
-            ),
-        },
-        "block" => api::message::tool_call::write_to_long_running_shell_command::Mode {
-            mode: Some(
-                api::message::tool_call::write_to_long_running_shell_command::mode::Mode::Block(()),
-            ),
-        },
-        other => {
-            return Err(AIApiError::Other(anyhow::anyhow!(
+    let mode = optional_string_strict(args, "mode")?
+        .map(|mode| {
+            match mode.to_ascii_lowercase().as_str() {
+            "raw" => Ok(api::message::tool_call::write_to_long_running_shell_command::Mode {
+                mode: Some(
+                    api::message::tool_call::write_to_long_running_shell_command::mode::Mode::Raw(
+                        (),
+                    ),
+                ),
+            }),
+            "line" => Ok(api::message::tool_call::write_to_long_running_shell_command::Mode {
+                mode: Some(
+                    api::message::tool_call::write_to_long_running_shell_command::mode::Mode::Line(
+                        (),
+                    ),
+                ),
+            }),
+            "block" => Ok(api::message::tool_call::write_to_long_running_shell_command::Mode {
+                mode: Some(
+                    api::message::tool_call::write_to_long_running_shell_command::mode::Mode::Block(
+                        (),
+                    ),
+                ),
+            }),
+            other => Err(AIApiError::Other(anyhow::anyhow!(
                 "unsupported long-running shell input mode `{other}`"
-            )));
+            ))),
         }
-    };
+        })
+        .transpose()?;
     Ok(api::message::tool_call::WriteToLongRunningShellCommand {
         input,
-        mode: Some(mode),
+        mode,
         command_id,
     })
 }
@@ -2756,7 +2788,7 @@ fn insert_review_comments_arg(
             .iter()
             .map(insert_review_comment_arg)
             .collect::<Result<Vec<_>, AIApiError>>()?,
-        base_branch: optional_string(args, "base_branch").unwrap_or_default(),
+        base_branch: optional_string_strict(args, "base_branch")?.unwrap_or_default(),
     })
 }
 
@@ -2765,17 +2797,18 @@ fn insert_review_comment_arg(
 ) -> Result<api::message::tool_call::insert_review_comments::Comment, AIApiError> {
     let location = value
         .get("location")
+        .filter(|location| !location.is_null())
         .map(insert_review_comment_location_arg)
         .transpose()?;
     Ok(api::message::tool_call::insert_review_comments::Comment {
         comment_id: required_string(value, "comment_id")?,
-        author: optional_string(value, "author").unwrap_or_default(),
-        last_modified_timestamp: optional_string(value, "last_modified_timestamp")
+        author: optional_string_strict(value, "author")?.unwrap_or_default(),
+        last_modified_timestamp: optional_string_strict(value, "last_modified_timestamp")?
             .unwrap_or_default(),
         comment_body: required_string(value, "comment_body")?,
-        parent_comment_id: optional_string(value, "parent_comment_id").unwrap_or_default(),
+        parent_comment_id: optional_string_strict(value, "parent_comment_id")?.unwrap_or_default(),
         location,
-        html_url: optional_string(value, "html_url").unwrap_or_default(),
+        html_url: optional_string_strict(value, "html_url")?.unwrap_or_default(),
     })
 }
 
@@ -2787,6 +2820,7 @@ fn insert_review_comment_location_arg(
             file_path: required_string(value, "file_path")?,
             line: value
                 .get("line")
+                .filter(|line| !line.is_null())
                 .map(insert_review_comment_line_arg)
                 .transpose()?,
         },
@@ -2796,7 +2830,7 @@ fn insert_review_comment_location_arg(
 fn insert_review_comment_line_arg(
     value: &Value,
 ) -> Result<api::message::tool_call::insert_review_comments::CommentLineRange, AIApiError> {
-    let side = optional_string(value, "side")
+    let side = optional_string_strict(value, "side")?
         .unwrap_or_else(|| "NEW".to_string())
         .to_ascii_uppercase();
     let side = match side.as_str() {
@@ -2810,9 +2844,10 @@ fn insert_review_comment_line_arg(
     };
     Ok(
         api::message::tool_call::insert_review_comments::CommentLineRange {
-            diff_hunk: optional_string(value, "diff_hunk").unwrap_or_default(),
+            diff_hunk: optional_string_strict(value, "diff_hunk")?.unwrap_or_default(),
             range: value
                 .get("range")
+                .filter(|range| !range.is_null())
                 .map(|range| {
                     let start = required_u32(range, "start")?;
                     let end = required_u32(range, "end")?;
@@ -2840,14 +2875,20 @@ fn ask_user_question_arg(args: &Value) -> Result<api::AskUserQuestion, AIApiErro
         questions: questions
             .iter()
             .map(|question| {
-                let multiple_choice = question
-                    .get("multiple_choice")
-                    .and_then(Value::as_object)
-                    .ok_or_else(|| {
+                let multiple_choice = match optional_value_strict(question, "multiple_choice")? {
+                    None => {
+                        return Ok(api::ask_user_question::Question {
+                            question_id: required_string(question, "question_id")?,
+                            question: required_string(question, "question")?,
+                            question_type: None,
+                        });
+                    }
+                    Some(multiple_choice) => multiple_choice.as_object().ok_or_else(|| {
                         AIApiError::Other(anyhow::anyhow!(
-                            "ask_user_question requires `multiple_choice`"
+                            "ask_user_question `multiple_choice` must be an object or null"
                         ))
-                    })?;
+                    })?,
+                };
                 let options = multiple_choice
                     .get("options")
                     .and_then(Value::as_array)
@@ -2861,10 +2902,10 @@ fn ask_user_question_arg(args: &Value) -> Result<api::AskUserQuestion, AIApiErro
                         "multiple_choice requires at least one option"
                     )));
                 }
-                let recommended_option_index = multiple_choice
-                    .get("recommended_option_index")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0);
+                let multiple_choice_value = Value::Object(multiple_choice.clone());
+                let recommended_option_index =
+                    optional_i64_strict(&multiple_choice_value, "recommended_option_index")?
+                        .unwrap_or(0);
                 if recommended_option_index < 0 || recommended_option_index >= options.len() as i64
                 {
                     return Err(AIApiError::Other(anyhow::anyhow!(
@@ -2886,14 +2927,16 @@ fn ask_user_question_arg(args: &Value) -> Result<api::AskUserQuestion, AIApiErro
                                     })
                                     .collect::<Result<Vec<_>, AIApiError>>()?,
                                 recommended_option_index: recommended_option_index as i32,
-                                is_multiselect: multiple_choice
-                                    .get("is_multiselect")
-                                    .and_then(Value::as_bool)
-                                    .unwrap_or(false),
-                                supports_other: multiple_choice
-                                    .get("supports_other")
-                                    .and_then(Value::as_bool)
-                                    .unwrap_or(false),
+                                is_multiselect: optional_bool_strict(
+                                    &multiple_choice_value,
+                                    "is_multiselect",
+                                )?
+                                .unwrap_or(false),
+                                supports_other: optional_bool_strict(
+                                    &multiple_choice_value,
+                                    "supports_other",
+                                )?
+                                .unwrap_or(false),
                             },
                         ),
                     ),
@@ -2915,12 +2958,13 @@ fn use_computer_arg(args: &Value) -> Result<api::message::tool_call::UseComputer
             .iter()
             .map(use_computer_action_arg)
             .collect::<Result<Vec<_>, AIApiError>>()?,
-        post_actions_screenshot_params: args
-            .get("post_actions_screenshot_params")
-            .filter(|value| !value.is_null())
-            .map(parse_screenshot_params)
-            .transpose()?,
-        action_summary: optional_string(args, "action_summary").unwrap_or_default(),
+        post_actions_screenshot_params: optional_value_strict(
+            args,
+            "post_actions_screenshot_params",
+        )?
+        .map(parse_screenshot_params)
+        .transpose()?,
+        action_summary: optional_string_strict(args, "action_summary")?.unwrap_or_default(),
     })
 }
 
@@ -2947,7 +2991,7 @@ fn use_computer_action_arg(
             distance: Some(parse_scroll_distance(value)?),
         }),
         "wait" => Type::Wait(action::Wait {
-            duration: Some(parse_duration(value, "seconds")?),
+            duration: parse_optional_duration(value, "seconds")?,
         }),
         "type_text" => Type::TypeText(action::TypeText {
             text: required_string(value, "text")?,
@@ -2972,7 +3016,13 @@ fn use_computer_action_arg(
 fn parse_coordinates(value: &Value, key: &str) -> Result<api::Coordinates, AIApiError> {
     let value = value
         .get(key)
+        .filter(|value| !value.is_null())
         .ok_or_else(|| AIApiError::Other(anyhow::anyhow!("missing object argument `{key}`")))?;
+    if !value.is_object() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "argument `{key}` must be an object"
+        )));
+    }
     Ok(api::Coordinates {
         x: required_i32(value, "x")?,
         y: required_i32(value, "y")?,
@@ -3021,49 +3071,40 @@ fn parse_scroll_distance(
     let distance = distance.as_object().ok_or_else(|| {
         AIApiError::Other(anyhow::anyhow!("mouse_wheel distance must be an object"))
     })?;
-    if let Some(pixels) = distance.get("pixels").and_then(Value::as_i64) {
-        return Ok(
-            api::message::tool_call::use_computer::action::mouse_wheel::Distance::Pixels(
-                i32::try_from(pixels).map_err(|_| {
-                    AIApiError::Other(anyhow::anyhow!("mouse_wheel pixels is out of range"))
-                })?,
-            ),
-        );
-    }
-    if let Some(clicks) = distance.get("clicks").and_then(Value::as_i64) {
-        return Ok(
-            api::message::tool_call::use_computer::action::mouse_wheel::Distance::Clicks(
-                i32::try_from(clicks).map_err(|_| {
-                    AIApiError::Other(anyhow::anyhow!("mouse_wheel clicks is out of range"))
-                })?,
-            ),
-        );
-    }
-    let kind = distance
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let amount = distance
-        .get("value")
-        .and_then(Value::as_i64)
-        .ok_or_else(|| {
-            AIApiError::Other(anyhow::anyhow!(
-                "mouse_wheel distance requires pixels or clicks"
-            ))
-        })?;
-    let amount = i32::try_from(amount)
-        .map_err(|_| AIApiError::Other(anyhow::anyhow!("mouse_wheel distance is out of range")))?;
-    match kind.as_str() {
-        "pixels" => Ok(
-            api::message::tool_call::use_computer::action::mouse_wheel::Distance::Pixels(amount),
+    let distance_value = Value::Object(distance.clone());
+    let pixels = optional_i32_strict(&distance_value, "pixels")?;
+    let clicks = optional_i32_strict(&distance_value, "clicks")?;
+    match (pixels, clicks) {
+        (Some(pixels), None) => Ok(
+            api::message::tool_call::use_computer::action::mouse_wheel::Distance::Pixels(pixels),
         ),
-        "clicks" => Ok(
-            api::message::tool_call::use_computer::action::mouse_wheel::Distance::Clicks(amount),
+        (None, Some(clicks)) => Ok(
+            api::message::tool_call::use_computer::action::mouse_wheel::Distance::Clicks(clicks),
         ),
-        _ => Err(AIApiError::Other(anyhow::anyhow!(
-            "mouse_wheel distance kind must be pixels or clicks"
+        (Some(_), Some(_)) => Err(AIApiError::Other(anyhow::anyhow!(
+            "mouse_wheel distance must contain exactly one of pixels or clicks"
         ))),
+        (None, None) => {
+            let kind = optional_string_strict(&distance_value, "kind")?
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let amount = required_i32(&distance_value, "value")?;
+            match kind.as_str() {
+                "pixels" => Ok(
+                    api::message::tool_call::use_computer::action::mouse_wheel::Distance::Pixels(
+                        amount,
+                    ),
+                ),
+                "clicks" => Ok(
+                    api::message::tool_call::use_computer::action::mouse_wheel::Distance::Clicks(
+                        amount,
+                    ),
+                ),
+                _ => Err(AIApiError::Other(anyhow::anyhow!(
+                    "mouse_wheel distance must contain exactly one of pixels or clicks"
+                ))),
+            }
+        }
     }
 }
 
@@ -3072,12 +3113,18 @@ fn parse_computer_key(
 ) -> Result<api::message::tool_call::use_computer::action::Key, AIApiError> {
     let key = value
         .get("key")
+        .filter(|key| !key.is_null())
         .ok_or_else(|| AIApiError::Other(anyhow::anyhow!("key action requires a `key` object")))?;
-    let data = match (key.get("char"), key.get("keycode")) {
+    if !key.is_object() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "computer key must be an object"
+        )));
+    }
+    let key_value = key.clone();
+    let char_value = optional_string_strict(&key_value, "char")?;
+    let keycode = optional_i32_strict(&key_value, "keycode")?;
+    let data = match (char_value, keycode) {
         (Some(char_value), None) => {
-            let char_value = char_value.as_str().ok_or_else(|| {
-                AIApiError::Other(anyhow::anyhow!("computer key char must be a string"))
-            })?;
             let mut chars = char_value.chars();
             let ch = chars.next().ok_or_else(|| {
                 AIApiError::Other(anyhow::anyhow!("computer key char must not be empty"))
@@ -3089,9 +3136,9 @@ fn parse_computer_key(
             }
             api::message::tool_call::use_computer::action::key::Data::Char(ch.to_string())
         }
-        (None, Some(_)) => api::message::tool_call::use_computer::action::key::Data::Keycode(
-            required_i32(key, "keycode")?,
-        ),
+        (None, Some(keycode)) => {
+            api::message::tool_call::use_computer::action::key::Data::Keycode(keycode)
+        }
         (Some(_), Some(_)) => {
             return Err(AIApiError::Other(anyhow::anyhow!(
                 "computer key must contain exactly one of char or keycode"
@@ -3111,9 +3158,7 @@ fn request_computer_use_arg(
 ) -> Result<api::message::tool_call::RequestComputerUse, AIApiError> {
     Ok(api::message::tool_call::RequestComputerUse {
         task_summary: required_string(args, "task_summary")?,
-        screenshot_params: args
-            .get("screenshot_params")
-            .filter(|value| !value.is_null())
+        screenshot_params: optional_value_strict(args, "screenshot_params")?
             .map(parse_screenshot_params)
             .transpose()?,
     })
@@ -3122,20 +3167,29 @@ fn request_computer_use_arg(
 fn parse_screenshot_params(
     value: &Value,
 ) -> Result<api::message::tool_call::ScreenshotParams, AIApiError> {
-    let max_long_edge_px = optional_i32(value, "max_long_edge_px").unwrap_or_default();
-    let max_total_px = optional_i32(value, "max_total_px").unwrap_or_default();
+    if !value.is_object() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "screenshot_params must be an object"
+        )));
+    }
+    let max_long_edge_px = optional_i32_strict(value, "max_long_edge_px")?.unwrap_or_default();
+    let max_total_px = optional_i32_strict(value, "max_total_px")?.unwrap_or_default();
     if max_long_edge_px < 0 || max_total_px < 0 {
         return Err(AIApiError::Other(anyhow::anyhow!(
             "screenshot size limits must not be negative"
         )));
     }
-    let region = value
-        .get("region")
+    let region = optional_value_strict(value, "region")?
         .map(
             |region| -> Result<api::message::tool_call::screenshot_params::Region, AIApiError> {
+                if !region.is_object() {
+                    return Err(AIApiError::Other(anyhow::anyhow!(
+                        "screenshot region must be an object"
+                    )));
+                }
                 Ok(api::message::tool_call::screenshot_params::Region {
-                    top_left: Some(parse_coordinates(region, "top_left")?),
-                    bottom_right: Some(parse_coordinates(region, "bottom_right")?),
+                    top_left: optional_coordinates(region, "top_left")?,
+                    bottom_right: optional_coordinates(region, "bottom_right")?,
                 })
             },
         )
@@ -3147,17 +3201,55 @@ fn parse_screenshot_params(
     })
 }
 
-fn parse_duration(value: &Value, key: &str) -> Result<prost_types::Duration, AIApiError> {
-    let seconds = value
-        .get(key)
-        .and_then(Value::as_i64)
-        .ok_or_else(|| AIApiError::Other(anyhow::anyhow!("missing integer argument `{key}`")))?;
+fn parse_optional_duration(
+    value: &Value,
+    key: &str,
+) -> Result<Option<prost_types::Duration>, AIApiError> {
+    let Some(value) = optional_value_strict(value, key)? else {
+        return Ok(None);
+    };
+    let (seconds, nanos) = if let Some(seconds) = value.as_i64() {
+        (seconds, 0)
+    } else {
+        if !value.is_object() {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "duration argument `{key}` must be an integer or object"
+            )));
+        }
+        let seconds = optional_i64_strict(value, "seconds")?.ok_or_else(|| {
+            AIApiError::Other(anyhow::anyhow!(
+                "duration object `{key}` requires integer `seconds`"
+            ))
+        })?;
+        let nanos = optional_i32_strict(value, "nanos")?.unwrap_or_default();
+        (seconds, nanos)
+    };
     if seconds < 0 {
         return Err(AIApiError::Other(anyhow::anyhow!(
             "duration seconds must not be negative"
         )));
     }
-    Ok(prost_types::Duration { seconds, nanos: 0 })
+    if !(0..1_000_000_000).contains(&nanos) {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "duration nanos must be between 0 and 999999999"
+        )));
+    }
+    Ok(Some(prost_types::Duration { seconds, nanos }))
+}
+
+fn optional_coordinates(value: &Value, key: &str) -> Result<Option<api::Coordinates>, AIApiError> {
+    let Some(value) = optional_value_strict(value, key)? else {
+        return Ok(None);
+    };
+    if !value.is_object() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "argument `{key}` must be an object"
+        )));
+    }
+    Ok(Some(api::Coordinates {
+        x: required_i32(value, "x")?,
+        y: required_i32(value, "y")?,
+    }))
 }
 
 fn required_i32(value: &Value, key: &str) -> Result<i32, AIApiError> {
@@ -3176,10 +3268,6 @@ fn required_u32(value: &Value, key: &str) -> Result<u32, AIApiError> {
         .ok_or_else(|| {
             AIApiError::Other(anyhow::anyhow!("missing unsigned integer argument `{key}`"))
         })
-}
-
-fn optional_i64(value: &Value, key: &str) -> Option<i64> {
-    value.get(key).and_then(Value::as_i64)
 }
 
 fn tool_type_for_openai_name(name: &str) -> Option<api::ToolType> {
@@ -3411,9 +3499,64 @@ fn apply_file_diffs_arg(
 }
 
 fn required_string(value: &Value, key: &str) -> Result<String, AIApiError> {
-    optional_string(value, key)
+    optional_string_strict(value, key)?
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AIApiError::Other(anyhow::anyhow!("missing string argument `{key}`")))
+}
+
+fn optional_value_strict<'a>(value: &'a Value, key: &str) -> Result<Option<&'a Value>, AIApiError> {
+    Ok(match value.get(key) {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(value),
+    })
+}
+
+fn optional_string_strict(value: &Value, key: &str) -> Result<Option<String>, AIApiError> {
+    let Some(value) = optional_value_strict(value, key)? else {
+        return Ok(None);
+    };
+    value
+        .as_str()
+        .map(ToString::to_string)
+        .map(Some)
+        .ok_or_else(|| {
+            AIApiError::Other(anyhow::anyhow!(
+                "optional argument `{key}` must be a string or null"
+            ))
+        })
+}
+
+fn optional_bool_strict(value: &Value, key: &str) -> Result<Option<bool>, AIApiError> {
+    let Some(value) = optional_value_strict(value, key)? else {
+        return Ok(None);
+    };
+    value.as_bool().map(Some).ok_or_else(|| {
+        AIApiError::Other(anyhow::anyhow!(
+            "optional argument `{key}` must be a boolean or null"
+        ))
+    })
+}
+
+fn optional_i64_strict(value: &Value, key: &str) -> Result<Option<i64>, AIApiError> {
+    let Some(value) = optional_value_strict(value, key)? else {
+        return Ok(None);
+    };
+    value.as_i64().map(Some).ok_or_else(|| {
+        AIApiError::Other(anyhow::anyhow!(
+            "optional argument `{key}` must be an integer or null"
+        ))
+    })
+}
+
+fn optional_i32_strict(value: &Value, key: &str) -> Result<Option<i32>, AIApiError> {
+    let Some(value) = optional_i64_strict(value, key)? else {
+        return Ok(None);
+    };
+    i32::try_from(value).map(Some).map_err(|_| {
+        AIApiError::Other(anyhow::anyhow!(
+            "optional argument `{key}` is outside the signed 32-bit range"
+        ))
+    })
 }
 
 fn optional_string(value: &Value, key: &str) -> Option<String> {
@@ -3421,10 +3564,6 @@ fn optional_string(value: &Value, key: &str) -> Option<String> {
         .get(key)
         .and_then(Value::as_str)
         .map(ToString::to_string)
-}
-
-fn optional_bool(value: &Value, key: &str) -> Option<bool> {
-    value.get(key).and_then(Value::as_bool)
 }
 
 fn optional_i32(value: &Value, key: &str) -> Option<i32> {
@@ -3688,6 +3827,161 @@ pub(super) fn error_stream(message: impl Into<String>) -> ResponseStream {
     let message = message.into();
     Box::pin(stream! {
         yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(message))));
+    })
+}
+
+fn i32_json_schema(minimum: i64, maximum: i64) -> Value {
+    json!({
+        "type": "integer",
+        "minimum": minimum,
+        "maximum": maximum,
+    })
+}
+
+fn coordinates_json_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "x": i32_json_schema(i32::MIN as i64, i32::MAX as i64),
+            "y": i32_json_schema(i32::MIN as i64, i32::MAX as i64),
+        },
+        "required": ["x", "y"],
+        "additionalProperties": false,
+    })
+}
+
+fn screenshot_params_json_schema() -> Value {
+    let coordinates = coordinates_json_schema();
+    json!({
+        "type": "object",
+        "properties": {
+            "max_long_edge_px": i32_json_schema(0, i32::MAX as i64),
+            "max_total_px": i32_json_schema(0, i32::MAX as i64),
+            "region": {
+                "type": "object",
+                "properties": {
+                    "top_left": coordinates,
+                    "bottom_right": coordinates_json_schema(),
+                },
+                "required": ["top_left", "bottom_right"],
+                "additionalProperties": false,
+            },
+        },
+        "additionalProperties": false,
+    })
+}
+
+fn duration_json_schema() -> Value {
+    json!({
+        "oneOf": [
+            i32_json_schema(0, i64::MAX),
+            {
+                "type": "object",
+                "properties": {
+                    "seconds": {"type":"integer", "minimum":0, "maximum":i64::MAX},
+                    "nanos": {"type":"integer", "minimum":0, "maximum":999999999},
+                },
+                "required": ["seconds"],
+                "additionalProperties": false,
+            }
+        ]
+    })
+}
+
+fn computer_key_json_schema() -> Value {
+    json!({
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {"char": {"type":"string", "minLength":1, "maxLength":1}},
+                "required": ["char"],
+                "additionalProperties": false,
+            },
+            {
+                "type": "object",
+                "properties": {"keycode": i32_json_schema(i32::MIN as i64, i32::MAX as i64)},
+                "required": ["keycode"],
+                "additionalProperties": false,
+            }
+        ]
+    })
+}
+
+fn mouse_wheel_distance_json_schema() -> Value {
+    json!({
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {"pixels": i32_json_schema(i32::MIN as i64, i32::MAX as i64)},
+                "required": ["pixels"],
+                "additionalProperties": false,
+            },
+            {
+                "type": "object",
+                "properties": {"clicks": i32_json_schema(i32::MIN as i64, i32::MAX as i64)},
+                "required": ["clicks"],
+                "additionalProperties": false,
+            }
+        ]
+    })
+}
+
+fn computer_action_json_schema() -> Value {
+    let coordinates = coordinates_json_schema();
+    let duration = duration_json_schema();
+    let key = computer_key_json_schema();
+    let distance = mouse_wheel_distance_json_schema();
+    json!({
+        "oneOf": [
+            {
+                "type":"object",
+                "properties": {"type":{"const":"mouse_move"}, "to":coordinates},
+                "required":["type", "to"],
+                "additionalProperties":false,
+            },
+            {
+                "type":"object",
+                "properties": {"type":{"const":"mouse_down"}, "button":{"type":"string","enum":["left","right","middle","back","forward"]}, "at":coordinates_json_schema()},
+                "required":["type", "button", "at"],
+                "additionalProperties":false,
+            },
+            {
+                "type":"object",
+                "properties": {"type":{"const":"mouse_up"}, "button":{"type":"string","enum":["left","right","middle","back","forward"]}},
+                "required":["type", "button"],
+                "additionalProperties":false,
+            },
+            {
+                "type":"object",
+                "properties": {"type":{"const":"mouse_wheel"}, "at":coordinates_json_schema(), "direction":{"type":"string","enum":["up","down","left","right"]}, "distance":distance},
+                "required":["type", "at", "direction", "distance"],
+                "additionalProperties":false,
+            },
+            {
+                "type":"object",
+                "properties": {"type":{"const":"wait"}, "seconds":duration},
+                "required":["type", "seconds"],
+                "additionalProperties":false,
+            },
+            {
+                "type":"object",
+                "properties": {"type":{"const":"type_text"}, "text":{"type":"string"}},
+                "required":["type", "text"],
+                "additionalProperties":false,
+            },
+            {
+                "type":"object",
+                "properties": {"type":{"const":"key_down"}, "key":key},
+                "required":["type", "key"],
+                "additionalProperties":false,
+            },
+            {
+                "type":"object",
+                "properties": {"type":{"const":"key_up"}, "key":computer_key_json_schema()},
+                "required":["type", "key"],
+                "additionalProperties":false,
+            },
+        ]
     })
 }
 
@@ -4124,10 +4418,13 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                 [
                     (
                         "actions",
-                        json!({"type": "array", "items": {"type": "object", "properties": {"type": {"type": "string", "enum": ["mouse_move", "mouse_down", "mouse_up", "mouse_wheel", "wait", "type_text", "key_down", "key_up"]}, "to": {"type": "object"}, "at": {"type": "object"}, "button": {"type": "string", "enum": ["left", "right", "middle", "back", "forward"]}, "direction": {"type": "string", "enum": ["up", "down", "left", "right"]}, "distance": {"type": "object"}, "seconds": {"type": "integer", "minimum": 0}, "text": {"type": "string"}, "key": {"type": "object"}}, "required": ["type"], "additionalProperties": false}}),
+                        json!({"type": "array", "items": computer_action_json_schema()}),
                     ),
                     ("action_summary", json!({"type": "string"})),
-                    ("post_actions_screenshot_params", json!({"type": "object"})),
+                    (
+                        "post_actions_screenshot_params",
+                        screenshot_params_json_schema(),
+                    ),
                 ],
                 ["actions"],
             ),
@@ -4141,7 +4438,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
             json_schema_object(
                 [
                     ("task_summary", json!({"type": "string"})),
-                    ("screenshot_params", json!({"type": "object"})),
+                    ("screenshot_params", screenshot_params_json_schema()),
                 ],
                 ["task_summary"],
             ),
@@ -4566,6 +4863,148 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn public_generate_non_streaming_tool_call_preserves_long_running_wait_gate() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {
+                                        "id": "call-run",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "run_shell_command",
+                                            "arguments": "{\"command\":\"tail -f log\",\"wait_until_completion\":false}"
+                                        }
+                                    }
+                                ]
+                            },
+                            "finish_reason": "tool_calls"
+                        }
+                    ]
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: Default::default(),
+        };
+        let mut response = generate(
+            route,
+            super::super::RequestParams::new_for_test(),
+            vec![
+                api::ToolType::RunShellCommand,
+                api::ToolType::WriteToLongRunningShellCommand,
+                api::ToolType::ReadShellCommandOutput,
+                api::ToolType::TransferShellCommandControlToUser,
+            ],
+        )
+        .await
+        .expect("public generate should return a response stream");
+
+        let mut run_shell_command = None;
+        while let Some(event) = response.next().await {
+            let event = event.expect("non-streaming tool call should decode");
+            let Some(api::response_event::Type::ClientActions(actions)) = event.r#type else {
+                continue;
+            };
+            for action in actions.actions {
+                let Some(api::client_action::Action::AddMessagesToTask(add)) = action.action else {
+                    continue;
+                };
+                for message in add.messages {
+                    let Some(api::message::Message::ToolCall(tool_call)) = message.message else {
+                        continue;
+                    };
+                    if let Some(api::message::tool_call::Tool::RunShellCommand(command)) =
+                        tool_call.tool
+                    {
+                        run_shell_command = Some(command);
+                    }
+                }
+            }
+        }
+
+        let run_shell_command = run_shell_command.expect("expected run_shell_command tool call");
+        assert!(matches!(
+            run_shell_command.wait_until_complete_value,
+            Some(
+                api::message::tool_call::run_shell_command::WaitUntilCompleteValue::WaitUntilComplete(
+                    false
+                )
+            )
+        ));
+    }
+
+    #[tokio::test]
+    async fn public_generate_non_streaming_tool_call_rejects_disabled_tool_locally() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {
+                                        "id": "call-write",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "write_to_long_running_shell_command",
+                                            "arguments": "{\"command_id\":\"block-1\",\"input\":\"yes\\n\"}"
+                                        }
+                                    }
+                                ]
+                            },
+                            "finish_reason": "tool_calls"
+                        }
+                    ]
+                }"#,
+            )
+            .create_async()
+            .await;
+
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: Default::default(),
+        };
+        let mut response = generate(
+            route,
+            super::super::RequestParams::new_for_test(),
+            vec![api::ToolType::RunShellCommand],
+        )
+        .await
+        .expect("public generate should return a response stream");
+
+        let mut local_error = None;
+        while let Some(event) = response.next().await {
+            if let Err(error) = event {
+                local_error = Some(error.to_string());
+            }
+        }
+
+        let local_error = local_error.expect("disabled tool call should fail locally");
+        assert!(local_error.contains("not advertised"));
+    }
+
+    #[tokio::test]
     async fn configured_context_budget_bounds_http_message_context() {
         let mut server = mockito::Server::new_async().await;
         let mut params = super::super::RequestParams::new_for_test();
@@ -4943,6 +5382,519 @@ mod tests {
             },
         };
         assert!(api_tool_from_openai_tool_call(&missing_document_id).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_optional_arguments_in_new_tool_parsers() {
+        let call = |name: &str, arguments: Value| OpenAIToolCall {
+            id: format!("call-{name}"),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+        };
+        let invalid_calls = [
+            (
+                "run_shell_command",
+                json!({"command":"pwd","wait_until_completion":"false"}),
+            ),
+            (
+                "write_to_long_running_shell_command",
+                json!({"command_id":"block-1","input":"x","mode":1}),
+            ),
+            (
+                "read_shell_command_output",
+                json!({"command_id":"block-1","delay_seconds":"2"}),
+            ),
+            (
+                "create_documents",
+                json!({"documents":[{"content":"body","title":false}]}),
+            ),
+            (
+                "insert_review_comments",
+                json!({"repo_path":"/repo","comments":[{"comment_id":"c-1","comment_body":"fix","location":{"file_path":"src/lib.rs","line":{"side":1}}}]}),
+            ),
+            (
+                "ask_user_question",
+                json!({"questions":[{"question_id":"q-1","question":"Choose","multiple_choice":{"options":[{"label":"yes"}],"recommended_option_index":"0"}}]}),
+            ),
+            (
+                "ask_user_question",
+                json!({"questions":[{"question_id":"q-1","question":"Choose","multiple_choice":{"options":[{"label":"yes"}],"is_multiselect":"false"}}]}),
+            ),
+            (
+                "ask_user_question",
+                json!({"questions":[{"question_id":"q-1","question":"Choose","multiple_choice":{"options":[{"label":"yes"}],"supports_other":1}}]}),
+            ),
+            (
+                "use_computer",
+                json!({"actions":[{"type":"wait","seconds":1}],"post_actions_screenshot_params":"full-screen"}),
+            ),
+            (
+                "request_computer_use",
+                json!({"task_summary":"Inspect","screenshot_params":1}),
+            ),
+            (
+                "request_computer_use",
+                json!({"task_summary":"Inspect","screenshot_params":{"max_long_edge_px":"1000"}}),
+            ),
+        ];
+
+        for (name, arguments) in invalid_calls {
+            assert!(
+                api_tool_from_openai_tool_call(&call(name, arguments)).is_err(),
+                "{name} should reject an optional field with the wrong JSON type"
+            );
+        }
+    }
+
+    #[test]
+    fn history_tool_arguments_round_trip_new_local_tool_semantics() {
+        let document_id = "00000000-0000-0000-0000-000000000001".to_string();
+        let tools = vec![
+            api::message::tool_call::Tool::SuggestNewConversation(
+                api::message::tool_call::SuggestNewConversation {
+                    message_id: "message-1".to_string(),
+                },
+            ),
+            api::message::tool_call::Tool::OpenCodeReview(
+                api::message::tool_call::OpenCodeReview {},
+            ),
+            api::message::tool_call::Tool::InitProject(api::message::tool_call::InitProject {}),
+            api::message::tool_call::Tool::ReadDocuments(
+                api::message::tool_call::ReadDocuments {
+                    documents: vec![api::message::tool_call::read_documents::Document {
+                        document_id: document_id.clone(),
+                        line_ranges: vec![api::FileContentLineRange { start: 2, end: 4 }],
+                    }],
+                },
+            ),
+            api::message::tool_call::Tool::EditDocuments(
+                api::message::tool_call::EditDocuments {
+                    diffs: vec![api::message::tool_call::edit_documents::DocumentDiff {
+                        document_id: document_id.clone(),
+                        search: "old".to_string(),
+                        replace: "new".to_string(),
+                    }],
+                },
+            ),
+            api::message::tool_call::Tool::CreateDocuments(
+                api::message::tool_call::CreateDocuments {
+                    new_documents: vec![
+                        api::message::tool_call::create_documents::NewDocument {
+                            content: "body".to_string(),
+                            title: "Plan".to_string(),
+                        },
+                    ],
+                },
+            ),
+            api::message::tool_call::Tool::InsertReviewComments(
+                api::message::tool_call::InsertReviewComments {
+                    repo_path: "/repo".to_string(),
+                    base_branch: "master".to_string(),
+                    comments: vec![
+                        api::message::tool_call::insert_review_comments::Comment {
+                            comment_id: "c-1".to_string(),
+                            comment_body: "fix".to_string(),
+                            location: Some(
+                                api::message::tool_call::insert_review_comments::CommentLocation {
+                                    file_path: "src/lib.rs".to_string(),
+                                    line: Some(
+                                        api::message::tool_call::insert_review_comments::CommentLineRange {
+                                            diff_hunk: "@@".to_string(),
+                                            range: None,
+                                            side: api::message::tool_call::insert_review_comments::CommentSide::Old as i32,
+                                        },
+                                    ),
+                                },
+                            ),
+                            ..Default::default()
+                        },
+                        api::message::tool_call::insert_review_comments::Comment {
+                            comment_id: "c-2".to_string(),
+                            comment_body: "general note".to_string(),
+                            location: None,
+                            ..Default::default()
+                        },
+                    ],
+                },
+            ),
+            api::message::tool_call::Tool::FetchConversation(
+                api::message::tool_call::FetchConversation {
+                    conversation_id: "conversation-1".to_string(),
+                },
+            ),
+            api::message::tool_call::Tool::AskUserQuestion(api::AskUserQuestion {
+                questions: vec![api::ask_user_question::Question {
+                    question_id: "q-1".to_string(),
+                    question: "Choose".to_string(),
+                    question_type: Some(
+                        api::ask_user_question::question::QuestionType::MultipleChoice(
+                            api::ask_user_question::MultipleChoice {
+                                options: vec![
+                                    api::ask_user_question::Option {
+                                        label: "yes".to_string(),
+                                    },
+                                    api::ask_user_question::Option {
+                                        label: "no".to_string(),
+                                    },
+                                ],
+                                recommended_option_index: 1,
+                                is_multiselect: true,
+                                supports_other: true,
+                            },
+                        ),
+                    ),
+                }],
+            }),
+            api::message::tool_call::Tool::AskUserQuestion(api::AskUserQuestion {
+                questions: vec![api::ask_user_question::Question {
+                    question_id: "q-2".to_string(),
+                    question: "No type".to_string(),
+                    question_type: None,
+                }],
+            }),
+            api::message::tool_call::Tool::UseComputer(
+                api::message::tool_call::UseComputer {
+                    actions: vec![
+                        api::message::tool_call::use_computer::Action {
+                            r#type: Some(
+                                api::message::tool_call::use_computer::action::Type::MouseMove(
+                                    api::message::tool_call::use_computer::action::MouseMove {
+                                        to: Some(api::Coordinates { x: 10, y: 20 }),
+                                    },
+                                ),
+                            ),
+                        },
+                        api::message::tool_call::use_computer::Action {
+                            r#type: Some(
+                                api::message::tool_call::use_computer::action::Type::MouseDown(
+                                    api::message::tool_call::use_computer::action::MouseDown {
+                                        button: api::message::tool_call::use_computer::action::MouseButton::Left as i32,
+                                        at: Some(api::Coordinates { x: 10, y: 20 }),
+                                    },
+                                ),
+                            ),
+                        },
+                        api::message::tool_call::use_computer::Action {
+                            r#type: Some(
+                                api::message::tool_call::use_computer::action::Type::MouseUp(
+                                    api::message::tool_call::use_computer::action::MouseUp {
+                                        button: api::message::tool_call::use_computer::action::MouseButton::Right as i32,
+                                    },
+                                ),
+                            ),
+                        },
+                        api::message::tool_call::use_computer::Action {
+                            r#type: Some(
+                                api::message::tool_call::use_computer::action::Type::MouseWheel(
+                                    api::message::tool_call::use_computer::action::MouseWheel {
+                                        at: Some(api::Coordinates { x: 10, y: 20 }),
+                                        direction: api::message::tool_call::use_computer::action::mouse_wheel::Direction::Down as i32,
+                                        distance: Some(
+                                            api::message::tool_call::use_computer::action::mouse_wheel::Distance::Pixels(-4),
+                                        ),
+                                    },
+                                ),
+                            ),
+                        },
+                        api::message::tool_call::use_computer::Action {
+                            r#type: Some(
+                                api::message::tool_call::use_computer::action::Type::Wait(
+                                    api::message::tool_call::use_computer::action::Wait {
+                                        duration: Some(prost_types::Duration {
+                                            seconds: 2,
+                                            nanos: 123,
+                                        }),
+                                    },
+                                ),
+                            ),
+                        },
+                        api::message::tool_call::use_computer::Action {
+                            r#type: Some(
+                                api::message::tool_call::use_computer::action::Type::TypeText(
+                                    api::message::tool_call::use_computer::action::TypeText {
+                                        text: "hello".to_string(),
+                                    },
+                                ),
+                            ),
+                        },
+                        api::message::tool_call::use_computer::Action {
+                            r#type: Some(
+                                api::message::tool_call::use_computer::action::Type::KeyDown(
+                                    api::message::tool_call::use_computer::action::KeyDown {
+                                        key: Some(
+                                            api::message::tool_call::use_computer::action::Key {
+                                                data: Some(
+                                                    api::message::tool_call::use_computer::action::key::Data::Char(
+                                                        "x".to_string(),
+                                                    ),
+                                                ),
+                                            },
+                                        ),
+                                    },
+                                ),
+                            ),
+                        },
+                        api::message::tool_call::use_computer::Action {
+                            r#type: Some(
+                                api::message::tool_call::use_computer::action::Type::KeyUp(
+                                    api::message::tool_call::use_computer::action::KeyUp {
+                                        key: Some(
+                                            api::message::tool_call::use_computer::action::Key {
+                                                data: Some(
+                                                    api::message::tool_call::use_computer::action::key::Data::Keycode(
+                                                        13,
+                                                    ),
+                                                ),
+                                            },
+                                        ),
+                                    },
+                                ),
+                            ),
+                        },
+                    ],
+                    post_actions_screenshot_params: Some(
+                        api::message::tool_call::ScreenshotParams {
+                            max_long_edge_px: 1000,
+                            max_total_px: 2000,
+                            region: Some(
+                                api::message::tool_call::screenshot_params::Region {
+                                    top_left: None,
+                                    bottom_right: Some(api::Coordinates { x: 640, y: 480 }),
+                                },
+                            ),
+                        },
+                    ),
+                    action_summary: "Wait".to_string(),
+                },
+            ),
+            api::message::tool_call::Tool::UseComputer(
+                api::message::tool_call::UseComputer {
+                    actions: vec![api::message::tool_call::use_computer::Action {
+                        r#type: Some(
+                            api::message::tool_call::use_computer::action::Type::Wait(
+                                api::message::tool_call::use_computer::action::Wait {
+                                    duration: None,
+                                },
+                            ),
+                        ),
+                    }],
+                    ..Default::default()
+                },
+            ),
+            api::message::tool_call::Tool::RunShellCommand(
+                api::message::tool_call::RunShellCommand {
+                    command: "tail -f log".to_string(),
+                    wait_until_complete_value: Some(
+                        api::message::tool_call::run_shell_command::WaitUntilCompleteValue::WaitUntilComplete(
+                            false,
+                        ),
+                    ),
+                    ..Default::default()
+                },
+            ),
+            api::message::tool_call::Tool::RequestComputerUse(
+                api::message::tool_call::RequestComputerUse {
+                    task_summary: "Inspect".to_string(),
+                    screenshot_params: Some(api::message::tool_call::ScreenshotParams {
+                        max_long_edge_px: 800,
+                        max_total_px: 1600,
+                        region: None,
+                    }),
+                },
+            ),
+            api::message::tool_call::Tool::RequestComputerUse(
+                api::message::tool_call::RequestComputerUse {
+                    task_summary: "Inspect without screenshot".to_string(),
+                    screenshot_params: None,
+                },
+            ),
+            api::message::tool_call::Tool::WriteToLongRunningShellCommand(
+                api::message::tool_call::WriteToLongRunningShellCommand {
+                    command_id: "block-1".to_string(),
+                    input: vec![0, 255, 10],
+                    mode: Some(
+                        api::message::tool_call::write_to_long_running_shell_command::Mode {
+                            mode: Some(
+                                api::message::tool_call::write_to_long_running_shell_command::mode::Mode::Block(
+                                    (),
+                                ),
+                            ),
+                        },
+                    ),
+                },
+            ),
+            api::message::tool_call::Tool::WriteToLongRunningShellCommand(
+                api::message::tool_call::WriteToLongRunningShellCommand {
+                    command_id: "block-2".to_string(),
+                    input: b"raw".to_vec(),
+                    mode: None,
+                },
+            ),
+            api::message::tool_call::Tool::ReadShellCommandOutput(
+                api::message::tool_call::ReadShellCommandOutput {
+                    command_id: "block-1".to_string(),
+                    delay: Some(
+                        api::message::tool_call::read_shell_command_output::Delay::Duration(
+                            prost_types::Duration {
+                                seconds: 3,
+                                nanos: 456,
+                            },
+                        ),
+                    ),
+                },
+            ),
+            api::message::tool_call::Tool::ReadShellCommandOutput(
+                api::message::tool_call::ReadShellCommandOutput {
+                    command_id: "block-2".to_string(),
+                    delay: None,
+                },
+            ),
+            api::message::tool_call::Tool::TransferShellCommandControlToUser(
+                api::message::tool_call::TransferShellCommandControlToUser {
+                    reason: "Needs input".to_string(),
+                },
+            ),
+        ];
+
+        for (index, expected) in tools.into_iter().enumerate() {
+            let call = api::message::ToolCall {
+                tool_call_id: format!("call-{index}"),
+                tool: Some(expected.clone()),
+            };
+            let openai_call = openai_tool_call_from_api_tool_call(&call)
+                .unwrap_or_else(|| panic!("tool {index} should serialize"));
+            let parsed = api_tool_from_openai_tool_call(&openai_call)
+                .unwrap_or_else(|error| panic!("tool {index} should parse: {error}"));
+            assert_eq!(parsed, expected, "tool {index} semantic round-trip");
+        }
+    }
+
+    #[test]
+    fn local_tool_result_history_preserves_long_running_status_and_error_variants() {
+        let finished = api::message::ToolCallResult {
+            tool_call_id: "call-finished".to_string(),
+            context: None,
+            result: Some(
+                api::message::tool_call_result::Result::ReadShellCommandOutput(
+                    api::ReadShellCommandOutputResult {
+                        command: "cat".to_string(),
+                        result: Some(
+                            api::read_shell_command_output_result::Result::CommandFinished(
+                                api::ShellCommandFinished {
+                                    output: "done".to_string(),
+                                    exit_code: 0,
+                                    command_id: "block-1".to_string(),
+                                    ..Default::default()
+                                },
+                            ),
+                        ),
+                    },
+                ),
+            ),
+        };
+        let error = api::message::ToolCallResult {
+            tool_call_id: "call-error".to_string(),
+            context: None,
+            result: Some(
+                api::message::tool_call_result::Result::ReadShellCommandOutput(
+                    api::ReadShellCommandOutputResult {
+                        command: "cat".to_string(),
+                        result: Some(api::read_shell_command_output_result::Result::Error(
+                            api::ShellCommandError {
+                                r#type: Some(api::shell_command_error::Type::CommandNotFound(())),
+                            },
+                        )),
+                    },
+                ),
+            ),
+        };
+
+        let finished_text = tool_call_result_to_text_with_tool_policy(&finished, true);
+        let error_text = tool_call_result_to_text_with_tool_policy(&error, true);
+        assert!(finished_text.contains("CommandFinished"));
+        assert!(finished_text.contains("block-1"));
+        assert!(error_text.contains("Error"));
+        assert!(error_text.contains("CommandNotFound"));
+    }
+
+    #[test]
+    fn computer_use_tools_publish_exact_discriminated_action_schemas() {
+        let tools = openai_tools_for_supported_tools(&[
+            api::ToolType::UseComputer,
+            api::ToolType::RequestComputerUse,
+        ]);
+        let use_computer = tools
+            .iter()
+            .find(|tool| tool.function.name == "use_computer")
+            .expect("use_computer schema");
+        let actions = &use_computer.function.parameters["properties"]["actions"]["items"];
+        let variants = actions["oneOf"]
+            .as_array()
+            .expect("computer actions should use oneOf");
+        assert_eq!(variants.len(), 8);
+        for variant in variants {
+            assert_eq!(variant["type"], "object");
+            assert_eq!(variant["additionalProperties"], false);
+            assert!(
+                variant["required"]
+                    .as_array()
+                    .is_some_and(|required| required.iter().any(|value| value == "type"))
+            );
+        }
+        let mouse_move = variants
+            .iter()
+            .find(|variant| variant["properties"]["type"]["const"] == "mouse_move")
+            .expect("mouse_move variant");
+        assert_eq!(mouse_move["required"], json!(["type", "to"]));
+        assert_eq!(
+            mouse_move["properties"]["to"],
+            json!({
+                "type": "object",
+                "properties": {
+                    "x": {"type":"integer","minimum":-2147483648_i64,"maximum":2147483647_i64},
+                    "y": {"type":"integer","minimum":-2147483648_i64,"maximum":2147483647_i64}
+                },
+                "required": ["x", "y"],
+                "additionalProperties": false
+            })
+        );
+
+        let request = tools
+            .iter()
+            .find(|tool| tool.function.name == "request_computer_use")
+            .expect("request_computer_use schema");
+        let screenshot = &request.function.parameters["properties"]["screenshot_params"];
+        assert_eq!(screenshot["type"], "object");
+        assert_eq!(screenshot["additionalProperties"], false);
+        assert_eq!(
+            screenshot["properties"]["max_long_edge_px"],
+            json!({"type":"integer","minimum":0,"maximum":2147483647_i64})
+        );
+        assert_eq!(
+            screenshot["properties"]["max_total_px"],
+            json!({"type":"integer","minimum":0,"maximum":2147483647_i64})
+        );
+        let region = &screenshot["properties"]["region"];
+        assert_eq!(region["type"], "object");
+        assert_eq!(region["required"], json!(["top_left", "bottom_right"]));
+        assert_eq!(region["additionalProperties"], false);
+        for coordinate in ["top_left", "bottom_right"] {
+            assert_eq!(
+                region["properties"][coordinate],
+                json!({
+                    "type":"object",
+                    "properties": {
+                        "x": {"type":"integer","minimum":-2147483648_i64,"maximum":2147483647_i64},
+                        "y": {"type":"integer","minimum":-2147483648_i64,"maximum":2147483647_i64}
+                    },
+                    "required": ["x", "y"],
+                    "additionalProperties": false
+                })
+            );
+        }
     }
 
     #[test]
