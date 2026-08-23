@@ -461,7 +461,7 @@ impl StreamingToolCall {
         })?;
         if kind != "function" {
             return Err(AIApiError::Other(anyhow::anyhow!(
-                "OpenAI-compatible tool call type must be exactly `function`, got `{kind}`"
+                "OpenAI-compatible tool call type must be exactly `function`"
             )));
         }
         let name = self.name.ok_or_else(|| {
@@ -619,10 +619,24 @@ pub(crate) async fn complete_text(
         .json()
         .await
         .context("failed to decode OpenAI-compatible chat completion response")?;
-    let content = response
+    if response.choices.len() != 1 {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "OpenAI-compatible text completion must contain exactly one choice"
+        )));
+    }
+    let choice = response
         .choices
         .into_iter()
-        .find_map(|choice| choice.message.content)
+        .next()
+        .expect("text completion choice count was checked above");
+    if !choice.message.tool_calls.is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "OpenAI-compatible text completion must not contain tool calls"
+        )));
+    }
+    let content = choice
+        .message
+        .content
         .unwrap_or_default()
         .trim()
         .to_string();
@@ -709,7 +723,7 @@ pub(super) async fn generate(
         &tools,
         route.context_char_budget(),
         long_running_shell_controls_advertised,
-    );
+    )?;
     log::info!(
         "Using OpenAI-compatible custom provider route: provider={}, model={}, advertised_tools={}, task_count={}, input_count={}, chat_message_count={}",
         route.provider_name,
@@ -902,9 +916,9 @@ fn stream_chat_completion_with_tool_policy(
             buffer.drain(..event_end + delimiter_len);
             let event = match String::from_utf8(event_bytes) {
                 Ok(event) => event,
-                Err(error) => {
+                Err(_) => {
                     yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
-                        "malformed OpenAI-compatible SSE event is not valid UTF-8: {error}"
+                        "malformed OpenAI-compatible SSE event: invalid UTF-8"
                     ))));
                     return;
                 }
@@ -933,9 +947,9 @@ fn stream_chat_completion_with_tool_policy(
     if !buffer.is_empty() && !buffer.iter().all(u8::is_ascii_whitespace) {
         let residual_event = match String::from_utf8(std::mem::take(&mut buffer)) {
             Ok(event) => event,
-            Err(error) => {
+            Err(_) => {
                 yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
-                    "malformed OpenAI-compatible SSE event is not valid UTF-8: {error}"
+                    "malformed OpenAI-compatible SSE event: invalid UTF-8"
                 ))));
                 return;
             }
@@ -981,9 +995,9 @@ fn stream_chat_completion_with_tool_policy(
             return;
         }
         log::info!(
-            "OpenAI-compatible stream finished: request_id={}, finish_reason={:?}, content_chars={}, tool_calls={}, parsed_events={}, residual_buffer_bytes={}",
+            "OpenAI-compatible stream finished: request_id={}, finish_reason_present={}, content_chars={}, tool_calls={}, parsed_events={}, residual_buffer_bytes={}",
             request_id,
-            finish_reason,
+            finish_reason.is_some(),
             content_chars,
             0,
             parsed_events,
@@ -1014,16 +1028,18 @@ fn stream_chat_completion_with_tool_policy(
         .collect::<Result<Vec<_>, _>>()
     {
         Ok(tool_calls) => tool_calls,
-        Err(error) => {
-            yield Err(Arc::new(error));
+        Err(_) => {
+            yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
+                "malformed OpenAI-compatible SSE tool call envelope"
+            ))));
             return;
         }
     };
     let completed_tool_call_count = completed_tool_calls.len();
     log::info!(
-        "OpenAI-compatible stream finished: request_id={}, finish_reason={:?}, content_chars={}, tool_calls={}, parsed_events={}, residual_buffer_bytes={}",
+        "OpenAI-compatible stream finished: request_id={}, finish_reason_present={}, content_chars={}, tool_calls={}, parsed_events={}, residual_buffer_bytes={}",
         request_id,
-        finish_reason,
+        finish_reason.is_some(),
         content_chars,
         completed_tool_call_count,
         parsed_events,
@@ -1040,8 +1056,10 @@ fn stream_chat_completion_with_tool_policy(
                 long_running_shell_controls_advertised,
             ) {
                 Ok(message) => messages.push(message),
-                Err(error) => {
-                    yield Err(Arc::new(error));
+                Err(_) => {
+                    yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
+                        "malformed OpenAI-compatible SSE tool call arguments"
+                    ))));
                     return;
                 }
             }
@@ -1147,9 +1165,9 @@ fn events_from_non_streaming_response(
         events.push(client_actions_event(actions));
     }
     log::info!(
-        "OpenAI-compatible non-stream response finished: request_id={}, finish_reason={:?}, content_chars={}, tool_calls={}",
+        "OpenAI-compatible non-stream response finished: request_id={}, finish_reason_present={}, content_chars={}, tool_calls={}",
         request_id,
-        finish_reason,
+        finish_reason.is_some(),
         content_chars,
         tool_call_count
     );
@@ -1174,12 +1192,13 @@ fn sse_event_end(buffer: &[u8]) -> Option<(usize, usize)> {
 
 fn sse_data_payloads(event: &str) -> Result<Vec<String>, AIApiError> {
     let mut payloads = Vec::new();
-    for line in event.lines() {
+    for (line_index, line) in event.lines().enumerate() {
         if let Some(data) = line.strip_prefix("data:") {
             payloads.push(data.trim_start().to_string());
         } else if !line.trim().is_empty() {
             return Err(AIApiError::Other(anyhow::anyhow!(
-                "malformed OpenAI-compatible SSE event field `{line}`"
+                "malformed OpenAI-compatible SSE event at line {}: unexpected field",
+                line_index + 1
             )));
         }
     }
@@ -1205,9 +1224,9 @@ fn apply_openai_sse_event(
         }
 
         state.parsed_events += 1;
-        let chunk: ChatCompletionChunk = serde_json::from_str(&data).map_err(|error| {
+        let chunk: ChatCompletionChunk = serde_json::from_str(&data).map_err(|_| {
             AIApiError::Other(anyhow::anyhow!(
-                "failed to decode OpenAI-compatible SSE event JSON: {error}"
+                "failed to decode OpenAI-compatible SSE event JSON"
             ))
         })?;
         if chunk.choices.len() != 1 {
@@ -1232,7 +1251,7 @@ fn openai_messages_from_params(
     params: &super::RequestParams,
     tools: &[OpenAITool],
     context_char_budget: usize,
-) -> Vec<ChatMessage> {
+) -> Result<Vec<ChatMessage>, anyhow::Error> {
     openai_messages_from_params_with_tool_policy(params, tools, context_char_budget, false)
 }
 
@@ -1241,7 +1260,7 @@ fn openai_messages_from_params_with_tool_policy(
     tools: &[OpenAITool],
     context_char_budget: usize,
     long_running_shell_controls_advertised: bool,
-) -> Vec<ChatMessage> {
+) -> Result<Vec<ChatMessage>, anyhow::Error> {
     let mut messages = vec![ChatMessage::system(system_prompt(
         params,
         tools,
@@ -1252,20 +1271,20 @@ fn openai_messages_from_params_with_tool_policy(
         messages.extend(openai_messages_from_api_messages_with_tool_policy(
             &task.messages,
             long_running_shell_controls_advertised,
-        ));
+        )?);
     }
 
     messages.extend(openai_messages_from_inputs(
         &params.input,
         context_char_budget,
     ));
-    messages
+    Ok(messages)
 }
 
 fn openai_messages_from_api_messages_with_tool_policy(
     messages: &[api::Message],
     long_running_shell_controls_advertised: bool,
-) -> Vec<ChatMessage> {
+) -> Result<Vec<ChatMessage>, anyhow::Error> {
     let mut output = Vec::new();
     let mut index = 0;
     while index < messages.len() {
@@ -1273,7 +1292,7 @@ fn openai_messages_from_api_messages_with_tool_policy(
             output.extend(openai_messages_from_api_message_with_tool_policy(
                 &messages[index],
                 long_running_shell_controls_advertised,
-            ));
+            )?);
             index += 1;
             continue;
         };
@@ -1283,7 +1302,7 @@ fn openai_messages_from_api_messages_with_tool_policy(
             output.extend(openai_messages_from_api_message_with_tool_policy(
                 &messages[index],
                 long_running_shell_controls_advertised,
-            ));
+            )?);
             index += 1;
             continue;
         }
@@ -1297,23 +1316,23 @@ fn openai_messages_from_api_messages_with_tool_policy(
             if messages[index].request_id != *request_id {
                 break;
             }
-            if let Some(openai_tool_call) = openai_tool_call_from_api_tool_call(tool_call) {
-                tool_calls.push(openai_tool_call);
-            }
+            let openai_tool_call = openai_tool_call_from_api_tool_call(tool_call)
+                .ok_or_else(|| historical_tool_call_conversion_error(tool_call))?;
+            tool_calls.push(openai_tool_call);
             index += 1;
         }
         if !tool_calls.is_empty() {
             output.push(ChatMessage::assistant_tool_calls(tool_calls));
         }
     }
-    output
+    Ok(output)
 }
 
 fn openai_messages_from_api_message_with_tool_policy(
     message: &api::Message,
     long_running_shell_controls_advertised: bool,
-) -> Vec<ChatMessage> {
-    match message.message.as_ref() {
+) -> Result<Vec<ChatMessage>, anyhow::Error> {
+    Ok(match message.message.as_ref() {
         Some(api::message::Message::UserQuery(query)) => {
             vec![ChatMessage::user(with_context(
                 query.query.clone(),
@@ -1347,9 +1366,8 @@ fn openai_messages_from_api_message_with_tool_policy(
             .into_iter()
             .collect(),
         Some(api::message::Message::ToolCall(tool_call)) => {
-            let Some(openai_tool_call) = openai_tool_call_from_api_tool_call(tool_call) else {
-                return vec![];
-            };
+            let openai_tool_call = openai_tool_call_from_api_tool_call(tool_call)
+                .ok_or_else(|| historical_tool_call_conversion_error(tool_call))?;
             vec![ChatMessage::assistant_tool_call(openai_tool_call)]
         }
         Some(api::message::Message::ToolCallResult(result)) => {
@@ -1366,6 +1384,25 @@ fn openai_messages_from_api_message_with_tool_policy(
             .into_iter()
             .collect(),
         _ => vec![],
+    })
+}
+
+fn historical_tool_call_conversion_error(tool_call: &api::message::ToolCall) -> anyhow::Error {
+    match tool_call.tool.as_ref() {
+        Some(api::message::tool_call::Tool::AskUserQuestion(question))
+            if question
+                .questions
+                .iter()
+                .any(|question| question.question_type.is_none()) =>
+        {
+            anyhow::anyhow!(
+                "historical ask_user_question contains a question without multiple_choice"
+            )
+        }
+        Some(_) => anyhow::anyhow!(
+            "historical local tool call cannot be represented by the OpenAI-compatible provider"
+        ),
+        None => anyhow::anyhow!("historical local tool call is missing its tool payload"),
     }
 }
 
@@ -2025,6 +2062,15 @@ fn openai_tool_call_from_api_tool_call(
     tool_call: &api::message::ToolCall,
 ) -> Option<OpenAIToolCall> {
     let tool = tool_call.tool.as_ref()?;
+    if let api::message::tool_call::Tool::AskUserQuestion(question) = tool {
+        if question
+            .questions
+            .iter()
+            .any(|question| question.question_type.is_none())
+        {
+            return None;
+        }
+    }
     let (name, args) = match tool {
         api::message::tool_call::Tool::RunShellCommand(call) => (
             "run_shell_command",
@@ -2454,10 +2500,7 @@ fn api_tool_call_message_inner(
     supported_tools: Option<&[api::ToolType]>,
     long_running_shell_controls_advertised: bool,
 ) -> Result<api::Message, AIApiError> {
-    log::info!(
-        "OpenAI-compatible custom provider requested Warp tool call: {}",
-        tool_call.function.name
-    );
+    log::info!("OpenAI-compatible custom provider requested a local tool call");
     let tool = api_tool_from_openai_tool_call_inner(
         &tool_call,
         supported_tools,
@@ -2720,8 +2763,7 @@ fn validate_openai_tool_call_envelope(tool_call: &OpenAIToolCall) -> Result<Valu
     }
     if tool_call.kind != "function" {
         return Err(AIApiError::Other(anyhow::anyhow!(
-            "OpenAI-compatible tool call type must be exactly `function`, got `{}`",
-            tool_call.kind
+            "OpenAI-compatible tool call type must be exactly `function`"
         )));
     }
     if tool_call.function.name.trim().is_empty() {
@@ -2734,16 +2776,11 @@ fn validate_openai_tool_call_envelope(tool_call: &OpenAIToolCall) -> Result<Valu
             "OpenAI-compatible tool call arguments must be a non-empty JSON object"
         )));
     }
-    let args: Value = serde_json::from_str(&tool_call.function.arguments).with_context(|| {
-        format!(
-            "failed to decode arguments for OpenAI-compatible tool `{}`",
-            tool_call.function.name
-        )
-    })?;
+    let args: Value = serde_json::from_str(&tool_call.function.arguments)
+        .context("failed to decode OpenAI-compatible tool call arguments")?;
     if !args.is_object() {
         return Err(AIApiError::Other(anyhow::anyhow!(
-            "arguments for OpenAI-compatible tool `{}` must be a JSON object",
-            tool_call.function.name
+            "OpenAI-compatible tool call arguments must be a JSON object"
         )));
     }
     Ok(args)
@@ -3131,8 +3168,14 @@ fn ask_user_question_arg(args: &Value) -> Result<api::AskUserQuestion, AIApiErro
                     )));
                 }
                 let recommended_option_index =
-                    optional_i64_strict(&multiple_choice_value, "recommended_option_index")?
-                        .unwrap_or(0);
+                    match multiple_choice_value.get("recommended_option_index") {
+                        None => 0,
+                        Some(value) => value.as_i64().ok_or_else(|| {
+                            AIApiError::Other(anyhow::anyhow!(
+                                "recommended_option_index must be an integer when provided"
+                            ))
+                        })?,
+                    };
                 if recommended_option_index < -1 || recommended_option_index >= options.len() as i64
                 {
                     return Err(AIApiError::Other(anyhow::anyhow!(
@@ -4137,7 +4180,7 @@ fn finished_event_for_openai_finish_reason(
                 && tool_call_count == 0 =>
         {
             log::warn!(
-                "OpenAI-compatible provider returned unrecognized finish_reason without tool calls: {other}"
+                "OpenAI-compatible provider returned an unrecognized finish reason without tool calls"
             );
             api::response_event::stream_finished::Reason::Done(
                 api::response_event::stream_finished::Done {},
@@ -4750,7 +4793,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
             json_schema_object(
                 [(
                     "questions",
-                    json!({"type": "array", "items": {"type": "object", "properties": {"question_id": {"type": "string"}, "question": {"type": "string"}, "multiple_choice": {"type": "object", "properties": {"options": {"type": "array", "items": {"type": "object", "properties": {"label": {"type": "string"}}, "required": ["label"], "additionalProperties": false}}, "recommended_option_index": {"type": "integer", "minimum": -1}, "is_multiselect": {"type": "boolean"}, "supports_other": {"type": "boolean"}}, "required": ["options"], "additionalProperties": false}}, "required": ["question_id", "question", "multiple_choice"], "additionalProperties": false}}),
+                    json!({"type": "array", "items": {"type": "object", "properties": {"question_id": {"type": "string"}, "question": {"type": "string"}, "multiple_choice": {"type": "object", "properties": {"options": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"label": {"type": "string"}}, "required": ["label"], "additionalProperties": false}}, "recommended_option_index": {"type": "integer", "minimum": -1}, "is_multiselect": {"type": "boolean"}, "supports_other": {"type": "boolean"}}, "required": ["options"], "additionalProperties": false}}, "required": ["question_id", "question", "multiple_choice"], "additionalProperties": false}}),
                 )],
                 ["questions"],
             ),
@@ -5163,7 +5206,8 @@ mod tests {
         let params = super::super::RequestParams::new_for_test();
         let expected_body = serde_json::to_value(ChatCompletionRequest {
             model: "model".to_string(),
-            messages: openai_messages_from_params(&params, &[], MAX_CONTEXT_CHARS),
+            messages: openai_messages_from_params(&params, &[], MAX_CONTEXT_CHARS)
+                .expect("request history should convert"),
             stream: true,
             tools: vec![],
             tool_choice: None,
@@ -5610,7 +5654,8 @@ mod tests {
             ]),
             MAX_CONTEXT_CHARS,
             false,
-        );
+        )
+        .expect("parallel request history should convert");
         let _second_mock = server
             .mock("POST", "/v1/chat/completions")
             .match_body(Matcher::Json(
@@ -5760,6 +5805,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn public_generate_streamed_malformed_event_does_not_echo_field_or_tool_payload() {
+        for (label, body, sentinel) in [
+            (
+                "event field",
+                "event: sensitive-sse-field\ndata: {not-json}\n\n",
+                "sensitive-sse-field",
+            ),
+            (
+                "tool envelope",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"sensitive-tool-type\",\"function\":{\"name\":\"run_shell_command\",\"arguments\":\"{\\\"command\\\":\\\"sensitive-tool-argument\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+                "sensitive-tool-type",
+            ),
+            (
+                "tool arguments",
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"run_shell_command\",\"arguments\":\"{\\\"command\\\":\\\"sensitive-base64\"\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+                "sensitive-base64",
+            ),
+        ] {
+            let mut server = mockito::Server::new_async().await;
+            let _mock = server
+                .mock("POST", "/v1/chat/completions")
+                .with_status(200)
+                .with_header("content-type", "text/event-stream")
+                .with_body(body)
+                .create_async()
+                .await;
+            let route = CustomProviderRoute {
+                provider_name: "local".to_string(),
+                base_url: format!("{}/v1", server.url()),
+                model: "model".to_string(),
+                api_key: None,
+                capabilities: Default::default(),
+            };
+            let mut response = generate(
+                route,
+                super::super::RequestParams::new_for_test(),
+                vec![api::ToolType::RunShellCommand],
+            )
+            .await
+            .expect("public generate should return a response stream");
+            let mut error = None;
+            while let Some(event) = response.next().await {
+                if let Err(error_value) = event {
+                    error = Some(error_value.to_string());
+                }
+            }
+            let error = error.expect("malformed SSE must fail locally");
+            assert!(
+                error.contains("malformed") || error.contains("failed to decode"),
+                "{label} should report a structural error"
+            );
+            assert!(
+                !error.contains(sentinel),
+                "{label} must not echo its payload"
+            );
+            assert!(!error.contains("sensitive-tool-argument"));
+        }
+    }
+
+    #[tokio::test]
     async fn configured_context_budget_bounds_http_message_context() {
         let mut server = mockito::Server::new_async().await;
         let mut params = super::super::RequestParams::new_for_test();
@@ -5781,7 +5886,8 @@ mod tests {
         let tools = openai_tools_for_supported_tools(&[api::ToolType::RunShellCommand]);
         let expected_body = serde_json::to_value(ChatCompletionRequest {
             model: route.model.clone(),
-            messages: openai_messages_from_params(&params, &tools, context_budget),
+            messages: openai_messages_from_params(&params, &tools, context_budget)
+                .expect("request history should convert"),
             stream: true,
             tools,
             tool_choice: Some("auto"),
@@ -5843,7 +5949,8 @@ mod tests {
         };
         let expected_body = serde_json::to_value(ChatCompletionRequest {
             model: route.model.clone(),
-            messages: openai_messages_from_params(&params, &[], MAX_CONTEXT_CHARS),
+            messages: openai_messages_from_params(&params, &[], MAX_CONTEXT_CHARS)
+                .expect("request history should convert"),
             stream: true,
             tools: vec![],
             tool_choice: None,
@@ -5923,6 +6030,62 @@ mod tests {
         .unwrap();
 
         assert_eq!(content, "local answer");
+    }
+
+    #[tokio::test]
+    async fn complete_text_rejects_empty_ambiguous_or_tool_completions() {
+        for (label, body) in [
+            ("empty choices", json!({"choices": []})),
+            (
+                "multiple choices",
+                json!({
+                    "choices": [
+                        {"message": {"content": "first"}, "finish_reason": "stop"},
+                        {"message": {"content": "second"}, "finish_reason": "stop"}
+                    ]
+                }),
+            ),
+            (
+                "empty content",
+                json!({
+                    "choices": [{"message": {"content": "  "}, "finish_reason": "stop"}]
+                }),
+            ),
+            (
+                "tool call",
+                json!({
+                    "choices": [{
+                        "message": {
+                            "content": null,
+                            "tool_calls": [{
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {"name": "run_shell_command", "arguments": "{\"command\":\"pwd\"}"}
+                            }]
+                        },
+                        "finish_reason": "tool_calls"
+                    }]
+                }),
+            ),
+        ] {
+            let mut server = mockito::Server::new_async().await;
+            let _mock = server
+                .mock("POST", "/v1/chat/completions")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(body.to_string())
+                .create_async()
+                .await;
+            let route = CustomProviderRoute {
+                provider_name: "local".to_string(),
+                base_url: format!("{}/v1", server.url()),
+                model: "model".to_string(),
+                api_key: None,
+                capabilities: Default::default(),
+            };
+            let result = complete_text(route, "system".to_string(), "user".to_string()).await;
+            assert!(result.is_err(), "{label} must fail closed");
+        }
     }
 
     #[test]
@@ -6260,6 +6423,32 @@ mod tests {
     }
 
     #[test]
+    fn ask_user_question_rejects_explicit_null_recommended_option_index() {
+        let call = OpenAIToolCall {
+            id: "call-ask".to_string(),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: "ask_user_question".to_string(),
+                arguments: json!({
+                    "questions": [{
+                        "question_id": "q-1",
+                        "question": "Choose",
+                        "multiple_choice": {
+                            "options": [{"label": "yes"}],
+                            "recommended_option_index": null
+                        }
+                    }]
+                })
+                .to_string(),
+            },
+        };
+        assert!(
+            api_tool_from_openai_tool_call(&call).is_err(),
+            "explicit null must not silently become the protobuf default"
+        );
+    }
+
+    #[test]
     fn legacy_direct_tool_parsers_reject_present_wrong_types_and_ranges() {
         let call = |name: &str, arguments: Value| OpenAIToolCall {
             id: format!("call-{name}"),
@@ -6420,7 +6609,8 @@ mod tests {
         };
 
         let messages =
-            openai_messages_from_params_with_tool_policy(&params, &[], MAX_CONTEXT_CHARS, false);
+            openai_messages_from_params_with_tool_policy(&params, &[], MAX_CONTEXT_CHARS, false)
+                .expect("parallel request history should convert");
         let assistant = messages
             .iter()
             .find(|message| message.role == "assistant")
@@ -6436,6 +6626,73 @@ mod tests {
         let content: Value = serde_json::from_str(tool.content.as_deref().unwrap()).unwrap();
         assert_eq!(content["version"], 1);
         assert_eq!(content["tool_call_id"], "call-1");
+    }
+
+    #[tokio::test]
+    async fn public_generate_rejects_malformed_persisted_question_history_before_http() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .expect(0)
+            .create_async()
+            .await;
+        let malformed_tool_call = api::Message {
+            id: "call-message".to_string(),
+            task_id: "task-1".to_string(),
+            request_id: "request-1".to_string(),
+            timestamp: None,
+            server_message_data: String::new(),
+            citations: vec![],
+            message: Some(api::message::Message::ToolCall(api::message::ToolCall {
+                tool_call_id: "call-1".to_string(),
+                tool: Some(api::message::tool_call::Tool::AskUserQuestion(
+                    api::AskUserQuestion {
+                        questions: vec![api::ask_user_question::Question {
+                            question_id: "q-1".to_string(),
+                            question: "Choose".to_string(),
+                            question_type: None,
+                        }],
+                    },
+                )),
+            })),
+        };
+        let orphan_result = api::Message {
+            id: "result-message".to_string(),
+            task_id: "task-1".to_string(),
+            request_id: "request-2".to_string(),
+            timestamp: None,
+            server_message_data: String::new(),
+            citations: vec![],
+            message: Some(api::message::Message::ToolCallResult(
+                api::message::ToolCallResult {
+                    tool_call_id: "call-1".to_string(),
+                    context: None,
+                    result: None,
+                },
+            )),
+        };
+        let params = super::super::RequestParams {
+            tasks: vec![api::Task {
+                id: "task-1".to_string(),
+                messages: vec![malformed_tool_call, orphan_result],
+                ..Default::default()
+            }],
+            ..super::super::RequestParams::new_for_test()
+        };
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: Default::default(),
+        };
+
+        let error = generate(route, params, vec![api::ToolType::AskUserQuestion])
+            .await
+            .err()
+            .expect("invalid persisted history must fail before creating a response stream");
+        assert!(error.to_string().contains("multiple_choice"));
+        mock.assert_async().await;
     }
 
     #[test]
@@ -6993,6 +7250,7 @@ mod tests {
         let multiple_choice = &ask.function.parameters["properties"]["questions"]["items"]["properties"]
             ["multiple_choice"];
         assert_eq!(multiple_choice["type"], "object");
+        assert_eq!(multiple_choice["properties"]["options"]["minItems"], 1);
         assert_eq!(
             multiple_choice["properties"]["recommended_option_index"]["minimum"],
             -1
