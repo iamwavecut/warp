@@ -16,6 +16,7 @@ use crate::user_config::WarpConfig;
 use crate::util::bindings::CustomAction;
 use crate::voltron::{VoltronFeatureViewMeta, VoltronMetadata};
 use crate::workflows::WorkflowType;
+use crate::workflows::local_saved_prompts::LocalSavedPrompt;
 use crate::{
     cloud_object::model::persistence::CloudModel, workspaces::user_workspaces::UserWorkspaces,
 };
@@ -366,9 +367,28 @@ struct WorkflowForRender<'a> {
 impl CategoriesView {
     pub fn new(
         local_workflows: impl IntoIterator<Item = Workflow>,
+        local_saved_prompts: impl IntoIterator<Item = LocalSavedPrompt>,
         app_workflows: impl IntoIterator<Item = Workflow>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
+        let local_saved_prompts = local_saved_prompts.into_iter().collect_vec();
+        let mut local_workflows = local_workflows.into_iter().collect_vec();
+        let saved_prompt_workflows = local_saved_prompts
+            .iter()
+            .map(|prompt| prompt.workflow().clone())
+            .collect_vec();
+        // WarpConfig's broad local-workflow loader also exposes managed files
+        // for compatibility. Remove one matching entry per managed file before
+        // adding the UUID-bearing variants below. This is only de-duplication;
+        // the UUID is never recovered by comparing workflow contents.
+        for workflow in &saved_prompt_workflows {
+            if let Some(index) = local_workflows
+                .iter()
+                .position(|candidate| candidate == workflow)
+            {
+                local_workflows.remove(index);
+            }
+        }
         let mut categorized_workflows = HashMap::new();
         categorized_workflows.insert(
             WorkflowSource::Global,
@@ -386,6 +406,12 @@ impl CategoriesView {
                 local_workflows
                     .into_iter()
                     .map(WorkflowType::Local)
+                    .chain(local_saved_prompts.into_iter().map(|prompt| {
+                        WorkflowType::LocalSavedPrompt {
+                            id: prompt.id(),
+                            workflow: prompt.into_workflow(),
+                        }
+                    }))
                     .map(Arc::new),
             ),
         );
@@ -1157,8 +1183,28 @@ impl CategoriesView {
             .local_user_workflows()
             .iter()
             .map(Clone::clone)
-            .map(WorkflowType::Local)
-            .map(Arc::new);
+            .collect_vec();
+        let local_saved_prompts = WarpConfig::as_ref(ctx).local_saved_prompts().to_vec();
+        let mut workflows = workflows;
+        for prompt in &local_saved_prompts {
+            if let Some(index) = workflows
+                .iter()
+                .position(|candidate| candidate == prompt.workflow())
+            {
+                workflows.remove(index);
+            }
+        }
+        let workflows =
+            workflows
+                .into_iter()
+                .map(WorkflowType::Local)
+                .chain(local_saved_prompts.into_iter().map(|prompt| {
+                    WorkflowType::LocalSavedPrompt {
+                        id: prompt.id(),
+                        workflow: prompt.into_workflow(),
+                    }
+                }))
+                .map(Arc::new);
         self.workflows_by_source
             .insert(WorkflowSource::Local, Self::categorize_workflows(workflows));
         self.selected_workflow_index = 0;

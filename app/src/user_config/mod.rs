@@ -19,6 +19,7 @@ use warpui::{Entity, ModelContext, SingletonEntity};
 use crate::launch_configs::launch_config::LaunchConfig;
 use crate::tab_configs::{TabConfig, TabConfigError};
 use crate::themes::theme::{ThemeKind, WarpThemeConfig};
+use crate::workflows::local_saved_prompts::LocalSavedPrompt;
 use crate::workflows::workflow::Workflow;
 
 lazy_static! {
@@ -84,6 +85,7 @@ pub struct WarpConfig {
     tab_config_errors: Vec<TabConfigError>,
     theme_config: WarpThemeConfig,
     local_user_workflows: Vec<Workflow>,
+    local_saved_prompts: Vec<LocalSavedPrompt>,
 }
 
 /// Platform-independent parts of WarpConfig.
@@ -113,6 +115,10 @@ impl WarpConfig {
 
     pub fn local_user_workflows(&self) -> &Vec<Workflow> {
         &self.local_user_workflows
+    }
+
+    pub fn local_saved_prompts(&self) -> &[LocalSavedPrompt] {
+        &self.local_saved_prompts
     }
 
     /// Saving the newly created launch configuration to the WarpConfig that we currently

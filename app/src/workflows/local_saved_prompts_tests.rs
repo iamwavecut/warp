@@ -75,6 +75,60 @@ fn duplicate_exact_names_are_ambiguous_without_private_contents() {
 }
 
 #[test]
+fn identical_content_keeps_distinct_managed_ids() {
+    let (_dir, repository) = repository();
+    let workflow = prompt("same", "identical");
+    let first = repository.create(workflow.clone()).unwrap();
+    let second = repository.create(workflow).unwrap();
+
+    assert_ne!(first.id(), second.id());
+    assert_eq!(
+        repository.get(first.id()).unwrap().unwrap().id(),
+        first.id()
+    );
+    assert_eq!(
+        repository.get(second.id()).unwrap().unwrap().id(),
+        second.id()
+    );
+    assert_eq!(
+        repository.resolve(&first.id().to_string()).unwrap().id(),
+        first.id()
+    );
+    assert_eq!(
+        repository.resolve(&second.id().to_string()).unwrap().id(),
+        second.id()
+    );
+}
+
+#[test]
+fn atomic_temporary_paths_are_not_effective_yaml_files() {
+    assert!(is_atomic_temp_path(std::path::Path::new(
+        ".prompt.yaml.tmp-123"
+    )));
+    assert!(!is_atomic_temp_path(std::path::Path::new("prompt.yaml")));
+}
+
+#[test]
+fn agent_mode_metadata_round_trips_without_reinference() {
+    let (_dir, repository) = repository();
+    let workflow = Workflow::AgentMode {
+        name: "metadata".to_owned(),
+        query: "review {{target}}".to_owned(),
+        description: Some("Keep this description".to_owned()),
+        arguments: vec![
+            crate::workflows::workflow::Argument::new("target", Default::default())
+                .with_description("Description survives")
+                .with_default("src/"),
+        ],
+    };
+    let created = repository.create(workflow.clone()).unwrap();
+    assert_eq!(
+        repository.get(created.id()).unwrap().unwrap().workflow(),
+        &workflow
+    );
+}
+
+#[test]
 fn command_workflows_and_multidocument_files_are_read_only() {
     let (_dir, repository) = repository();
     let command_path = repository

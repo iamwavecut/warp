@@ -1657,7 +1657,10 @@ pub enum Event {
     // Tell the pane group to open the workflow modal with an existing cloud workflow.
     OpenWorkflowModalWithCloudWorkflow(SyncId),
     // Tell the pane group to open an editor-owned local saved prompt.
-    OpenWorkflowModalWithLocalWorkflow(Box<Workflow>),
+    OpenWorkflowModalWithLocalWorkflow {
+        id: uuid::Uuid,
+        workflow: Box<Workflow>,
+    },
     // Tell the pane group to open the workflow modal with an unsaved workflow.
     OpenWorkflowModalWithTemporary(Box<Workflow>),
     OpenWarpDriveObjectInPane(ObjectUid),
@@ -16034,12 +16037,14 @@ impl TerminalView {
 
     pub fn open_workflow_modal_with_local(
         &mut self,
+        id: uuid::Uuid,
         workflow: Workflow,
         ctx: &mut ViewContext<Self>,
     ) {
-        ctx.emit(Event::OpenWorkflowModalWithLocalWorkflow(Box::new(
-            workflow,
-        )));
+        ctx.emit(Event::OpenWorkflowModalWithLocalWorkflow {
+            id,
+            workflow: Box::new(workflow),
+        });
         ctx.notify();
     }
 
@@ -24723,7 +24728,7 @@ impl TypedActionView for TerminalView {
             | OpenWorkflowModalForAIWorkflow(_)
             | OpenWorkflowModalForBlock(_)
             | OpenWorkflowModalWithCloudWorkflow(_)
-            | OpenWorkflowModalWithLocalWorkflow(_)
+            | OpenWorkflowModalWithLocalWorkflow { .. }
             | OpenShareSessionModal { .. }
             | OpenSharedSessionViewerRoleMenu
             | CopySharedSessionLink { .. }
@@ -25108,8 +25113,8 @@ impl TypedActionView for TerminalView {
             OpenWorkflowModalWithCloudWorkflow(workflow_id) => {
                 self.open_workflow_modal_with_existing(*workflow_id, ctx)
             }
-            OpenWorkflowModalWithLocalWorkflow(workflow) => {
-                self.open_workflow_modal_with_local(workflow.clone(), ctx)
+            OpenWorkflowModalWithLocalWorkflow { id, workflow } => {
+                self.open_workflow_modal_with_local(*id, workflow.clone(), ctx)
             }
             OpenBlockListContextMenu => self.open_block_list_context_menu_via_keybinding(ctx),
             AskAIAssistant { block_index } => {

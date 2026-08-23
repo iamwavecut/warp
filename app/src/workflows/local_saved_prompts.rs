@@ -14,6 +14,8 @@ use super::workflow::Workflow;
 pub const LOCAL_SAVED_PROMPTS_DIR: &str = "local-prompts";
 
 const YAML_EXTENSION: &str = "yaml";
+const ATOMIC_TEMP_PREFIX: &str = ".";
+const ATOMIC_TEMP_MARKER: &str = ".tmp-";
 
 #[derive(Debug, thiserror::Error)]
 pub enum LocalSavedPromptRepositoryError {
@@ -115,8 +117,12 @@ impl LocalSavedPromptRepository {
         for _ in 0..16 {
             let id = Uuid::new_v4();
             let path = self.path_for_id(id);
-            if path.exists() {
-                continue;
+            match fs::symlink_metadata(&path) {
+                Ok(_) => continue,
+                Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(LocalSavedPromptRepositoryError::Io { path, source });
+                }
             }
             self.write_atomically(&path, &workflow, false)?;
             return Ok(LocalSavedPrompt { id, workflow, path });
@@ -136,10 +142,11 @@ impl LocalSavedPromptRepository {
         id: Uuid,
     ) -> Result<Option<LocalSavedPrompt>, LocalSavedPromptRepositoryError> {
         let path = self.path_for_id(id);
-        if !path.exists() {
-            return Ok(None);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => self.read_path(id, &path).map(Some),
+            Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(LocalSavedPromptRepositoryError::Io { path, source }),
         }
-        self.read_path(id, &path).map(Some)
     }
 
     pub fn update(
@@ -231,19 +238,6 @@ impl LocalSavedPromptRepository {
         }
     }
 
-    /// Finds a managed prompt only when its complete workflow matches. This is
-    /// used by UI discovery, where the existing read-only WarpConfig path
-    /// intentionally exposes `Workflow` without repository metadata.
-    pub fn find_workflow(
-        &self,
-        workflow: &Workflow,
-    ) -> Result<Option<LocalSavedPrompt>, LocalSavedPromptRepositoryError> {
-        Ok(self
-            .list()?
-            .into_iter()
-            .find(|prompt| prompt.workflow() == workflow))
-    }
-
     fn ensure_managed_dir(&self) -> Result<(), LocalSavedPromptRepositoryError> {
         fs::create_dir_all(self.managed_dir()).map_err(|source| {
             LocalSavedPromptRepositoryError::Io {
@@ -330,11 +324,25 @@ impl LocalSavedPromptRepository {
                 })?;
             drop(file);
 
-            if !replace_existing && path.exists() {
-                return Err(LocalSavedPromptRepositoryError::Io {
-                    path: path.to_path_buf(),
-                    source: io::Error::new(io::ErrorKind::AlreadyExists, "saved prompt exists"),
-                });
+            if !replace_existing {
+                match fs::symlink_metadata(path) {
+                    Ok(_) => {
+                        return Err(LocalSavedPromptRepositoryError::Io {
+                            path: path.to_path_buf(),
+                            source: io::Error::new(
+                                io::ErrorKind::AlreadyExists,
+                                "saved prompt exists",
+                            ),
+                        });
+                    }
+                    Err(source) if source.kind() == io::ErrorKind::NotFound => {}
+                    Err(source) => {
+                        return Err(LocalSavedPromptRepositoryError::Io {
+                            path: path.to_path_buf(),
+                            source,
+                        });
+                    }
+                }
             }
             fs::rename(&temp_path, path).map_err(|source| LocalSavedPromptRepositoryError::Io {
                 path: path.to_path_buf(),
@@ -368,6 +376,18 @@ fn is_yaml_path(path: &Path) -> bool {
         path.extension().and_then(|extension| extension.to_str()),
         Some("yaml" | "yml")
     )
+}
+
+/// Returns whether a path is one of the temporary files used by the atomic
+/// saved-prompt writer. These files must remain invisible to the workflow
+/// loader and watcher; only the final UUID-named YAML file is meaningful.
+pub fn is_atomic_temp_path(path: &Path) -> bool {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    file_name.starts_with(ATOMIC_TEMP_PREFIX)
+        && file_name.contains(ATOMIC_TEMP_MARKER)
+        && !is_yaml_path(path)
 }
 
 #[cfg(test)]

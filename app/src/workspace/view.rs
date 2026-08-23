@@ -12639,8 +12639,8 @@ impl Workspace {
                     &OpenWarpDriveObjectSettings::default(),
                     ctx,
                 ),
-            pane_group::Event::OpenLocalWorkflowForEdit(workflow) => {
-                self.open_local_saved_prompt_for_edit(*workflow.clone(), ctx)
+            pane_group::Event::OpenLocalWorkflowForEdit { id, workflow } => {
+                self.open_local_saved_prompt_for_edit(*id, *workflow.clone(), ctx)
             }
             pane_group::Event::OpenWorkflowModalWithTemporary(workflow) => {
                 self.open_workflow_with_temporary(*workflow.clone(), ctx)
@@ -13500,8 +13500,12 @@ impl Workspace {
             }
             pane_group::Event::OpenAddPromptPane { initial_content } => {
                 let source = WorkflowOpenSource::NewLocalAgentMode {
-                    title: None,
-                    content: initial_content.clone(),
+                    workflow: Box::new(Workflow::AgentMode {
+                        name: String::new(),
+                        query: initial_content.clone().unwrap_or_default(),
+                        description: None,
+                        arguments: Vec::new(),
+                    }),
                 };
                 self.open_workflow_in_pane(
                     &source,
@@ -15646,8 +15650,7 @@ impl Workspace {
     fn open_workflow_with_temporary(&mut self, workflow: Workflow, ctx: &mut ViewContext<Self>) {
         if workflow.is_agent_mode_workflow() {
             let source = WorkflowOpenSource::NewLocalAgentMode {
-                title: Some(workflow.name().to_owned()),
-                content: Some(workflow.content().to_owned()),
+                workflow: Box::new(workflow),
             };
             self.open_workflow_in_pane(
                 &source,
@@ -17372,10 +17375,14 @@ impl Workspace {
 
     fn open_local_saved_prompt_for_edit(
         &mut self,
+        id: uuid::Uuid,
         workflow: Workflow,
         ctx: &mut ViewContext<Self>,
     ) {
-        let source = WorkflowOpenSource::Local(Box::new(workflow));
+        let source = WorkflowOpenSource::Local {
+            id,
+            workflow: Box::new(workflow),
+        };
         self.open_workflow_in_pane(
             &source,
             &OpenWarpDriveObjectSettings::default(),
@@ -20625,8 +20632,12 @@ impl TypedActionView for Workspace {
             }
             CreatePersonalAIPrompt => {
                 let source = WorkflowOpenSource::NewLocalAgentMode {
-                    title: None,
-                    content: None,
+                    workflow: Box::new(Workflow::AgentMode {
+                        name: String::new(),
+                        query: String::new(),
+                        description: None,
+                        arguments: Vec::new(),
+                    }),
                 };
                 self.open_workflow_in_pane(
                     &source,

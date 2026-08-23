@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use uuid::Uuid;
 
 use serde::{Deserialize, Serialize};
 use warp_core::context_flag::ContextFlag;
@@ -154,6 +155,8 @@ pub enum AIWorkflowOrigin {
 pub enum WorkflowType {
     /// Saved workflows sourced from local, global, project, app collections, saved locally.
     Local(Workflow),
+    /// An editor-owned local Agent Mode prompt with a stable repository UUID.
+    LocalSavedPrompt { id: Uuid, workflow: Workflow },
     /// Saved workflows from personal or team collections, saved using cloud-sync.
     Cloud(Box<CloudWorkflow>),
     /// Ephemeral/transient workflows created from Warp AI output
@@ -169,6 +172,7 @@ impl WorkflowType {
     pub fn as_workflow(&self) -> &Workflow {
         match self {
             WorkflowType::Local(workflow) => workflow,
+            WorkflowType::LocalSavedPrompt { workflow, .. } => workflow,
             WorkflowType::AIGenerated { workflow, .. } => workflow,
             WorkflowType::Cloud(workflow) => &workflow.model().data,
             WorkflowType::Notebook(workflow) => workflow,
@@ -179,6 +183,7 @@ impl WorkflowType {
     pub fn take_workflow(self) -> Workflow {
         match self {
             WorkflowType::Local(workflow) => workflow,
+            WorkflowType::LocalSavedPrompt { workflow, .. } => workflow,
             WorkflowType::AIGenerated { workflow, .. } => workflow,
             WorkflowType::Cloud(workflow) => workflow.model().data.clone(),
             WorkflowType::Notebook(workflow) => workflow,

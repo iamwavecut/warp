@@ -2656,9 +2656,15 @@ impl Input {
             .cloned()
             .collect_vec();
         let local_user_workflows = WarpConfig::as_ref(ctx).local_user_workflows().clone();
+        let local_saved_prompts = WarpConfig::as_ref(ctx).local_saved_prompts().to_vec();
 
         let workflows_search_view = ctx.add_typed_action_view(|ctx| {
-            workflows::CategoriesView::new(local_user_workflows, app_workflows, ctx)
+            workflows::CategoriesView::new(
+                local_user_workflows,
+                local_saved_prompts,
+                app_workflows,
+                ctx,
+            )
         });
         ctx.subscribe_to_view(&workflows_search_view, move |me, _, event, ctx| {
             me.handle_workflows_event(event, ctx);

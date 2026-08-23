@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use url::Url;
+use uuid::Uuid;
 use warpui::{AppContext, ModelHandle, SingletonEntity, ViewContext, ViewHandle};
 
 use super::{
@@ -13,6 +14,7 @@ use crate::app_state::{LeafContents, WorkflowPaneSnapshot};
 use crate::drive::OpenWarpDriveObjectSettings;
 use crate::drive::items::WarpDriveItemId;
 use crate::server::ids::SyncId;
+use crate::workflows::local_saved_prompts::LocalSavedPromptRepository;
 use crate::workflows::manager::{WorkflowManager, WorkflowOpenSource};
 use crate::workflows::workflow_view::{WorkflowView, WorkflowViewEvent};
 use crate::workflows::{WorkflowSelectionSource, WorkflowSource, WorkflowType, WorkflowViewMode};
@@ -65,6 +67,25 @@ impl WorkflowPane {
                 window_id,
                 ctx,
             )
+        }))
+    }
+
+    pub fn restore_local_saved_prompt(
+        prompt_id: Uuid,
+        settings: OpenWarpDriveObjectSettings,
+        ctx: &mut ViewContext<PaneGroup>,
+    ) -> anyhow::Result<Self> {
+        let prompt = LocalSavedPromptRepository::for_user()
+            .get(prompt_id)
+            .with_context(|| format!("Failed to read local saved prompt {prompt_id}"))?
+            .with_context(|| format!("Local saved prompt {prompt_id} no longer exists"))?;
+        let source = WorkflowOpenSource::Local {
+            id: prompt_id,
+            workflow: Box::new(prompt.into_workflow()),
+        };
+        let window_id = ctx.window_id();
+        Ok(WorkflowManager::handle(ctx).update(ctx, |manager, ctx| {
+            manager.create_pane(&source, &settings, WorkflowViewMode::View, window_id, ctx)
         }))
     }
 
@@ -129,11 +150,19 @@ impl PaneContent for WorkflowPane {
 
     /// Snapshot this pane for session restoration.
     fn snapshot(&self, app: &AppContext) -> LeafContents {
-        let workflow_id = self.get_view(app).as_ref(app).workflow_id();
-        LeafContents::Workflow(WorkflowPaneSnapshot::CloudWorkflow {
-            workflow_id: Some(workflow_id),
-            settings: OpenWarpDriveObjectSettings::default(),
-        })
+        let view = self.get_view(app).as_ref(app);
+        let snapshot = match view.local_saved_prompt_id() {
+            Some(prompt_id) => WorkflowPaneSnapshot::LocalSavedPrompt {
+                prompt_id,
+                settings: OpenWarpDriveObjectSettings::default(),
+            },
+            None if view.is_local_prompt_editor() => WorkflowPaneSnapshot::UnsavedLocal,
+            None => WorkflowPaneSnapshot::CloudWorkflow {
+                workflow_id: Some(view.workflow_id()),
+                settings: OpenWarpDriveObjectSettings::default(),
+            },
+        };
+        LeafContents::Workflow(snapshot)
     }
 
     fn has_application_focus(&self, ctx: &mut ViewContext<PaneGroup>) -> bool {

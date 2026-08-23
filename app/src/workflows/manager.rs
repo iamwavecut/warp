@@ -11,12 +11,10 @@ use crate::{
         },
         ids::{ClientId, SyncId},
     },
-    workflows::{
-        WorkflowViewMode, local_saved_prompts::LocalSavedPromptRepository,
-        workflow_view::WorkflowView,
-    },
+    workflows::{WorkflowViewMode, workflow_view::WorkflowView},
 };
 use std::collections::{HashMap, hash_map::Entry};
+use uuid::Uuid;
 use warpui::{Entity, EntityId, ModelContext, SingletonEntity};
 
 pub struct WorkflowManager {
@@ -27,11 +25,13 @@ pub struct WorkflowManager {
 pub enum WorkflowOpenSource {
     Existing(SyncId),
     /// A local Agent Mode prompt loaded from the editor-owned repository.
-    Local(Box<Workflow>),
+    Local {
+        id: Uuid,
+        workflow: Box<Workflow>,
+    },
     /// A new local Agent Mode prompt with optional initial editor contents.
     NewLocalAgentMode {
-        title: Option<String>,
-        content: Option<String>,
+        workflow: Box<Workflow>,
     },
     New {
         title: Option<String>,
@@ -69,7 +69,7 @@ impl WorkflowManager {
                 let pane_data = self.panes_by_hashed_id.get(&workflow_id.uid())?;
                 Some((pane_data.window_id, pane_data.locator))
             }
-            WorkflowOpenSource::Local(_)
+            WorkflowOpenSource::Local { .. }
             | WorkflowOpenSource::NewLocalAgentMode { .. }
             | WorkflowOpenSource::New { .. }
             | WorkflowOpenSource::NewFromWorkflow { .. } => None,
@@ -104,21 +104,14 @@ impl WorkflowManager {
                     });
                 }
             }
-            WorkflowOpenSource::Local(workflow) => {
-                let local_saved_prompt_id = LocalSavedPromptRepository::for_user()
-                    .find_workflow(workflow)
-                    .ok()
-                    .flatten()
-                    .map(|prompt| prompt.id());
+            WorkflowOpenSource::Local { id, .. } => {
                 view.update(ctx, |view, ctx| {
-                    view.load_local_saved_prompt(workflow, mode, ctx);
-                    view.set_local_saved_prompt_id(local_saved_prompt_id, ctx);
+                    view.load_local_saved_prompt_by_id(*id, mode, ctx);
                 });
             }
-            WorkflowOpenSource::NewLocalAgentMode { title, content } => view
-                .update(ctx, |view, ctx| {
-                    view.open_new_local_saved_prompt(title.clone(), content.clone(), ctx)
-                }),
+            WorkflowOpenSource::NewLocalAgentMode { workflow } => view.update(ctx, |view, ctx| {
+                view.open_new_local_saved_prompt(*workflow.clone(), ctx)
+            }),
             WorkflowOpenSource::New {
                 title,
                 content,
@@ -141,15 +134,6 @@ impl WorkflowManager {
                 owner,
                 initial_folder_id,
             } => {
-                let local_saved_prompt_id = if workflow.is_agent_mode_workflow() {
-                    LocalSavedPromptRepository::for_user()
-                        .find_workflow(workflow)
-                        .ok()
-                        .flatten()
-                        .map(|prompt| prompt.id())
-                } else {
-                    None
-                };
                 view.update(ctx, |view, ctx| {
                     view.load(
                         GenericCloudObject::new_local(
@@ -162,7 +146,6 @@ impl WorkflowManager {
                         mode,
                         ctx,
                     );
-                    view.set_local_saved_prompt_id(local_saved_prompt_id, ctx);
                 });
             }
         }

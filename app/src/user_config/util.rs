@@ -12,6 +12,7 @@ use walkdir::{DirEntry, WalkDir};
 use crate::launch_configs::launch_config::LaunchConfig;
 use crate::tab_configs::{TabConfig, TabConfigError};
 use crate::themes::theme::{ThemeKind, WarpTheme, WarpThemeConfig};
+use crate::workflows::local_saved_prompts::is_atomic_temp_path;
 use crate::workflows::workflow::Workflow;
 
 const CONFIG_FILE_SUFFIXES: &[&str] = &[".yaml", ".yml"];
@@ -157,6 +158,9 @@ pub(super) fn parse_single_theme_dir_entry(item: &DirEntry) -> Option<(ThemeKind
 }
 
 pub(super) fn parse_multi_workflow_dir_entry(item: &DirEntry) -> Option<Vec<Workflow>> {
+    if is_atomic_temp_path(item.path()) {
+        return None;
+    }
     parse_multi_item_file(item, |_, workflow| workflow)
 }
 

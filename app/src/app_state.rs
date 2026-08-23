@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use pathfinder_geometry::rect::RectF;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 use warpui::platform::FullscreenState;
 use warpui::{AppContext, SingletonEntity as _};
 
@@ -161,7 +162,6 @@ impl LeafContents {
             | LeafContents::AIDocument(_)
             | LeafContents::Code(_)
             | LeafContents::EnvVarCollection(_)
-            | LeafContents::Workflow(_)
             | LeafContents::Settings(_)
             | LeafContents::AIFact(_)
             | LeafContents::ExecutionProfileEditor
@@ -169,6 +169,9 @@ impl LeafContents {
             | LeafContents::AmbientAgent(_)
             | LeafContents::Welcome { .. }
             | LeafContents::GetStarted => true,
+            LeafContents::Workflow(WorkflowPaneSnapshot::CloudWorkflow { .. })
+            | LeafContents::Workflow(WorkflowPaneSnapshot::LocalSavedPrompt { .. }) => true,
+            LeafContents::Workflow(WorkflowPaneSnapshot::UnsavedLocal) => false,
         }
     }
 }
@@ -245,6 +248,8 @@ pub enum CodePaneSnapShot {
     },
 }
 
+pub(crate) const LOCAL_SAVED_PROMPT_SNAPSHOT_PREFIX: &str = "LocalSavedPrompt-";
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkflowPaneSnapshot {
     CloudWorkflow {
@@ -252,6 +257,13 @@ pub enum WorkflowPaneSnapshot {
         // Settings for the workflow pane when it's opened (such as a folder to focus upon opening)
         settings: OpenWarpDriveObjectSettings,
     },
+    LocalSavedPrompt {
+        prompt_id: Uuid,
+        settings: OpenWarpDriveObjectSettings,
+    },
+    /// A new or unmanaged local editor has no stable repository identity and
+    /// is intentionally not persisted across restarts.
+    UnsavedLocal,
 }
 
 #[derive(Clone, Debug, PartialEq)]

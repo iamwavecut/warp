@@ -5,6 +5,7 @@ use std::{fs, io};
 use anyhow::{Result, anyhow};
 use itertools::Itertools;
 use repo_metadata::RepositoryUpdate;
+use warp_errors::report_error;
 use warpui::{ModelContext, ModelHandle, SingletonEntity};
 
 use super::util::{
@@ -23,6 +24,7 @@ use crate::warp_managed_paths_watcher::{
     WarpManagedPathsWatcher, WarpManagedPathsWatcherEvent, repository_update_touches_path,
     repository_update_touches_prefix,
 };
+use crate::workflows::local_saved_prompts::{LocalSavedPromptRepository, is_atomic_temp_path};
 use crate::workflows::workflow::Workflow;
 
 impl super::WarpConfig {
@@ -54,9 +56,19 @@ impl super::WarpConfig {
             );
         }
         let _ = ctx.spawn(
-            async move { load_workflows(&workflows_dir()) },
-            |me, user_workflows, ctx| {
+            async move {
+                let user_workflows = load_workflows(&workflows_dir());
+                let saved_prompts = LocalSavedPromptRepository::for_user().list();
+                (user_workflows, saved_prompts)
+            },
+            |me, (user_workflows, saved_prompts), ctx| {
                 me.local_user_workflows = user_workflows;
+                match saved_prompts {
+                    Ok(saved_prompts) => me.local_saved_prompts = saved_prompts,
+                    Err(error) => report_error!(
+                        anyhow::Error::new(error).context("Failed to load local saved prompts")
+                    ),
+                }
                 ctx.emit(WarpConfigUpdateEvent::LocalUserWorkflows);
             },
         );
@@ -90,12 +102,23 @@ impl super::WarpConfig {
             );
         }
 
-        if update_touches_dir(update, &workflows_dir()) {
+        if update_touches_workflows_dir(update, &workflows_dir()) {
             let workflow_dir = workflows_dir();
             let _ = ctx.spawn(
-                async move { load_workflows(&workflow_dir) },
-                |me, workflows, ctx| {
+                async move {
+                    let workflows = load_workflows(&workflow_dir);
+                    let saved_prompts = LocalSavedPromptRepository::for_user().list();
+                    (workflows, saved_prompts)
+                },
+                |me, (workflows, saved_prompts), ctx| {
                     me.local_user_workflows = workflows;
+                    match saved_prompts {
+                        Ok(saved_prompts) => me.local_saved_prompts = saved_prompts,
+                        Err(error) => report_error!(
+                            anyhow::Error::new(error)
+                                .context("Failed to refresh local saved prompts")
+                        ),
+                    }
                     ctx.emit(WarpConfigUpdateEvent::LocalUserWorkflows);
                 },
             );
@@ -217,8 +240,98 @@ fn update_touches_dir(update: &RepositoryUpdate, path: &Path) -> bool {
         || repository_update_touches_prefix(update, &canonical_path)
 }
 
+fn update_touches_workflows_dir(update: &RepositoryUpdate, path: &Path) -> bool {
+    let touches = |candidate: &Path| candidate.starts_with(path) && !is_atomic_temp_path(candidate);
+    update
+        .added
+        .iter()
+        .map(|target| target.path.as_path())
+        .chain(update.modified.iter().map(|target| target.path.as_path()))
+        .chain(update.deleted.iter().map(|target| target.path.as_path()))
+        .chain(update.moved.iter().flat_map(|(to_target, from_target)| {
+            [to_target.path.as_path(), from_target.path.as_path()]
+        }))
+        .any(touches)
+}
+
 fn update_touches_path(update: &RepositoryUpdate, path: &Path) -> bool {
     let canonical_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     repository_update_touches_path(update, path)
         || repository_update_touches_path(update, &canonical_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::{HashMap, HashSet},
+        path::{Path, PathBuf},
+    };
+
+    use repo_metadata::{RepositoryUpdate, TargetFile};
+
+    use super::update_touches_workflows_dir;
+
+    fn update_with_added(path: PathBuf) -> RepositoryUpdate {
+        RepositoryUpdate {
+            added: HashSet::from([TargetFile::new(path, false)]),
+            ..Default::default()
+        }
+    }
+
+    fn update_with_deleted(path: PathBuf) -> RepositoryUpdate {
+        RepositoryUpdate {
+            deleted: HashSet::from([TargetFile::new(path, false)]),
+            ..Default::default()
+        }
+    }
+
+    fn update_with_move(to: PathBuf, from: PathBuf) -> RepositoryUpdate {
+        RepositoryUpdate {
+            moved: HashMap::from([(TargetFile::new(to, false), TargetFile::new(from, false))]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn local_saved_prompt_temporary_watcher_events_are_ignored() {
+        let workflows_dir = Path::new("/tmp/warp-workflows");
+        let temp_path = workflows_dir.join("local-prompts/.prompt.yaml.tmp-test");
+        assert!(!update_touches_workflows_dir(
+            &update_with_added(temp_path),
+            workflows_dir,
+        ));
+    }
+
+    #[test]
+    fn local_saved_prompt_create_update_delete_emit_one_effective_refresh_each() {
+        let workflows_dir = Path::new("/tmp/warp-workflows");
+        let final_path = workflows_dir.join("local-prompts/prompt.yaml");
+        let temp_path = workflows_dir.join("local-prompts/.prompt.yaml.tmp-test");
+
+        let operations = [
+            (
+                "create",
+                vec![
+                    update_with_added(temp_path.clone()),
+                    update_with_move(final_path.clone(), temp_path.clone()),
+                ],
+            ),
+            (
+                "update",
+                vec![
+                    update_with_added(temp_path.clone()),
+                    update_with_move(final_path.clone(), temp_path.clone()),
+                ],
+            ),
+            ("delete", vec![update_with_deleted(final_path.clone())]),
+        ];
+
+        for (operation, updates) in operations {
+            let effective_refreshes = updates
+                .iter()
+                .filter(|update| update_touches_workflows_dir(update, workflows_dir))
+                .count();
+            assert_eq!(effective_refreshes, 1, "{operation} refresh count");
+        }
+    }
 }

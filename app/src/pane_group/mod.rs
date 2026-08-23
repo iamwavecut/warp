@@ -515,7 +515,10 @@ pub enum Event {
     OpenWorkflowModalWithCommand(String),
     // Tell the workspace to open the workflow for edit.
     OpenCloudWorkflowForEdit(SyncId),
-    OpenLocalWorkflowForEdit(Box<Workflow>),
+    OpenLocalWorkflowForEdit {
+        id: uuid::Uuid,
+        workflow: Box<Workflow>,
+    },
     // Tell the workspace to open the share dialog for the given drive object. The share dialog will
     // open in the index. If the invitee email is provided, it will be added to the share dialog.
     OpenDriveObjectShareDialog {
@@ -1763,6 +1766,17 @@ impl PaneGroup {
                         workflow_id,
                         settings,
                     } => Box::new(WorkflowPane::restore(workflow_id, settings, ctx)?),
+                    WorkflowPaneSnapshot::LocalSavedPrompt {
+                        prompt_id,
+                        settings,
+                    } => Box::new(WorkflowPane::restore_local_saved_prompt(
+                        prompt_id, settings, ctx,
+                    )?),
+                    WorkflowPaneSnapshot::UnsavedLocal => {
+                        return Err(anyhow::anyhow!(
+                            "Unsaved local prompt panes are not restorable"
+                        ));
+                    }
                 };
 
                 let pane_id = pane.as_pane().id();

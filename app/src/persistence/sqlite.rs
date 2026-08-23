@@ -63,8 +63,8 @@ use crate::ai::mcp::{TemplatableMCPServer, TemplatableMCPServerInstallation};
 use crate::ai::persisted_workspace::EnablementState;
 use crate::app_state::{
     AIFactPaneSnapshot, AmbientAgentPaneSnapshot, CodeReviewPaneSnapshot,
-    EnvVarCollectionPaneSnapshot, LeftPanelSnapshot, RightPanelSnapshot, SettingsPaneSnapshot,
-    WorkflowPaneSnapshot,
+    EnvVarCollectionPaneSnapshot, LOCAL_SAVED_PROMPT_SNAPSHOT_PREFIX, LeftPanelSnapshot,
+    RightPanelSnapshot, SettingsPaneSnapshot, WorkflowPaneSnapshot,
 };
 use crate::auth::UserUid;
 use crate::auth::auth_manager::PersistedCurrentUserInformation;
@@ -1222,6 +1222,11 @@ fn save_pane_state(
                     workflow_id,
                     settings: _,
                 } => workflow_id.map(|id| id.sqlite_uid_hash(ObjectIdType::Workflow)),
+                WorkflowPaneSnapshot::LocalSavedPrompt {
+                    prompt_id,
+                    settings: _,
+                } => Some(format!("{LOCAL_SAVED_PROMPT_SNAPSHOT_PREFIX}{prompt_id}")),
+                WorkflowPaneSnapshot::UnsavedLocal => None,
             };
 
             let workflow = model::NewWorkflowPane { id, workflow_id };
@@ -2477,16 +2482,30 @@ fn read_node(conn: &mut SqliteConnection, node: model::PaneNode) -> Result<PaneN
                         .select(model::WorkflowPane::as_select())
                         .first(conn)?;
 
-                    let workflow_id = workflow_pane.workflow_id.and_then(|id| {
-                        ClientId::from_hash(&id).map(SyncId::ClientId).or_else(|| {
-                            WorkflowId::from_hash(&id).map(|id| SyncId::ServerId(id.into()))
+                    let snapshot = workflow_pane
+                        .workflow_id
+                        .as_deref()
+                        .and_then(|id| {
+                            id.strip_prefix(LOCAL_SAVED_PROMPT_SNAPSHOT_PREFIX)
+                                .and_then(|id| Uuid::parse_str(id).ok())
                         })
-                    });
+                        .map(|prompt_id| WorkflowPaneSnapshot::LocalSavedPrompt {
+                            prompt_id,
+                            settings: OpenWarpDriveObjectSettings::default(),
+                        })
+                        .unwrap_or_else(|| {
+                            let workflow_id = workflow_pane.workflow_id.and_then(|id| {
+                                ClientId::from_hash(&id).map(SyncId::ClientId).or_else(|| {
+                                    WorkflowId::from_hash(&id).map(|id| SyncId::ServerId(id.into()))
+                                })
+                            });
+                            WorkflowPaneSnapshot::CloudWorkflow {
+                                workflow_id,
+                                settings: OpenWarpDriveObjectSettings::default(),
+                            }
+                        });
 
-                    LeafContents::Workflow(WorkflowPaneSnapshot::CloudWorkflow {
-                        workflow_id,
-                        settings: OpenWarpDriveObjectSettings::default(),
-                    })
+                    LeafContents::Workflow(snapshot)
                 }
                 CODE_PANE_KIND => {
                     let code_pane = schema::code_panes::dsl::code_panes

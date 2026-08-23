@@ -262,6 +262,7 @@ pub enum WorkflowViewEvent {
 enum UnsavedChangeType {
     ForEdit,
     ForClose,
+    ForDelete,
 }
 
 enum ContainerConfiguration {
@@ -351,6 +352,10 @@ impl WorkflowView {
         self.is_for_agent_mode
     }
 
+    pub fn local_saved_prompt_id(&self) -> Option<Uuid> {
+        self.local_saved_prompt_id
+    }
+
     pub fn set_local_saved_prompt_id(&mut self, id: Option<Uuid>, ctx: &mut ViewContext<Self>) {
         self.local_saved_prompt_id = id;
         if id.is_some() && matches!(self.workflow_view_mode, WorkflowViewMode::Create) {
@@ -370,7 +375,7 @@ impl WorkflowView {
         ctx.notify();
     }
 
-    fn is_local_prompt_editor(&self) -> bool {
+    pub(crate) fn is_local_prompt_editor(&self) -> bool {
         self.is_local_saved_prompt_editor
     }
 }
@@ -675,12 +680,19 @@ impl WorkflowView {
             return;
         };
         let repository = LocalSavedPromptRepository::for_user();
-        let Ok(Some(prompt)) = repository.get(id) else {
-            self.display_error_toast(
-                "The local saved prompt could not be reloaded".to_owned(),
-                ctx,
-            );
-            return;
+        let prompt = match repository.get(id) {
+            Ok(Some(prompt)) => prompt,
+            Ok(None) => {
+                self.display_error_toast(format!("Local saved prompt {id} no longer exists"), ctx);
+                return;
+            }
+            Err(error) => {
+                self.display_error_toast(
+                    format!("Could not reload local saved prompt {id}: {error}"),
+                    ctx,
+                );
+                return;
+            }
         };
         self.name_editor.update(ctx, |editor, ctx| {
             editor.set_buffer_text_with_base_buffer(prompt.workflow().name(), ctx)
@@ -787,13 +799,20 @@ impl WorkflowView {
 
     /// Opens a new editor-owned local Agent Mode prompt without creating a
     /// cloud object or requiring an authenticated owner.
-    pub fn open_new_local_saved_prompt(
-        &mut self,
-        title: Option<String>,
-        content: Option<String>,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        let pane_title = title.clone();
+    pub fn open_new_local_saved_prompt(&mut self, workflow: Workflow, ctx: &mut ViewContext<Self>) {
+        let Workflow::AgentMode {
+            name,
+            query,
+            description,
+            arguments,
+        } = workflow
+        else {
+            self.display_error_toast(
+                "Could not open a non-Agent Mode workflow as a local prompt".to_owned(),
+                ctx,
+            );
+            return;
+        };
         self.set_workflow_id(SyncId::ClientId(ClientId::default()), ctx);
         self.initial_folder_id = None;
         self.owner = None;
@@ -812,28 +831,33 @@ impl WorkflowView {
         self.content_editor.update(ctx, |editor, ctx| {
             editor.set_placeholder_text(AGENT_MODE_QUERY_PLACEHOLDER_TEXT, ctx);
             editor.set_font_family(Appearance::as_ref(ctx).ui_font_family(), ctx);
-            editor.clear_buffer(ctx);
+            editor.set_buffer_text(&query, ctx);
         });
         self.name_editor.update(ctx, |editor, ctx| {
             editor.clear_buffer(ctx);
-            if let Some(title) = title.as_deref() {
-                editor.set_buffer_text(title, ctx);
+            editor.set_buffer_text(&name, ctx);
+        });
+        self.description_editor.update(ctx, |editor, ctx| {
+            editor.clear_buffer(ctx);
+            if let Some(description) = description.as_deref() {
+                editor.set_buffer_text(description, ctx);
             }
         });
-        self.description_editor
-            .update(ctx, |editor, ctx| editor.clear_buffer(ctx));
-        if let Some(content) = content {
-            self.content_editor
-                .update(ctx, |editor, ctx| editor.set_buffer_text(&content, ctx));
-            self.arguments_state = ArgumentsState::for_saved_prompt(&self.arguments_state, content);
-            self.update_arguments_rows(ctx);
-        }
-        if let Some(pane_title) = pane_title {
-            if let ContainerConfiguration::Pane(pane_config) = &mut self.container_configuration {
-                pane_config.update(ctx, |pane_config, ctx| {
-                    pane_config.set_title(pane_title, ctx);
-                });
-            }
+        self.arguments_state = ArgumentsState::for_saved_prompt(&Default::default(), query.clone());
+        self.update_arguments_rows(ctx);
+        self.load_argument_data(
+            &Workflow::AgentMode {
+                name: name.clone(),
+                query: query.clone(),
+                description: description.clone(),
+                arguments,
+            },
+            ctx,
+        );
+        if let ContainerConfiguration::Pane(pane_config) = &mut self.container_configuration {
+            pane_config.update(ctx, |pane_config, ctx| {
+                pane_config.set_title(name, ctx);
+            });
         }
         self.update_editors_interactivity(ctx);
         self.refresh_pane_overflow_menu(ctx);
@@ -897,6 +921,27 @@ impl WorkflowView {
             self.focus_first_argument_value(ctx);
         }
         ctx.notify();
+    }
+
+    pub fn load_local_saved_prompt_by_id(
+        &mut self,
+        id: Uuid,
+        mode: WorkflowViewMode,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        match LocalSavedPromptRepository::for_user().get(id) {
+            Ok(Some(prompt)) => {
+                self.load_local_saved_prompt(prompt.workflow(), mode, ctx);
+                self.set_local_saved_prompt_id(Some(id), ctx);
+            }
+            Ok(None) => {
+                self.display_error_toast(format!("Local saved prompt {id} no longer exists"), ctx)
+            }
+            Err(error) => self.display_error_toast(
+                format!("Could not load local saved prompt {id}: {error}"),
+                ctx,
+            ),
+        }
     }
 
     pub fn load(
@@ -1696,8 +1741,15 @@ impl WorkflowView {
         if self.is_workflow_dirty(ctx) {
             let new_workflow = self.create_workflow_object_from_input(ctx);
             if self.is_local_prompt_editor() {
+                let workflow = self
+                    .local_saved_prompt_id
+                    .map(|id| WorkflowType::LocalSavedPrompt {
+                        id,
+                        workflow: new_workflow.clone(),
+                    })
+                    .unwrap_or(WorkflowType::Local(new_workflow));
                 ctx.emit(WorkflowViewEvent::RunWorkflow {
-                    workflow: Arc::new(WorkflowType::Local(new_workflow)),
+                    workflow: Arc::new(workflow),
                     source: WorkflowSource::Local,
                     argument_override: None,
                 });
@@ -1728,7 +1780,10 @@ impl WorkflowView {
             };
             match LocalSavedPromptRepository::for_user().get(id) {
                 Ok(Some(prompt)) => ctx.emit(WorkflowViewEvent::RunWorkflow {
-                    workflow: Arc::new(WorkflowType::Local(prompt.into_workflow())),
+                    workflow: Arc::new(WorkflowType::LocalSavedPrompt {
+                        id,
+                        workflow: prompt.into_workflow(),
+                    }),
                     source: WorkflowSource::Local,
                     argument_override: Some(self.command_display_data.get_argument_values()),
                 }),
@@ -3365,6 +3420,15 @@ impl View for WorkflowView {
                     ChildAnchor::Center,
                 ),
             ),
+            Some(UnsavedChangeType::ForDelete) => stack.add_positioned_child(
+                self.render_unsaved_changes_dialog(WorkflowAction::Delete, appearance),
+                OffsetPositioning::offset_from_parent(
+                    vec2f(0., 0.),
+                    ParentOffsetBounds::WindowByPosition,
+                    ParentAnchor::Center,
+                    ChildAnchor::Center,
+                ),
+            ),
             None => {}
         }
 
@@ -3435,7 +3499,19 @@ impl TypedActionView for WorkflowView {
             WorkflowAction::OpenLinkOnDesktop(_) => {
                 // No-op when not on wasm
             }
-            WorkflowAction::Delete => self.delete_local_saved_prompt(ctx),
+            WorkflowAction::Delete => {
+                if matches!(
+                    self.show_unsaved_changes,
+                    Some(UnsavedChangeType::ForDelete)
+                ) {
+                    self.hide_unsaved_changes_dialog(ctx);
+                    self.delete_local_saved_prompt(ctx);
+                } else if self.should_show_unsaved_changes_dialog(ctx) {
+                    self.show_unsaved_changes_dialog(UnsavedChangeType::ForDelete, ctx);
+                } else {
+                    self.delete_local_saved_prompt(ctx);
+                }
+            }
             WorkflowAction::Trash => self.trash_object(ctx),
             WorkflowAction::Untrash => self.untrash_object(ctx),
             WorkflowAction::CloseEnumDialog => self.hide_enum_creation_dialog(ctx),
