@@ -12248,21 +12248,18 @@ impl Input {
         attachments: Vec<PendingAttachment>,
         ctx: &mut ViewContext<Self>,
     ) {
-        if !attachments.is_empty() {
-            self.ai_context_model.update(ctx, |model, ctx| {
-                model.append_pending_attachments(attachments, ctx);
-            });
-        }
-        self.submit_queued_prompt(prompt, ctx);
-        if !self
+        let Some(conversation_id) = self
             .ai_context_model
             .as_ref(ctx)
-            .pending_attachments()
-            .is_empty()
+            .selected_conversation_id(ctx)
+        else {
+            report_error!("cannot dispatch queued prompt without an owning conversation");
+            return;
+        };
+        if let Err(error) =
+            self.submit_queued_prompt_for_conversation(prompt, conversation_id, attachments, ctx)
         {
-            self.ai_context_model.update(ctx, |model, ctx| {
-                model.clear_pending_attachments(ctx);
-            });
+            report_error!(error);
         }
     }
 
@@ -12276,21 +12273,55 @@ impl Input {
         attachments: Vec<PendingAttachment>,
         ctx: &mut ViewContext<Self>,
     ) -> anyhow::Result<()> {
-        self.ai_controller.update(ctx, |controller, ctx| {
-            controller.cancel_conversation_progress(
-                conversation_id,
-                CancellationReason::FollowUpSubmitted {
-                    is_for_same_conversation: true,
-                },
-                ctx,
-            );
-        });
+        let detected = self
+            .slash_command_model
+            .as_ref(ctx)
+            .detect_command(&prompt, ctx);
 
-        let had_attachments = !attachments.is_empty();
-        if had_attachments {
-            self.ai_context_model.update(ctx, |model, ctx| {
-                model.append_pending_attachments(attachments, ctx);
-            });
+        match detected {
+            SlashCommandEntryState::SlashCommand(detected_command) => {
+                if let Some(request) = SlashCommandRequest::from_query(&prompt) {
+                    self.ai_controller.update(ctx, |controller, ctx| {
+                        controller.send_queued_slash_command_request_for_conversation(
+                            request,
+                            conversation_id,
+                            attachments,
+                            ctx,
+                        )
+                    })?;
+                    ctx.emit(Event::ExecuteAIQuery);
+                    return Ok(());
+                }
+                if !slash_command_is_submitted_as_prompt(&detected_command.command) {
+                    return Err(anyhow::anyhow!(
+                        "slash command {} cannot be dispatched from the durable queue",
+                        detected_command.command.name
+                    ));
+                }
+            }
+            SlashCommandEntryState::SkillCommand(detected_skill) => {
+                let skill = SkillManager::handle(ctx)
+                    .as_ref(ctx)
+                    .skill_by_reference(&detected_skill.reference)
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("skill not found: {}", detected_skill.reference)
+                    })?;
+                self.ai_controller.update(ctx, |controller, ctx| {
+                    controller.send_queued_slash_command_request_for_conversation(
+                        SlashCommandRequest::InvokeSkill {
+                            skill,
+                            user_query: detected_skill.argument,
+                        },
+                        conversation_id,
+                        attachments,
+                        ctx,
+                    )
+                })?;
+                ctx.emit(Event::ExecuteAIQuery);
+                return Ok(());
+            }
+            _ => {}
         }
 
         let send_result = self.ai_controller.update(ctx, |controller, ctx| {
@@ -12298,23 +12329,11 @@ impl Input {
                 prompt,
                 conversation_id,
                 None,
-                HashMap::new(),
+                attachments,
                 ctx,
             )
         });
-        if let Err(error) = send_result {
-            if had_attachments {
-                self.ai_context_model.update(ctx, |model, ctx| {
-                    model.clear_pending_attachments(ctx);
-                });
-            }
-            return Err(error);
-        }
-        if had_attachments {
-            self.ai_context_model.update(ctx, |model, ctx| {
-                model.clear_pending_attachments(ctx);
-            });
-        }
+        send_result?;
         ctx.emit(Event::ExecuteAIQuery);
         Ok(())
     }

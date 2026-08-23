@@ -117,6 +117,31 @@ fn append_from_each_user_origin_lands_in_the_queue() {
 }
 
 #[test]
+fn compact_family_rows_are_retained_with_a_local_error_and_never_autofire() {
+    with_model(|mut app, model, _events| {
+        let conv = AIConversationId::new();
+        for text in ["/compact", "/compact-and summarize", "/fork-and-compact"] {
+            model
+                .update(&mut app, |m, ctx| {
+                    m.append(
+                        conv,
+                        QueuedQuery::new(text.to_owned(), QueuedQueryOrigin::QueueSlashCommand),
+                        ctx,
+                    )
+                })
+                .expect("compact-family row should be retained durably");
+        }
+
+        model.read(&app, |model, _| {
+            assert_eq!(model.queue(conv).len(), 3);
+            assert!(model.queue(conv).iter().all(|row| row.has_local_error()));
+            assert!(!model.has_autofireable_prompt(conv));
+            assert!(model.peek_autofire(conv).is_none());
+        });
+    });
+}
+
+#[test]
 fn queue_next_prompt_toggle_defaults_false_and_emits_event() {
     with_model(|mut app, model, events| {
         let conv = AIConversationId::new();
@@ -456,6 +481,46 @@ fn delete_conversation_drops_only_that_conversation_state() {
             assert_eq!(b.len(), 1);
             assert_eq!(b[0].text(), "b1");
         });
+    });
+}
+
+#[test]
+fn deleting_an_inactive_conversation_clears_its_durable_queue_state() {
+    App::test((), |mut app| async move {
+        initialize_history_persistence_for_tests(&mut app);
+        app.add_singleton_model(|_| BlocklistAIHistoryModel::new_for_test());
+        let repository = LocalPromptQueueRepository::in_memory().expect("queue database");
+        let repository_check = repository.clone();
+        let model =
+            app.add_singleton_model(|ctx| QueuedQueryModel::new_with_repository(repository, ctx));
+        let history = BlocklistAIHistoryModel::handle(&app);
+        let terminal_view_id = warpui::EntityId::new();
+        let conversation_id = history.update(&mut app, |history, ctx| {
+            history.start_new_conversation(terminal_view_id, false, false, false, ctx)
+        });
+
+        append_user(&model, &mut app, conversation_id, "retained until deletion");
+        model
+            .update(&mut app, |model, ctx| {
+                model.toggle_queue_next_prompt(conversation_id, ctx)
+            })
+            .expect("queue settings should persist");
+
+        history.update(&mut app, |history, ctx| {
+            history.delete_conversation(conversation_id, None, ctx);
+        });
+
+        model.read(&app, |model, _| {
+            assert!(!model.has_queue(conversation_id));
+            assert!(!model.is_queue_next_prompt_enabled(conversation_id));
+        });
+        assert!(
+            repository_check
+                .load_all()
+                .expect("queue database should load")
+                .is_empty(),
+            "inactive deletion must remove rows and settings transactionally"
+        );
     });
 }
 

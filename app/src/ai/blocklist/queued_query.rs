@@ -151,6 +151,22 @@ impl QueuedQuery {
         matches!(self.kind, QueuedQueryKind::Command)
     }
 
+    /// Compact/fork-and-compact actions mutate the current transcript directly. They are
+    /// intentionally outside the durable prompt queue because replaying one after a restart
+    /// would apply the transcript mutation to an uncertain target.
+    pub fn is_compact_family(&self) -> bool {
+        if self.is_command() {
+            return false;
+        }
+        self.text
+            .trim_start()
+            .strip_prefix('/')
+            .and_then(|text| text.split_whitespace().next())
+            .is_some_and(|command| {
+                matches!(command, "compact" | "compact-and" | "fork-and-compact")
+            })
+    }
+
     pub fn attachments(&self) -> &[PendingAttachment] {
         match &self.kind {
             QueuedQueryKind::Prompt { attachments } => attachments,
@@ -645,9 +661,16 @@ impl QueuedQueryModel {
     pub fn try_append(
         &mut self,
         conversation_id: AIConversationId,
-        query: QueuedQuery,
+        mut query: QueuedQuery,
         ctx: &mut ModelContext<Self>,
     ) -> anyhow::Result<QueuedQueryId> {
+        let compact_family = query.is_compact_family();
+        if compact_family {
+            query.local_error = Some(
+                "compact actions cannot run from the durable queue; submit them directly"
+                    .to_owned(),
+            );
+        }
         let query_id = query.id;
         let mut next = self
             .queues
@@ -663,6 +686,12 @@ impl QueuedQueryModel {
             conversation_id,
             query_id,
         });
+        if compact_family {
+            ctx.emit(QueuedQueryEvent::LocalError {
+                conversation_id,
+                query_id,
+            });
+        }
         Ok(query_id)
     }
 
@@ -777,6 +806,13 @@ impl QueuedQueryModel {
             return Err(anyhow::anyhow!("queued row is not dispatchable"));
         }
         let row = row.clone();
+        if row.is_compact_family() {
+            let error = anyhow::anyhow!(
+                "compact actions cannot run from the durable queue; submit them directly"
+            );
+            self.mark_local_error(conversation_id, query_id, &error.to_string(), ctx)?;
+            return Err(error);
+        }
         if !capability_available {
             let error = anyhow::anyhow!("local queue provider or capability is unavailable");
             self.mark_local_error(conversation_id, query_id, &error.to_string(), ctx)?;

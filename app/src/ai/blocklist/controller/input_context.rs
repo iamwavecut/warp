@@ -16,7 +16,7 @@ use crate::{
             conversation::AIConversationId,
         },
         block_context::BlockContext,
-        blocklist::{BlocklistAIContextModel, SessionContext},
+        blocklist::{BlocklistAIContextModel, PendingAttachment, SessionContext},
         document::ai_document_model::{AIDocumentId, AIDocumentModel},
         facts::CloudAIFactModel,
         skills::list_skills_if_changed,
@@ -93,6 +93,50 @@ pub(super) fn input_context_for_request(
     context.into()
 }
 
+/// Builds request context for a queued row without borrowing the shared input draft's images.
+/// Images captured by the row are passed through `additional_context` by the caller.
+pub(super) fn input_context_for_queued_request(
+    is_user_query: bool,
+    context_model: &BlocklistAIContextModel,
+    active_session: &ActiveSession,
+    conversation_id: Option<AIConversationId>,
+    additional_context: Vec<AIAgentContext>,
+    app: &AppContext,
+) -> Arc<[AIAgentContext]> {
+    let mut context = context_model.pending_context_without_pending_images(app, is_user_query);
+
+    context.push(AIAgentContext::CurrentTime {
+        current_time: Local::now(),
+    });
+
+    if let Some(env) = active_session.ai_execution_environment(app) {
+        context.push(AIAgentContext::ExecutionEnvironment(env));
+    }
+
+    if FeatureFlag::FullSourceCodeEmbedding.is_enabled()
+        && FeatureFlag::CrossRepoContext.is_enabled()
+    {
+        let session_context = SessionContext::from_session(active_session, app);
+        if session_context.is_remote() {
+            add_remote_codebase_context(&mut context, &session_context, app);
+        } else {
+            add_local_codebase_context(&mut context, app);
+        }
+    }
+
+    if FeatureFlag::ListSkills.is_enabled() {
+        let working_directory = active_session.current_working_directory_location(app);
+        let skills = list_skills_if_changed(working_directory.as_ref(), conversation_id, app);
+
+        if let Some(skills) = skills {
+            context.push(AIAgentContext::Skills { skills });
+        }
+    }
+
+    context.extend(additional_context);
+    context.into()
+}
+
 fn add_local_codebase_context(context: &mut Vec<AIAgentContext>, app: &AppContext) {
     for (codebase_path, status) in
         CodebaseIndexManager::as_ref(app).get_codebase_index_statuses(app)
@@ -148,6 +192,25 @@ pub(super) fn parse_context_attachments(
     query: &str,
     context_model: &BlocklistAIContextModel,
     ctx: &AppContext,
+) -> HashMap<String, AIAgentAttachment> {
+    parse_context_attachments_with_pending_files(query, context_model, ctx, true)
+}
+
+/// Same as [`parse_context_attachments`] but excludes files currently staged in the shared input
+/// draft. Queued rows pass their durable file snapshots separately.
+pub(super) fn parse_context_attachments_without_pending_files(
+    query: &str,
+    context_model: &BlocklistAIContextModel,
+    ctx: &AppContext,
+) -> HashMap<String, AIAgentAttachment> {
+    parse_context_attachments_with_pending_files(query, context_model, ctx, false)
+}
+
+fn parse_context_attachments_with_pending_files(
+    query: &str,
+    context_model: &BlocklistAIContextModel,
+    ctx: &AppContext,
+    include_pending_files: bool,
 ) -> HashMap<String, AIAgentAttachment> {
     let mut referenced_attachments = HashMap::new();
 
@@ -247,24 +310,26 @@ pub(super) fn parse_context_attachments(
     // Add pending file attachments as FilePathReference.
     // Duplicate basenames get a (1), (2), ... suffix to avoid collisions,
     // matching local file attachment keys.
-    for file in context_model.pending_files().iter() {
-        let attachment = AIAgentAttachment::FilePathReference {
-            file_id: uuid::Uuid::new_v4().to_string(),
-            file_name: file.file_name.clone(),
-            file_path: file.file_path.to_string_lossy().to_string(),
-        };
-        let mut key = file.file_name.clone();
-        if referenced_attachments.contains_key(&key) {
-            let mut suffix = 1;
-            loop {
-                key = format!("{} ({suffix})", file.file_name);
-                if !referenced_attachments.contains_key(&key) {
-                    break;
+    if include_pending_files {
+        for file in context_model.pending_files().iter() {
+            let attachment = AIAgentAttachment::FilePathReference {
+                file_id: uuid::Uuid::new_v4().to_string(),
+                file_name: file.file_name.clone(),
+                file_path: file.file_path.to_string_lossy().to_string(),
+            };
+            let mut key = file.file_name.clone();
+            if referenced_attachments.contains_key(&key) {
+                let mut suffix = 1;
+                loop {
+                    key = format!("{} ({suffix})", file.file_name);
+                    if !referenced_attachments.contains_key(&key) {
+                        break;
+                    }
+                    suffix += 1;
                 }
-                suffix += 1;
             }
+            referenced_attachments.insert(key, attachment);
         }
-        referenced_attachments.insert(key, attachment);
     }
 
     // Add pending AI document as attachment if present
@@ -283,6 +348,43 @@ pub(super) fn parse_context_attachments(
     }
 
     referenced_attachments
+}
+
+/// Converts a queued row's attachment snapshot into request-local context and file references.
+/// The returned values do not touch `BlocklistAIContextModel`, so an unrelated draft remains
+/// intact while a background conversation dispatches.
+pub(super) fn queued_attachments_for_request(
+    attachments: &[PendingAttachment],
+) -> (Vec<AIAgentContext>, HashMap<String, AIAgentAttachment>) {
+    let mut context = Vec::new();
+    let mut referenced_attachments = HashMap::new();
+    for attachment in attachments {
+        match attachment {
+            PendingAttachment::Image(image) => {
+                context.push(AIAgentContext::Image(image.clone()));
+            }
+            PendingAttachment::File(file) => {
+                let attachment = AIAgentAttachment::FilePathReference {
+                    file_id: uuid::Uuid::new_v4().to_string(),
+                    file_name: file.file_name.clone(),
+                    file_path: file.file_path.to_string_lossy().to_string(),
+                };
+                let mut key = file.file_name.clone();
+                if referenced_attachments.contains_key(&key) {
+                    let mut suffix = 1;
+                    loop {
+                        key = format!("{} ({suffix})", file.file_name);
+                        if !referenced_attachments.contains_key(&key) {
+                            break;
+                        }
+                        suffix += 1;
+                    }
+                }
+                referenced_attachments.insert(key, attachment);
+            }
+        }
+    }
+    (context, referenced_attachments)
 }
 
 /// Searches for a block across all terminal models in the application.
@@ -371,5 +473,45 @@ fn get_object_attachment_payload(
                 })
         }
         _ => None, // Other object types not supported for drive object attachments
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::queued_attachments_for_request;
+    use crate::ai::agent::{AIAgentAttachment, AIAgentContext, ImageContext};
+    use crate::ai::blocklist::{PendingAttachment, PendingFile};
+
+    #[test]
+    fn queued_attachment_mapping_is_request_local() {
+        let attachments = vec![
+            PendingAttachment::Image(ImageContext {
+                data: "queued-image".to_owned(),
+                mime_type: "image/png".to_owned(),
+                file_name: "queued.png".to_owned(),
+                is_figma: false,
+            }),
+            PendingAttachment::File(PendingFile {
+                file_name: "queued.txt".to_owned(),
+                file_path: PathBuf::from("/tmp/queued.txt"),
+                mime_type: "text/plain".to_owned(),
+            }),
+        ];
+
+        let (context, referenced_attachments) = queued_attachments_for_request(&attachments);
+        assert!(matches!(
+            context.as_slice(),
+            [AIAgentContext::Image(image)] if image.file_name == "queued.png"
+        ));
+        assert!(matches!(
+            referenced_attachments.get("queued.txt"),
+            Some(AIAgentAttachment::FilePathReference { file_path, .. })
+                if file_path == "/tmp/queued.txt"
+        ));
+        // The helper only reads the row snapshot; no shared draft attachment is staged or
+        // cleared as a side effect.
+        assert_eq!(attachments.len(), 2);
     }
 }

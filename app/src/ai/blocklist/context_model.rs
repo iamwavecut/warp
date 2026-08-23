@@ -437,6 +437,19 @@ impl BlocklistAIContextModel {
         context
     }
 
+    /// Returns the normal request context without images held by the shared input draft.
+    /// Queued rows carry their own attachment snapshot and must not borrow or consume the
+    /// currently selected conversation's draft attachments while dispatching in the background.
+    pub fn pending_context_without_pending_images(
+        &self,
+        app: &AppContext,
+        is_user_query: bool,
+    ) -> Vec<AIAgentContext> {
+        let mut context = self.pending_context(app, is_user_query);
+        context.retain(|item| !matches!(item, AIAgentContext::Image(_)));
+        context
+    }
+
     pub fn current_pwd(&self) -> Option<String> {
         self.directory_context.pwd.clone()
     }

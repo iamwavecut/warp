@@ -213,7 +213,7 @@ fn deletion_cleans_up_pending_artifacts() {
 
         history.update(&mut app, |_: &mut BlocklistAIHistoryModel, ctx| {
             ctx.emit(BlocklistAIHistoryEvent::DeletedConversation {
-                terminal_surface_id: terminal_view_id,
+                terminal_surface_id: Some(terminal_view_id),
                 conversation_id,
                 conversation_title: None,
                 run_id: None,

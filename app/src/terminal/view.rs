@@ -4719,7 +4719,14 @@ impl TerminalView {
             };
 
             let mut finish_reason: Option<FinishReason> = None;
-            if let Some(active_ai_block) = self.active_ai_block(ctx) {
+            if let Some(active_ai_block) = self
+                .ai_block_for_conversation(*conversation_id, ctx)
+                .filter(|block| {
+                    !block.as_ref(ctx).is_finished()
+                        && !block.as_ref(ctx).is_passive_conversation()
+                        && !block.as_ref(ctx).is_hidden(ctx)
+                })
+            {
                 // A new exchange is already active, so callbacks for the
                 // just-finished exchange will be skipped. Clear any pending
                 // user query now to prevent its callback from firing when
@@ -4736,9 +4743,9 @@ impl TerminalView {
                     self.remove_pending_user_query_block(ctx);
                 }
             } else if !has_active_subagent()
-                && let Some(last_ai_block) = self.last_ai_block()
+                && let Some(ai_block) = self.ai_block_for_conversation(*conversation_id, ctx)
             {
-                finish_reason = last_ai_block.as_ref(ctx).finish_reason();
+                finish_reason = ai_block.as_ref(ctx).finish_reason();
             }
 
             if let Some(reason) = finish_reason {
@@ -4847,24 +4854,6 @@ impl TerminalView {
                 };
                 match action {
                     Some(AutofireAction::Submit { text }) => {
-                        let compact_action = text
-                            .trim_start()
-                            .strip_prefix('/')
-                            .and_then(|text| text.split_whitespace().next())
-                            .is_some_and(|command| {
-                                command == "compact-and" || command == "fork-and-compact"
-                            });
-                        if compact_action {
-                            let _ = QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
-                                model.mark_local_error(
-                                    conversation_id,
-                                    query_id,
-                                    "compact-and actions cannot run from the durable queue; submit them directly",
-                                    ctx,
-                                )
-                            });
-                            return;
-                        }
                         let ai_enabled = AISettings::as_ref(ctx).is_any_ai_enabled(ctx);
                         let has_image_attachments = attachments
                             .iter()
@@ -19383,6 +19372,26 @@ impl TerminalView {
                 && !ai_block.is_hidden(ctx))
             .then_some(&ai_metadata.ai_block_handle)
         })
+    }
+
+    /// Returns the latest rendered AI block for an explicit conversation. Completion events can
+    /// arrive for a background conversation while another conversation is selected, so the
+    /// global active/last block is not a valid source for finish state.
+    fn ai_block_for_conversation(
+        &self,
+        conversation_id: AIConversationId,
+        _ctx: &AppContext,
+    ) -> Option<&ViewHandle<AIBlock>> {
+        self.rich_content_views
+            .iter()
+            .rev()
+            .filter(|rich_content| {
+                !rich_content.is_usage_footer() && !rich_content.is_pending_user_query()
+            })
+            .find_map(|rich_content| {
+                let metadata = rich_content.ai_block_metadata()?;
+                (metadata.conversation_id == conversation_id).then_some(&metadata.ai_block_handle)
+            })
     }
 
     /// Check if there's an active (non-completed, non-cancelled) /init in progress

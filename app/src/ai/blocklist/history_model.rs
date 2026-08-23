@@ -1788,16 +1788,15 @@ impl BlocklistAIHistoryModel {
             |_, _, _| {},
         );
 
-        // Only emit the event if we have a terminal_surface_id, since the event is
-        // filtered by terminal_surface_id in handlers.
-        if let Some(terminal_surface_id) = terminal_surface_id {
-            ctx.emit(BlocklistAIHistoryEvent::DeletedConversation {
-                terminal_surface_id,
-                conversation_id,
-                conversation_title,
-                run_id,
-            });
-        }
+        // Emit this even for historical-only conversations. Durable local models
+        // key cleanup by conversation ID, while surface-specific consumers can
+        // use the optional terminal surface to filter the event.
+        ctx.emit(BlocklistAIHistoryEvent::DeletedConversation {
+            terminal_surface_id,
+            conversation_id,
+            conversation_title,
+            run_id,
+        });
     }
 
     /// Remove a conversation from all in-memory storage.
@@ -2446,7 +2445,10 @@ pub enum BlocklistAIHistoryEvent {
     /// `run_id` is captured before the in-memory record was dropped — see
     /// the note on [`Self::RemoveConversation`].
     DeletedConversation {
-        terminal_surface_id: EntityId,
+        /// The terminal surface that displayed the conversation, when it was
+        /// active in a pane. Historical-only conversations are deleted without
+        /// a terminal surface, but still need to notify durable local models.
+        terminal_surface_id: Option<EntityId>,
         conversation_id: AIConversationId,
         conversation_title: Option<String>,
         run_id: Option<String>,
@@ -2561,10 +2563,6 @@ impl BlocklistAIHistoryEvent {
                 terminal_surface_id,
                 ..
             }
-            | BlocklistAIHistoryEvent::DeletedConversation {
-                terminal_surface_id,
-                ..
-            }
             | BlocklistAIHistoryEvent::CreatedSubtask {
                 terminal_surface_id,
                 ..
@@ -2589,6 +2587,10 @@ impl BlocklistAIHistoryEvent {
                 terminal_surface_id,
                 ..
             } => Some(*terminal_surface_id),
+            BlocklistAIHistoryEvent::DeletedConversation {
+                terminal_surface_id,
+                ..
+            } => *terminal_surface_id,
             // UpdatedConversationMetadata can have None when updating historical-only conversations
             BlocklistAIHistoryEvent::UpdatedConversationMetadata {
                 terminal_surface_id,

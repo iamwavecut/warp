@@ -1,19 +1,20 @@
 use std::sync::Arc;
 
 use warp_core::features::FeatureFlag;
-use warp_errors::report_error;
 use warpui::{AppContext, ModelContext, SingletonEntity};
 
 use super::{
-    BlocklistAIController, BlocklistAIControllerEvent, RequestInput, input_context_for_request,
-    parse_context_attachments,
+    BlocklistAIController, BlocklistAIControllerEvent, RequestInput,
+    input_context_for_queued_request, input_context_for_request, parse_context_attachments,
+    parse_context_attachments_without_pending_files, queued_attachments_for_request,
 };
 use crate::BlocklistAIHistoryModel;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::agent::{
-    AIAgentContext, AIAgentInput, CancellationReason, CloneRepositoryURL, EntrypointType,
-    RequestMetadata,
+    AIAgentAttachment, AIAgentContext, AIAgentInput, CancellationReason, CloneRepositoryURL,
+    EntrypointType, RequestMetadata,
 };
+use crate::ai::blocklist::PendingAttachment;
 use crate::ai::blocklist::agent_view::AgentViewEntryOrigin;
 use crate::search::slash_command_menu::static_commands::commands;
 use crate::terminal::input::slash_commands::SlashCommandTrigger;
@@ -59,34 +60,59 @@ impl SlashCommandRequest {
         self,
         controller: &mut BlocklistAIController,
         is_queued_prompt: bool,
+        explicit_conversation_id: Option<AIConversationId>,
+        queued_attachments: Option<Vec<PendingAttachment>>,
         ctx: &mut ModelContext<BlocklistAIController>,
-    ) {
-        let conversation_id = self.conversation_id(controller, ctx);
+    ) -> anyhow::Result<()> {
+        let requested_conversation_id =
+            explicit_conversation_id.or_else(|| self.conversation_id(controller, ctx));
+        let has_requested_conversation = requested_conversation_id.is_some();
         // For skill invocations, include user-attached context (images, blocks, and selected
         // text) so the skill's agent sees the same attachments a non-slash-command user query
         // would. Other slash commands continue to pass `false` to preserve existing behavior.
         let is_invoke_skill = matches!(self, Self::InvokeSkill { .. });
-        let context = input_context_for_request(
-            is_invoke_skill,
-            controller.context_model.as_ref(ctx),
-            controller.active_session.as_ref(ctx),
-            conversation_id,
-            vec![],
-            ctx,
-        );
+        let (queued_context, queued_referenced_attachments) = queued_attachments
+            .as_deref()
+            .map(queued_attachments_for_request)
+            .unwrap_or_default();
+        let context = if queued_attachments.is_some() {
+            input_context_for_queued_request(
+                is_invoke_skill,
+                controller.context_model.as_ref(ctx),
+                controller.active_session.as_ref(ctx),
+                requested_conversation_id,
+                queued_context,
+                ctx,
+            )
+        } else {
+            input_context_for_request(
+                is_invoke_skill,
+                controller.context_model.as_ref(ctx),
+                controller.active_session.as_ref(ctx),
+                requested_conversation_id,
+                vec![],
+                ctx,
+            )
+        };
         let entrypoint = self.entrypoint();
         let is_summarize = matches!(self, Self::Summarize { .. });
-        let inputs = self.input(context, controller.context_model.as_ref(ctx), ctx);
+        let inputs = self.input(
+            context,
+            controller.context_model.as_ref(ctx),
+            queued_attachments.is_none(),
+            queued_referenced_attachments,
+            ctx,
+        );
         if inputs.is_empty() {
-            return;
+            return Err(anyhow::anyhow!(
+                "slash command produced no AI request input"
+            ));
         }
-        let active_conversation_id = BlocklistAIHistoryModel::as_ref(ctx)
-            .active_conversation_id(controller.terminal_surface_id);
 
         // If no existing conversation, create a new one.
         // When AgentView is enabled, enter agent view which creates the conversation
         // and ensures AI blocks render correctly in the agent view.
-        let Some(conversation_id) = conversation_id.or_else(|| {
+        let Some(conversation_id) = requested_conversation_id.or_else(|| {
             if FeatureFlag::AgentView.is_enabled() {
                 controller.context_model.update(ctx, |context_model, ctx| {
                     context_model
@@ -102,26 +128,22 @@ impl SlashCommandRequest {
                 Some(controller.start_new_conversation_for_request(ctx).id())
             }
         }) else {
-            report_error!("Failed to get conversation ID for slash command request");
-            return;
+            return Err(anyhow::anyhow!(
+                "failed to get conversation ID for slash command request"
+            ));
         };
 
         let cancellation_reason = CancellationReason::FollowUpSubmitted {
-            is_for_same_conversation: active_conversation_id
-                .is_some_and(|id| id == conversation_id),
+            is_for_same_conversation: has_requested_conversation,
         };
-        if let Some(active_conversation_id) = active_conversation_id {
-            controller.cancel_conversation_progress(
-                active_conversation_id,
-                cancellation_reason,
-                ctx,
-            );
+        if has_requested_conversation {
+            controller.cancel_conversation_progress(conversation_id, cancellation_reason, ctx);
         }
 
         let Some(conversation) =
             BlocklistAIHistoryModel::as_ref(ctx).conversation(&conversation_id)
         else {
-            return;
+            return Err(anyhow::anyhow!("slash command conversation does not exist"));
         };
         let task_id = conversation.get_root_task_id().clone();
 
@@ -154,7 +176,7 @@ impl SlashCommandRequest {
                 // only clears that context for `AIAgentInput::UserQuery`, so we mirror its
                 // reset here for `InvokeSkill` to avoid pending attachments sticking around
                 // and getting re-sent on subsequent messages.
-                if is_invoke_skill {
+                if is_invoke_skill && queued_attachments.is_none() {
                     controller.context_model.update(ctx, |context_model, ctx| {
                         context_model.reset_context_to_default(ctx);
                     });
@@ -170,8 +192,9 @@ impl SlashCommandRequest {
                     });
                 }
             }
-            Err(e) => report_error!(e.context("Failed to send agent slash command request")),
+            Err(e) => return Err(e.context("failed to send agent slash command request")),
         }
+        Ok(())
     }
 
     pub(super) fn conversation_id(
@@ -192,6 +215,8 @@ impl SlashCommandRequest {
         self,
         context: Arc<[AIAgentContext]>,
         context_model: &crate::ai::blocklist::BlocklistAIContextModel,
+        include_pending_files: bool,
+        queued_referenced_attachments: std::collections::HashMap<String, AIAgentAttachment>,
         app: &AppContext,
     ) -> Vec<AIAgentInput> {
         match self {
@@ -216,13 +241,21 @@ impl SlashCommandRequest {
                     user_query
                         .map(|query| query.trim().to_string())
                         .filter(|query| !query.is_empty())
-                        .map(|query| crate::ai::agent::InvokeSkillUserQuery {
-                            referenced_attachments: parse_context_attachments(
-                                &query,
-                                context_model,
-                                app,
-                            ),
-                            query,
+                        .map(|query| {
+                            let mut referenced_attachments = if include_pending_files {
+                                parse_context_attachments(&query, context_model, app)
+                            } else {
+                                parse_context_attachments_without_pending_files(
+                                    &query,
+                                    context_model,
+                                    app,
+                                )
+                            };
+                            referenced_attachments.extend(queued_referenced_attachments);
+                            crate::ai::agent::InvokeSkillUserQuery {
+                                referenced_attachments,
+                                query,
+                            }
                         })
                 } else {
                     None
