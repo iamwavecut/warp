@@ -240,3 +240,27 @@ fn drain_is_isolated_per_conversation() {
         });
     });
 }
+
+#[test]
+fn queued_prompt_drain_scopes_long_running_command_to_conversation() {
+    let conversation_a = AIConversationId::new();
+    let conversation_b = AIConversationId::new();
+
+    // A's completion must proceed while the selected/unrelated B terminal block is long-running.
+    assert!(
+        !super::TerminalView::should_defer_queued_prompt_for_active_long_running_command(
+            conversation_a,
+            Some(conversation_b),
+            true,
+        )
+    );
+
+    // A's own long-running command still blocks its next queued row.
+    assert!(
+        super::TerminalView::should_defer_queued_prompt_for_active_long_running_command(
+            conversation_a,
+            Some(conversation_a),
+            true,
+        )
+    );
+}

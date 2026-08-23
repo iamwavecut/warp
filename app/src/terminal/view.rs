@@ -4817,7 +4817,7 @@ impl TerminalView {
                     .ai_action_model
                     .as_ref(ctx)
                     .has_unfinished_actions_for_conversation(conversation_id)
-                    || self.has_active_long_running_command()
+                    || self.has_active_long_running_command_for_conversation(conversation_id)
                 {
                     // A response stream can finish before a local tool or shell action reaches
                     // its terminal state. Leave the durable head untouched until that action is
@@ -19841,6 +19841,27 @@ impl TerminalView {
     fn is_block_active_and_running(&self, model: &TerminalModel, block_index: BlockIndex) -> bool {
         let active_block = model.block_list().active_block();
         active_block.index() == block_index && active_block.is_active_and_long_running()
+    }
+
+    fn has_active_long_running_command_for_conversation(
+        &self,
+        conversation_id: AIConversationId,
+    ) -> bool {
+        let model = self.model.lock();
+        let active_block = model.block_list().active_block();
+        Self::should_defer_queued_prompt_for_active_long_running_command(
+            conversation_id,
+            active_block.ai_conversation_id(),
+            active_block.is_active_and_long_running(),
+        )
+    }
+
+    fn should_defer_queued_prompt_for_active_long_running_command(
+        queued_conversation_id: AIConversationId,
+        active_block_conversation_id: Option<AIConversationId>,
+        active_block_is_long_running: bool,
+    ) -> bool {
+        active_block_is_long_running && active_block_conversation_id == Some(queued_conversation_id)
     }
 
     pub fn has_active_long_running_command(&self) -> bool {
