@@ -136,6 +136,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::LazyLock;
 
 const CONTENT_FONT_SIZE: f32 = 12.;
@@ -481,6 +482,7 @@ pub struct AISettingsPageView {
     page: PageType<Self>,
     active_subpage: Option<AISubpage>,
     custom_provider_keys_ready: bool,
+    provider_editor_error_state: ProviderEditorErrorState,
     local_only_icon_tooltip_states: RefCell<HashMap<String, MouseStateHandle>>,
     autodetection_denylist_editor: ViewHandle<EditorView>,
     autonomy_dropdown_menu: ViewHandle<Dropdown<AISettingsPageAction>>,
@@ -553,7 +555,11 @@ impl AISettingsPageView {
                 && custom_provider_editing_allowed(ApiKeyManager::as_ref(ctx).keys_ready())
             {
                 me.custom_provider_keys_ready = true;
-                me.page = Self::build_page(me.active_subpage, ctx);
+                me.page = Self::build_page(
+                    me.active_subpage,
+                    me.provider_editor_error_state.clone(),
+                    ctx,
+                );
                 ctx.notify();
             }
         });
@@ -1413,10 +1419,13 @@ impl AISettingsPageView {
             dropdown
         });
 
+        let provider_editor_error_state = ProviderEditorErrorState::default();
+
         Self {
-            page: Self::build_page(None, ctx),
+            page: Self::build_page(None, provider_editor_error_state.clone(), ctx),
             active_subpage: None,
             custom_provider_keys_ready,
+            provider_editor_error_state,
             autodetection_denylist_editor,
             local_only_icon_tooltip_states: Default::default(),
             command_execution_allowlist_editor,
@@ -1466,12 +1475,16 @@ impl AISettingsPageView {
     pub fn set_active_subpage(&mut self, subpage: Option<AISubpage>, ctx: &mut ViewContext<Self>) {
         if self.active_subpage != subpage {
             self.active_subpage = subpage;
-            self.page = Self::build_page(subpage, ctx);
+            self.page = Self::build_page(subpage, self.provider_editor_error_state.clone(), ctx);
             ctx.notify();
         }
     }
 
-    fn build_page(subpage: Option<AISubpage>, ctx: &mut ViewContext<Self>) -> PageType<Self> {
+    fn build_page(
+        subpage: Option<AISubpage>,
+        provider_editor_error_state: ProviderEditorErrorState,
+        ctx: &mut ViewContext<Self>,
+    ) -> PageType<Self> {
         let ai_settings = AISettings::as_ref(ctx);
 
         let mut widgets: Vec<Box<dyn SettingsWidget<View = AISettingsPageView>>> = Vec::new();
@@ -1508,7 +1521,10 @@ impl AISettingsPageView {
                     widgets.push(Box::new(AIFactWidget::default()));
                 }
                 widgets.push(Box::new(CLIAgentWidget::default()));
-                widgets.push(Box::new(LLMProvidersWidget::new(ctx)));
+                widgets.push(Box::new(LLMProvidersWidget::new(
+                    provider_editor_error_state.clone(),
+                    ctx,
+                )));
                 widgets.push(Box::new(AgentAttributionWidget::default()));
                 widgets.push(Box::new(OtherAIWidget::default()));
                 if FeatureFlag::AgentModeComputerUse.is_enabled() {
@@ -1543,7 +1559,10 @@ impl AISettingsPageView {
                 }
             }
             Some(AISubpage::LLMProviders) => {
-                widgets.push(Box::new(LLMProvidersWidget::new(ctx)));
+                widgets.push(Box::new(LLMProvidersWidget::new(
+                    provider_editor_error_state,
+                    ctx,
+                )));
             }
             Some(AISubpage::Profiles) => {
                 widgets.push(Box::new(AgentsWidget::default()));
@@ -2791,7 +2810,11 @@ impl TypedActionView for AISettingsPageView {
                     report_error!(error);
                     return;
                 }
-                self.page = Self::build_page(self.active_subpage, ctx);
+                self.page = Self::build_page(
+                    self.active_subpage,
+                    self.provider_editor_error_state.clone(),
+                    ctx,
+                );
                 ctx.notify();
             }
             AISettingsPageAction::RemoveLLMProvider(provider_id) => {
@@ -2818,7 +2841,11 @@ impl TypedActionView for AISettingsPageView {
                             manager.set_custom_key(removed.name, None, ctx);
                         });
                     }
-                    self.page = Self::build_page(self.active_subpage, ctx);
+                    self.page = Self::build_page(
+                        self.active_subpage,
+                        self.provider_editor_error_state.clone(),
+                        ctx,
+                    );
                     ctx.notify();
                 }
             }
@@ -2837,6 +2864,7 @@ impl TypedActionView for AISettingsPageView {
                     .iter_mut()
                     .find(|provider| provider.local_id.as_deref() == Some(provider_id.as_str()))
                 {
+                    let provider_name = provider.name.clone();
                     match capability {
                         EditableCustomProviderCapability::Chat => {
                             provider.capabilities.chat = !provider.capabilities.chat;
@@ -2856,16 +2884,30 @@ impl TypedActionView for AISettingsPageView {
                         }
                     }
                     if let Err(error) = provider.validate() {
-                        report_error!(anyhow::anyhow!(
-                            "Refusing invalid local custom provider capability change: {error}"
-                        ));
+                        self.provider_editor_error_state.set(
+                            provider_id,
+                            provider_editor_error_message(&provider_name, error),
+                        );
+                        ctx.notify();
                         return;
                     }
-                    if let Err(error) = persist_custom_provider_configs(providers, ctx) {
-                        report_error!(error);
+                    if let Err(_error) = persist_custom_provider_configs(providers, ctx) {
+                        self.provider_editor_error_state.set(
+                            provider_id,
+                            provider_editor_error_message(
+                                &provider_name,
+                                "local settings could not be saved",
+                            ),
+                        );
+                        ctx.notify();
                         return;
                     }
-                    self.page = Self::build_page(self.active_subpage, ctx);
+                    self.provider_editor_error_state.clear(provider_id);
+                    self.page = Self::build_page(
+                        self.active_subpage,
+                        self.provider_editor_error_state.clone(),
+                        ctx,
+                    );
                     ctx.notify();
                 }
             }
@@ -5624,6 +5666,46 @@ impl SettingsWidget for CloudAgentComputerUseWidget {
     }
 }
 
+#[derive(Clone, Default)]
+struct ProviderEditorErrorState {
+    messages: Rc<RefCell<HashMap<String, String>>>,
+}
+
+impl ProviderEditorErrorState {
+    fn set(&self, provider_id: &str, message: impl Into<String>) {
+        self.messages
+            .borrow_mut()
+            .insert(provider_id.to_string(), message.into());
+    }
+
+    fn clear(&self, provider_id: &str) {
+        self.messages.borrow_mut().remove(provider_id);
+    }
+
+    fn message(&self, provider_id: &str) -> Option<String> {
+        self.messages.borrow().get(provider_id).cloned()
+    }
+}
+
+fn provider_editor_error_message(provider_name: &str, reason: impl std::fmt::Display) -> String {
+    let provider_name = provider_name.trim();
+    let provider_label = if provider_name.is_empty() {
+        "Local custom provider".to_string()
+    } else {
+        format!("Provider `{provider_name}`")
+    };
+    format!(
+        "{provider_label} could not be saved: {reason}. Fix the provider settings and try again."
+    )
+}
+
+fn provider_editor_duplicate_name_error(provider_name: &str) -> String {
+    provider_editor_error_message(
+        provider_name,
+        "a provider with this name already exists; choose a unique name",
+    )
+}
+
 #[derive(Clone)]
 struct LLMProviderEditorHandles {
     provider_id: String,
@@ -5632,6 +5714,7 @@ struct LLMProviderEditorHandles {
     // and merge only fields that this editor actually changed into live settings.
     initial_config: CustomProviderConfig,
     initial_api_key_fingerprint: Option<u64>,
+    editor_error_state: ProviderEditorErrorState,
     capabilities: CustomProviderCapabilities,
     name_editor: ViewHandle<EditorView>,
     base_url_editor: ViewHandle<EditorView>,
@@ -6504,9 +6587,10 @@ fn sync_llm_provider_editors_to_settings(
         ) {
             Ok(capabilities) => capabilities,
             Err(error) => {
-                report_error!(anyhow::anyhow!(
-                    "Keeping existing local custom provider after invalid capability input: {error}"
-                ));
+                provider.editor_error_state.set(
+                    &provider.provider_id,
+                    provider_editor_error_message(&name, error),
+                );
                 continue;
             }
         };
@@ -6521,9 +6605,10 @@ fn sync_llm_provider_editors_to_settings(
             Ok(Some(config)) => config,
             Ok(None) => continue,
             Err(error) => {
-                report_error!(anyhow::anyhow!(
-                    "Keeping invalid local custom provider unchanged: {error}"
-                ));
+                provider.editor_error_state.set(
+                    &provider.provider_id,
+                    provider_editor_error_message(&name, error),
+                );
                 continue;
             }
         };
@@ -6538,9 +6623,10 @@ fn sync_llm_provider_editors_to_settings(
             .enumerate()
             .any(|(index, existing)| index != live_index && existing.name == config.name)
         {
-            report_error!(anyhow::anyhow!(
-                "A local custom provider with that name already exists. Choose a unique provider name."
-            ));
+            provider.editor_error_state.set(
+                &provider.provider_id,
+                provider_editor_duplicate_name_error(&name),
+            );
             continue;
         }
 
@@ -6552,6 +6638,7 @@ fn sync_llm_provider_editors_to_settings(
             custom_provider_api_key_update(&api_key, provider.initial_api_key_fingerprint),
         ));
         configs[live_index] = config;
+        provider.editor_error_state.clear(&provider.provider_id);
     }
 
     let final_configs = match persist_custom_provider_configs(configs, ctx) {
@@ -6585,7 +6672,10 @@ fn sync_llm_provider_editors_to_settings(
 }
 
 impl LLMProvidersWidget {
-    fn new(ctx: &mut ViewContext<<Self as SettingsWidget>::View>) -> Self {
+    fn new(
+        editor_error_state: ProviderEditorErrorState,
+        ctx: &mut ViewContext<<Self as SettingsWidget>::View>,
+    ) -> Self {
         let provider_keys_ready =
             custom_provider_editing_allowed(ApiKeyManager::as_ref(ctx).keys_ready());
         let (providers, provider_ids_persisted) = ensure_custom_provider_ids(ctx);
@@ -6693,6 +6783,7 @@ impl LLMProvidersWidget {
                     initial_config: provider.clone(),
                     initial_api_key_fingerprint: (!initial_api_key.trim().is_empty())
                         .then(|| api_key_fingerprint(initial_api_key.trim())),
+                    editor_error_state: editor_error_state.clone(),
                     capabilities: provider.capabilities.clone(),
                     name_editor,
                     base_url_editor,
@@ -6881,38 +6972,40 @@ impl LLMProvidersWidget {
             provider_name.to_string()
         };
 
+        let mut title_content = Flex::column()
+            .with_spacing(4.)
+            .with_child(
+                Text::new_inline(title, appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                    .with_style(Properties::default().weight(Weight::Semibold))
+                    .with_color(appearance.theme().active_ui_text_color().into())
+                    .finish(),
+            )
+            .with_child(
+                Text::new_inline(
+                    "OpenAI-compatible API",
+                    appearance.ui_font_family(),
+                    CONTENT_FONT_SIZE,
+                )
+                .with_color(
+                    appearance
+                        .theme()
+                        .sub_text_color(appearance.theme().surface_1())
+                        .into(),
+                )
+                .finish(),
+            );
+        if let Some(error) = provider.editor_error_state.message(&provider.provider_id) {
+            title_content = title_content.with_child(
+                Text::new_inline(error, appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                    .with_color(appearance.theme().ui_error_color().into())
+                    .finish(),
+            );
+        }
+
         let header = Flex::row()
             .with_main_axis_size(MainAxisSize::Max)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
-            .with_child(
-                Expanded::new(
-                    1.,
-                    Flex::column()
-                        .with_spacing(4.)
-                        .with_child(
-                            Text::new_inline(title, appearance.ui_font_family(), CONTENT_FONT_SIZE)
-                                .with_style(Properties::default().weight(Weight::Semibold))
-                                .with_color(appearance.theme().active_ui_text_color().into())
-                                .finish(),
-                        )
-                        .with_child(
-                            Text::new_inline(
-                                "OpenAI-compatible API",
-                                appearance.ui_font_family(),
-                                CONTENT_FONT_SIZE,
-                            )
-                            .with_color(
-                                appearance
-                                    .theme()
-                                    .sub_text_color(appearance.theme().surface_1())
-                                    .into(),
-                            )
-                            .finish(),
-                        )
-                        .finish(),
-                )
-                .finish(),
-            )
+            .with_child(Expanded::new(1., title_content.finish()).finish())
             .with_child(ChildView::new(&provider.remove_button).finish())
             .finish();
 

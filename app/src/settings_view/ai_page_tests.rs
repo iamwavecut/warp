@@ -1,14 +1,16 @@
 use super::{
-    AgentAttributionToggleState, ProviderConnectionSignature, ProviderModelsValidationState,
-    api_key_fingerprint, custom_provider_api_key_update, custom_provider_editing_allowed,
-    custom_provider_editor_actions_allowed, custom_provider_ids_are_persisted,
-    custom_provider_key_is_still_referenced, derive_agent_attribution_toggle_state,
-    find_live_provider_index, merge_provider_editor_config_with_live,
-    normalize_custom_provider_ids, plan_custom_provider_key_migration,
-    provider_connection_is_valid, resolve_provider_connection,
+    AgentAttributionToggleState, ProviderConnectionSignature, ProviderEditorErrorState,
+    ProviderModelsValidationState, api_key_fingerprint, custom_provider_api_key_update,
+    custom_provider_editing_allowed, custom_provider_editor_actions_allowed,
+    custom_provider_ids_are_persisted, custom_provider_key_is_still_referenced,
+    derive_agent_attribution_toggle_state, find_live_provider_index,
+    merge_provider_editor_config_with_live, normalize_custom_provider_ids,
+    plan_custom_provider_key_migration, provider_connection_is_valid,
+    provider_editor_duplicate_name_error, provider_editor_error_message,
+    resolve_provider_connection,
 };
 use crate::settings::{
-    CustomProviderCapabilities, CustomProviderConfig,
+    CustomProviderCapabilities, CustomProviderConfig, CustomProviderConfigError,
     custom_provider_config_from_ui_with_capabilities,
 };
 use crate::workspaces::workspace::AdminEnablementSetting;
@@ -374,6 +376,41 @@ fn duplicate_provider_key_survives_rename_until_last_legacy_name_is_removed() {
         &providers_after_delete,
         "legacy"
     ));
+}
+
+#[test]
+fn provider_editor_error_state_is_visible_and_clears_after_success() {
+    let state = ProviderEditorErrorState::default();
+    state.set(
+        "provider-a",
+        provider_editor_error_message(
+            "provider-a",
+            CustomProviderConfigError::MissingTranscriptionModel,
+        ),
+    );
+
+    let visible = state
+        .message("provider-a")
+        .expect("validation error should be visible for its provider");
+    assert!(visible.contains("transcription"));
+    assert!(visible.contains("Fix the provider settings"));
+
+    state.clear("provider-a");
+    assert_eq!(state.message("provider-a"), None);
+}
+
+#[test]
+fn provider_editor_error_message_preserves_duplicate_and_route_reasons() {
+    let duplicate = provider_editor_duplicate_name_error("provider-a");
+    assert!(duplicate.contains("already exists"));
+    assert!(duplicate.contains("unique"));
+
+    let route = provider_editor_error_message(
+        "provider-a",
+        "selected chat model `chat-a` is not listed for the provider route",
+    );
+    assert!(route.contains("selected chat model"));
+    assert!(route.contains("provider route"));
 }
 
 #[test]
