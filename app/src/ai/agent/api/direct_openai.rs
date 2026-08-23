@@ -72,9 +72,8 @@ impl std::fmt::Display for CustomProviderRouteError {
 
 impl std::error::Error for CustomProviderRouteError {}
 
-/// Capabilities that the current direct OpenAI-compatible adapter can actually
-/// deliver. Embeddings and transcription remain disabled until their local
-/// adapters are implemented.
+/// Capabilities that the current direct OpenAI-compatible adapters can actually
+/// deliver. Embeddings remain disabled until a local adapter is implemented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EffectiveCustomProviderCapabilities {
     pub chat: bool,
@@ -109,7 +108,11 @@ pub(crate) fn effective_capabilities_for_config(
         tools: capabilities.tools,
         vision: capabilities.vision,
         embeddings: false,
-        transcription: false,
+        transcription: capabilities.transcription
+            && capabilities
+                .transcription_model
+                .as_deref()
+                .is_some_and(|model| !model.trim().is_empty()),
     }
 }
 
@@ -6233,6 +6236,94 @@ mod tests {
     }
 
     #[test]
+    fn transcription_route_fails_closed_for_missing_provider_capability_model_or_keys() {
+        let mut provider = CustomProviderConfig {
+            name: "selected-local".to_string(),
+            base_url: "http://localhost:1234/v1".to_string(),
+            models: vec!["chat-model".to_string()],
+            capabilities: CustomProviderCapabilities {
+                transcription: true,
+                transcription_model: Some("local-whisper".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(
+            resolve_custom_provider_transcription_route(
+                "custom/missing/chat-model",
+                &[provider.clone()],
+                &ApiKeys::default(),
+            )
+            .unwrap()
+            .is_none()
+        );
+
+        provider.capabilities.transcription = false;
+        assert!(
+            resolve_custom_provider_transcription_route(
+                "custom/selected-local/chat-model",
+                &[provider.clone()],
+                &ApiKeys::default(),
+            )
+            .unwrap()
+            .is_none()
+        );
+
+        provider.capabilities.transcription = true;
+        provider.capabilities.transcription_model = Some("  ".to_string());
+        assert!(
+            resolve_custom_provider_transcription_route(
+                "custom/selected-local/chat-model",
+                &[provider.clone()],
+                &ApiKeys::default(),
+            )
+            .unwrap()
+            .is_none()
+        );
+
+        assert_eq!(
+            resolve_custom_provider_transcription_route_with_readiness(
+                "custom/selected-local/chat-model",
+                &[provider],
+                &ApiKeys::default(),
+                false,
+            )
+            .unwrap_err(),
+            CustomProviderRouteError::KeysNotReady,
+        );
+    }
+
+    #[test]
+    fn transcription_route_preserves_keyless_env_var_resolution() {
+        let provider = CustomProviderConfig {
+            name: "keyless-local".to_string(),
+            base_url: "http://localhost:1234/v1".to_string(),
+            models: vec!["chat-model".to_string()],
+            api_key_env_var: Some("WARPOSS_TRANSCRIPTION_TEST_KEY_UNSET".to_string()),
+            capabilities: CustomProviderCapabilities {
+                transcription: true,
+                transcription_model: Some("local-whisper".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        if std::env::var_os("WARPOSS_TRANSCRIPTION_TEST_KEY_UNSET").is_some() {
+            return;
+        }
+
+        let route = resolve_custom_provider_transcription_route(
+            "custom/keyless-local/chat-model",
+            &[provider],
+            &ApiKeys::default(),
+        )
+        .unwrap()
+        .expect("configured keyless provider should remain usable");
+        assert_eq!(route.api_key, None);
+    }
+
+    #[test]
     fn configured_capabilities_are_retained_and_vision_is_enabled_by_the_local_adapter() {
         let route = CustomProviderRoute {
             provider_name: "local".to_string(),
@@ -6260,9 +6351,19 @@ mod tests {
                 tools: true,
                 vision: true,
                 embeddings: false,
-                transcription: false,
+                transcription: true,
             }
         );
+    }
+
+    #[test]
+    fn transcription_capability_is_not_effective_without_a_model() {
+        let capabilities = CustomProviderCapabilities {
+            transcription: true,
+            ..Default::default()
+        };
+
+        assert!(!effective_capabilities_for_config(&capabilities).transcription);
     }
 
     #[test]

@@ -28,7 +28,8 @@ use crate::settings::{
     MemoryEnabled, NLDInTerminalEnabled, NaturalLanguageAutosuggestionsEnabled,
     RuleSuggestionsEnabled, ShouldRenderCLIAgentToolbar,
     ShouldRenderUseAgentToolbarForUserCommands, ShowAgentTips, ShowConversationHistory,
-    ShowHintText, ThinkingDisplayMode, custom_provider_capabilities_from_ui,
+    ShowHintText, ThinkingDisplayMode,
+    custom_provider_capabilities_from_ui_with_transcription_model,
     custom_provider_config_from_ui_with_capabilities, normalize_custom_provider_env_var,
     ranked_custom_provider_model_suggestions,
 };
@@ -5636,6 +5637,7 @@ struct LLMProviderEditorHandles {
     api_key_editor: ViewHandle<EditorView>,
     api_key_env_var_editor: ViewHandle<EditorView>,
     context_window_editor: ViewHandle<EditorView>,
+    transcription_model_editor: ViewHandle<EditorView>,
     chat_toggle: SwitchStateHandle,
     tools_toggle: SwitchStateHandle,
     vision_toggle: SwitchStateHandle,
@@ -6433,6 +6435,9 @@ fn merge_provider_editor_config_with_live(
     if edited.capabilities.transcription == initial.capabilities.transcription {
         edited.capabilities.transcription = live.capabilities.transcription;
     }
+    if edited.capabilities.transcription_model == initial.capabilities.transcription_model {
+        edited.capabilities.transcription_model = live.capabilities.transcription_model.clone();
+    }
     if edited.capabilities.context_window_tokens == initial.capabilities.context_window_tokens {
         edited.capabilities.context_window_tokens = live.capabilities.context_window_tokens;
     }
@@ -6482,12 +6487,17 @@ fn sync_llm_provider_editors_to_settings(
         let api_key_env_var = provider.api_key_env_var_editor.as_ref(ctx).buffer_text(ctx);
         let api_key = provider.api_key_editor.as_ref(ctx).buffer_text(ctx);
         let context_window_tokens = provider.context_window_editor.as_ref(ctx).buffer_text(ctx);
-        let capabilities = match custom_provider_capabilities_from_ui(
+        let transcription_model = provider
+            .transcription_model_editor
+            .as_ref(ctx)
+            .buffer_text(ctx);
+        let capabilities = match custom_provider_capabilities_from_ui_with_transcription_model(
             provider.capabilities.chat,
             provider.capabilities.tools,
             provider.capabilities.vision,
             provider.capabilities.embeddings,
             provider.capabilities.transcription,
+            Some(&transcription_model),
             &context_window_tokens,
         ) {
             Ok(capabilities) => capabilities,
@@ -6621,6 +6631,18 @@ impl LLMProvidersWidget {
                     false,
                     ctx,
                 );
+                let transcription_model_editor = create_llm_provider_editor(
+                    provider
+                        .capabilities
+                        .transcription_model
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_string(),
+                    "e.g. whisper-1",
+                    false,
+                    false,
+                    ctx,
+                );
                 let chat_toggle = SwitchStateHandle::default();
                 let tools_toggle = SwitchStateHandle::default();
                 let vision_toggle = SwitchStateHandle::default();
@@ -6671,6 +6693,7 @@ impl LLMProvidersWidget {
                     api_key_editor,
                     api_key_env_var_editor,
                     context_window_editor,
+                    transcription_model_editor,
                     chat_toggle,
                     tools_toggle,
                     vision_toggle,
@@ -6689,6 +6712,7 @@ impl LLMProvidersWidget {
                     provider.api_key_editor.clone(),
                     provider.api_key_env_var_editor.clone(),
                     provider.context_window_editor.clone(),
+                    provider.transcription_model_editor.clone(),
                 ] {
                     editor.update(ctx, |editor, ctx| {
                         editor.set_interaction_state(InteractionState::Disabled, ctx);
@@ -6707,6 +6731,7 @@ impl LLMProvidersWidget {
                 provider.api_key_editor.clone(),
                 provider.api_key_env_var_editor.clone(),
                 provider.context_window_editor.clone(),
+                provider.transcription_model_editor.clone(),
             ] {
                 let providers = editor_handles.clone();
                 ctx.subscribe_to_view(&editor, move |_, _, event, ctx| {
@@ -6914,9 +6939,14 @@ impl LLMProvidersWidget {
                     "Context window (tokens)",
                     provider.context_window_editor.clone(),
                 ))
+                .with_child(Self::render_editor_input(
+                    appearance,
+                    "Transcription model",
+                    provider.transcription_model_editor.clone(),
+                ))
                 .with_child(
                     Text::new_inline(
-                        "Configured capabilities are saved locally. Vision, embeddings, and transcription remain unavailable until their local adapters are implemented.",
+                        "Configured capabilities and the transcription model are saved locally. Voice input uses the selected custom provider route.",
                         appearance.ui_font_family(),
                         CONTENT_FONT_SIZE,
                     )
@@ -6978,8 +7008,8 @@ impl LLMProvidersWidget {
                 ))
                 .with_child(Self::render_capability_toggle(
                     appearance,
-                    "Transcription (adapter pending)",
-                    "Stored as provider intent; not advertised by this build yet.",
+                    "Transcription",
+                    "Uses /audio/transcriptions with the configured model.",
                     provider.capabilities.transcription,
                     provider.transcription_toggle.clone(),
                     !self.provider_editing_enabled,

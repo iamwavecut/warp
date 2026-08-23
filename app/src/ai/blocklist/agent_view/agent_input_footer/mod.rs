@@ -65,7 +65,7 @@ use ai::document::{AIDocumentId, AIDocumentVersion};
 use parking_lot::FairMutex;
 use pathfinder_color::ColorU;
 use pathfinder_geometry::vector::Vector2F;
-use settings::ToggleableSetting;
+use settings::{Setting as _, ToggleableSetting};
 #[cfg(not(target_family = "wasm"))]
 use std::env;
 #[cfg(not(target_family = "wasm"))]

@@ -213,8 +213,16 @@ fn custom_provider_capabilities_from_ui_rejects_invalid_context_window() {
         .expect_err("tiny context window should be rejected before saving settings");
     assert!(error.to_string().contains("context window"));
 
-    let capabilities = custom_provider_capabilities_from_ui(true, false, true, true, true, "")
-        .expect("empty context window means use the adapter fallback");
+    let capabilities = custom_provider_capabilities_from_ui_with_transcription_model(
+        true,
+        false,
+        true,
+        true,
+        true,
+        Some("local-whisper"),
+        "",
+    )
+    .expect("empty context window means use the adapter fallback");
     assert!(capabilities.chat);
     assert!(!capabilities.tools);
     assert!(capabilities.vision);

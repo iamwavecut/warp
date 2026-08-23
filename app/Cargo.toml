@@ -436,6 +436,7 @@ completions_v2 = [
 cross_repo_context = []
 codebase_index_persistence = ["full_source_code_embedding"]
 default = [
+    "voice_input",
     "agent_mode",
     "render_continuous_block_selections_with_single_border",
     "external_agent_mode_context",

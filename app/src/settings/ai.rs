@@ -38,9 +38,9 @@ pub const CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS: u32 = 256;
 ///
 /// This is deliberately provider-wide for now. When a single endpoint exposes
 /// models with different capabilities, configure separate provider entries
-/// with distinct local names. The direct adapter computes effective
-/// capabilities separately so configuring a future adapter never creates a
-/// false UI promise today.
+/// with distinct local names. Direct adapters compute effective capabilities
+/// separately so configuring an unsupported capability never creates a false
+/// UI promise.
 #[derive(
     Clone,
     Debug,
@@ -1951,8 +1951,20 @@ impl AISettings {
         self.is_active_ai_enabled(app) && *self.intelligent_autosuggestions_enabled_internal
     }
 
-    pub fn is_voice_input_enabled(&self, _app: &warpui::AppContext) -> bool {
-        false
+    pub fn is_voice_input_enabled(&self, app: &warpui::AppContext) -> bool {
+        let enabled_in_settings = *self.voice_input_enabled_internal;
+        #[cfg(all(feature = "voice_input", not(test)))]
+        {
+            return enabled_in_settings
+                && crate::voice::transcriber::VoiceTranscriber::as_ref(app)
+                    .transcriber()
+                    .is_some();
+        }
+        #[cfg(any(not(feature = "voice_input"), test))]
+        {
+            let _ = app;
+            enabled_in_settings
+        }
     }
 
     /// Returns `true` if input autodetection is enabled.

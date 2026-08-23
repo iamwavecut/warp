@@ -146,7 +146,7 @@ use ai::agent_conversations_model::AgentConversationsModel;
 use ai::agent_management::AgentNotificationsModel;
 use ai::blocklist::{BlocklistAIHistoryModel, BlocklistAIPermissions};
 use ai::execution_profiles::editor::ExecutionProfileEditorManager;
-use ai::execution_profiles::profiles::AIExecutionProfilesModel;
+use ai::execution_profiles::profiles::{AIExecutionProfilesModel, AIExecutionProfilesModelEvent};
 use ai::persisted_workspace::PersistedWorkspace;
 use auth::auth_state::AuthStateProvider;
 use auth::{auth_manager::AuthManager, auth_state::AuthState};
@@ -193,12 +193,14 @@ use window_settings::WindowSettings;
 use workflows::manager::WorkflowManager;
 
 use crate::ai::AIRequestUsageModel;
+#[cfg(feature = "voice_input")]
+use crate::ai::agent::api::direct_openai;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::ambient_agents::github_auth_notifier::GitHubAuthNotifier;
 use crate::ai::document::ai_document_model::AIDocumentModel;
 use crate::ai::facts::manager::AIFactManager;
 use crate::ai::harness_availability::HarnessAvailabilityModel;
-use crate::ai::llms::LLMPreferences;
+use crate::ai::llms::{LLMPreferences, LLMPreferencesEvent};
 use crate::ai::mcp::MCPGalleryManager;
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::ai::outline::RepoOutlines;
@@ -241,6 +243,8 @@ use crate::terminal::{AudibleBell, History};
 use crate::undo_close::UndoCloseStack;
 use crate::user_config::WarpConfig;
 use crate::vim_registers::VimRegisters;
+#[cfg(feature = "voice_input")]
+use crate::voice::transcriber::VoiceTranscriber;
 use crate::warp_managed_paths_watcher::{WarpManagedPathsWatcher, ensure_warp_watch_roots_exist};
 use crate::workflows::aliases::WorkflowAliases;
 use crate::workflows::local_workflows::LocalWorkflows;
@@ -1003,6 +1007,28 @@ pub struct UpdateQuakeModeEventArg {
     active_window_id: Option<WindowId>,
 }
 
+#[cfg(feature = "voice_input")]
+fn refresh_local_voice_transcriber(ctx: &mut AppContext) {
+    let selected_model_id = LLMPreferences::as_ref(ctx)
+        .get_active_base_model(ctx, None)
+        .id
+        .as_str()
+        .to_owned();
+    let settings = AISettings::as_ref(ctx);
+    let key_manager = ::ai::api_keys::ApiKeyManager::as_ref(ctx);
+    let route = direct_openai::resolve_custom_provider_transcription_route_with_readiness(
+        &selected_model_id,
+        &settings.custom_providers,
+        key_manager.keys(),
+        key_manager.keys_ready(),
+    )
+    .ok()
+    .flatten();
+    VoiceTranscriber::handle(ctx).update(ctx, |transcriber, _| {
+        transcriber.set_route(route);
+    });
+}
+
 pub(crate) fn initialize_app(
     launch_mode: &LaunchMode,
     mut timer: IntervalTimer,
@@ -1754,6 +1780,54 @@ pub(crate) fn initialize_app(
     }
 
     ctx.add_singleton_model(|ctx| AIExecutionProfilesModel::new(launch_mode, ctx));
+    #[cfg(feature = "voice_input")]
+    ctx.subscribe_to_model(&AIExecutionProfilesModel::handle(ctx), |_, event, ctx| {
+        if matches!(
+            event,
+            AIExecutionProfilesModelEvent::ProfileUpdated(_)
+                | AIExecutionProfilesModelEvent::UpdatedActiveProfile { .. }
+        ) {
+            refresh_local_voice_transcriber(ctx);
+        }
+    });
+    #[cfg(feature = "voice_input")]
+    ctx.add_singleton_model(|ctx| {
+        let selected_model_id = LLMPreferences::as_ref(ctx)
+            .get_active_base_model(ctx, None)
+            .id
+            .as_str()
+            .to_owned();
+        let settings = AISettings::as_ref(ctx);
+        let key_manager = ::ai::api_keys::ApiKeyManager::as_ref(ctx);
+        let route = direct_openai::resolve_custom_provider_transcription_route_with_readiness(
+            &selected_model_id,
+            &settings.custom_providers,
+            key_manager.keys(),
+            key_manager.keys_ready(),
+        )
+        .ok()
+        .flatten();
+        VoiceTranscriber::from_route(route)
+    });
+    #[cfg(feature = "voice_input")]
+    ctx.subscribe_to_model(&LLMPreferences::handle(ctx), |_, event, ctx| {
+        if matches!(
+            event,
+            LLMPreferencesEvent::UpdatedActiveAgentModeLLM
+                | LLMPreferencesEvent::UpdatedAvailableLLMs
+        ) {
+            refresh_local_voice_transcriber(ctx);
+        }
+    });
+    #[cfg(feature = "voice_input")]
+    {
+        ctx.subscribe_to_model(&AISettings::handle(ctx), |_, _, ctx| {
+            refresh_local_voice_transcriber(ctx);
+        });
+        ctx.subscribe_to_model(&::ai::api_keys::ApiKeyManager::handle(ctx), |_, _, ctx| {
+            refresh_local_voice_transcriber(ctx);
+        });
+    }
 
     ctx.add_singleton_model(DefaultTerminal::new);
 
