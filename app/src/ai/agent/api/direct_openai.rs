@@ -22,6 +22,9 @@ use crate::settings::{
     CustomProviderCapabilities, CustomProviderConfig, custom_provider_name_is_unique,
     normalize_custom_provider_env_var,
 };
+use crate::util::image::{
+    MAX_IMAGE_COUNT_FOR_QUERY, MAX_IMAGE_SIZE_BYTES, is_supported_image_mime_type,
+};
 use ::ai::api_keys::ApiKeys;
 
 use super::ResponseStream;
@@ -69,8 +72,8 @@ impl std::fmt::Display for CustomProviderRouteError {
 impl std::error::Error for CustomProviderRouteError {}
 
 /// Capabilities that the current direct OpenAI-compatible adapter can actually
-/// deliver. Configured vision, embeddings, and transcription remain disabled
-/// until their local adapters are implemented.
+/// deliver. Embeddings and transcription remain disabled until their local
+/// adapters are implemented.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EffectiveCustomProviderCapabilities {
     pub chat: bool,
@@ -103,7 +106,7 @@ pub(crate) fn effective_capabilities_for_config(
     EffectiveCustomProviderCapabilities {
         chat: capabilities.chat,
         tools: capabilities.tools,
-        vision: false,
+        vision: capabilities.vision,
         embeddings: false,
         transcription: false,
     }
@@ -274,10 +277,32 @@ struct ChatCompletionRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+enum ChatMessageContent {
+    Text(String),
+    Parts(Vec<OpenAIContentPart>),
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OpenAIContentPart {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_url: Option<OpenAIImageUrl>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OpenAIImageUrl {
+    url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct ChatMessage {
     role: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    content: Option<ChatMessageContent>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     tool_calls: Vec<OpenAIToolCall>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -288,7 +313,7 @@ impl ChatMessage {
     fn system(content: String) -> Self {
         Self {
             role: "system",
-            content: Some(content),
+            content: Some(ChatMessageContent::Text(content)),
             tool_calls: vec![],
             tool_call_id: None,
         }
@@ -297,7 +322,7 @@ impl ChatMessage {
     fn user(content: String) -> Self {
         Self {
             role: "user",
-            content: Some(content),
+            content: Some(ChatMessageContent::Text(content)),
             tool_calls: vec![],
             tool_call_id: None,
         }
@@ -306,7 +331,7 @@ impl ChatMessage {
     fn assistant(content: String) -> Self {
         Self {
             role: "assistant",
-            content: Some(content),
+            content: Some(ChatMessageContent::Text(content)),
             tool_calls: vec![],
             tool_call_id: None,
         }
@@ -328,10 +353,27 @@ impl ChatMessage {
     fn tool(tool_call_id: String, content: String) -> Self {
         Self {
             role: "tool",
-            content: Some(content),
+            content: Some(ChatMessageContent::Text(content)),
             tool_calls: vec![],
             tool_call_id: Some(tool_call_id),
         }
+    }
+
+    fn user_parts(parts: Vec<OpenAIContentPart>) -> Self {
+        Self {
+            role: "user",
+            content: Some(ChatMessageContent::Parts(parts)),
+            tool_calls: vec![],
+            tool_call_id: None,
+        }
+    }
+}
+
+fn text_content_part(text: String) -> OpenAIContentPart {
+    OpenAIContentPart {
+        kind: "text",
+        text: Some(text),
+        image_url: None,
     }
 }
 
@@ -693,9 +735,12 @@ pub(super) async fn generate(
     if !effective_capabilities.chat {
         return Ok(error_stream(chat_disabled_message(&route.provider_name)));
     }
-    if !effective_capabilities.vision && input_contains_image(&params.input) {
+    if !effective_capabilities.vision
+        && (input_contains_image(&params.input) || tasks_contain_image(&params.tasks))
+    {
         return Ok(error_stream(vision_disabled_message(&route.provider_name)));
     }
+    validate_openai_contexts(&params, effective_capabilities.vision)?;
 
     let task_id = response_task_id(&params);
     let needs_create_task = should_create_task(&params, &task_id);
@@ -718,11 +763,12 @@ pub(super) async fn generate(
     let long_running_shell_controls_advertised =
         supports_complete_long_running_shell_family(&advertised_supported_tools);
     let input_messages = api_messages_from_inputs(&task_id, &request_id, &params.input);
-    let chat_messages = openai_messages_from_params_with_tool_policy(
+    let chat_messages = openai_messages_from_params_with_tool_policy_and_vision(
         &params,
         &tools,
         route.context_char_budget(),
         long_running_shell_controls_advertised,
+        effective_capabilities.vision,
     )?;
     log::info!(
         "Using OpenAI-compatible custom provider route: provider={}, model={}, advertised_tools={}, task_count={}, input_count={}, chat_message_count={}",
@@ -791,7 +837,7 @@ fn chat_disabled_message(provider_name: &str) -> String {
 
 fn vision_disabled_message(provider_name: &str) -> String {
     format!(
-        "Custom provider `{provider_name}` received image context, but vision is not implemented by the local adapter yet; choose a text-only request or another local model."
+        "Custom provider `{provider_name}` received image context, but vision is disabled in its local capability configuration; enable vision or choose a text-only request."
     )
 }
 
@@ -810,9 +856,9 @@ fn input_contains_image(input: &[AIAgentInput]) -> bool {
             | AIAgentInput::InvokeSkill { context, .. }
             | AIAgentInput::StartFromAmbientRunPrompt { context, .. }
             | AIAgentInput::ActionResult { context, .. }
-            | AIAgentInput::PassiveSuggestionResult { context, .. } => Some(context),
-            AIAgentInput::TriggerPassiveSuggestion { .. }
-            | AIAgentInput::MessagesReceivedFromAgents { .. }
+            | AIAgentInput::PassiveSuggestionResult { context, .. }
+            | AIAgentInput::TriggerPassiveSuggestion { context, .. } => Some(context),
+            AIAgentInput::MessagesReceivedFromAgents { .. }
             | AIAgentInput::EventsFromAgents { .. }
             | AIAgentInput::OrchestrationConfigUpdate { .. } => None,
         };
@@ -821,6 +867,161 @@ fn input_contains_image(input: &[AIAgentInput]) -> bool {
                 .iter()
                 .any(|item| matches!(item, AIAgentContext::Image(_)))
         })
+    })
+}
+
+fn tasks_contain_image(tasks: &[api::Task]) -> bool {
+    tasks.iter().any(|task| {
+        task.messages
+            .iter()
+            .any(|message| match message.message.as_ref() {
+                Some(api::message::Message::UserQuery(query)) => query
+                    .context
+                    .as_ref()
+                    .is_some_and(|context| !context.images.is_empty()),
+                Some(api::message::Message::SystemQuery(query)) => query
+                    .context
+                    .as_ref()
+                    .is_some_and(|context| !context.images.is_empty()),
+                Some(api::message::Message::ToolCallResult(result)) => result
+                    .context
+                    .as_ref()
+                    .is_some_and(|context| !context.images.is_empty()),
+                _ => false,
+            })
+    })
+}
+
+fn validate_openai_contexts(
+    params: &super::RequestParams,
+    vision_enabled: bool,
+) -> Result<(), anyhow::Error> {
+    let mut image_count = 0;
+    for item in &params.input {
+        let context = match item {
+            AIAgentInput::UserQuery { context, .. }
+            | AIAgentInput::AutoCodeDiffQuery { context, .. }
+            | AIAgentInput::ResumeConversation { context }
+            | AIAgentInput::InitProjectRules { context, .. }
+            | AIAgentInput::CreateEnvironment { context, .. }
+            | AIAgentInput::CreateNewProject { context, .. }
+            | AIAgentInput::CloneRepository { context, .. }
+            | AIAgentInput::CodeReview { context, .. }
+            | AIAgentInput::SummarizeConversation { context, .. }
+            | AIAgentInput::InvokeSkill { context, .. }
+            | AIAgentInput::StartFromAmbientRunPrompt { context, .. }
+            | AIAgentInput::ActionResult { context, .. }
+            | AIAgentInput::PassiveSuggestionResult { context, .. }
+            | AIAgentInput::TriggerPassiveSuggestion { context, .. } => Some(context),
+            AIAgentInput::MessagesReceivedFromAgents { .. }
+            | AIAgentInput::EventsFromAgents { .. }
+            | AIAgentInput::OrchestrationConfigUpdate { .. } => None,
+        };
+        if let Some(context) = context {
+            validate_openai_context(context, vision_enabled, &mut image_count)?;
+        }
+    }
+
+    for task in &params.tasks {
+        for message in &task.messages {
+            let context = match message.message.as_ref() {
+                Some(api::message::Message::UserQuery(query)) => query.context.as_ref(),
+                Some(api::message::Message::SystemQuery(query)) => query.context.as_ref(),
+                Some(api::message::Message::ToolCallResult(result)) => result.context.as_ref(),
+                _ => None,
+            };
+            if let Some(context) = context {
+                let context = super::convert_conversation::convert_input_context(Some(context));
+                validate_openai_context(&context, vision_enabled, &mut image_count)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_openai_context(
+    context: &[AIAgentContext],
+    vision_enabled: bool,
+    image_count: &mut usize,
+) -> Result<(), anyhow::Error> {
+    for item in context {
+        match item {
+            AIAgentContext::Image(image) => {
+                if !vision_enabled {
+                    return Err(anyhow::anyhow!(
+                        "OpenAI-compatible vision is disabled for this local provider"
+                    ));
+                }
+                *image_count = (*image_count).saturating_add(1);
+                if *image_count > MAX_IMAGE_COUNT_FOR_QUERY {
+                    return Err(anyhow::anyhow!(
+                        "OpenAI-compatible image context exceeds the local image count limit"
+                    ));
+                }
+                validate_image_context(image)?;
+            }
+            AIAgentContext::File(file) => validate_file_context(file)?,
+            AIAgentContext::ProjectRules { active_rules, .. } => {
+                for file in active_rules {
+                    validate_file_context(file)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_file_context(file: &crate::ai::agent::FileContext) -> Result<(), anyhow::Error> {
+    if matches!(file.content, AnyFileContent::BinaryContent(_)) {
+        return Err(anyhow::anyhow!(
+            "OpenAI-compatible local adapter cannot send binary file context"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_image_context(image: &crate::ai::agent::ImageContext) -> Result<(), anyhow::Error> {
+    if !is_supported_image_mime_type(image.mime_type.as_str()) {
+        return Err(anyhow::anyhow!(
+            "OpenAI-compatible local adapter received an unsupported image MIME type"
+        ));
+    }
+
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(image.data.as_bytes())
+        .map_err(|_| {
+            anyhow::anyhow!("OpenAI-compatible local adapter received invalid image base64")
+        })?;
+    if base64::engine::general_purpose::STANDARD.encode(&decoded) != image.data {
+        return Err(anyhow::anyhow!(
+            "OpenAI-compatible local adapter received non-canonical image base64"
+        ));
+    }
+    if decoded.len() > MAX_IMAGE_SIZE_BYTES {
+        return Err(anyhow::anyhow!(
+            "OpenAI-compatible image context exceeds the local image byte limit"
+        ));
+    }
+    image::load_from_memory(&decoded).map_err(|_| {
+        anyhow::anyhow!(
+            "OpenAI-compatible local adapter received image data that cannot be decoded"
+        )
+    })?;
+    Ok(())
+}
+
+fn image_content_part(
+    image: &crate::ai::agent::ImageContext,
+) -> Result<OpenAIContentPart, anyhow::Error> {
+    validate_image_context(image)?;
+    Ok(OpenAIContentPart {
+        kind: "image_url",
+        text: None,
+        image_url: Some(OpenAIImageUrl {
+            url: format!("data:{};base64,{}", image.mime_type, image.data),
+        }),
     })
 }
 
@@ -1261,6 +1462,22 @@ fn openai_messages_from_params_with_tool_policy(
     context_char_budget: usize,
     long_running_shell_controls_advertised: bool,
 ) -> Result<Vec<ChatMessage>, anyhow::Error> {
+    openai_messages_from_params_with_tool_policy_and_vision(
+        params,
+        tools,
+        context_char_budget,
+        long_running_shell_controls_advertised,
+        true,
+    )
+}
+
+fn openai_messages_from_params_with_tool_policy_and_vision(
+    params: &super::RequestParams,
+    tools: &[OpenAITool],
+    context_char_budget: usize,
+    long_running_shell_controls_advertised: bool,
+    vision_enabled: bool,
+) -> Result<Vec<ChatMessage>, anyhow::Error> {
     let mut messages = vec![ChatMessage::system(system_prompt(
         params,
         tools,
@@ -1268,41 +1485,56 @@ fn openai_messages_from_params_with_tool_policy(
     ))];
 
     for task in &params.tasks {
-        messages.extend(openai_messages_from_api_messages_with_tool_policy(
-            &task.messages,
-            long_running_shell_controls_advertised,
-        )?);
+        messages.extend(
+            openai_messages_from_api_messages_with_tool_policy_and_vision(
+                &task.messages,
+                long_running_shell_controls_advertised,
+                context_char_budget,
+                vision_enabled,
+            )?,
+        );
     }
 
-    messages.extend(openai_messages_from_inputs(
+    messages.extend(openai_messages_from_inputs_with_vision(
         &params.input,
         context_char_budget,
-    ));
+        vision_enabled,
+    )?);
     Ok(messages)
 }
 
-fn openai_messages_from_api_messages_with_tool_policy(
+fn openai_messages_from_api_messages_with_tool_policy_and_vision(
     messages: &[api::Message],
     long_running_shell_controls_advertised: bool,
+    context_char_budget: usize,
+    vision_enabled: bool,
 ) -> Result<Vec<ChatMessage>, anyhow::Error> {
     let mut output = Vec::new();
     let mut index = 0;
     while index < messages.len() {
         let Some(api::message::Message::ToolCall(_)) = messages[index].message.as_ref() else {
-            output.extend(openai_messages_from_api_message_with_tool_policy(
-                &messages[index],
-                long_running_shell_controls_advertised,
-            )?);
+            output.extend(
+                openai_messages_from_api_message_with_tool_policy_and_vision(
+                    &messages[index],
+                    long_running_shell_controls_advertised,
+                    context_char_budget,
+                    vision_enabled,
+                )?,
+            );
             index += 1;
             continue;
         };
 
         let request_id = &messages[index].request_id;
         if request_id.is_empty() {
-            output.extend(openai_messages_from_api_message_with_tool_policy(
-                &messages[index],
-                long_running_shell_controls_advertised,
-            )?);
+            output.extend(
+                openai_messages_from_api_message_with_tool_policy_and_vision(
+                    &messages[index],
+                    long_running_shell_controls_advertised,
+                    context_char_budget,
+                    vision_enabled,
+                )?,
+            );
             index += 1;
             continue;
         }
@@ -1328,38 +1560,55 @@ fn openai_messages_from_api_messages_with_tool_policy(
     Ok(output)
 }
 
-fn openai_messages_from_api_message_with_tool_policy(
+fn openai_messages_from_api_message_with_tool_policy_and_vision(
     message: &api::Message,
     long_running_shell_controls_advertised: bool,
+    context_char_budget: usize,
+    vision_enabled: bool,
 ) -> Result<Vec<ChatMessage>, anyhow::Error> {
     Ok(match message.message.as_ref() {
         Some(api::message::Message::UserQuery(query)) => {
-            vec![ChatMessage::user(with_context(
+            let context =
+                super::convert_conversation::convert_input_context(query.context.as_ref());
+            vec![user_message_with_context(
                 query.query.clone(),
-                query
-                    .context
-                    .as_ref()
-                    .map(|_| "Context was supplied by Warp."),
-            ))]
+                &context,
+                context_char_budget,
+                vision_enabled,
+            )?]
         }
         Some(api::message::Message::SystemQuery(query)) => {
-            let content = match &query.r#type {
-                Some(api::message::system_query::Type::AutoCodeDiff(query)) => query.query.clone(),
+            let query_context = query.context.as_ref();
+            let (content, context) = match &query.r#type {
+                Some(api::message::system_query::Type::AutoCodeDiff(query)) => {
+                    (query.query.clone(), query_context)
+                }
                 Some(api::message::system_query::Type::CreateNewProject(query)) => {
-                    query.query.clone()
+                    (query.query.clone(), query_context)
                 }
                 Some(api::message::system_query::Type::CloneRepository(query)) => {
-                    format!("Clone {}", query.url)
+                    (format!("Clone {}", query.url), query_context)
                 }
                 Some(api::message::system_query::Type::SummarizeConversation(query)) => {
-                    query.prompt.clone()
+                    (query.prompt.clone(), query_context)
                 }
-                _ => String::new(),
+                _ => (String::new(), query_context),
             };
-            (!content.is_empty())
-                .then(|| ChatMessage::user(content))
-                .into_iter()
-                .collect()
+            let context = super::convert_conversation::convert_input_context(context);
+            if content.is_empty()
+                && !context
+                    .iter()
+                    .any(|item| matches!(item, AIAgentContext::Image(_)))
+            {
+                Vec::new()
+            } else {
+                vec![user_message_with_context(
+                    content,
+                    &context,
+                    context_char_budget,
+                    vision_enabled,
+                )?]
+            }
         }
         Some(api::message::Message::AgentOutput(output)) => (!output.text.is_empty())
             .then(|| ChatMessage::assistant(output.text.clone()))
@@ -1404,41 +1653,51 @@ fn historical_tool_call_conversion_error(tool_call: &api::message::ToolCall) -> 
     }
 }
 
-fn openai_messages_from_inputs(
+fn openai_messages_from_inputs_with_vision(
     input: &[AIAgentInput],
     context_char_budget: usize,
-) -> Vec<ChatMessage> {
+    vision_enabled: bool,
+) -> Result<Vec<ChatMessage>, anyhow::Error> {
     let mut messages = Vec::new();
     for item in input {
         match item {
             AIAgentInput::UserQuery { query, context, .. } => {
-                messages.push(ChatMessage::user(with_context(
+                messages.push(user_message_with_context(
                     query.clone(),
-                    context_text(context, context_char_budget).as_deref(),
-                )));
+                    context,
+                    context_char_budget,
+                    vision_enabled,
+                )?);
             }
             AIAgentInput::AutoCodeDiffQuery { query, context }
             | AIAgentInput::CreateNewProject { query, context } => {
-                messages.push(ChatMessage::user(with_context(
+                messages.push(user_message_with_context(
                     query.clone(),
-                    context_text(context, context_char_budget).as_deref(),
-                )));
+                    context,
+                    context_char_budget,
+                    vision_enabled,
+                )?);
             }
             AIAgentInput::CloneRepository {
                 clone_repo_url,
                 context,
             } => {
-                messages.push(ChatMessage::user(with_context(
+                messages.push(user_message_with_context(
                     clone_repo_url.clone().into_url(),
-                    context_text(context, context_char_budget).as_deref(),
-                )));
+                    context,
+                    context_char_budget,
+                    vision_enabled,
+                )?);
             }
-            AIAgentInput::SummarizeConversation { prompt, .. } => {
-                messages.push(ChatMessage::user(
+            AIAgentInput::SummarizeConversation { prompt, context } => {
+                messages.push(user_message_with_context(
                     prompt
                         .clone()
                         .unwrap_or_else(|| "Summarize this conversation.".to_string()),
-                ));
+                    context,
+                    context_char_budget,
+                    vision_enabled,
+                )?);
             }
             AIAgentInput::InvokeSkill {
                 skill,
@@ -1450,13 +1709,15 @@ fn openai_messages_from_inputs(
                     .map(|query| query.query.clone())
                     .filter(|query| !query.is_empty())
                     .unwrap_or_else(|| format!("Use the {} skill.", skill.name));
-                messages.push(ChatMessage::user(with_context(
+                messages.push(user_message_with_context(
                     format!(
                         "Invoke Warp skill `{}`.\n\nSkill instructions:\n{}\n\nUser request:\n{}",
                         skill.name, skill.content, query
                     ),
-                    context_text(context, context_char_budget).as_deref(),
-                )));
+                    context,
+                    context_char_budget,
+                    vision_enabled,
+                )?);
             }
             AIAgentInput::ActionResult { result, .. } => {
                 messages.push(ChatMessage::tool(
@@ -1517,12 +1778,88 @@ fn openai_messages_from_inputs(
             | AIAgentInput::CodeReview { .. }
             | AIAgentInput::StartFromAmbientRunPrompt { .. } => {
                 if let Some(query) = item.user_query() {
-                    messages.push(ChatMessage::user(query));
+                    let context = match item {
+                        AIAgentInput::ResumeConversation { context }
+                        | AIAgentInput::InitProjectRules { context, .. }
+                        | AIAgentInput::CreateEnvironment { context, .. }
+                        | AIAgentInput::TriggerPassiveSuggestion { context, .. }
+                        | AIAgentInput::CodeReview { context, .. }
+                        | AIAgentInput::StartFromAmbientRunPrompt { context, .. } => context,
+                        _ => unreachable!(),
+                    };
+                    messages.push(user_message_with_context(
+                        query,
+                        context,
+                        context_char_budget,
+                        vision_enabled,
+                    )?);
+                } else if let Some(context) = match item {
+                    AIAgentInput::ResumeConversation { context }
+                    | AIAgentInput::InitProjectRules { context, .. }
+                    | AIAgentInput::CreateEnvironment { context, .. }
+                    | AIAgentInput::TriggerPassiveSuggestion { context, .. }
+                    | AIAgentInput::CodeReview { context, .. }
+                    | AIAgentInput::StartFromAmbientRunPrompt { context, .. } => context
+                        .iter()
+                        .any(|item| matches!(item, AIAgentContext::Image(_)))
+                        .then_some(context),
+                    _ => None,
+                } {
+                    messages.push(user_message_with_context(
+                        "Attached local context".to_string(),
+                        context,
+                        context_char_budget,
+                        vision_enabled,
+                    )?);
                 }
             }
         }
     }
-    messages
+    Ok(messages)
+}
+
+fn user_message_with_context(
+    query: String,
+    context: &[AIAgentContext],
+    context_char_budget: usize,
+    vision_enabled: bool,
+) -> Result<ChatMessage, anyhow::Error> {
+    let mut image_count = 0;
+    validate_openai_context(context, vision_enabled, &mut image_count)?;
+
+    if !context
+        .iter()
+        .any(|item| matches!(item, AIAgentContext::Image(_)))
+    {
+        return Ok(ChatMessage::user(with_context(
+            query,
+            context_text(context, context_char_budget).as_deref(),
+        )));
+    }
+
+    let mut parts = vec![text_content_part(query)];
+    let mut context_prefix_pending = true;
+    for item in context {
+        match item {
+            AIAgentContext::Image(image) => parts.push(image_content_part(image)?),
+            _ => {
+                let Some(text) = context_item_text(item, context_char_budget) else {
+                    continue;
+                };
+                let text = if context_prefix_pending {
+                    context_prefix_pending = false;
+                    format!("Warp context:\n{text}")
+                } else {
+                    text
+                };
+                parts.push(text_content_part(truncate_context_to(
+                    &text,
+                    context_char_budget,
+                )));
+            }
+        }
+    }
+    Ok(ChatMessage::user_parts(parts))
 }
 
 fn with_context(mut query: String, context: Option<&str>) -> String {
@@ -1535,88 +1872,10 @@ fn with_context(mut query: String, context: Option<&str>) -> String {
 }
 
 fn context_text(context: &[AIAgentContext], context_char_budget: usize) -> Option<String> {
-    let mut parts = Vec::new();
-    for item in context {
-        match item {
-            AIAgentContext::Directory {
-                pwd,
-                home_dir,
-                are_file_symbols_indexed,
-            } => parts.push(format!(
-                "Directory: pwd={}, home={}, indexed_symbols={}",
-                pwd.as_deref().unwrap_or("unknown"),
-                home_dir.as_deref().unwrap_or("unknown"),
-                are_file_symbols_indexed
-            )),
-            AIAgentContext::SelectedText(text) => {
-                parts.push(format!(
-                    "Selected text:\n{}",
-                    truncate_context_to(text, context_char_budget)
-                ));
-            }
-            AIAgentContext::ExecutionEnvironment(env) => {
-                parts.push(format!("Execution environment: {env:?}"));
-            }
-            AIAgentContext::CurrentTime { current_time } => {
-                parts.push(format!("Current time: {}", current_time.to_rfc3339()));
-            }
-            AIAgentContext::Image(image) => {
-                parts.push(format!(
-                    "Attached image: {} ({})",
-                    image.file_name, image.mime_type
-                ));
-            }
-            AIAgentContext::Codebase { path, name } => {
-                parts.push(format!("Codebase `{name}` at {path}"));
-            }
-            AIAgentContext::ProjectRules {
-                root_path,
-                active_rules,
-                additional_rule_paths,
-            } => {
-                let mut text = format!("Project rules for {root_path}:");
-                for rule in active_rules {
-                    text.push_str(&format!(
-                        "\n\n{}:\n{}",
-                        rule.file_name,
-                        file_context_content(rule, context_char_budget)
-                    ));
-                }
-                if !additional_rule_paths.is_empty() {
-                    text.push_str(&format!(
-                        "\nAdditional rule paths: {}",
-                        additional_rule_paths.join(", ")
-                    ));
-                }
-                parts.push(text);
-            }
-            AIAgentContext::File(file) => {
-                parts.push(format!(
-                    "File {}:\n{}",
-                    file.file_name,
-                    file_context_content(file, context_char_budget)
-                ));
-            }
-            AIAgentContext::Git { head, branch } => {
-                parts.push(format!(
-                    "Git: head={}, branch={}",
-                    head,
-                    branch.as_deref().unwrap_or("unknown")
-                ));
-            }
-            AIAgentContext::Skills { skills } => {
-                parts.push(format!("Available skills: {skills:?}"));
-            }
-            AIAgentContext::Block(block) => {
-                parts.push(format!(
-                    "Terminal block:\ncommand: {}\nexit_code: {}\noutput:\n{}",
-                    block.command,
-                    block.exit_code.value(),
-                    truncate_context_to(&block.output, context_char_budget)
-                ));
-            }
-        }
-    }
+    let parts = context
+        .iter()
+        .filter_map(|item| context_item_text(item, context_char_budget))
+        .collect::<Vec<_>>();
 
     if parts.is_empty() {
         None
@@ -1626,6 +1885,69 @@ fn context_text(context: &[AIAgentContext], context_char_budget: usize) -> Optio
             context_char_budget,
         ))
     }
+}
+
+fn context_item_text(item: &AIAgentContext, context_char_budget: usize) -> Option<String> {
+    Some(match item {
+        AIAgentContext::Directory {
+            pwd,
+            home_dir,
+            are_file_symbols_indexed,
+        } => format!(
+            "Directory: pwd={}, home={}, indexed_symbols={}",
+            pwd.as_deref().unwrap_or("unknown"),
+            home_dir.as_deref().unwrap_or("unknown"),
+            are_file_symbols_indexed
+        ),
+        AIAgentContext::SelectedText(text) => format!(
+            "Selected text:\n{}",
+            truncate_context_to(text, context_char_budget)
+        ),
+        AIAgentContext::ExecutionEnvironment(env) => format!("Execution environment: {env:?}"),
+        AIAgentContext::CurrentTime { current_time } => {
+            format!("Current time: {}", current_time.to_rfc3339())
+        }
+        AIAgentContext::Image(_) => return None,
+        AIAgentContext::Codebase { path, name } => format!("Codebase `{name}` at {path}"),
+        AIAgentContext::ProjectRules {
+            root_path,
+            active_rules,
+            additional_rule_paths,
+        } => {
+            let mut text = format!("Project rules for {root_path}:");
+            for rule in active_rules {
+                text.push_str(&format!(
+                    "\n\n{}:\n{}",
+                    rule.file_name,
+                    file_context_content(rule, context_char_budget)
+                ));
+            }
+            if !additional_rule_paths.is_empty() {
+                text.push_str(&format!(
+                    "\nAdditional rule paths: {}",
+                    additional_rule_paths.join(", ")
+                ));
+            }
+            text
+        }
+        AIAgentContext::File(file) => format!(
+            "File {}:\n{}",
+            file.file_name,
+            file_context_content(file, context_char_budget)
+        ),
+        AIAgentContext::Git { head, branch } => format!(
+            "Git: head={}, branch={}",
+            head,
+            branch.as_deref().unwrap_or("unknown")
+        ),
+        AIAgentContext::Skills { skills } => format!("Available skills: {skills:?}"),
+        AIAgentContext::Block(block) => format!(
+            "Terminal block:\ncommand: {}\nexit_code: {}\noutput:\n{}",
+            block.command,
+            block.exit_code.value(),
+            truncate_context_to(&block.output, context_char_budget)
+        ),
+    })
 }
 
 fn file_context_content(
@@ -4918,7 +5240,7 @@ fn json_schema_object<const N: usize, const M: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::agent::ImageContext;
+    use crate::ai::agent::{AnyFileContent, FileContext, ImageContext};
     use mockito::Matcher;
 
     #[test]
@@ -5106,7 +5428,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_capabilities_are_retained_but_unimplemented_adapters_stay_disabled() {
+    fn configured_capabilities_are_retained_and_vision_is_enabled_by_the_local_adapter() {
         let route = CustomProviderRoute {
             provider_name: "local".to_string(),
             base_url: "http://localhost:1234/v1".to_string(),
@@ -5130,7 +5452,7 @@ mod tests {
             EffectiveCustomProviderCapabilities {
                 chat: true,
                 tools: true,
-                vision: false,
+                vision: true,
                 embeddings: false,
                 transcription: false,
             }
@@ -5189,7 +5511,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unimplemented_vision_returns_local_error_without_http_request() {
+    async fn disabled_vision_returns_local_error_without_http_request() {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("POST", "/v1/chat/completions")
@@ -5202,7 +5524,6 @@ mod tests {
             model: "model".to_string(),
             api_key: None,
             capabilities: CustomProviderCapabilities {
-                vision: true,
                 ..Default::default()
             },
         };
@@ -5226,7 +5547,252 @@ mod tests {
             .expect("local error stream should produce one event")
             .expect_err("unsupported vision must be reported as a local error");
 
-        assert!(error.to_string().contains("vision is not implemented"));
+        assert!(error.to_string().contains("vision is disabled"));
+        mock.assert_async().await;
+    }
+
+    fn valid_test_png_base64() -> &'static str {
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    }
+
+    fn vision_test_route(base_url: String) -> CustomProviderRoute {
+        CustomProviderRoute {
+            provider_name: "local-vision".to_string(),
+            base_url,
+            model: "vision-model".to_string(),
+            api_key: None,
+            capabilities: CustomProviderCapabilities {
+                chat: true,
+                vision: true,
+                ..Default::default()
+            },
+        }
+    }
+
+    fn vision_test_image(data: &str) -> ImageContext {
+        ImageContext {
+            data: data.to_string(),
+            mime_type: "image/png".to_string(),
+            file_name: "local.png".to_string(),
+            is_figma: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn public_generate_sends_ordered_text_and_image_parts_to_local_vision_endpoint() {
+        let mut server = mockito::Server::new_async().await;
+        let mut params = super::super::RequestParams::new_for_test();
+        params.input = vec![AIAgentInput::AutoCodeDiffQuery {
+            query: "Describe the attached image".to_string(),
+            context: std::sync::Arc::from(vec![
+                AIAgentContext::SelectedText("before-image".to_string()),
+                AIAgentContext::Image(vision_test_image(valid_test_png_base64())),
+                AIAgentContext::SelectedText("after-image".to_string()),
+            ]),
+        }];
+        let route = vision_test_route(format!("{}/v1", server.url()));
+        let expected_messages = openai_messages_from_params_with_tool_policy_and_vision(
+            &params,
+            &[],
+            route.context_char_budget(),
+            false,
+            true,
+        )
+        .expect("vision request messages should convert");
+        let expected_body = serde_json::to_value(ChatCompletionRequest {
+            model: route.model.clone(),
+            messages: expected_messages.clone(),
+            stream: true,
+            tools: vec![],
+            tool_choice: None,
+            parallel_tool_calls: None,
+        })
+        .expect("vision request should serialize");
+        let user_content = expected_body["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+            .and_then(|message| message["content"].as_array())
+            .expect("vision user message should use OpenAI content parts");
+        assert_eq!(
+            user_content[0],
+            json!({
+                "type": "text",
+                "text": "Describe the attached image",
+            })
+        );
+        assert_eq!(
+            user_content[1],
+            json!({
+                "type": "text",
+                "text": "Warp context:\nSelected text:\nbefore-image",
+            })
+        );
+        assert_eq!(
+            user_content[2],
+            json!({
+                "type": "image_url",
+                "image_url": {
+                    "url": format!("data:image/png;base64,{}", valid_test_png_base64()),
+                },
+            })
+        );
+        assert_eq!(
+            user_content[3],
+            json!({
+                "type": "text",
+                "text": "Selected text:\nafter-image",
+            })
+        );
+
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_body(Matcher::Json(expected_body))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"choices":[{"message":{"content":"local vision answer"}}]}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let mut response = generate(route, params, vec![])
+            .await
+            .expect("vision request should produce a local response stream");
+        while let Some(event) = response.next().await {
+            event.expect("local vision response should decode");
+        }
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn public_generate_rejects_invalid_image_and_binary_file_before_http() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .expect(0)
+            .create_async()
+            .await;
+        let route = vision_test_route(format!("{}/v1", server.url()));
+
+        let mut malformed = super::super::RequestParams::new_for_test();
+        malformed.input = vec![AIAgentInput::AutoCodeDiffQuery {
+            query: "Inspect image".to_string(),
+            context: std::sync::Arc::from(vec![AIAgentContext::Image(vision_test_image(
+                "not-valid-base64",
+            ))]),
+        }];
+        let malformed_error = generate(route.clone(), malformed, vec![])
+            .await
+            .err()
+            .expect("malformed image must fail before creating an HTTP stream");
+        assert!(malformed_error.to_string().contains("image base64"));
+
+        let mut binary = super::super::RequestParams::new_for_test();
+        binary.input = vec![AIAgentInput::AutoCodeDiffQuery {
+            query: "Inspect file".to_string(),
+            context: std::sync::Arc::from(vec![AIAgentContext::File(FileContext::new(
+                "local.bin".to_string(),
+                AnyFileContent::BinaryContent(vec![1, 2, 3]),
+                None,
+                None,
+            ))]),
+        }];
+        let binary_error = generate(route, binary, vec![])
+            .await
+            .err()
+            .expect("binary file context must fail before creating an HTTP stream");
+        assert!(binary_error.to_string().contains("binary file context"));
+        mock.assert_async().await;
+    }
+
+    #[test]
+    fn text_only_chat_message_keeps_string_content_shape() {
+        let encoded = serde_json::to_value(ChatMessage::user("text-only".to_string()))
+            .expect("text-only message should serialize");
+        assert_eq!(encoded["content"], json!("text-only"));
+    }
+
+    #[tokio::test]
+    async fn public_generate_restores_historical_image_context_as_ordered_parts() {
+        let mut server = mockito::Server::new_async().await;
+        let image_data = base64::engine::general_purpose::STANDARD
+            .decode(valid_test_png_base64())
+            .expect("test image base64 should decode");
+        let historical_message = api::Message {
+            id: "historical-user".to_string(),
+            task_id: "task-1".to_string(),
+            request_id: "request-1".to_string(),
+            timestamp: None,
+            server_message_data: String::new(),
+            citations: vec![],
+            message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                query: "What is in history?".to_string(),
+                context: Some(api::InputContext {
+                    selected_text: vec![api::input_context::SelectedText {
+                        text: "historical-before".to_string(),
+                    }],
+                    images: vec![api::input_context::Image {
+                        data: image_data,
+                        mime_type: "image/png".to_string(),
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })),
+        };
+        let params = super::super::RequestParams {
+            tasks: vec![api::Task {
+                id: "task-1".to_string(),
+                messages: vec![historical_message],
+                ..Default::default()
+            }],
+            ..super::super::RequestParams::new_for_test()
+        };
+        let route = vision_test_route(format!("{}/v1", server.url()));
+        let expected_messages = openai_messages_from_params_with_tool_policy_and_vision(
+            &params,
+            &[],
+            route.context_char_budget(),
+            false,
+            true,
+        )
+        .expect("historical image context should convert");
+        let expected_body = serde_json::to_value(ChatCompletionRequest {
+            model: route.model.clone(),
+            messages: expected_messages,
+            stream: true,
+            tools: vec![],
+            tool_choice: None,
+            parallel_tool_calls: None,
+        })
+        .expect("historical vision request should serialize");
+        let user_content = expected_body["messages"][1]["content"]
+            .as_array()
+            .expect("historical image context should use content parts");
+        assert_eq!(user_content[0]["text"], "What is in history?");
+        assert_eq!(
+            user_content[1]["text"],
+            "Warp context:\nSelected text:\nhistorical-before"
+        );
+        assert!(
+            user_content[2]["image_url"]["url"]
+                .as_str()
+                .is_some_and(|url| url.starts_with("data:image/png;base64,"))
+        );
+
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_body(Matcher::Json(expected_body))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"choices":[{"message":{"content":"history answer"}}]}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let mut response = generate(route, params, vec![])
+            .await
+            .expect("historical image request should reach the local endpoint");
+        while let Some(event) = response.next().await {
+            event.expect("historical vision response should decode");
+        }
         mock.assert_async().await;
     }
 
@@ -6671,7 +7237,10 @@ mod tests {
             .find(|message| message.role == "tool")
             .expect("tool result should remain a separate tool message");
         assert_eq!(tool.tool_call_id.as_deref(), Some("call-1"));
-        let content: Value = serde_json::from_str(tool.content.as_deref().unwrap()).unwrap();
+        let ChatMessageContent::Text(content) = tool.content.as_ref().unwrap() else {
+            panic!("tool result content must retain its text shape");
+        };
+        let content: Value = serde_json::from_str(content).unwrap();
         assert_eq!(content["version"], 1);
         assert_eq!(content["tool_call_id"], "call-1");
     }
