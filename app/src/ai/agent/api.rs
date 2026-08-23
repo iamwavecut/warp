@@ -24,8 +24,7 @@ use crate::{
     ai::{
         blocklist::SessionContext,
         custom_model_routers::{
-            RouterRequestFacts, first_concrete_custom_model, is_local_custom_router_id,
-            resolve_router_selection,
+            RouterRequestFacts, is_local_custom_router_id, resolve_router_selection,
         },
         llms::{LLMId, LLMPreferences},
     },
@@ -224,7 +223,7 @@ impl RequestParams {
 
         let should_redact_secrets = get_secret_obfuscation_mode(app).should_redact_secret();
 
-        let router_facts = router_request_facts(request_input);
+        let router_facts = router_request_facts(request_input, mcp_context.as_ref());
         let (resolved_model_id, router_error) =
             if is_local_custom_router_id(request_input.model_id.as_str()) {
                 match LLMPreferences::as_ref(app)
@@ -239,17 +238,10 @@ impl RequestParams {
                             format!("custom/{}/{}", target.provider_name, target.model_id).into(),
                             None,
                         ),
-                        Err(error) => (
-                            first_concrete_custom_model(&ai_settings.custom_providers)
-                                .map(Into::into)
-                                .unwrap_or_else(|| request_input.model_id.clone()),
-                            Some(error.to_string()),
-                        ),
+                        Err(error) => (request_input.model_id.clone(), Some(error.to_string())),
                     },
                     None => (
-                        first_concrete_custom_model(&ai_settings.custom_providers)
-                            .map(Into::into)
-                            .unwrap_or_else(|| request_input.model_id.clone()),
+                        request_input.model_id.clone(),
                         Some(format!(
                             "Local custom model router {} is not loaded",
                             request_input.model_id
@@ -311,7 +303,10 @@ impl RequestParams {
     }
 }
 
-fn router_request_facts(request_input: &RequestInput) -> RouterRequestFacts {
+fn router_request_facts(
+    request_input: &RequestInput,
+    mcp_context: Option<&MCPContext>,
+) -> RouterRequestFacts {
     let inputs = request_input.all_inputs().collect::<Vec<_>>();
     let prompt = inputs
         .iter()
@@ -323,8 +318,20 @@ fn router_request_facts(request_input: &RequestInput) -> RouterRequestFacts {
         .filter_map(|input| input.attachments())
         .map(|attachments| attachments.len())
         .sum();
+    let mut context_chars = prompt.chars().count();
+    for input in &inputs {
+        for context in input.context().into_iter().flatten() {
+            context_chars = context_chars.saturating_add(router_context_chars(context));
+        }
+        for attachment in input.attachments().into_iter().flatten() {
+            context_chars = context_chars.saturating_add(router_attachment_chars(&attachment));
+        }
+    }
+    if let Some(mcp_context) = mcp_context {
+        context_chars = context_chars.saturating_add(router_mcp_context_chars(mcp_context));
+    }
     RouterRequestFacts {
-        context_chars: prompt.chars().count(),
+        context_chars: context_chars.min(1_000_000),
         prompt,
         attachment_count,
         requires_code_review: inputs
@@ -343,4 +350,128 @@ fn router_request_facts(request_input: &RequestInput) -> RouterRequestFacts {
             })
         }),
     }
+}
+
+fn router_context_chars(context: &AIAgentContext) -> usize {
+    match context {
+        AIAgentContext::Directory {
+            pwd,
+            home_dir,
+            are_file_symbols_indexed,
+        } => format!(
+            "Directory: pwd={}, home={}, indexed_symbols={}",
+            pwd.as_deref().unwrap_or("unknown"),
+            home_dir.as_deref().unwrap_or("unknown"),
+            are_file_symbols_indexed
+        )
+        .chars()
+        .count(),
+        AIAgentContext::SelectedText(text) => text.chars().count(),
+        AIAgentContext::ExecutionEnvironment(environment) => {
+            format!("{environment:?}").chars().count()
+        }
+        AIAgentContext::CurrentTime { current_time } => current_time.to_rfc3339().chars().count(),
+        AIAgentContext::Image(_) => 0,
+        AIAgentContext::Codebase { path, name } => path.chars().count() + name.chars().count(),
+        AIAgentContext::ProjectRules {
+            root_path,
+            active_rules,
+            additional_rule_paths,
+        } => {
+            root_path.chars().count()
+                + active_rules
+                    .iter()
+                    .map(|rule| rule.file_name.chars().count() + file_context_chars(rule))
+                    .sum::<usize>()
+                + additional_rule_paths
+                    .iter()
+                    .map(|path| path.chars().count())
+                    .sum::<usize>()
+        }
+        AIAgentContext::File(file) => file.file_name.chars().count() + file_context_chars(file),
+        AIAgentContext::Git { head, branch } => {
+            head.chars().count() + branch.as_deref().unwrap_or_default().chars().count()
+        }
+        AIAgentContext::Skills { skills } => {
+            skills.iter().map(|skill| skill.name.chars().count()).sum()
+        }
+        AIAgentContext::Block(block) => {
+            block.command.chars().count() + block.output.chars().count()
+        }
+    }
+}
+
+fn file_context_chars(file: &crate::ai::agent::FileContext) -> usize {
+    match &file.content {
+        crate::ai::agent::AnyFileContent::StringContent(content) => content.chars().count(),
+        crate::ai::agent::AnyFileContent::BinaryContent(_) => 0,
+    }
+}
+
+fn router_attachment_chars(attachment: &crate::ai::agent::AIAgentAttachment) -> usize {
+    match attachment {
+        crate::ai::agent::AIAgentAttachment::PlainText(text) => text.chars().count(),
+        crate::ai::agent::AIAgentAttachment::DocumentContent { content, .. }
+        | crate::ai::agent::AIAgentAttachment::DiffHunk {
+            diff_content: content,
+            ..
+        } => content.chars().count(),
+        crate::ai::agent::AIAgentAttachment::DriveObject { payload, .. } => payload
+            .as_ref()
+            .map(|payload| match payload {
+                crate::ai::agent::DriveObjectPayload::Workflow {
+                    name,
+                    description,
+                    command,
+                } => name.chars().count() + description.chars().count() + command.chars().count(),
+                crate::ai::agent::DriveObjectPayload::Notebook { title, content } => {
+                    title.chars().count() + content.chars().count()
+                }
+                crate::ai::agent::DriveObjectPayload::GenericStringObject {
+                    payload,
+                    object_type,
+                } => payload.chars().count() + object_type.chars().count(),
+            })
+            .unwrap_or_default(),
+        crate::ai::agent::AIAgentAttachment::DiffSet { file_diffs, .. } => file_diffs
+            .values()
+            .flatten()
+            .map(|hunk| hunk.diff_content.chars().count())
+            .sum(),
+        crate::ai::agent::AIAgentAttachment::FilePathReference { .. } => 0,
+        crate::ai::agent::AIAgentAttachment::Block(block) => {
+            block.command.chars().count() + block.output.chars().count()
+        }
+    }
+}
+
+fn router_mcp_context_chars(context: &MCPContext) -> usize {
+    let tools = context
+        .tools
+        .iter()
+        .map(|tool| {
+            tool.name.chars().count()
+                + tool
+                    .description
+                    .as_deref()
+                    .unwrap_or_default()
+                    .chars()
+                    .count()
+        })
+        .sum::<usize>();
+    let resources = context
+        .resources
+        .iter()
+        .map(|resource| resource.uri.chars().count())
+        .sum::<usize>();
+    let servers = context
+        .servers
+        .iter()
+        .map(|server| {
+            server.name.chars().count()
+                + server.id.chars().count()
+                + server.description.chars().count()
+        })
+        .sum::<usize>();
+    tools + resources + servers
 }

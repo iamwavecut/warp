@@ -38,6 +38,21 @@ pub fn render_router_error_card(
     error_message: impl Into<String>,
     appearance: &Appearance,
 ) -> Box<dyn Element> {
+    render_router_error_card_with_actions(file_name, error_message, None, appearance)
+}
+
+struct RouterErrorHandles {
+    open_button: ViewHandle<ActionButton>,
+    delete_button: ViewHandle<ActionButton>,
+}
+
+#[cfg(feature = "local_fs")]
+fn render_router_error_card_with_actions(
+    file_name: impl Into<String>,
+    error_message: impl Into<String>,
+    handles: Option<&RouterErrorHandles>,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
     let theme = appearance.theme();
     let error_fill = warp_core::ui::theme::Fill::Solid(theme.ui_error_color());
     let sub = theme.sub_text_color(theme.surface_2());
@@ -75,9 +90,17 @@ pub fn render_router_error_card(
         .soft_wrap(true)
         .finish();
 
+    let actions = handles.map(|handles| {
+        Flex::row()
+            .with_spacing(8.)
+            .with_child(ChildView::new(&handles.open_button).finish())
+            .with_child(ChildView::new(&handles.delete_button).finish())
+            .finish()
+    });
+
     ConstrainedBox::new(
-        Container::new(
-            Flex::column()
+        Container::new({
+            let mut card = Flex::column()
                 .with_child(
                     ConstrainedBox::new(Container::new(name_row).with_margin_bottom(6.).finish())
                         .with_max_width(568.)
@@ -89,9 +112,12 @@ pub fn render_router_error_card(
                         .with_max_width(568.)
                         .with_max_height(160.)
                         .finish(),
-                )
-                .finish(),
-        )
+                );
+            if let Some(actions) = actions {
+                card = card.with_child(Container::new(actions).with_margin_top(8.).finish());
+            }
+            card.finish()
+        })
         .with_background(theme.surface_2())
         .with_border(Border::new(1.).with_border_fill(error_fill))
         .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
@@ -120,6 +146,10 @@ pub enum CustomRouterManagerAction {
     AskDelete(PathBuf),
     ConfirmDelete,
     CancelDelete,
+    OpenErrorFile(PathBuf),
+    AskDeleteError(PathBuf),
+    ConfirmDeleteError,
+    CancelDeleteError,
     SetRouterType(RouterEditorType),
     SetComplexityDefault(String),
     SetComplexityEasy(String),
@@ -152,6 +182,12 @@ struct PendingDelete {
     path: PathBuf,
     revision: RouterFileRevision,
     display_name: String,
+    confirm_button: ViewHandle<ActionButton>,
+    cancel_button: ViewHandle<ActionButton>,
+}
+
+struct PendingErrorDelete {
+    path: PathBuf,
     confirm_button: ViewHandle<ActionButton>,
     cancel_button: ViewHandle<ActionButton>,
 }
@@ -197,9 +233,11 @@ pub struct CustomRouterManagerView {
     routers: Vec<CustomModelRouter>,
     errors: Vec<ModelConfigError>,
     rows: Vec<RouterRowHandles>,
+    error_rows: Vec<RouterErrorHandles>,
     add_button: ViewHandle<ActionButton>,
     editor: Option<RouterEditorState>,
     pending_delete: Option<PendingDelete>,
+    pending_error_delete: Option<PendingErrorDelete>,
     operation_error: Option<String>,
 }
 
@@ -215,9 +253,11 @@ impl CustomRouterManagerView {
             routers: Vec::new(),
             errors: Vec::new(),
             rows: Vec::new(),
+            error_rows: Vec::new(),
             add_button,
             editor: None,
             pending_delete: None,
+            pending_error_delete: None,
             operation_error: None,
         };
         view.reload(ctx);
@@ -250,6 +290,11 @@ impl CustomRouterManagerView {
             .filter_map(|router| router.source_path.clone())
             .map(|path| self.make_row_handles(path, ctx))
             .collect();
+        self.error_rows = self
+            .errors
+            .iter()
+            .map(|error| self.make_error_row_handles(&error.file_path, ctx))
+            .collect();
         if let Some(pending) = &self.pending_delete
             && !self
                 .routers
@@ -257,6 +302,14 @@ impl CustomRouterManagerView {
                 .any(|router| router.source_path.as_ref() == Some(&pending.path))
         {
             self.pending_delete = None;
+        }
+        if let Some(pending) = &self.pending_error_delete
+            && !self
+                .errors
+                .iter()
+                .any(|error| error.file_path == pending.path)
+        {
+            self.pending_error_delete = None;
         }
         self.refresh_editor_models(ctx);
         ctx.notify();
@@ -284,6 +337,37 @@ impl CustomRouterManagerView {
         });
         RouterRowHandles {
             edit_button,
+            delete_button,
+        }
+    }
+
+    fn make_error_row_handles(
+        &self,
+        path: &PathBuf,
+        ctx: &mut ViewContext<Self>,
+    ) -> RouterErrorHandles {
+        let open_path = path.clone();
+        let delete_path = path.clone();
+        let open_button = ctx.add_typed_action_view(|_| {
+            ActionButton::new("Open file", SecondaryTheme)
+                .with_size(ButtonSize::Small)
+                .on_click(move |ctx| {
+                    ctx.dispatch_typed_action(CustomRouterManagerAction::OpenErrorFile(
+                        open_path.clone(),
+                    ));
+                })
+        });
+        let delete_button = ctx.add_typed_action_view(|_| {
+            ActionButton::new("Delete and fix", DangerNakedTheme)
+                .with_size(ButtonSize::Small)
+                .on_click(move |ctx| {
+                    ctx.dispatch_typed_action(CustomRouterManagerAction::AskDeleteError(
+                        delete_path.clone(),
+                    ));
+                })
+        });
+        RouterErrorHandles {
+            open_button,
             delete_button,
         }
     }
@@ -371,6 +455,76 @@ impl CustomRouterManagerView {
                     pending.path.display()
                 ));
             }
+        }
+        ctx.notify();
+    }
+
+    fn open_error_file(&mut self, path: PathBuf, ctx: &mut ViewContext<Self>) {
+        let repository = LocalCustomModelRouterRepository::new(custom_model_routers_dir());
+        match repository.validate_managed_path(&path) {
+            Ok(path) => {
+                ctx.dispatch_global_action("root_view:open_new_with_file_notebook", path);
+                self.operation_error = None;
+            }
+            Err(error) => {
+                self.operation_error = Some(format!(
+                    "Could not open router file {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+        ctx.notify();
+    }
+
+    fn ask_delete_error(&mut self, path: PathBuf, ctx: &mut ViewContext<Self>) {
+        let repository = LocalCustomModelRouterRepository::new(custom_model_routers_dir());
+        let path = match repository.validate_managed_path(&path) {
+            Ok(path) => path,
+            Err(error) => {
+                self.operation_error = Some(format!(
+                    "Could not validate malformed router file {}: {error}",
+                    path.display()
+                ));
+                ctx.notify();
+                return;
+            }
+        };
+        let confirm_button = ctx.add_typed_action_view(|_| {
+            ActionButton::new("Delete file", DangerNakedTheme)
+                .with_size(ButtonSize::Small)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(CustomRouterManagerAction::ConfirmDeleteError)
+                })
+        });
+        let cancel_button = ctx.add_typed_action_view(|_| {
+            ActionButton::new("Cancel", SecondaryTheme)
+                .with_size(ButtonSize::Small)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(CustomRouterManagerAction::CancelDeleteError)
+                })
+        });
+        self.pending_error_delete = Some(PendingErrorDelete {
+            path,
+            confirm_button,
+            cancel_button,
+        });
+        self.operation_error = None;
+        ctx.notify();
+    }
+
+    fn confirm_delete_error(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(pending) = self.pending_error_delete.take() else {
+            return;
+        };
+        let repository = LocalCustomModelRouterRepository::new(custom_model_routers_dir());
+        if let Err(error) = repository.delete_invalid(&pending.path) {
+            self.operation_error = Some(format!(
+                "Could not delete malformed router {}: {error}",
+                pending.path.display()
+            ));
+            self.pending_error_delete = Some(pending);
+        } else {
+            self.operation_error = None;
         }
         ctx.notify();
     }
@@ -588,6 +742,17 @@ impl CustomRouterManagerView {
             CustomRouterManagerAction::ConfirmDelete => self.confirm_delete(ctx),
             CustomRouterManagerAction::CancelDelete => {
                 self.pending_delete = None;
+                ctx.notify();
+            }
+            CustomRouterManagerAction::OpenErrorFile(path) => {
+                self.open_error_file(path.clone(), ctx)
+            }
+            CustomRouterManagerAction::AskDeleteError(path) => {
+                self.ask_delete_error(path.clone(), ctx)
+            }
+            CustomRouterManagerAction::ConfirmDeleteError => self.confirm_delete_error(ctx),
+            CustomRouterManagerAction::CancelDeleteError => {
+                self.pending_error_delete = None;
                 ctx.notify();
             }
             CustomRouterManagerAction::SetRouterType(router_type) => {
@@ -1073,7 +1238,7 @@ fn router_from_editor(
                     if description.is_empty() || model.is_empty() {
                         None
                     } else {
-                        Some(PromptRule { description, model })
+                        Some(PromptRule::new(description, model))
                     }
                 })
                 .collect(),
@@ -1201,10 +1366,14 @@ fn render_router_list(
     if let Some(error) = &manager.operation_error {
         content.add_child(error_text(error, appearance));
     }
-    for error in &manager.errors {
-        content.add_child(render_router_error_card(
+    for (index, error) in manager.errors.iter().enumerate() {
+        let Some(handles) = manager.error_rows.get(index) else {
+            continue;
+        };
+        content.add_child(render_router_error_card_with_actions(
             error.file_name.clone(),
             error.error_message.clone(),
+            Some(handles),
             appearance,
         ));
     }
@@ -1233,6 +1402,9 @@ fn render_router_list(
     }
     if let Some(pending) = &manager.pending_delete {
         content.add_child(render_delete_confirmation(pending, appearance));
+    }
+    if let Some(pending) = &manager.pending_error_delete {
+        content.add_child(render_error_delete_confirmation(pending, appearance));
     }
     content.finish()
 }
@@ -1332,6 +1504,45 @@ fn render_delete_confirmation(
                     format!(
                         "Delete router {:?}? This removes only {}.",
                         pending.display_name,
+                        warp_core::paths::home_relative_path(&pending.path)
+                    ),
+                    appearance.ui_font_family(),
+                    12.,
+                )
+                .with_color(appearance.theme().active_ui_text_color().into())
+                .soft_wrap(true)
+                .finish(),
+            )
+            .with_child(
+                Flex::row()
+                    .with_child(ChildView::new(&pending.confirm_button).finish())
+                    .with_child(
+                        Container::new(ChildView::new(&pending.cancel_button).finish())
+                            .with_margin_left(8.)
+                            .finish(),
+                    )
+                    .finish(),
+            )
+            .finish(),
+    )
+    .with_background(appearance.theme().surface_2())
+    .with_border(Border::all(1.).with_border_fill(appearance.theme().ui_error_color()))
+    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(6.)))
+    .with_uniform_padding(12.)
+    .finish()
+}
+
+fn render_error_delete_confirmation(
+    pending: &PendingErrorDelete,
+    appearance: &Appearance,
+) -> Box<dyn Element> {
+    Container::new(
+        Flex::column()
+            .with_spacing(8.)
+            .with_child(
+                Text::new(
+                    format!(
+                        "Delete malformed router file? This removes only {}.",
                         warp_core::paths::home_relative_path(&pending.path)
                     ),
                     appearance.ui_font_family(),

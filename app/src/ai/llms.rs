@@ -919,7 +919,10 @@ impl LLMPreferences {
             .data()
             .base_model
             .as_ref()
-            .and_then(|id| self.models_by_feature.agent_mode.info_for_id(id))
+            // Routers are local catalog entries too; comparing only the
+            // hosted-feature slice would create a spurious pane override
+            // whenever a profile default points at a custom router.
+            .and_then(|id| self.get_llm_info(id))
             .unwrap_or_else(|| self.models_by_feature.agent_mode.default_llm_info())
             .id
             .clone();

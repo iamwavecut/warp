@@ -9,16 +9,16 @@ use warp_errors::report_error;
 use warpui::{ModelContext, ModelHandle, SingletonEntity};
 
 use super::util::{
-    for_each_dir_entry, has_name, is_config_file, parse_model_config_dir_entry,
-    parse_multi_launch_config_dir_entry, parse_multi_workflow_dir_entry,
-    parse_single_theme_dir_entry, parse_tab_config_dir_entry,
+    for_each_dir_entry, has_name, is_config_file, parse_multi_launch_config_dir_entry,
+    parse_multi_workflow_dir_entry, parse_single_theme_dir_entry, parse_tab_config_dir_entry,
 };
 use super::{
     LAUNCH_CONFIG_COMMENT, WarpConfigUpdateEvent, custom_model_routers_dir, launch_configs_dir,
     tab_configs_dir, themes_dir, workflows_dir,
 };
 use crate::ai::custom_model_routers::{
-    CustomModelRouter, LocalCustomModelRouterRepository, ModelConfigError, parse_model_config_yaml,
+    CustomModelRouter, LocalCustomModelRouterRepository, ModelConfigError, RouterFileRevision,
+    parse_model_config_yaml,
 };
 use crate::features::FeatureFlag;
 use crate::launch_configs::launch_config::LaunchConfig;
@@ -185,13 +185,14 @@ impl super::WarpConfig {
         }
     }
 
-    /// Parse and atomically save one local custom model router.
+    /// Parse and atomically create one local custom model router.
     ///
-    /// Existing files are updated using the repository revision check so an
-    /// editor cannot silently overwrite a watcher or another process update.
+    /// Existing files must be saved through
+    /// [`Self::save_custom_model_router_with_revision`] so an editor cannot
+    /// silently overwrite a watcher or another process update.
     #[cfg(feature = "local_fs")]
     pub fn save_custom_model_router(
-        name: &str,
+        _name: &str,
         yaml: &str,
         existing_path: Option<&Path>,
     ) -> Result<PathBuf> {
@@ -207,8 +208,9 @@ impl super::WarpConfig {
         let router = parse_model_config_yaml(yaml, Some(&path))
             .map_err(|error| anyhow!("could not parse custom model router: {error}"))?;
         let stored = if existing_path.is_some() {
-            let current = repository.read(&path)?;
-            repository.update(&path, &current.revision, &router)?
+            return Err(anyhow!(
+                "updating a custom model router requires the revision from the opened file"
+            ));
         } else {
             let file_name = path
                 .file_name()
@@ -218,11 +220,41 @@ impl super::WarpConfig {
         Ok(stored.path)
     }
 
+    /// Save an already-opened router using the revision captured by the
+    /// editor. The repository performs the CAS against its opened directory
+    /// descriptor; this helper never rereads a fresh revision on behalf of a
+    /// caller.
+    #[cfg(feature = "local_fs")]
+    pub fn save_custom_model_router_with_revision(
+        name: &str,
+        yaml: &str,
+        existing_path: &Path,
+        expected: &RouterFileRevision,
+    ) -> Result<PathBuf> {
+        let directory = custom_model_routers_dir();
+        let repository = LocalCustomModelRouterRepository::new(&directory);
+        let router = parse_model_config_yaml(yaml, Some(existing_path))
+            .map_err(|error| anyhow!("could not parse custom model router: {error}"))?;
+        let stored = repository.update(existing_path, expected, &router)?;
+        Ok(stored.path)
+    }
+
     /// Delete one managed local custom model router file.
     #[cfg(feature = "local_fs")]
     pub fn delete_custom_model_router(path: &Path) -> Result<()> {
+        Err(anyhow!(
+            "deleting a custom model router requires the revision from the opened file: {}",
+            path.display()
+        ))
+    }
+
+    #[cfg(feature = "local_fs")]
+    pub fn delete_custom_model_router_checked(
+        path: &Path,
+        expected: &RouterFileRevision,
+    ) -> Result<()> {
         LocalCustomModelRouterRepository::new(custom_model_routers_dir())
-            .delete(path)
+            .delete_checked(path, expected)
             .map_err(Into::into)
     }
 
@@ -286,13 +318,32 @@ pub fn load_launch_configs(launch_config_path: &Path) -> Vec<LaunchConfig> {
 pub fn load_model_configs(
     model_config_path: &Path,
 ) -> (Vec<CustomModelRouter>, Vec<ModelConfigError>) {
+    let repository = LocalCustomModelRouterRepository::new(model_config_path);
+    let (stored_routers, mut errors) = match repository.list_with_errors() {
+        Ok(result) => result,
+        Err(error) => {
+            return (
+                Vec::new(),
+                vec![ModelConfigError {
+                    file_name: model_config_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("routers")
+                        .to_owned(),
+                    file_path: model_config_path.to_path_buf(),
+                    error_message: error.to_string(),
+                }],
+            );
+        }
+    };
     let mut routers = Vec::new();
-    let mut errors = Vec::new();
     let mut stable_ids = std::collections::HashSet::new();
-    for result in for_each_dir_entry(model_config_path, parse_model_config_dir_entry) {
-        match result {
-            Ok(router) if stable_ids.insert(router.llm_id()) => routers.push(router),
-            Ok(router) => errors.push(ModelConfigError {
+    for stored in stored_routers {
+        let router = stored.router;
+        if stable_ids.insert(router.llm_id()) {
+            routers.push(router);
+        } else {
+            errors.push(ModelConfigError {
                 file_name: router
                     .source_path
                     .as_deref()
@@ -304,8 +355,7 @@ pub fn load_model_configs(
                 error_message:
                     "duplicate router filename identity; use one YAML file per stable local id"
                         .to_owned(),
-            }),
-            Err(error) => errors.push(error),
+            });
         }
     }
     routers.sort_by(|left, right| {

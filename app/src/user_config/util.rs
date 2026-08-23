@@ -9,9 +9,6 @@ use itertools::Itertools;
 use serde::de::DeserializeOwned;
 use walkdir::{DirEntry, WalkDir};
 
-use crate::ai::custom_model_routers::{
-    CustomModelRouter, ModelConfigError, parse_model_config_yaml,
-};
 use crate::launch_configs::launch_config::LaunchConfig;
 use crate::tab_configs::{TabConfig, TabConfigError};
 use crate::themes::theme::{ThemeKind, WarpTheme, WarpThemeConfig};
@@ -29,31 +26,6 @@ fn get_file_name(item: &DirEntry) -> Option<String> {
         // The file was deleted between when we generated the DirEntry and now.
         Err(_) => None,
     }
-}
-
-/// Parses one strict custom model router YAML document from a directory entry.
-pub(super) fn parse_model_config_dir_entry(
-    item: &DirEntry,
-) -> Option<Result<CustomModelRouter, ModelConfigError>> {
-    let file_name = get_file_name(item)?;
-    if !is_config_file(&file_name) {
-        return None;
-    }
-    let make_error = |message: String| ModelConfigError {
-        file_name: file_name.clone(),
-        file_path: item.path().to_path_buf(),
-        error_message: message,
-    };
-    if fs::symlink_metadata(item.path()).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
-        return Some(Err(make_error(
-            "router files must be regular files, not symlinks".to_owned(),
-        )));
-    }
-    let contents = match fs::read_to_string(item.path()) {
-        Ok(contents) => contents,
-        Err(error) => return Some(Err(make_error(error.to_string()))),
-    };
-    Some(parse_model_config_yaml(&contents, Some(item.path())).map_err(make_error))
 }
 
 pub fn from_yaml<R>(path: PathBuf) -> anyhow::Result<R>
@@ -226,7 +198,7 @@ where
 {
     if path.is_dir() {
         WalkDir::new(path)
-            .follow_links(true)
+            .follow_links(false)
             .into_iter()
             .filter_map(Result::ok)
             .filter_map(|item| dir_entry_fn(&item))

@@ -4,20 +4,29 @@
 //! only a local editing/catalog concern; the direct OpenAI-compatible adapter
 //! receives the concrete `custom/<provider>/<model>` id selected here.
 
-use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::collections::{HashMap, HashSet};
+use std::fs;
+#[cfg(not(unix))]
+use std::fs::{File, OpenOptions};
+use std::io;
+#[cfg(not(unix))]
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 #[cfg(unix)]
-use nix::fcntl::{FlockArg, flock};
+use nix::fcntl::{AtFlags, FlockArg, OFlag, flock, open, openat, renameat};
+#[cfg(unix)]
+use nix::sys::stat::{FileStat, Mode, SFlag, fstat, fstatat};
+#[cfg(unix)]
+use nix::unistd::{LinkatFlags, UnlinkatFlags, close, fsync, linkat, read, unlinkat, write};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(unix)]
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::RawFd;
 use unicode_normalization_alignments::UnicodeNormalization;
 use uuid::Uuid;
+use walkdir::WalkDir;
 
 use crate::ai::agent::api::direct_openai::{
     EffectiveCustomProviderCapabilities, effective_capabilities_for_config,
@@ -35,6 +44,8 @@ pub const CUSTOM_ROUTER_PREFIX: &str = "custom-router:";
 pub const LOCAL_CUSTOM_ROUTER_PREFIX: &str = "custom-router:local:";
 
 const MAX_ROUTER_PROMPT_CHARS: usize = 64 * 1024;
+const MAX_ROUTER_PROMPT_DESCRIPTION_CHARS: usize = 256 * 1024;
+const MAX_ROUTER_PROMPT_TOKEN_BUDGET: usize = 16 * 1024;
 const MAX_ROUTER_YAML_BYTES: usize = 256 * 1024;
 const MAX_ROUTER_RULES: usize = 128;
 const MAX_ROUTER_TARGETS: usize = 132;
@@ -74,6 +85,19 @@ pub struct PromptRouting {
 pub struct PromptRule {
     pub description: String,
     pub model: String,
+    #[serde(skip)]
+    tokens: Vec<String>,
+}
+
+impl PromptRule {
+    pub(crate) fn new(description: String, model: String) -> Self {
+        let tokens = meaningful_tokens(&description);
+        Self {
+            description,
+            model,
+            tokens,
+        }
+    }
 }
 
 /// A single local custom model router.
@@ -90,6 +114,7 @@ impl CustomModelRouter {
         routing: CustomModelRouting,
         source_path: Option<&Path>,
     ) -> Self {
+        let routing = normalize_routing(routing);
         let id = local_id_from_path(source_path, &name);
         let routing_description = match &routing {
             CustomModelRouting::Complexity(_) => "Routes by task complexity",
@@ -213,8 +238,23 @@ impl CustomModelRouter {
                 }
                 validate_target(&routing.default_model)
                     .map_err(|error| format!("`default`: {error}"))?;
+                let mut description_chars = 0usize;
+                let mut token_budget = 0usize;
                 for (index, rule) in routing.rules.iter().enumerate() {
-                    if meaningful_tokens(&rule.description).is_empty() {
+                    description_chars =
+                        description_chars.saturating_add(rule.description.chars().count());
+                    token_budget = token_budget.saturating_add(rule.tokens.len());
+                    if description_chars > MAX_ROUTER_PROMPT_DESCRIPTION_CHARS {
+                        return Err(format!(
+                            "prompt rule descriptions exceed {MAX_ROUTER_PROMPT_DESCRIPTION_CHARS} characters"
+                        ));
+                    }
+                    if token_budget > MAX_ROUTER_PROMPT_TOKEN_BUDGET {
+                        return Err(format!(
+                            "prompt rule tokens exceed {MAX_ROUTER_PROMPT_TOKEN_BUDGET}"
+                        ));
+                    }
+                    if rule.tokens.is_empty() {
                         return Err(format!("prompt rule {index}: `description` is empty"));
                     }
                     validate_target(&rule.model)
@@ -241,15 +281,13 @@ impl CustomModelRouter {
                 (model.to_owned(), Some(bucket), None)
             }
             CustomModelRouting::Prompt(routing) => {
-                let prompt_tokens = meaningful_tokens(&facts.prompt);
+                let prompt_tokens = meaningful_tokens(&facts.prompt)
+                    .into_iter()
+                    .collect::<HashSet<_>>();
                 let selected = routing.rules.iter().enumerate().find(|(_, rule)| {
-                    let rule_tokens = meaningful_tokens(&rule.description);
-                    !rule_tokens.is_empty()
-                        && rule_tokens.iter().any(|token| {
-                            prompt_tokens
-                                .iter()
-                                .any(|prompt_token| prompt_token == token)
-                        })
+                    rule.tokens
+                        .iter()
+                        .any(|token| prompt_tokens.contains(token))
                 });
                 match selected {
                     Some((index, rule)) => (rule.model.clone(), None, Some(index)),
@@ -325,6 +363,17 @@ impl RouterRequestFacts {
     pub fn from_prompt(prompt: impl Into<String>) -> Self {
         Self {
             prompt: prompt.into(),
+            ..Default::default()
+        }
+    }
+
+    /// The normal request path starts with tool support available. A router
+    /// must therefore advertise only the capability intersection that can
+    /// satisfy an ordinary local request, even before a specific prompt is
+    /// available.
+    pub fn baseline() -> Self {
+        Self {
+            requires_tools: true,
             ..Default::default()
         }
     }
@@ -618,7 +667,22 @@ pub fn complexity_bucket(facts: &RouterRequestFacts) -> ComplexityBucket {
     }
 }
 
+fn normalize_routing(routing: CustomModelRouting) -> CustomModelRouting {
+    match routing {
+        CustomModelRouting::Complexity(routing) => CustomModelRouting::Complexity(routing),
+        CustomModelRouting::Prompt(mut routing) => {
+            routing.rules = routing
+                .rules
+                .into_iter()
+                .map(|rule| PromptRule::new(rule.description, rule.model))
+                .collect();
+            CustomModelRouting::Prompt(routing)
+        }
+    }
+}
+
 fn meaningful_tokens(value: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
     value
         .chars()
         .take(MAX_ROUTER_PROMPT_CHARS)
@@ -643,6 +707,7 @@ fn meaningful_tokens(value: &str) -> Vec<String> {
                 )
         })
         .map(str::to_owned)
+        .filter(|token| seen.insert(token.clone()))
         .collect()
 }
 
@@ -681,7 +746,7 @@ pub fn router_catalog_entry(
     let targets = router
         .all_targets()
         .into_iter()
-        .map(|target| resolve_target(target, &RouterRequestFacts::default(), providers))
+        .map(|target| resolve_target(target, &RouterRequestFacts::baseline(), providers))
         .collect::<Result<Vec<_>, _>>()?;
     if targets.is_empty() {
         return Err(RouterResolutionError::InvalidRouter(
@@ -919,9 +984,11 @@ impl YamlCustomModelRouter {
                     default_model: default,
                     rules: rules
                         .into_iter()
-                        .map(|rule| PromptRule {
-                            description: rule.description.trim().to_owned(),
-                            model: rule.model.trim().to_owned(),
+                        .map(|rule| {
+                            PromptRule::new(
+                                rule.description.trim().to_owned(),
+                                rule.model.trim().to_owned(),
+                            )
                         })
                         .collect(),
                 })
@@ -1015,6 +1082,12 @@ pub enum LocalCustomModelRouterRepositoryError {
     Parse { path: PathBuf, message: String },
     #[error("could not serialize router: {0}")]
     Serialize(#[from] serde_yaml::Error),
+    #[error("router file is {size} bytes, exceeding the {limit}-byte limit: {path}")]
+    Oversize {
+        path: PathBuf,
+        size: u64,
+        limit: u64,
+    },
     #[error("could not access router file {path}: {source}")]
     Io { path: PathBuf, source: io::Error },
 }
@@ -1041,13 +1114,17 @@ impl LocalCustomModelRouterRepository {
         router: &CustomModelRouter,
     ) -> Result<StoredCustomModelRouter, LocalCustomModelRouterRepositoryError> {
         let path = self.managed_path(file_name.as_ref(), true)?;
-        self.ensure_directory()?;
-        if fs::symlink_metadata(&path).is_ok() {
-            return Err(LocalCustomModelRouterRepositoryError::AlreadyExists { path });
-        }
         let router = router.with_source_path(&path);
-        self.write_atomically(&path, &router, None, false)?;
-        self.read(&path)
+        let serialized = router.to_yaml_string()?;
+        validate_serialized_size(&path, serialized.as_bytes())?;
+        #[cfg(unix)]
+        {
+            self.atomic_write_unix(&path, &router, serialized.as_bytes(), None, true)
+        }
+        #[cfg(not(unix))]
+        {
+            self.atomic_write_path(&path, &router, serialized.as_bytes(), None, true)
+        }
     }
 
     pub fn read(
@@ -1055,48 +1132,18 @@ impl LocalCustomModelRouterRepository {
         path: impl AsRef<Path>,
     ) -> Result<StoredCustomModelRouter, LocalCustomModelRouterRepositoryError> {
         let path = self.managed_path(path.as_ref(), false)?;
-        let _lock = self.lock_directory()?;
-        self.read_unlocked(&path)
-    }
-
-    fn read_unlocked(
-        &self,
-        path: &Path,
-    ) -> Result<StoredCustomModelRouter, LocalCustomModelRouterRepositoryError> {
-        let metadata = fs::symlink_metadata(&path).map_err(|source| {
-            if source.kind() == io::ErrorKind::NotFound {
-                LocalCustomModelRouterRepositoryError::NotFound {
-                    path: path.to_path_buf(),
-                }
-            } else {
-                LocalCustomModelRouterRepositoryError::Io {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            }
-        })?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(LocalCustomModelRouterRepositoryError::NotManaged {
-                path: path.to_path_buf(),
-            });
+        #[cfg(unix)]
+        {
+            let directory = self.open_locked(FlockArg::LockShared)?;
+            let name = file_name(path.as_path());
+            let (bytes, revision) = read_snapshot_at(&directory, name, &path)?;
+            stored_from_bytes(&path, bytes, revision)
         }
-        let contents = fs::read_to_string(&path).map_err(|source| {
-            LocalCustomModelRouterRepositoryError::Io {
-                path: path.to_path_buf(),
-                source,
-            }
-        })?;
-        let router = parse_model_config_yaml(&contents, Some(&path)).map_err(|source| {
-            LocalCustomModelRouterRepositoryError::Parse {
-                path: path.to_path_buf(),
-                message: source,
-            }
-        })?;
-        Ok(StoredCustomModelRouter {
-            router,
-            revision: revision_for(&path, &contents, &metadata),
-            path: path.to_path_buf(),
-        })
+        #[cfg(not(unix))]
+        {
+            let (bytes, revision) = read_snapshot_path(&path)?;
+            stored_from_bytes(&path, bytes, revision)
+        }
     }
 
     pub fn update(
@@ -1106,26 +1153,17 @@ impl LocalCustomModelRouterRepository {
         router: &CustomModelRouter,
     ) -> Result<StoredCustomModelRouter, LocalCustomModelRouterRepositoryError> {
         let path = self.managed_path(path.as_ref(), false)?;
-        let current = self.read(&path)?;
-        if &current.revision != expected {
-            return Err(LocalCustomModelRouterRepositoryError::Conflict {
-                path,
-                expected: expected.clone(),
-                actual: Some(current.revision),
-            });
-        }
         let router = router.with_source_path(&path);
-        self.write_atomically(&path, &router, Some(expected), true)?;
-        self.read(&path)
-    }
-
-    pub fn delete(
-        &self,
-        path: impl AsRef<Path>,
-    ) -> Result<(), LocalCustomModelRouterRepositoryError> {
-        let path = self.managed_path(path.as_ref(), false)?;
-        let current = self.read(&path)?;
-        self.delete_checked(&path, &current.revision)
+        let serialized = router.to_yaml_string()?;
+        validate_serialized_size(&path, serialized.as_bytes())?;
+        #[cfg(unix)]
+        {
+            self.atomic_write_unix(&path, &router, serialized.as_bytes(), Some(expected), false)
+        }
+        #[cfg(not(unix))]
+        {
+            self.atomic_write_path(&path, &router, serialized.as_bytes(), Some(expected), false)
+        }
     }
 
     /// Delete only when the caller still owns the revision it read.
@@ -1135,53 +1173,163 @@ impl LocalCustomModelRouterRepository {
         expected: &RouterFileRevision,
     ) -> Result<(), LocalCustomModelRouterRepositoryError> {
         let path = self.managed_path(path.as_ref(), false)?;
-        let _lock = self.lock_directory()?;
-        let current = self.read_unlocked(&path)?;
-        if &current.revision != expected {
-            return Err(LocalCustomModelRouterRepositoryError::Conflict {
-                path,
-                expected: expected.clone(),
-                actual: Some(current.revision),
-            });
-        }
-        fs::remove_file(&path).map_err(|source| LocalCustomModelRouterRepositoryError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        if let Some(parent) = path.parent()
-            && let Ok(directory) = File::open(parent)
+        #[cfg(unix)]
         {
-            let _ = directory.sync_all();
+            let directory = self.open_locked(FlockArg::LockExclusive)?;
+            let name = file_name(path.as_path());
+            let Some((_, current)) = snapshot_at_optional(&directory, name, &path)? else {
+                return Err(LocalCustomModelRouterRepositoryError::Conflict {
+                    path,
+                    expected: expected.clone(),
+                    actual: None,
+                });
+            };
+            if &current != expected {
+                return Err(LocalCustomModelRouterRepositoryError::Conflict {
+                    path,
+                    expected: expected.clone(),
+                    actual: Some(current),
+                });
+            }
+            delete_at(&directory, name, &path)
         }
-        Ok(())
+        #[cfg(not(unix))]
+        {
+            let (_, current) = read_snapshot_path(&path)?;
+            if &current != expected {
+                return Err(LocalCustomModelRouterRepositoryError::Conflict {
+                    path,
+                    expected: expected.clone(),
+                    actual: Some(current),
+                });
+            }
+            fs::remove_file(&path).map_err(|source| LocalCustomModelRouterRepositoryError::Io {
+                path: path.clone(),
+                source,
+            })
+        }
+    }
+
+    /// Remove a malformed managed YAML file without parsing it. The path is
+    /// still validated against this exact directory and symlinks are never
+    /// followed.
+    pub fn delete_invalid(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<(), LocalCustomModelRouterRepositoryError> {
+        let path = self.managed_path(path.as_ref(), false)?;
+        #[cfg(unix)]
+        {
+            let directory = self.open_locked(FlockArg::LockExclusive)?;
+            let name = file_name(path.as_path());
+            let Some(stat) = stat_at(&directory, name, &path)? else {
+                return Err(LocalCustomModelRouterRepositoryError::NotFound { path });
+            };
+            if !SFlag::from_bits_truncate(stat.st_mode).contains(SFlag::S_IFREG) {
+                return Err(LocalCustomModelRouterRepositoryError::NotManaged { path });
+            }
+            unlinkat(Some(directory.fd()), name, UnlinkatFlags::NoRemoveDir)
+                .map_err(|error| map_nix(&path, error))?;
+            if let Err(error) = sync_fd(&directory, &path) {
+                // The unlink is already visible; do not report an error that
+                // would make the UI claim the malformed file still exists.
+                log::warn!("could not sync deleted router directory: {error}");
+            }
+            Ok(())
+        }
+        #[cfg(not(unix))]
+        {
+            let metadata = fs::symlink_metadata(&path).map_err(|source| {
+                LocalCustomModelRouterRepositoryError::Io {
+                    path: path.clone(),
+                    source,
+                }
+            })?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(LocalCustomModelRouterRepositoryError::NotManaged { path });
+            }
+            fs::remove_file(&path)
+                .map_err(|source| LocalCustomModelRouterRepositoryError::Io { path, source })
+        }
     }
 
     pub fn list(
         &self,
     ) -> Result<Vec<StoredCustomModelRouter>, LocalCustomModelRouterRepositoryError> {
-        let entries = match fs::read_dir(&self.directory) {
-            Ok(entries) => entries,
-            Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(source) => {
-                return Err(LocalCustomModelRouterRepositoryError::Io {
-                    path: self.directory.clone(),
-                    source,
-                });
-            }
-        };
+        let (routers, errors) = self.list_with_errors()?;
+        if let Some(error) = errors.into_iter().next() {
+            return Err(LocalCustomModelRouterRepositoryError::Parse {
+                path: error.file_path,
+                message: error.error_message,
+            });
+        }
+        Ok(routers)
+    }
+
+    pub fn list_with_errors(
+        &self,
+    ) -> Result<
+        (Vec<StoredCustomModelRouter>, Vec<ModelConfigError>),
+        LocalCustomModelRouterRepositoryError,
+    > {
+        let directory = self.ensure_directory()?;
         let mut routers = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|source| LocalCustomModelRouterRepositoryError::Io {
-                path: self.directory.clone(),
-                source,
-            })?;
-            let path = entry.path();
-            if path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| matches!(extension, "yaml" | "yml"))
+        let mut errors = Vec::new();
+        for entry in WalkDir::new(&directory)
+            .follow_links(false)
+            .min_depth(1)
+            .max_depth(1)
+            .into_iter()
+        {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    let path = error
+                        .path()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| directory.clone());
+                    errors.push(ModelConfigError {
+                        file_name: path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("router.yaml")
+                            .to_owned(),
+                        file_path: path,
+                        error_message: error.to_string(),
+                    });
+                    continue;
+                }
+            };
+            let path = entry.path().to_path_buf();
+            if path.parent() != Some(directory.as_path())
+                || !path.starts_with(&directory)
+                || !path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| matches!(extension, "yaml" | "yml"))
             {
-                routers.push(self.read(path)?);
+                continue;
+            }
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("router.yaml")
+                .to_owned();
+            if entry.file_type().is_symlink() {
+                errors.push(ModelConfigError {
+                    file_name,
+                    file_path: path,
+                    error_message: "router files must be regular files, not symlinks".to_owned(),
+                });
+                continue;
+            }
+            match self.read(&path) {
+                Ok(router) => routers.push(router),
+                Err(error) => errors.push(ModelConfigError {
+                    file_name,
+                    file_path: path,
+                    error_message: error.to_string(),
+                }),
             }
         }
         routers.sort_by(|left, right| {
@@ -1192,38 +1340,48 @@ impl LocalCustomModelRouterRepository {
                 .cmp(&right.router.info.display_name.to_lowercase())
                 .then_with(|| left.path.cmp(&right.path))
         });
-        Ok(routers)
+        Ok((routers, errors))
     }
 
-    fn ensure_directory(&self) -> Result<(), LocalCustomModelRouterRepositoryError> {
+    pub fn validate_managed_path(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<PathBuf, LocalCustomModelRouterRepositoryError> {
+        self.managed_path(path.as_ref(), false)
+    }
+
+    fn ensure_directory(&self) -> Result<PathBuf, LocalCustomModelRouterRepositoryError> {
         fs::create_dir_all(&self.directory).map_err(|source| {
             LocalCustomModelRouterRepositoryError::Io {
                 path: self.directory.clone(),
                 source,
             }
-        })
-    }
-
-    fn lock_directory(&self) -> Result<File, LocalCustomModelRouterRepositoryError> {
-        self.ensure_directory()?;
-        let path = self.directory.join(".routers.lock");
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .open(&path)
-            .map_err(|source| LocalCustomModelRouterRepositoryError::Io {
-                path: path.clone(),
-                source,
-            })?;
-        #[cfg(unix)]
-        flock(file.as_raw_fd(), FlockArg::LockExclusive).map_err(|source| {
+        })?;
+        let metadata = fs::symlink_metadata(&self.directory).map_err(|source| {
             LocalCustomModelRouterRepositoryError::Io {
-                path: path.clone(),
-                source: io::Error::other(source),
+                path: self.directory.clone(),
+                source,
             }
         })?;
-        Ok(file)
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(LocalCustomModelRouterRepositoryError::NotManaged {
+                path: self.directory.clone(),
+            });
+        }
+        let directory = fs::canonicalize(&self.directory).map_err(|source| {
+            LocalCustomModelRouterRepositoryError::Io {
+                path: self.directory.clone(),
+                source,
+            }
+        })?;
+        #[cfg(unix)]
+        open_directory_nofollow_raw(&directory).map_err(|error| {
+            LocalCustomModelRouterRepositoryError::Io {
+                path: directory.clone(),
+                source: io::Error::other(error),
+            }
+        })?;
+        Ok(directory)
     }
 
     fn managed_path(
@@ -1231,16 +1389,7 @@ impl LocalCustomModelRouterRepository {
         requested: &Path,
         require_missing_allowed: bool,
     ) -> Result<PathBuf, LocalCustomModelRouterRepositoryError> {
-        let directory = if self.directory.exists() {
-            fs::canonicalize(&self.directory).map_err(|source| {
-                LocalCustomModelRouterRepositoryError::Io {
-                    path: self.directory.clone(),
-                    source,
-                }
-            })?
-        } else {
-            self.directory.clone()
-        };
+        let directory = self.ensure_directory()?;
         let path = if requested.is_absolute() {
             requested.to_path_buf()
         } else {
@@ -1282,127 +1431,662 @@ impl LocalCustomModelRouterRepository {
         {
             return Err(LocalCustomModelRouterRepositoryError::NotFound { path });
         }
-        if matches!(
-            fs::symlink_metadata(&path),
-            Ok(metadata) if metadata.file_type().is_symlink()
-        ) {
-            return Err(LocalCustomModelRouterRepositoryError::InvalidPath { path });
-        }
         Ok(directory.join(file_name))
     }
 
-    fn write_atomically(
+    #[cfg(unix)]
+    fn open_locked(
+        &self,
+        lock: FlockArg,
+    ) -> Result<DirectoryLock, LocalCustomModelRouterRepositoryError> {
+        let directory = self.ensure_directory()?;
+        let fd = open_directory_nofollow_raw(&directory)?;
+        flock(fd.fd(), lock).map_err(|error| map_nix(&directory, error))?;
+        Ok(DirectoryLock { fd })
+    }
+
+    #[cfg(unix)]
+    fn atomic_write_unix(
         &self,
         path: &Path,
         router: &CustomModelRouter,
+        serialized: &[u8],
         expected: Option<&RouterFileRevision>,
-        replace_existing: bool,
-    ) -> Result<(), LocalCustomModelRouterRepositoryError> {
-        let serialized = router.to_yaml_string()?;
-        let parent = path.parent().unwrap_or(Path::new("."));
-        let _lock = self.lock_directory()?;
-        let temporary = parent.join(format!(
-            ".{}.tmp-{}",
-            path.file_name().unwrap().to_string_lossy(),
-            Uuid::new_v4()
-        ));
-        let result = (|| -> Result<(), LocalCustomModelRouterRepositoryError> {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary)
-                .map_err(|source| LocalCustomModelRouterRepositoryError::Io {
-                    path: temporary.clone(),
-                    source,
-                })?;
-            file.write_all(serialized.as_bytes())
-                .and_then(|_| file.flush())
-                .and_then(|_| file.sync_all())
-                .map_err(|source| LocalCustomModelRouterRepositoryError::Io {
-                    path: temporary.clone(),
-                    source,
-                })?;
-            drop(file);
-            let actual = if path.exists() {
-                let contents = fs::read_to_string(path).map_err(|source| {
-                    LocalCustomModelRouterRepositoryError::Io {
-                        path: path.to_path_buf(),
-                        source,
+        creating: bool,
+    ) -> Result<StoredCustomModelRouter, LocalCustomModelRouterRepositoryError> {
+        let directory = self.open_locked(FlockArg::LockExclusive)?;
+        let target = file_name(path);
+        let first = snapshot_at_optional(&directory, target, path)?;
+        check_expected(
+            path,
+            expected,
+            creating,
+            first.as_ref().map(|(_, revision)| revision),
+        )?;
+        // An external writer may ignore flock. Re-read through the same
+        // directory descriptor immediately before publication; no path-based
+        // revision reread is used for the CAS decision.
+        let second = snapshot_at_optional(&directory, target, path)?;
+        check_expected(
+            path,
+            expected,
+            creating,
+            second.as_ref().map(|(_, revision)| revision),
+        )?;
+
+        let temporary = temp_name(target);
+        let new_revision = match write_temp(&directory, &temporary, serialized, path) {
+            Ok(revision) => revision,
+            Err(error) => return Err(error),
+        };
+        if creating {
+            match linkat(
+                Some(directory.fd()),
+                temporary.as_str(),
+                Some(directory.fd()),
+                target,
+                LinkatFlags::NoSymlinkFollow,
+            ) {
+                Ok(()) => {
+                    cleanup_entry(&directory, &temporary);
+                    if let Err(error) = sync_fd(&directory, path) {
+                        if remove_entry(&directory, target).is_ok() {
+                            let _ = sync_fd(&directory, path);
+                            return Err(error);
+                        }
+                        return Ok(stored_from_router(path, router.clone(), new_revision));
                     }
-                })?;
-                let metadata = fs::metadata(path).map_err(|source| {
-                    LocalCustomModelRouterRepositoryError::Io {
-                        path: path.to_path_buf(),
-                        source,
-                    }
-                })?;
-                Some(revision_for(path, &contents, &metadata))
-            } else {
-                None
-            };
-            if let Some(expected) = expected {
-                if actual.as_ref() != Some(expected) {
-                    return Err(LocalCustomModelRouterRepositoryError::Conflict {
-                        path: path.to_path_buf(),
-                        expected: expected.clone(),
-                        actual,
-                    });
+                    let _ = sync_fd(&directory, path);
+                    Ok(stored_from_router(path, router.clone(), new_revision))
                 }
-            } else if actual.is_some() && !replace_existing {
-                return Err(LocalCustomModelRouterRepositoryError::AlreadyExists {
-                    path: path.to_path_buf(),
-                });
-            }
-            if expected.is_none() && !replace_existing {
-                fs::hard_link(&temporary, path).map_err(|source| {
-                    if source.kind() == io::ErrorKind::AlreadyExists {
-                        LocalCustomModelRouterRepositoryError::AlreadyExists {
-                            path: path.to_path_buf(),
-                        }
-                    } else {
-                        LocalCustomModelRouterRepositoryError::Io {
-                            path: path.to_path_buf(),
-                            source,
-                        }
-                    }
-                })?;
-                fs::remove_file(&temporary).map_err(|source| {
-                    LocalCustomModelRouterRepositoryError::Io {
-                        path: temporary.clone(),
-                        source,
-                    }
-                })?;
-            } else {
-                fs::rename(&temporary, path).map_err(|source| {
-                    LocalCustomModelRouterRepositoryError::Io {
+                Err(error) if error == nix::errno::Errno::EEXIST => {
+                    cleanup_entry(&directory, &temporary);
+                    Err(LocalCustomModelRouterRepositoryError::AlreadyExists {
                         path: path.to_path_buf(),
-                        source,
-                    }
-                })?;
+                    })
+                }
+                Err(error) => {
+                    cleanup_entry(&directory, &temporary);
+                    Err(map_nix(path, error))
+                }
             }
-            if let Ok(directory) = File::open(parent) {
-                let _ = directory.sync_all();
+        } else {
+            let backup = backup_name(target);
+            if let Err(error) = renameat(
+                Some(directory.fd()),
+                target,
+                Some(directory.fd()),
+                backup.as_str(),
+            ) {
+                cleanup_entry(&directory, &temporary);
+                return Err(map_nix(path, error));
             }
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
+            if let Err(error) = renameat(
+                Some(directory.fd()),
+                temporary.as_str(),
+                Some(directory.fd()),
+                target,
+            ) {
+                let _ = renameat(
+                    Some(directory.fd()),
+                    backup.as_str(),
+                    Some(directory.fd()),
+                    target,
+                );
+                cleanup_entry(&directory, &temporary);
+                return Err(map_nix(path, error));
+            }
+            if let Err(error) = sync_fd(&directory, path) {
+                if restore_backup(&directory, target, &backup).is_ok() {
+                    let _ = sync_fd(&directory, path);
+                    return Err(error);
+                }
+                return Ok(stored_from_router(path, router.clone(), new_revision));
+            }
+            cleanup_entry(&directory, &backup);
+            let _ = sync_fd(&directory, path);
+            Ok(stored_from_router(path, router.clone(), new_revision))
         }
-        result
+    }
+
+    #[cfg(not(unix))]
+    fn atomic_write_path(
+        &self,
+        path: &Path,
+        router: &CustomModelRouter,
+        serialized: &[u8],
+        expected: Option<&RouterFileRevision>,
+        creating: bool,
+    ) -> Result<StoredCustomModelRouter, LocalCustomModelRouterRepositoryError> {
+        let current = match read_snapshot_path(path) {
+            Ok((_, revision)) => Some(revision),
+            Err(LocalCustomModelRouterRepositoryError::NotFound { .. }) => None,
+            Err(error) => return Err(error),
+        };
+        check_expected(path, expected, creating, current.as_ref())?;
+        let temporary = path.with_file_name(format!(".{}.tmp-{}", file_name(path), Uuid::new_v4()));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|source| LocalCustomModelRouterRepositoryError::Io {
+                path: temporary.clone(),
+                source,
+            })?;
+        if let Err(source) = file.write_all(serialized).and_then(|_| file.sync_all()) {
+            let _ = fs::remove_file(&temporary);
+            return Err(LocalCustomModelRouterRepositoryError::Io {
+                path: temporary,
+                source,
+            });
+        }
+        drop(file);
+        if let Err(source) = fs::rename(&temporary, path) {
+            let _ = fs::remove_file(&temporary);
+            return Err(LocalCustomModelRouterRepositoryError::Io {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+        let (_, revision) = read_snapshot_path(path)?;
+        Ok(stored_from_router(path, router.clone(), revision))
     }
 }
 
-fn revision_for(_path: &Path, contents: &str, metadata: &fs::Metadata) -> RouterFileRevision {
+fn validate_serialized_size(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), LocalCustomModelRouterRepositoryError> {
+    if bytes.len() > MAX_ROUTER_YAML_BYTES {
+        return Err(LocalCustomModelRouterRepositoryError::Oversize {
+            path: path.to_path_buf(),
+            size: bytes.len() as u64,
+            limit: MAX_ROUTER_YAML_BYTES as u64,
+        });
+    }
+    Ok(())
+}
+
+fn stored_from_router(
+    path: &Path,
+    router: CustomModelRouter,
+    revision: RouterFileRevision,
+) -> StoredCustomModelRouter {
+    StoredCustomModelRouter {
+        router,
+        path: path.to_path_buf(),
+        revision,
+    }
+}
+
+fn stored_from_bytes(
+    path: &Path,
+    bytes: Vec<u8>,
+    revision: RouterFileRevision,
+) -> Result<StoredCustomModelRouter, LocalCustomModelRouterRepositoryError> {
+    let contents =
+        String::from_utf8(bytes).map_err(|error| LocalCustomModelRouterRepositoryError::Parse {
+            path: path.to_path_buf(),
+            message: format!("router YAML is not valid UTF-8: {error}"),
+        })?;
+    let router = parse_model_config_yaml(&contents, Some(path)).map_err(|message| {
+        LocalCustomModelRouterRepositoryError::Parse {
+            path: path.to_path_buf(),
+            message,
+        }
+    })?;
+    Ok(stored_from_router(path, router, revision))
+}
+
+fn check_expected(
+    path: &Path,
+    expected: Option<&RouterFileRevision>,
+    creating: bool,
+    actual: Option<&RouterFileRevision>,
+) -> Result<(), LocalCustomModelRouterRepositoryError> {
+    if creating {
+        if actual.is_some() {
+            return Err(LocalCustomModelRouterRepositoryError::AlreadyExists {
+                path: path.to_path_buf(),
+            });
+        }
+        return Ok(());
+    }
+    let Some(expected) = expected else {
+        return Err(LocalCustomModelRouterRepositoryError::Conflict {
+            path: path.to_path_buf(),
+            expected: RouterFileRevision::empty(),
+            actual: actual.cloned(),
+        });
+    };
+    if actual != Some(expected) {
+        return Err(LocalCustomModelRouterRepositoryError::Conflict {
+            path: path.to_path_buf(),
+            expected: expected.clone(),
+            actual: actual.cloned(),
+        });
+    }
+    Ok(())
+}
+
+impl RouterFileRevision {
+    fn empty() -> Self {
+        Self {
+            content_hash: [0; 32],
+            size: 0,
+            modified: None,
+            #[cfg(unix)]
+            device: 0,
+            #[cfg(unix)]
+            inode: 0,
+        }
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct FdGuard {
+    fd: RawFd,
+}
+
+#[cfg(unix)]
+impl FdGuard {
+    fn new(fd: RawFd) -> Self {
+        Self { fd }
+    }
+
+    fn fd(&self) -> RawFd {
+        self.fd
+    }
+}
+
+#[cfg(unix)]
+impl Drop for FdGuard {
+    fn drop(&mut self) {
+        let _ = close(self.fd);
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
+struct DirectoryLock {
+    fd: FdGuard,
+}
+
+#[cfg(unix)]
+impl DirectoryLock {
+    fn fd(&self) -> RawFd {
+        self.fd.fd()
+    }
+}
+
+#[cfg(unix)]
+fn open_directory_nofollow_raw(
+    path: &Path,
+) -> Result<FdGuard, LocalCustomModelRouterRepositoryError> {
+    let mut directory = FdGuard::new(
+        open(
+            Path::new("/"),
+            OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW,
+            Mode::empty(),
+        )
+        .map_err(|error| map_nix(path, error))?,
+    );
+    for component in path.components() {
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        let next = openat(
+            directory.fd(),
+            name,
+            OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW,
+            Mode::empty(),
+        )
+        .map_err(|error| map_nix(path, error))?;
+        directory = FdGuard::new(next);
+    }
+    Ok(directory)
+}
+
+#[cfg(unix)]
+fn open_at_nofollow(
+    directory: &DirectoryLock,
+    name: &str,
+    path: &Path,
+) -> Result<FdGuard, LocalCustomModelRouterRepositoryError> {
+    match openat(
+        directory.fd(),
+        name,
+        OFlag::O_RDONLY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW,
+        Mode::empty(),
+    ) {
+        Ok(fd) => Ok(FdGuard::new(fd)),
+        Err(error) if error == nix::errno::Errno::ELOOP => {
+            Err(LocalCustomModelRouterRepositoryError::NotManaged {
+                path: path.to_path_buf(),
+            })
+        }
+        Err(error) => Err(map_nix(path, error)),
+    }
+}
+
+#[cfg(unix)]
+fn stat_at(
+    directory: &DirectoryLock,
+    name: &str,
+    path: &Path,
+) -> Result<Option<FileStat>, LocalCustomModelRouterRepositoryError> {
+    match fstatat(directory.fd(), name, AtFlags::AT_SYMLINK_NOFOLLOW) {
+        Ok(stat) => {
+            if SFlag::from_bits_truncate(stat.st_mode).contains(SFlag::S_IFLNK) {
+                return Err(LocalCustomModelRouterRepositoryError::NotManaged {
+                    path: path.to_path_buf(),
+                });
+            }
+            Ok(Some(stat))
+        }
+        Err(error) if error == nix::errno::Errno::ENOENT => Ok(None),
+        Err(error) => Err(map_nix(path, error)),
+    }
+}
+
+#[cfg(unix)]
+fn read_snapshot_at(
+    directory: &DirectoryLock,
+    name: &str,
+    path: &Path,
+) -> Result<(Vec<u8>, RouterFileRevision), LocalCustomModelRouterRepositoryError> {
+    let file = open_at_nofollow(directory, name, path)?;
+    let initial = fstat(file.fd()).map_err(|error| map_nix(path, error))?;
+    if !SFlag::from_bits_truncate(initial.st_mode).contains(SFlag::S_IFREG) {
+        return Err(LocalCustomModelRouterRepositoryError::NotManaged {
+            path: path.to_path_buf(),
+        });
+    }
+    if initial.st_size < 0 || initial.st_size as usize > MAX_ROUTER_YAML_BYTES {
+        return Err(LocalCustomModelRouterRepositoryError::Oversize {
+            path: path.to_path_buf(),
+            size: initial.st_size.max(0) as u64,
+            limit: MAX_ROUTER_YAML_BYTES as u64,
+        });
+    }
+    let bytes = read_all_bounded(file.fd(), path, initial.st_size as usize)?;
+    let final_stat = fstat(file.fd()).map_err(|error| map_nix(path, error))?;
+    if final_stat.st_size < 0 || final_stat.st_size as usize > MAX_ROUTER_YAML_BYTES {
+        return Err(LocalCustomModelRouterRepositoryError::Oversize {
+            path: path.to_path_buf(),
+            size: final_stat.st_size.max(0) as u64,
+            limit: MAX_ROUTER_YAML_BYTES as u64,
+        });
+    }
+    Ok((bytes.clone(), revision_from_stat(&final_stat, &bytes)))
+}
+
+#[cfg(unix)]
+fn snapshot_at_optional(
+    directory: &DirectoryLock,
+    name: &str,
+    path: &Path,
+) -> Result<Option<(Vec<u8>, RouterFileRevision)>, LocalCustomModelRouterRepositoryError> {
+    if stat_at(directory, name, path)?.is_none() {
+        return Ok(None);
+    }
+    read_snapshot_at(directory, name, path).map(Some)
+}
+
+#[cfg(unix)]
+fn write_temp(
+    directory: &DirectoryLock,
+    name: &str,
+    bytes: &[u8],
+    path: &Path,
+) -> Result<RouterFileRevision, LocalCustomModelRouterRepositoryError> {
+    validate_serialized_size(path, bytes)?;
+    let fd = openat(
+        directory.fd(),
+        name,
+        OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW,
+        Mode::from_bits_truncate(0o600),
+    )
+    .map_err(|error| map_nix(path, error))?;
+    let file = FdGuard::new(fd);
+    if let Err(error) = write_all_fd(file.fd(), bytes, path) {
+        cleanup_entry(directory, name);
+        return Err(error);
+    }
+    if let Err(error) = fsync(file.fd()) {
+        cleanup_entry(directory, name);
+        return Err(map_nix(path, error));
+    }
+    let stat = match fstat(file.fd()) {
+        Ok(stat) => stat,
+        Err(error) => {
+            cleanup_entry(directory, name);
+            return Err(map_nix(path, error));
+        }
+    };
+    if stat.st_size < 0 || stat.st_size as usize > MAX_ROUTER_YAML_BYTES {
+        cleanup_entry(directory, name);
+        return Err(LocalCustomModelRouterRepositoryError::Oversize {
+            path: path.to_path_buf(),
+            size: stat.st_size.max(0) as u64,
+            limit: MAX_ROUTER_YAML_BYTES as u64,
+        });
+    }
+    Ok(revision_from_stat(&stat, bytes))
+}
+
+#[cfg(unix)]
+fn read_all_bounded(
+    fd: RawFd,
+    path: &Path,
+    initial_size: usize,
+) -> Result<Vec<u8>, LocalCustomModelRouterRepositoryError> {
+    let mut bytes = Vec::with_capacity(initial_size);
+    let mut buffer = [0u8; 8192];
+    loop {
+        match read(fd, &mut buffer) {
+            Ok(0) => return Ok(bytes),
+            Ok(count) => {
+                if bytes.len().saturating_add(count) > MAX_ROUTER_YAML_BYTES {
+                    return Err(LocalCustomModelRouterRepositoryError::Oversize {
+                        path: path.to_path_buf(),
+                        size: (bytes.len() + count) as u64,
+                        limit: MAX_ROUTER_YAML_BYTES as u64,
+                    });
+                }
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            Err(error) if error == nix::errno::Errno::EINTR => {}
+            Err(error) => return Err(map_nix(path, error)),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn write_all_fd(
+    fd: RawFd,
+    bytes: &[u8],
+    path: &Path,
+) -> Result<(), LocalCustomModelRouterRepositoryError> {
+    let mut offset = 0;
+    while offset < bytes.len() {
+        match write(fd, &bytes[offset..]) {
+            Ok(0) => {
+                return Err(LocalCustomModelRouterRepositoryError::Io {
+                    path: path.to_path_buf(),
+                    source: io::Error::new(io::ErrorKind::WriteZero, "short router write"),
+                });
+            }
+            Ok(count) => offset += count,
+            Err(error) if error == nix::errno::Errno::EINTR => {}
+            Err(error) => return Err(map_nix(path, error)),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_fd(
+    directory: &DirectoryLock,
+    path: &Path,
+) -> Result<(), LocalCustomModelRouterRepositoryError> {
+    fsync(directory.fd()).map_err(|error| map_nix(path, error))
+}
+
+#[cfg(unix)]
+fn restore_backup(
+    directory: &DirectoryLock,
+    target: &str,
+    backup: &str,
+) -> Result<(), LocalCustomModelRouterRepositoryError> {
+    renameat(Some(directory.fd()), backup, Some(directory.fd()), target)
+        .map_err(|error| map_nix(Path::new(target), error))
+}
+
+#[cfg(unix)]
+fn remove_entry(
+    directory: &DirectoryLock,
+    name: &str,
+) -> Result<(), LocalCustomModelRouterRepositoryError> {
+    unlinkat(Some(directory.fd()), name, UnlinkatFlags::NoRemoveDir)
+        .map_err(|error| map_nix(Path::new(name), error))
+}
+
+#[cfg(unix)]
+fn cleanup_entry(directory: &DirectoryLock, name: &str) {
+    let _ = unlinkat(Some(directory.fd()), name, UnlinkatFlags::NoRemoveDir);
+}
+
+#[cfg(unix)]
+fn delete_at(
+    directory: &DirectoryLock,
+    target: &str,
+    path: &Path,
+) -> Result<(), LocalCustomModelRouterRepositoryError> {
+    let backup = backup_name(target);
+    renameat(
+        Some(directory.fd()),
+        target,
+        Some(directory.fd()),
+        backup.as_str(),
+    )
+    .map_err(|error| map_nix(path, error))?;
+    if let Err(error) = sync_fd(directory, path) {
+        if restore_backup(directory, target, &backup).is_ok() {
+            let _ = sync_fd(directory, path);
+            return Err(error);
+        }
+        return Ok(());
+    }
+    cleanup_entry(directory, &backup);
+    let _ = sync_fd(directory, path);
+    Ok(())
+}
+
+#[cfg(unix)]
+fn revision_from_stat(stat: &FileStat, contents: &[u8]) -> RouterFileRevision {
     let mut hasher = Sha256::new();
-    hasher.update(contents.as_bytes());
+    hasher.update(contents);
+    RouterFileRevision {
+        content_hash: hasher.finalize().into(),
+        size: stat.st_size.max(0) as u64,
+        modified: None,
+        device: stat.st_dev as u64,
+        inode: stat.st_ino as u64,
+    }
+}
+
+#[cfg(not(unix))]
+fn read_snapshot_path(
+    path: &Path,
+) -> Result<(Vec<u8>, RouterFileRevision), LocalCustomModelRouterRepositoryError> {
+    let metadata = fs::symlink_metadata(path).map_err(|source| {
+        if source.kind() == io::ErrorKind::NotFound {
+            LocalCustomModelRouterRepositoryError::NotFound {
+                path: path.to_path_buf(),
+            }
+        } else {
+            LocalCustomModelRouterRepositoryError::Io {
+                path: path.to_path_buf(),
+                source,
+            }
+        }
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(LocalCustomModelRouterRepositoryError::NotManaged {
+            path: path.to_path_buf(),
+        });
+    }
+    if metadata.len() > MAX_ROUTER_YAML_BYTES as u64 {
+        return Err(LocalCustomModelRouterRepositoryError::Oversize {
+            path: path.to_path_buf(),
+            size: metadata.len(),
+            limit: MAX_ROUTER_YAML_BYTES as u64,
+        });
+    }
+    let mut file =
+        File::open(path).map_err(|source| LocalCustomModelRouterRepositoryError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take((MAX_ROUTER_YAML_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|source| LocalCustomModelRouterRepositoryError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if bytes.len() > MAX_ROUTER_YAML_BYTES {
+        return Err(LocalCustomModelRouterRepositoryError::Oversize {
+            path: path.to_path_buf(),
+            size: bytes.len() as u64,
+            limit: MAX_ROUTER_YAML_BYTES as u64,
+        });
+    }
+    let revision = revision_for(path, &bytes, &metadata);
+    Ok((bytes, revision))
+}
+
+#[cfg(not(unix))]
+fn revision_for(_path: &Path, contents: &[u8], metadata: &fs::Metadata) -> RouterFileRevision {
+    let mut hasher = Sha256::new();
+    hasher.update(contents);
     RouterFileRevision {
         content_hash: hasher.finalize().into(),
         size: metadata.len(),
         modified: metadata.modified().ok(),
-        #[cfg(unix)]
-        device: std::os::unix::fs::MetadataExt::dev(metadata),
-        #[cfg(unix)]
-        inode: std::os::unix::fs::MetadataExt::ino(metadata),
+    }
+}
+
+fn file_name(path: &Path) -> &str {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("router.yaml")
+}
+
+#[cfg(unix)]
+fn temp_name(target: &str) -> String {
+    format!(".{target}.router-temp-{}", Uuid::new_v4())
+}
+
+#[cfg(unix)]
+fn backup_name(target: &str) -> String {
+    format!(".{target}.router-backup-{}", Uuid::new_v4())
+}
+
+#[cfg(unix)]
+fn map_nix(path: &Path, source: nix::Error) -> LocalCustomModelRouterRepositoryError {
+    let source = io::Error::from_raw_os_error(source as i32);
+    if source.kind() == io::ErrorKind::NotFound {
+        LocalCustomModelRouterRepositoryError::NotFound {
+            path: path.to_path_buf(),
+        }
+    } else {
+        LocalCustomModelRouterRepositoryError::Io {
+            path: path.to_path_buf(),
+            source,
+        }
     }
 }
 
@@ -1507,6 +2191,52 @@ mod tests {
     }
 
     #[test]
+    fn prompt_tokens_are_normalized_once_and_rule_budgets_are_bounded() {
+        let router = CustomModelRouter::new_local(
+            "Prompt".to_owned(),
+            CustomModelRouting::Prompt(PromptRouting {
+                default_model: "custom/local/general".to_owned(),
+                rules: vec![PromptRule::new(
+                    "Rust rust RUST".to_owned(),
+                    "custom/local/rust".to_owned(),
+                )],
+            }),
+            None,
+        );
+        assert_eq!(
+            router
+                .resolve(&RouterRequestFacts::from_prompt("please use rust"))
+                .unwrap()
+                .model_id,
+            "custom/local/rust"
+        );
+
+        let too_many_tokens = (0..MAX_ROUTER_RULES)
+            .map(|index| {
+                let tokens = (0..200)
+                    .map(|token| format!("token-{index}-{token}"))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                PromptRule::new(tokens, "custom/local/general".to_owned())
+            })
+            .collect();
+        let oversized = CustomModelRouter::new_local(
+            "Prompt".to_owned(),
+            CustomModelRouting::Prompt(PromptRouting {
+                default_model: "custom/local/general".to_owned(),
+                rules: too_many_tokens,
+            }),
+            None,
+        );
+        assert!(
+            oversized
+                .validate()
+                .expect_err("aggregate token budget must be enforced")
+                .contains("tokens")
+        );
+    }
+
+    #[test]
     fn resolver_rejects_auto_nested_missing_duplicate_invalid_and_capability_mismatch() {
         let providers = vec![provider("local", &["code"]), provider("local", &["other"])];
         let duplicate = parse_model_config_yaml(
@@ -1561,6 +2291,24 @@ mod tests {
     }
 
     #[test]
+    fn catalog_requires_baseline_tools_capability() {
+        let mut provider = provider("local", &["model"]);
+        provider.capabilities.tools = false;
+        let router = parse_model_config_yaml(
+            "name: Local\ntype: complexity\ndefault: custom/local/model\n",
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            router_catalog_entry(&router, &[provider]),
+            Err(RouterResolutionError::CapabilityMismatch {
+                capability: "tools",
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn repository_crud_uses_stable_ids_and_compare_and_swap() {
         let dir = tempfile::tempdir().unwrap();
         let repository = LocalCustomModelRouterRepository::new(dir.path());
@@ -1580,8 +2328,104 @@ mod tests {
             repository.update(&created.path, &read.revision, &router),
             Err(LocalCustomModelRouterRepositoryError::Conflict { .. })
         ));
-        repository.delete(&created.path).unwrap();
+        repository
+            .delete_checked(&created.path, &read.revision)
+            .unwrap_err();
+        let updated = repository.read(&created.path).unwrap();
+        repository
+            .delete_checked(&updated.path, &updated.revision)
+            .unwrap();
         assert!(repository.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn repository_bounds_reads_and_preserves_old_file_on_oversized_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let repository = LocalCustomModelRouterRepository::new(dir.path());
+        let router = parse_model_config_yaml(
+            "name: One\ntype: complexity\ndefault: custom/local/model\n",
+            None,
+        )
+        .unwrap();
+        let created = repository.create("one.yaml", &router).unwrap();
+        let old = repository.read(&created.path).unwrap();
+        let oversized = CustomModelRouter::new_local(
+            "x".repeat(MAX_ROUTER_ID_CHARS),
+            CustomModelRouting::Prompt(PromptRouting {
+                default_model: "custom/local/model".to_owned(),
+                rules: vec![PromptRule::new(
+                    "description".repeat(MAX_ROUTER_PROMPT_DESCRIPTION_CHARS),
+                    "custom/local/model".to_owned(),
+                )],
+            }),
+            Some(&created.path),
+        );
+        assert!(matches!(
+            repository.update(&created.path, &old.revision, &oversized),
+            Err(LocalCustomModelRouterRepositoryError::Oversize { .. })
+        ));
+        assert_eq!(
+            repository.read(&created.path).unwrap().revision,
+            old.revision
+        );
+
+        std::fs::write(&created.path, vec![b'x'; MAX_ROUTER_YAML_BYTES + 1]).unwrap();
+        assert!(matches!(
+            repository.read(&created.path),
+            Err(LocalCustomModelRouterRepositoryError::Oversize { .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_and_loader_do_not_follow_router_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            outside.path(),
+            "name: Outside\ntype: complexity\ndefault: custom/local/model\n",
+        )
+        .unwrap();
+        let link = dir.path().join("link.yaml");
+        symlink(outside.path(), &link).unwrap();
+        let repository = LocalCustomModelRouterRepository::new(dir.path());
+        assert!(matches!(
+            repository.read(&link),
+            Err(LocalCustomModelRouterRepositoryError::NotManaged { .. })
+        ));
+        let (_, errors) = repository.list_with_errors().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].error_message.contains("symlinks"));
+    }
+
+    #[test]
+    fn repository_cas_rejects_external_writer_before_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let repository = LocalCustomModelRouterRepository::new(dir.path());
+        let router = parse_model_config_yaml(
+            "name: One\ntype: complexity\ndefault: custom/local/model\n",
+            None,
+        )
+        .unwrap();
+        let created = repository.create("one.yaml", &router).unwrap();
+        let stale = repository.read(&created.path).unwrap();
+        let external = router.with_display_name("External".to_owned());
+        std::fs::write(&created.path, external.to_yaml_string().unwrap()).unwrap();
+        assert!(matches!(
+            repository.update(&created.path, &stale.revision, &router),
+            Err(LocalCustomModelRouterRepositoryError::Conflict { .. })
+        ));
+        assert_eq!(
+            repository
+                .read(&created.path)
+                .unwrap()
+                .router
+                .info
+                .display_name,
+            "External"
+        );
     }
 
     #[test]
