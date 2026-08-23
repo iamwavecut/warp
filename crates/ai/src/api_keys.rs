@@ -8,7 +8,8 @@ pub use crate::aws_credentials::{AwsCredentials, AwsCredentialsState};
 
 const SECURE_STORAGE_KEY: &str = "AiApiKeys";
 
-/// Emitted when user-provided API keys are updated in-memory.
+/// Emitted when user-provided API keys are updated in-memory or startup secure
+/// storage hydration completes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiKeyManagerEvent {
     KeysUpdated,
@@ -44,17 +45,18 @@ pub struct ApiKeyManager {
     keys: ApiKeys,
     pub(crate) aws_credentials_state: AwsCredentialsState,
     startup_keys_mutated: bool,
+    keys_ready: bool,
 }
 
 impl ApiKeyManager {
     pub fn new(ctx: &mut ModelContext<Self>) -> Self {
         let keys = Self::load_keys_from_secure_storage(ctx);
-        Self::with_keys(keys)
+        Self::with_keys(keys, true)
     }
 
     #[cfg(target_os = "macos")]
     pub fn new_deferred(service_name: String, ctx: &mut ModelContext<Self>) -> Self {
-        let manager = Self::with_keys(ApiKeys::default());
+        let manager = Self::with_keys(ApiKeys::default(), false);
         ctx.spawn(
             async move { Self::load_keys_from_named_secure_storage(&service_name) },
             |manager, keys, ctx| {
@@ -66,16 +68,26 @@ impl ApiKeyManager {
         manager
     }
 
-    fn with_keys(keys: ApiKeys) -> Self {
+    fn with_keys(keys: ApiKeys, keys_ready: bool) -> Self {
         Self {
             keys,
             aws_credentials_state: AwsCredentialsState::Missing,
             startup_keys_mutated: false,
+            keys_ready,
         }
     }
 
     pub fn keys(&self) -> &ApiKeys {
         &self.keys
+    }
+
+    /// Returns whether the initial secure-storage read has completed.
+    ///
+    /// macOS starts this manager with an empty in-memory snapshot while the
+    /// keychain read runs asynchronously. Consumers that can rename or remove
+    /// name-keyed provider keys must wait for this boundary before persisting.
+    pub fn keys_ready(&self) -> bool {
+        self.keys_ready
     }
 
     pub fn set_google_key(&mut self, key: Option<String>, ctx: &mut ModelContext<Self>) {
@@ -229,11 +241,12 @@ impl ApiKeyManager {
     }
 
     fn apply_startup_loaded_keys(&mut self, keys: ApiKeys) -> bool {
-        if self.startup_keys_mutated || self.keys == keys {
-            return false;
+        if !self.startup_keys_mutated {
+            self.keys = keys;
         }
-        self.keys = keys;
-        true
+        let became_ready = !self.keys_ready;
+        self.keys_ready = true;
+        became_ready
     }
 
     fn write_keys_to_secure_storage(&mut self, ctx: &mut ModelContext<Self>) {
@@ -268,6 +281,7 @@ mod tests {
             keys,
             aws_credentials_state: AwsCredentialsState::Missing,
             startup_keys_mutated: false,
+            keys_ready: false,
         }
     }
 
@@ -291,10 +305,18 @@ mod tests {
         });
         manager.startup_keys_mutated = true;
 
-        assert!(!manager.apply_startup_loaded_keys(ApiKeys {
+        assert!(manager.apply_startup_loaded_keys(ApiKeys {
             openai: Some("old-startup-value".to_string()),
             ..ApiKeys::default()
         }));
         assert_eq!(manager.keys().openai.as_deref(), Some("user-value"));
+    }
+
+    #[test]
+    fn startup_key_load_marks_equal_empty_state_ready() {
+        let mut manager = manager_with(ApiKeys::default());
+
+        assert!(manager.apply_startup_loaded_keys(ApiKeys::default()));
+        assert!(manager.keys_ready());
     }
 }

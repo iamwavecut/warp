@@ -40,7 +40,7 @@ use crate::view_components::{
     render_warning_box,
 };
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
-use ::ai::api_keys::ApiKeyManager;
+use ::ai::api_keys::{ApiKeyManager, ApiKeyManagerEvent};
 use enum_iterator::all;
 use itertools::Itertools;
 use regex::Regex;
@@ -477,6 +477,7 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
 pub struct AISettingsPageView {
     page: PageType<Self>,
     active_subpage: Option<AISubpage>,
+    custom_provider_keys_ready: bool,
     local_only_icon_tooltip_states: RefCell<HashMap<String, MouseStateHandle>>,
     autodetection_denylist_editor: ViewHandle<EditorView>,
     autonomy_dropdown_menu: ViewHandle<Dropdown<AISettingsPageAction>>,
@@ -541,6 +542,18 @@ pub struct AISettingsPageView {
 impl AISettingsPageView {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
         let is_any_ai_enabled = AISettings::as_ref(ctx).is_any_ai_enabled(ctx);
+        let custom_provider_keys_ready = ApiKeyManager::as_ref(ctx).keys_ready();
+
+        ctx.subscribe_to_model(&ApiKeyManager::handle(ctx), |me, _, event, ctx| {
+            if matches!(event, ApiKeyManagerEvent::KeysUpdated)
+                && !me.custom_provider_keys_ready
+                && custom_provider_editing_allowed(ApiKeyManager::as_ref(ctx).keys_ready())
+            {
+                me.custom_provider_keys_ready = true;
+                me.page = Self::build_page(me.active_subpage, ctx);
+                ctx.notify();
+            }
+        });
 
         let workspace = UserWorkspaces::handle(ctx);
         let ai_autonomy_settings = workspace.as_ref(ctx).ai_autonomy_settings();
@@ -1400,6 +1413,7 @@ impl AISettingsPageView {
         Self {
             page: Self::build_page(None, ctx),
             active_subpage: None,
+            custom_provider_keys_ready,
             autodetection_denylist_editor,
             local_only_icon_tooltip_states: Default::default(),
             command_execution_allowlist_editor,
@@ -2753,6 +2767,9 @@ impl TypedActionView for AISettingsPageView {
                 ctx.notify();
             }
             AISettingsPageAction::AddLLMProvider => {
+                if !custom_provider_editing_allowed(ApiKeyManager::as_ref(ctx).keys_ready()) {
+                    return;
+                }
                 let mut providers = AISettings::as_ref(ctx).custom_providers.clone();
                 let name = unique_custom_provider_name(&providers);
                 providers.push(CustomProviderConfig {
@@ -2769,16 +2786,23 @@ impl TypedActionView for AISettingsPageView {
                 ctx.notify();
             }
             AISettingsPageAction::RemoveLLMProvider(provider_id) => {
+                if !custom_provider_editing_allowed(ApiKeyManager::as_ref(ctx).keys_ready()) {
+                    return;
+                }
                 let mut providers = AISettings::as_ref(ctx).custom_providers.clone();
                 if let Some(index) = providers
                     .iter()
                     .position(|provider| provider.local_id.as_deref() == Some(provider_id.as_str()))
                 {
                     let removed = providers.remove(index);
+                    let should_clear_key =
+                        !custom_provider_key_is_still_referenced(&providers, &removed.name);
                     persist_custom_provider_configs(providers, ctx);
-                    ApiKeyManager::handle(ctx).update(ctx, |manager, ctx| {
-                        manager.set_custom_key(removed.name, None, ctx);
-                    });
+                    if should_clear_key {
+                        ApiKeyManager::handle(ctx).update(ctx, |manager, ctx| {
+                            manager.set_custom_key(removed.name, None, ctx);
+                        });
+                    }
                     self.page = Self::build_page(self.active_subpage, ctx);
                     ctx.notify();
                 }
@@ -2787,6 +2811,9 @@ impl TypedActionView for AISettingsPageView {
                 provider_id,
                 capability,
             } => {
+                if !custom_provider_editing_allowed(ApiKeyManager::as_ref(ctx).keys_ready()) {
+                    return;
+                }
                 let mut providers = AISettings::as_ref(ctx).custom_providers.clone();
                 if let Some(provider) = providers
                     .iter_mut()
@@ -5629,6 +5656,7 @@ struct LLMProviderModelsPicker {
     selected_models: Vec<String>,
     available_models: Vec<String>,
     validation_state: ProviderModelsValidationState,
+    keys_ready: bool,
     model_input_editor: ViewHandle<EditorView>,
     validate_button: ViewHandle<ActionButton>,
     base_url_editor: ViewHandle<EditorView>,
@@ -5660,7 +5688,7 @@ impl TypedActionView for LLMProviderModelsPicker {
         match action {
             LLMProviderModelsPickerAction::ValidateProvider => self.validate_provider(ctx),
             LLMProviderModelsPickerAction::AddModel(model) => {
-                if !self.can_add_models(ctx) {
+                if !self.keys_ready || !self.can_add_models(ctx) {
                     return;
                 }
                 if !self
@@ -5677,6 +5705,9 @@ impl TypedActionView for LLMProviderModelsPicker {
                 }
             }
             LLMProviderModelsPickerAction::RemoveModel(index) => {
+                if !self.keys_ready {
+                    return;
+                }
                 if *index < self.selected_models.len() {
                     self.selected_models.remove(*index);
                     ctx.emit(LLMProviderModelsPickerEvent::ModelsChanged);
@@ -5693,6 +5724,7 @@ impl LLMProviderModelsPicker {
         base_url_editor: ViewHandle<EditorView>,
         api_key_editor: ViewHandle<EditorView>,
         api_key_env_var_editor: ViewHandle<EditorView>,
+        keys_ready: bool,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
         let model_input_editor = create_llm_provider_editor(
@@ -5713,11 +5745,15 @@ impl LLMProviderModelsPicker {
                     ctx.dispatch_typed_action(LLMProviderModelsPickerAction::ValidateProvider);
                 })
         });
+        validate_button.update(ctx, |button, ctx| {
+            button.set_disabled(!keys_ready, ctx);
+        });
 
         let picker = Self {
             selected_models,
             available_models: Vec::new(),
             validation_state: ProviderModelsValidationState::NotChecked,
+            keys_ready,
             model_input_editor,
             validate_button,
             base_url_editor,
@@ -5784,6 +5820,9 @@ impl LLMProviderModelsPicker {
     }
 
     fn validate_provider(&mut self, ctx: &mut ViewContext<Self>) {
+        if !self.keys_ready {
+            return;
+        }
         let (signature, base_url, api_key) = match self.current_connection(ctx) {
             Ok(connection) => connection,
             Err(error) => {
@@ -5858,6 +5897,9 @@ impl LLMProviderModelsPicker {
     }
 
     fn can_add_models(&self, ctx: &AppContext) -> bool {
+        if !self.keys_ready {
+            return false;
+        }
         let Ok((signature, _, _)) = self.current_connection(ctx) else {
             return false;
         };
@@ -5933,7 +5975,7 @@ impl LLMProviderModelsPicker {
             let mut tags = Wrap::row().with_spacing(8.).with_run_spacing(8.);
             let remove_states = self.remove_model_button_states.borrow();
             for (index, model) in self.selected_models.iter().enumerate() {
-                let remove_button =
+                let remove_button = if self.keys_ready {
                     icon_button(appearance, Icon::X, false, remove_states[index].clone())
                         .build()
                         .on_click(move |ctx, _, _| {
@@ -5941,7 +5983,13 @@ impl LLMProviderModelsPicker {
                                 index,
                             ));
                         })
-                        .finish();
+                        .finish()
+                } else {
+                    icon_button(appearance, Icon::X, false, remove_states[index].clone())
+                        .disabled()
+                        .build()
+                        .finish()
+                };
 
                 tags.add_child(
                     Container::new(
@@ -6083,6 +6131,57 @@ fn custom_provider_api_key_update(
     Some((!direct_key.is_empty()).then(|| direct_key.to_string()))
 }
 
+fn custom_provider_editing_allowed(keys_ready: bool) -> bool {
+    keys_ready
+}
+
+fn custom_provider_key_is_still_referenced(
+    providers: &[CustomProviderConfig],
+    provider_name: &str,
+) -> bool {
+    providers
+        .iter()
+        .any(|provider| provider.name == provider_name)
+}
+
+struct CustomProviderKeyMigration {
+    remove_original: bool,
+    current_key: Option<String>,
+}
+
+fn plan_custom_provider_key_migration(
+    providers: &[CustomProviderConfig],
+    provider_id: &str,
+    original_name: &str,
+    current_name: &str,
+    name_changed: bool,
+    api_key_update: Option<Option<String>>,
+    existing_keys: &HashMap<String, String>,
+) -> Option<CustomProviderKeyMigration> {
+    if original_name == current_name || !name_changed {
+        return api_key_update.map(|current_key| CustomProviderKeyMigration {
+            remove_original: false,
+            current_key,
+        });
+    }
+
+    let original_key_exists = existing_keys.contains_key(original_name);
+    let has_api_key_update = api_key_update.is_some();
+    if !original_key_exists && !has_api_key_update {
+        return None;
+    }
+
+    let current_key = api_key_update.unwrap_or_else(|| existing_keys.get(original_name).cloned());
+    let remove_original = !providers.iter().any(|provider| {
+        provider.name == original_name && provider.local_id.as_deref() != Some(provider_id)
+    });
+
+    Some(CustomProviderKeyMigration {
+        remove_original,
+        current_key,
+    })
+}
+
 fn resolve_provider_connection(
     base_url: &str,
     direct_key: &str,
@@ -6134,6 +6233,7 @@ fn provider_connection_is_valid(
 struct LLMProvidersWidget {
     providers: Vec<LLMProviderEditorHandles>,
     add_provider_button: ViewHandle<ActionButton>,
+    provider_keys_ready: bool,
 }
 
 fn new_custom_provider_id() -> String {
@@ -6164,13 +6264,16 @@ fn normalize_custom_provider_ids(providers: &mut [CustomProviderConfig]) -> bool
     changed
 }
 
-fn ensure_custom_provider_ids(ctx: &mut ViewContext<AISettingsPageView>) {
+fn ensure_custom_provider_ids(
+    ctx: &mut ViewContext<AISettingsPageView>,
+) -> Vec<CustomProviderConfig> {
     let mut providers = AISettings::as_ref(ctx).custom_providers.clone();
     if normalize_custom_provider_ids(&mut providers) {
         AISettings::handle(ctx).update(ctx, |settings, ctx| {
-            report_if_error!(settings.custom_providers.set_value(providers, ctx));
+            report_if_error!(settings.custom_providers.set_value(providers.clone(), ctx));
         });
     }
+    providers
 }
 
 fn unique_custom_provider_name(providers: &[CustomProviderConfig]) -> String {
@@ -6311,6 +6414,10 @@ fn sync_llm_provider_editors_to_settings(
     providers: &[LLMProviderEditorHandles],
     ctx: &mut ViewContext<AISettingsPageView>,
 ) {
+    if !custom_provider_editing_allowed(ApiKeyManager::as_ref(ctx).keys_ready()) {
+        return;
+    }
+
     let live_providers = AISettings::as_ref(ctx).custom_providers.clone();
     let mut configs = live_providers.clone();
     let mut key_updates = Vec::new();
@@ -6379,6 +6486,7 @@ fn sync_llm_provider_editors_to_settings(
         }
 
         key_updates.push((
+            provider.provider_id.clone(),
             provider.original_name.clone(),
             config.name.clone(),
             name.trim() != provider.initial_config.name,
@@ -6387,20 +6495,25 @@ fn sync_llm_provider_editors_to_settings(
         configs[live_index] = config;
     }
 
+    let final_configs = configs.clone();
     persist_custom_provider_configs(configs, ctx);
     ApiKeyManager::handle(ctx).update(ctx, |manager, ctx| {
-        for (original_name, current_name, name_changed, api_key_update) in key_updates {
-            if original_name != current_name && name_changed {
-                let original_key_exists = manager.keys().custom.contains_key(&original_name);
-                let has_api_key_update = api_key_update.is_some();
-                let api_key = api_key_update
-                    .unwrap_or_else(|| manager.keys().custom.get(&original_name).cloned());
-                if original_key_exists || has_api_key_update {
+        let existing_keys = manager.keys().custom.clone();
+        for (provider_id, original_name, current_name, name_changed, api_key_update) in key_updates
+        {
+            if let Some(migration) = plan_custom_provider_key_migration(
+                &final_configs,
+                &provider_id,
+                &original_name,
+                &current_name,
+                name_changed,
+                api_key_update,
+                &existing_keys,
+            ) {
+                if migration.remove_original && original_name != current_name {
                     manager.set_custom_key(original_name, None, ctx);
-                    manager.set_custom_key(current_name, api_key, ctx);
                 }
-            } else if let Some(api_key) = api_key_update {
-                manager.set_custom_key(current_name, api_key, ctx);
+                manager.set_custom_key(current_name, migration.current_key, ctx);
             }
         }
     });
@@ -6409,9 +6522,12 @@ fn sync_llm_provider_editors_to_settings(
 
 impl LLMProvidersWidget {
     fn new(ctx: &mut ViewContext<<Self as SettingsWidget>::View>) -> Self {
-        ensure_custom_provider_ids(ctx);
-        let stored_keys = ApiKeyManager::as_ref(ctx).keys().custom.clone();
-        let providers = AISettings::as_ref(ctx).custom_providers.clone();
+        let provider_keys_ready =
+            custom_provider_editing_allowed(ApiKeyManager::as_ref(ctx).keys_ready());
+        let providers = ensure_custom_provider_ids(ctx);
+        let stored_keys = provider_keys_ready
+            .then(|| ApiKeyManager::as_ref(ctx).keys().custom.clone())
+            .unwrap_or_default();
 
         let mut editor_handles = providers
             .iter()
@@ -6472,6 +6588,7 @@ impl LLMProvidersWidget {
                             base_url_editor,
                             api_key_editor,
                             api_key_env_var_editor,
+                            provider_keys_ready,
                             ctx,
                         )
                     })
@@ -6479,7 +6596,7 @@ impl LLMProvidersWidget {
                 let provider_id = provider
                     .local_id
                     .clone()
-                    .expect("custom provider IDs are normalized before editor creation");
+                    .unwrap_or_else(new_custom_provider_id);
                 let remove_provider_id = provider_id.clone();
                 let remove_button = ctx.add_typed_action_view(move |_| {
                     ActionButton::new("Remove", DangerNakedTheme)
@@ -6515,6 +6632,25 @@ impl LLMProvidersWidget {
             })
             .collect::<Vec<_>>();
 
+        if !provider_keys_ready {
+            for provider in &editor_handles {
+                for editor in [
+                    provider.name_editor.clone(),
+                    provider.base_url_editor.clone(),
+                    provider.api_key_editor.clone(),
+                    provider.api_key_env_var_editor.clone(),
+                    provider.context_window_editor.clone(),
+                ] {
+                    editor.update(ctx, |editor, ctx| {
+                        editor.set_interaction_state(InteractionState::Disabled, ctx);
+                    });
+                }
+                provider.remove_button.update(ctx, |button, ctx| {
+                    button.set_disabled(true, ctx);
+                });
+            }
+        }
+
         for provider in editor_handles.clone() {
             for editor in [
                 provider.name_editor.clone(),
@@ -6547,9 +6683,14 @@ impl LLMProvidersWidget {
                 })
         });
 
+        add_provider_button.update(ctx, |button, ctx| {
+            button.set_disabled(!provider_keys_ready, ctx);
+        });
+
         Self {
             providers: std::mem::take(&mut editor_handles),
             add_provider_button,
+            provider_keys_ready,
         }
     }
 
@@ -6593,12 +6734,14 @@ impl LLMProvidersWidget {
         description: &'static str,
         checked: bool,
         state: SwitchStateHandle,
+        disabled: bool,
         action: AISettingsPageAction,
     ) -> Box<dyn Element> {
         let switch = appearance
             .ui_builder()
             .switch(state)
             .check(checked)
+            .with_disabled(disabled)
             .build()
             .on_click(move |ctx, _, _| {
                 ctx.dispatch_typed_action(action.clone());
@@ -6740,6 +6883,7 @@ impl LLMProvidersWidget {
                     "Used by the local direct adapter.",
                     provider.capabilities.chat,
                     provider.chat_toggle.clone(),
+                    !self.provider_keys_ready,
                     AISettingsPageAction::ToggleLLMProviderCapability {
                         provider_id: provider.provider_id.clone(),
                         capability: EditableCustomProviderCapability::Chat,
@@ -6751,6 +6895,7 @@ impl LLMProvidersWidget {
                     "Used by the local shell, file, and MCP tool bridge.",
                     provider.capabilities.tools,
                     provider.tools_toggle.clone(),
+                    !self.provider_keys_ready,
                     AISettingsPageAction::ToggleLLMProviderCapability {
                         provider_id: provider.provider_id.clone(),
                         capability: EditableCustomProviderCapability::Tools,
@@ -6762,6 +6907,7 @@ impl LLMProvidersWidget {
                     "Stored as provider intent; not advertised by this build yet.",
                     provider.capabilities.vision,
                     provider.vision_toggle.clone(),
+                    !self.provider_keys_ready,
                     AISettingsPageAction::ToggleLLMProviderCapability {
                         provider_id: provider.provider_id.clone(),
                         capability: EditableCustomProviderCapability::Vision,
@@ -6773,6 +6919,7 @@ impl LLMProvidersWidget {
                     "Stored as provider intent; not advertised by this build yet.",
                     provider.capabilities.embeddings,
                     provider.embeddings_toggle.clone(),
+                    !self.provider_keys_ready,
                     AISettingsPageAction::ToggleLLMProviderCapability {
                         provider_id: provider.provider_id.clone(),
                         capability: EditableCustomProviderCapability::Embeddings,
@@ -6784,6 +6931,7 @@ impl LLMProvidersWidget {
                     "Stored as provider intent; not advertised by this build yet.",
                     provider.capabilities.transcription,
                     provider.transcription_toggle.clone(),
+                    !self.provider_keys_ready,
                     AISettingsPageAction::ToggleLLMProviderCapability {
                         provider_id: provider.provider_id.clone(),
                         capability: EditableCustomProviderCapability::Transcription,
@@ -6839,6 +6987,18 @@ impl SettingsWidget for LLMProvidersWidget {
                 true,
                 app,
             ));
+
+        if !ApiKeyManager::as_ref(app).keys_ready() {
+            content.add_child(
+                Text::new_inline(
+                    "Loading local API keys… Provider editing is temporarily disabled.",
+                    appearance.ui_font_family(),
+                    CONTENT_FONT_SIZE,
+                )
+                .with_color(appearance.theme().disabled_ui_text_color().into())
+                .finish(),
+            );
+        }
 
         if self.providers.is_empty() {
             content.add_child(

@@ -87,6 +87,7 @@ pub struct RequestParams {
     should_redact_secrets: bool,
 
     pub(crate) custom_provider_route: Option<direct_openai::CustomProviderRoute>,
+    pub(crate) custom_provider_route_error: Option<String>,
     pub computer_use_enabled: bool,
     pub ask_user_question_enabled: bool,
     pub orchestration_enabled: bool,
@@ -128,6 +129,7 @@ impl RequestParams {
             mcp_context: None,
             should_redact_secrets: false,
             custom_provider_route: None,
+            custom_provider_route_error: None,
             computer_use_enabled: false,
             ask_user_question_enabled: false,
             orchestration_enabled: false,
@@ -215,11 +217,15 @@ impl RequestParams {
 
         let should_redact_secrets = get_secret_obfuscation_mode(app).should_redact_secret();
 
-        let custom_provider_route = direct_openai::resolve_custom_provider_route(
-            request_input.model_id.as_str(),
-            &ai_settings.custom_providers,
-            ApiKeyManager::as_ref(app).keys(),
-        );
+        let (custom_provider_route, custom_provider_route_error) =
+            match direct_openai::resolve_custom_provider_route_with_error(
+                request_input.model_id.as_str(),
+                &ai_settings.custom_providers,
+                ApiKeyManager::as_ref(app).keys(),
+            ) {
+                Ok(route) => (route, None),
+                Err(error) => (None, Some(error.to_string())),
+            };
         let request_task_id = request_input
             .input_messages
             .keys()
@@ -247,6 +253,7 @@ impl RequestParams {
             mcp_context,
             should_redact_secrets,
             custom_provider_route,
+            custom_provider_route_error,
             computer_use_enabled,
             ask_user_question_enabled,
             orchestration_enabled,

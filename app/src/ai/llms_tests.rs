@@ -65,6 +65,59 @@ fn startup_loads_existing_custom_provider_models() {
 }
 
 #[test]
+fn startup_catalog_skips_ambiguous_custom_provider_names() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        app.add_singleton_model(UserWorkspaces::default_mock);
+        app.add_singleton_model(|_| TemplatableMCPServerManager::default());
+        app.add_singleton_model(|ctx| {
+            AIExecutionProfilesModel::new(&LaunchMode::new_for_unit_test(), ctx)
+        });
+        AISettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .custom_providers
+                .set_value(
+                    vec![
+                        CustomProviderConfig {
+                            name: "ambiguous".to_string(),
+                            base_url: "http://localhost:1234/v1".to_string(),
+                            models: vec!["first".to_string()],
+                            ..Default::default()
+                        },
+                        CustomProviderConfig {
+                            name: "ambiguous".to_string(),
+                            base_url: "http://localhost:5678/v1".to_string(),
+                            models: vec!["second".to_string()],
+                            ..Default::default()
+                        },
+                        CustomProviderConfig {
+                            name: "usable".to_string(),
+                            base_url: "http://localhost:9012/v1".to_string(),
+                            models: vec!["model".to_string()],
+                            ..Default::default()
+                        },
+                    ],
+                    ctx,
+                )
+                .unwrap();
+        });
+
+        let preferences = app.add_singleton_model(LLMPreferences::new);
+
+        assert_eq!(
+            preferences.read(&app, |preferences, _| {
+                preferences
+                    .get_base_llm_choices_for_agent_mode()
+                    .map(|model| model.id.to_string())
+                    .collect::<Vec<_>>()
+            }),
+            vec!["custom/usable/model"],
+            "ambiguous providers must not be advertised in the local catalog"
+        );
+    });
+}
+
+#[test]
 fn startup_without_custom_providers_ignores_stale_cached_models() {
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);

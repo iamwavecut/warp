@@ -20,6 +20,7 @@ fn request_params_with_ask_user_question_enabled(ask_user_question_enabled: bool
         mcp_context: None,
         should_redact_secrets: false,
         custom_provider_route: None,
+        custom_provider_route_error: None,
         computer_use_enabled: false,
         ask_user_question_enabled,
         orchestration_enabled: false,

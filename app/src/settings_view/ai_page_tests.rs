@@ -1,8 +1,10 @@
 use super::{
     AgentAttributionToggleState, ProviderConnectionSignature, ProviderModelsValidationState,
-    api_key_fingerprint, custom_provider_api_key_update, derive_agent_attribution_toggle_state,
+    api_key_fingerprint, custom_provider_api_key_update, custom_provider_editing_allowed,
+    custom_provider_key_is_still_referenced, derive_agent_attribution_toggle_state,
     find_live_provider_index, merge_provider_editor_config_with_live,
-    normalize_custom_provider_ids, provider_connection_is_valid, resolve_provider_connection,
+    normalize_custom_provider_ids, plan_custom_provider_key_migration,
+    provider_connection_is_valid, resolve_provider_connection,
 };
 use crate::settings::{
     CustomProviderCapabilities, CustomProviderConfig,
@@ -284,6 +286,53 @@ fn missing_or_duplicate_provider_ids_are_repaired() {
         })
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(ids.len(), providers.len());
+}
+
+#[test]
+fn custom_provider_editor_waits_for_secure_key_hydration() {
+    assert!(!custom_provider_editing_allowed(false));
+    assert!(custom_provider_editing_allowed(true));
+}
+
+#[test]
+fn duplicate_provider_key_survives_rename_until_last_legacy_name_is_removed() {
+    let providers_after_rename = vec![
+        CustomProviderConfig {
+            local_id: Some("renamed-provider".to_string()),
+            name: "renamed".to_string(),
+            ..Default::default()
+        },
+        CustomProviderConfig {
+            local_id: Some("legacy-provider".to_string()),
+            name: "legacy".to_string(),
+            ..Default::default()
+        },
+    ];
+    let existing_keys =
+        std::collections::HashMap::from([("legacy".to_string(), "shared-key".to_string())]);
+    let migration = plan_custom_provider_key_migration(
+        &providers_after_rename,
+        "renamed-provider",
+        "legacy",
+        "renamed",
+        true,
+        None,
+        &existing_keys,
+    )
+    .expect("rename should copy the shared legacy key");
+
+    assert!(!migration.remove_original);
+    assert_eq!(migration.current_key.as_deref(), Some("shared-key"));
+    assert!(custom_provider_key_is_still_referenced(
+        &providers_after_rename,
+        "legacy"
+    ));
+
+    let providers_after_delete = vec![providers_after_rename[0].clone()];
+    assert!(!custom_provider_key_is_still_referenced(
+        &providers_after_delete,
+        "legacy"
+    ));
 }
 
 #[test]

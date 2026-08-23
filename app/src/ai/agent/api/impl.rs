@@ -23,6 +23,11 @@ pub async fn generate_multi_agent_output(
         redaction::redact_inputs(&mut params.input);
     }
 
+    if let Some(error) = params.custom_provider_route_error.take() {
+        let response_stream = super::direct_openai::error_stream(error);
+        return Ok(Box::pin(response_stream.take_until(cancellation_rx)));
+    }
+
     if let Some(route) = params.custom_provider_route.clone() {
         let response_stream =
             super::direct_openai::generate(route, params, supported_tools).await?;

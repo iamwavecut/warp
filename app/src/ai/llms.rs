@@ -11,7 +11,9 @@ use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity};
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 use crate::{
     ai::agent::api::direct_openai::effective_capabilities_for_config,
-    settings::{AISettings, CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS},
+    settings::{
+        AISettings, CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS, custom_provider_name_is_unique,
+    },
 };
 
 use ai::api_keys::{ApiKeyManager, ApiKeyManagerEvent};
@@ -1188,7 +1190,15 @@ impl SingletonEntity for LLMPreferences {}
 /// provider has models. This is pure settings-to-model transformation and performs no I/O.
 fn models_by_feature_from_custom_providers(app: &AppContext) -> ModelsByFeature {
     let mut all_llms = Vec::new();
-    for provider_config in AISettings::as_ref(app).custom_providers.iter() {
+    let providers = AISettings::as_ref(app).custom_providers.as_slice();
+    for provider_config in providers {
+        if !custom_provider_name_is_unique(&provider_config.name, providers) {
+            log::warn!(
+                "Skipping ambiguous local custom provider `{}`; rename one duplicate provider",
+                provider_config.name
+            );
+            continue;
+        }
         if let Err(error) = provider_config.validate() {
             log::warn!(
                 "Skipping invalid local custom provider `{}`: {error}",

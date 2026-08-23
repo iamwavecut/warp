@@ -17,7 +17,8 @@ use crate::ai::agent::{
 use crate::ai::llms::LLMId;
 use crate::server::server_api::AIApiError;
 use crate::settings::{
-    CustomProviderCapabilities, CustomProviderConfig, normalize_custom_provider_env_var,
+    CustomProviderCapabilities, CustomProviderConfig, custom_provider_name_is_unique,
+    normalize_custom_provider_env_var,
 };
 use ::ai::api_keys::ApiKeys;
 
@@ -41,6 +42,24 @@ pub(crate) struct CustomProviderRoute {
     pub api_key: Option<String>,
     pub capabilities: CustomProviderCapabilities,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CustomProviderRouteError {
+    AmbiguousProviderName(String),
+}
+
+impl std::fmt::Display for CustomProviderRouteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AmbiguousProviderName(name) => write!(
+                f,
+                "custom provider name `{name}` is ambiguous; rename one provider before using it"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CustomProviderRouteError {}
 
 /// Capabilities that the current direct OpenAI-compatible adapter can actually
 /// deliver. Configured vision, embeddings, and transcription remain disabled
@@ -105,16 +124,43 @@ pub(crate) fn resolve_custom_provider_route(
     providers: &[CustomProviderConfig],
     api_keys: &ApiKeys,
 ) -> Option<CustomProviderRoute> {
-    let custom_model = parse_custom_model_id(model_id)?;
-    let provider = providers.iter().find(|provider| {
-        provider.name == custom_model.provider_name && provider.validate().is_ok()
-    })?;
+    resolve_custom_provider_route_with_error(model_id, providers, api_keys)
+        .ok()
+        .flatten()
+}
 
-    Some(route_for_provider_model(
+pub(crate) fn resolve_custom_provider_route_with_error(
+    model_id: &str,
+    providers: &[CustomProviderConfig],
+    api_keys: &ApiKeys,
+) -> Result<Option<CustomProviderRoute>, CustomProviderRouteError> {
+    let Some(custom_model) = parse_custom_model_id(model_id) else {
+        return Ok(None);
+    };
+    if !custom_provider_name_is_unique(&custom_model.provider_name, providers) {
+        let provider_name = custom_model.provider_name.clone();
+        let has_matching_provider = providers
+            .iter()
+            .any(|provider| provider.name == provider_name);
+        return if has_matching_provider {
+            Err(CustomProviderRouteError::AmbiguousProviderName(
+                provider_name,
+            ))
+        } else {
+            Ok(None)
+        };
+    }
+    let Some(provider) = providers.iter().find(|provider| {
+        provider.name == custom_model.provider_name && provider.validate().is_ok()
+    }) else {
+        return Ok(None);
+    };
+
+    Ok(Some(route_for_provider_model(
         provider,
         custom_model.model,
         api_keys,
-    ))
+    )))
 }
 
 pub(crate) fn default_custom_provider_route(
@@ -122,6 +168,9 @@ pub(crate) fn default_custom_provider_route(
     api_keys: &ApiKeys,
 ) -> Option<CustomProviderRoute> {
     providers.iter().find_map(|provider| {
+        if !custom_provider_name_is_unique(&provider.name, providers) {
+            return None;
+        }
         provider.validate().ok()?;
         let model = provider.models.first()?.clone();
         Some(route_for_provider_model(provider, model, api_keys))
@@ -2624,6 +2673,49 @@ mod tests {
         assert_eq!(route.base_url, "http://localhost:1234/v1");
         assert_eq!(route.model, "qwen3-coder");
         assert_eq!(route.api_key.as_deref(), Some("stored-key"));
+    }
+
+    #[test]
+    fn duplicate_custom_provider_names_fail_closed_without_route() {
+        let providers = vec![
+            CustomProviderConfig {
+                local_id: Some("first".to_string()),
+                name: "duplicate".to_string(),
+                base_url: "http://localhost:1234/v1".to_string(),
+                models: vec!["model".to_string()],
+                ..Default::default()
+            },
+            CustomProviderConfig {
+                local_id: Some("second".to_string()),
+                name: "duplicate".to_string(),
+                base_url: "http://localhost:5678/v1".to_string(),
+                models: vec!["model".to_string()],
+                ..Default::default()
+            },
+        ];
+
+        assert_eq!(
+            resolve_custom_provider_route(
+                "custom/duplicate/model",
+                &providers,
+                &ApiKeys::default()
+            ),
+            None
+        );
+        assert_eq!(
+            default_custom_provider_route(&providers, &ApiKeys::default()),
+            None
+        );
+        assert_eq!(
+            resolve_custom_provider_route_with_error(
+                "custom/duplicate/model",
+                &providers,
+                &ApiKeys::default(),
+            )
+            .unwrap_err()
+            .to_string(),
+            "custom provider name `duplicate` is ambiguous; rename one provider before using it"
+        );
     }
 
     #[test]

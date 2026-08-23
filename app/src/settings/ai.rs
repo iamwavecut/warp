@@ -218,6 +218,18 @@ pub fn parse_custom_provider_models(input: &str) -> Vec<String> {
         })
 }
 
+/// Returns whether a provider display name identifies exactly one configured
+/// provider. Provider routes and name-keyed secure keys cannot disambiguate
+/// duplicate names, so callers must fail closed until the user renames one.
+pub fn custom_provider_name_is_unique(name: &str, providers: &[CustomProviderConfig]) -> bool {
+    providers
+        .iter()
+        .filter(|provider| provider.name == name)
+        .take(2)
+        .count()
+        == 1
+}
+
 pub fn ranked_custom_provider_model_suggestions(
     query: &str,
     available_models: &[String],

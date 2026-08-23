@@ -21,6 +21,28 @@ fn normalizes_custom_provider_env_var_from_ui() {
 }
 
 #[test]
+fn custom_provider_names_are_unique_only_when_unambiguous() {
+    let providers = vec![
+        CustomProviderConfig {
+            name: "duplicate".to_string(),
+            ..Default::default()
+        },
+        CustomProviderConfig {
+            name: "duplicate".to_string(),
+            ..Default::default()
+        },
+        CustomProviderConfig {
+            name: "unique".to_string(),
+            ..Default::default()
+        },
+    ];
+
+    assert!(!custom_provider_name_is_unique("duplicate", &providers));
+    assert!(custom_provider_name_is_unique("unique", &providers));
+    assert!(!custom_provider_name_is_unique("missing", &providers));
+}
+
+#[test]
 fn builds_openai_compatible_custom_provider_from_ui_fields() {
     let provider = custom_provider_config_from_ui(
         " local-openai-compatible ",
