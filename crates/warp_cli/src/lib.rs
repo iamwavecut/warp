@@ -344,6 +344,12 @@ pub enum Command {
     /// Print debugging information and exit.
     #[clap(long_flag = "dump-debug-info")]
     DumpDebugInfo,
+    /// Print the JSON schema for the current Warp channel's settings and exit.
+    #[cfg(not(target_family = "wasm"))]
+    DumpSettingsSchema {
+        /// Write the schema to this path instead of standard output.
+        output_path: Option<std::path::PathBuf>,
+    },
 }
 
 impl Command {
@@ -353,6 +359,8 @@ impl Command {
             Command::Worker(_) => false,
             Command::CommandLine(_) | Command::DumpDebugInfo => true,
             Command::Completions { .. } => true,
+            #[cfg(not(target_family = "wasm"))]
+            Command::DumpSettingsSchema { output_path } => output_path.is_none(),
         }
     }
 }

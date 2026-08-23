@@ -26,6 +26,8 @@ mod onboarding;
 mod pane;
 mod privacy;
 mod same_line_prompt_block;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod schema_generation;
 mod scroll;
 mod select;
 mod ssh;
@@ -58,6 +60,8 @@ pub use onboarding::*;
 pub use pane::*;
 pub use privacy::*;
 pub use same_line_prompt_block::*;
+#[cfg(not(target_family = "wasm"))]
+pub use schema_generation::dump_settings_schema;
 pub use scroll::*;
 pub use select::*;
 pub use ssh::*;
