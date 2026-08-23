@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `832c342c`.
+- Current local implementation head: `b5083388`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -210,6 +210,16 @@ Current evidence:
 **Estimate / risk:** 4–7 days / medium-high.
 
 ### P1.2 Complete the direct OpenAI tool adapter
+
+**Delivered in code:** `953075f0`, `cf6f97db`, `279ed8a3`, `87cb76e2`,
+`0123d2ab`, `b5083388`. Five semantic fix cycles resolved the independent
+review findings; the final reviewer approved the complete adapter without
+remaining Critical, Important, or Minor findings.
+
+Focused default and `local_only` suites each passed all 58 direct-provider
+tests. Both all-target builds, bundle creation, executable and directory
+checks, and strict codesign also passed. The verified bundle binary SHA-256 was
+`175803bef64d024f2e61b6cfafe05d2af4b9a411ee41daea8e1c229c02b49eae`.
 
 Existing local executors support more actions than the direct adapter can
 advertise or parse. Add schemas/parsers for local documents and plans, code
