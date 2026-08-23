@@ -218,10 +218,11 @@ impl RequestParams {
         let should_redact_secrets = get_secret_obfuscation_mode(app).should_redact_secret();
 
         let (custom_provider_route, custom_provider_route_error) =
-            match direct_openai::resolve_custom_provider_route_with_error(
+            match direct_openai::resolve_custom_provider_route_with_readiness(
                 request_input.model_id.as_str(),
                 &ai_settings.custom_providers,
                 ApiKeyManager::as_ref(app).keys(),
+                ApiKeyManager::as_ref(app).keys_ready(),
             ) {
                 Ok(route) => (route, None),
                 Err(error) => (None, Some(error.to_string())),

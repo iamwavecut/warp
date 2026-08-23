@@ -46,6 +46,7 @@ pub(crate) struct CustomProviderRoute {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CustomProviderRouteError {
     AmbiguousProviderName(String),
+    KeysNotReady,
 }
 
 impl std::fmt::Display for CustomProviderRouteError {
@@ -54,6 +55,10 @@ impl std::fmt::Display for CustomProviderRouteError {
             Self::AmbiguousProviderName(name) => write!(
                 f,
                 "custom provider name `{name}` is ambiguous; rename one provider before using it"
+            ),
+            Self::KeysNotReady => write!(
+                f,
+                "Local API keys are still loading; retry the request when secure storage is ready."
             ),
         }
     }
@@ -134,9 +139,21 @@ pub(crate) fn resolve_custom_provider_route_with_error(
     providers: &[CustomProviderConfig],
     api_keys: &ApiKeys,
 ) -> Result<Option<CustomProviderRoute>, CustomProviderRouteError> {
+    resolve_custom_provider_route_with_readiness(model_id, providers, api_keys, true)
+}
+
+pub(crate) fn resolve_custom_provider_route_with_readiness(
+    model_id: &str,
+    providers: &[CustomProviderConfig],
+    api_keys: &ApiKeys,
+    keys_ready: bool,
+) -> Result<Option<CustomProviderRoute>, CustomProviderRouteError> {
     let Some(custom_model) = parse_custom_model_id(model_id) else {
         return Ok(None);
     };
+    if !keys_ready {
+        return Err(CustomProviderRouteError::KeysNotReady);
+    }
     if !custom_provider_name_is_unique(&custom_model.provider_name, providers) {
         let provider_name = custom_model.provider_name.clone();
         let has_matching_provider = providers
@@ -167,14 +184,49 @@ pub(crate) fn default_custom_provider_route(
     providers: &[CustomProviderConfig],
     api_keys: &ApiKeys,
 ) -> Option<CustomProviderRoute> {
-    providers.iter().find_map(|provider| {
-        if !custom_provider_name_is_unique(&provider.name, providers) {
-            return None;
+    default_custom_provider_route_with_error(providers, api_keys, true)
+        .ok()
+        .flatten()
+}
+
+pub(crate) fn default_custom_provider_route_when_ready(
+    providers: &[CustomProviderConfig],
+    api_keys: &ApiKeys,
+    keys_ready: bool,
+) -> Option<CustomProviderRoute> {
+    default_custom_provider_route_with_error(providers, api_keys, keys_ready)
+        .ok()
+        .flatten()
+}
+
+pub(crate) fn default_custom_provider_route_with_error(
+    providers: &[CustomProviderConfig],
+    api_keys: &ApiKeys,
+    keys_ready: bool,
+) -> Result<Option<CustomProviderRoute>, CustomProviderRouteError> {
+    if !keys_ready {
+        return Err(CustomProviderRouteError::KeysNotReady);
+    }
+
+    if let Some(provider) = providers
+        .iter()
+        .find(|provider| !custom_provider_name_is_unique(&provider.name, providers))
+    {
+        return Err(CustomProviderRouteError::AmbiguousProviderName(
+            provider.name.clone(),
+        ));
+    }
+
+    for provider in providers {
+        if provider.validate().is_err() {
+            continue;
         }
-        provider.validate().ok()?;
-        let model = provider.models.first()?.clone();
-        Some(route_for_provider_model(provider, model, api_keys))
-    })
+        let Some(model) = provider.models.first().cloned() else {
+            continue;
+        };
+        return Ok(Some(route_for_provider_model(provider, model, api_keys)));
+    }
+    Ok(None)
 }
 
 fn route_for_provider_model(
@@ -2707,6 +2759,12 @@ mod tests {
             None
         );
         assert_eq!(
+            default_custom_provider_route_with_error(&providers, &ApiKeys::default(), true)
+                .unwrap_err()
+                .to_string(),
+            "custom provider name `duplicate` is ambiguous; rename one provider before using it"
+        );
+        assert_eq!(
             resolve_custom_provider_route_with_error(
                 "custom/duplicate/model",
                 &providers,
@@ -2715,6 +2773,85 @@ mod tests {
             .unwrap_err()
             .to_string(),
             "custom provider name `duplicate` is ambiguous; rename one provider before using it"
+        );
+    }
+
+    #[test]
+    fn duplicate_custom_provider_name_blocks_default_route_for_other_providers() {
+        let providers = vec![
+            CustomProviderConfig {
+                local_id: Some("first".to_string()),
+                name: "duplicate".to_string(),
+                base_url: "http://localhost:1234/v1".to_string(),
+                models: vec!["first-model".to_string()],
+                ..Default::default()
+            },
+            CustomProviderConfig {
+                local_id: Some("second".to_string()),
+                name: "duplicate".to_string(),
+                base_url: "http://localhost:1234/v1".to_string(),
+                models: vec!["second-model".to_string()],
+                ..Default::default()
+            },
+            CustomProviderConfig {
+                local_id: Some("unique".to_string()),
+                name: "unique".to_string(),
+                base_url: "http://localhost:1234/v1".to_string(),
+                models: vec!["unique-model".to_string()],
+                ..Default::default()
+            },
+        ];
+
+        let error = default_custom_provider_route_with_error(&providers, &ApiKeys::default(), true)
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "custom provider name `duplicate` is ambiguous; rename one provider before using it"
+        );
+        assert!(default_custom_provider_route(&providers, &ApiKeys::default()).is_none());
+    }
+
+    #[test]
+    fn custom_provider_route_waits_for_secure_key_hydration() {
+        let providers = vec![CustomProviderConfig {
+            local_id: Some("local".to_string()),
+            name: "local".to_string(),
+            base_url: "http://localhost:1234/v1".to_string(),
+            models: vec!["model".to_string()],
+            ..Default::default()
+        }];
+        let mut api_keys = ApiKeys::default();
+        api_keys
+            .custom
+            .insert("local".to_string(), "stored-key".to_string());
+
+        let loading_error = resolve_custom_provider_route_with_readiness(
+            "custom/local/model",
+            &providers,
+            &api_keys,
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(
+            loading_error.to_string(),
+            "Local API keys are still loading; retry the request when secure storage is ready."
+        );
+        assert!(
+            resolve_custom_provider_route_with_readiness(
+                "custom/local/model",
+                &providers,
+                &api_keys,
+                true,
+            )
+            .unwrap()
+            .map(|route| route.api_key.as_deref() == Some("stored-key"))
+            .unwrap_or(false)
+        );
+        assert!(default_custom_provider_route_when_ready(&providers, &api_keys, false,).is_none());
+        assert_eq!(
+            default_custom_provider_route_when_ready(&providers, &api_keys, true,)
+                .and_then(|route| route.api_key),
+            Some("stored-key".to_string())
         );
     }
 

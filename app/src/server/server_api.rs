@@ -265,6 +265,7 @@ pub struct ServerApi {
     client: Arc<http_client::Client>,
     last_server_time: Arc<Mutex<Option<ServerTime>>>,
     local_ai_route: Arc<Mutex<Option<CustomProviderRoute>>>,
+    local_ai_route_error: Arc<Mutex<Option<String>>>,
 }
 
 impl ServerApi {
@@ -285,6 +286,7 @@ impl ServerApi {
             client: Arc::new(http_client::Client::new()),
             last_server_time: Arc::new(Mutex::new(None)),
             local_ai_route: Arc::new(Mutex::new(None)),
+            local_ai_route_error: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -294,6 +296,7 @@ impl ServerApi {
             client: Arc::new(http_client::Client::new_for_test()),
             last_server_time: Arc::new(Mutex::new(None)),
             local_ai_route: Arc::new(Mutex::new(None)),
+            local_ai_route_error: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -303,19 +306,30 @@ impl ServerApi {
             client: Arc::new(http_client::Client::new_for_test()),
             last_server_time: Arc::new(Mutex::new(None)),
             local_ai_route: Arc::new(Mutex::new(Some(route))),
+            local_ai_route_error: Arc::new(Mutex::new(None)),
         }
     }
 
     pub(crate) fn refresh_local_ai_route(&self, ctx: &warpui::AppContext) {
-        let route = direct_openai::default_custom_provider_route(
+        let result = direct_openai::default_custom_provider_route_with_error(
             &AISettings::as_ref(ctx).custom_providers,
             ::ai::api_keys::ApiKeyManager::as_ref(ctx).keys(),
+            ::ai::api_keys::ApiKeyManager::as_ref(ctx).keys_ready(),
         );
-        self.set_local_ai_route(route);
+        match result {
+            Ok(route) => self.set_local_ai_route(route),
+            Err(error) => self.set_local_ai_route_error(error.to_string()),
+        }
     }
 
     pub(crate) fn set_local_ai_route(&self, route: Option<CustomProviderRoute>) {
         *self.local_ai_route.lock() = route;
+        *self.local_ai_route_error.lock() = None;
+    }
+
+    fn set_local_ai_route_error(&self, error: String) {
+        *self.local_ai_route.lock() = None;
+        *self.local_ai_route_error.lock() = Some(error);
     }
 
     pub(crate) fn local_ai_route(&self) -> Option<CustomProviderRoute> {
@@ -327,6 +341,9 @@ impl ServerApi {
         system_prompt: String,
         user_prompt: String,
     ) -> Result<String, AIApiError> {
+        if let Some(error) = self.local_ai_route_error.lock().clone() {
+            return Err(AIApiError::Other(anyhow!(error)));
+        }
         let route = self
             .local_ai_route()
             .ok_or_else(Self::backend_disabled_ai_error)?;

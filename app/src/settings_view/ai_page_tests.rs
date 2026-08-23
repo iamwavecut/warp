@@ -1,6 +1,7 @@
 use super::{
     AgentAttributionToggleState, ProviderConnectionSignature, ProviderModelsValidationState,
     api_key_fingerprint, custom_provider_api_key_update, custom_provider_editing_allowed,
+    custom_provider_editor_actions_allowed, custom_provider_ids_are_persisted,
     custom_provider_key_is_still_referenced, derive_agent_attribution_toggle_state,
     find_live_provider_index, merge_provider_editor_config_with_live,
     normalize_custom_provider_ids, plan_custom_provider_key_migration,
@@ -292,6 +293,26 @@ fn missing_or_duplicate_provider_ids_are_repaired() {
 fn custom_provider_editor_waits_for_secure_key_hydration() {
     assert!(!custom_provider_editing_allowed(false));
     assert!(custom_provider_editing_allowed(true));
+}
+
+#[test]
+fn provider_editor_actions_require_persisted_provider_identity() {
+    let persisted = vec![CustomProviderConfig {
+        local_id: Some("stable".to_string()),
+        name: "local".to_string(),
+        ..Default::default()
+    }];
+    let ephemeral = vec![CustomProviderConfig {
+        local_id: None,
+        name: "local".to_string(),
+        ..Default::default()
+    }];
+
+    assert!(custom_provider_ids_are_persisted(&persisted));
+    assert!(!custom_provider_ids_are_persisted(&ephemeral));
+    assert!(!custom_provider_editor_actions_allowed(false, true));
+    assert!(!custom_provider_editor_actions_allowed(true, false));
+    assert!(custom_provider_editor_actions_allowed(true, true));
 }
 
 #[test]
