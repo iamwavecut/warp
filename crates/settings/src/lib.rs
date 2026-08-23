@@ -533,12 +533,12 @@ pub trait Setting {
                 key,
                 value
             );
-            let _ = preferences.write_value_with_hierarchy(
-                key,
-                value,
-                Self::hierarchy(),
-                Self::max_table_depth(),
-            );
+            preferences
+                .write_value_with_hierarchy(key, value, Self::hierarchy(), Self::max_table_depth())
+                .context(format!(
+                    "Failed to write {} to storage",
+                    Self::storage_key()
+                ))?;
             Ok(true)
         } else {
             Ok(false)

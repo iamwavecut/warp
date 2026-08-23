@@ -1,5 +1,6 @@
 use anyhow::Result;
 use warpui_core::{AppContext, SingletonEntity};
+use warpui_extras::user_preferences::{Error as PreferencesError, UserPreferences};
 
 use crate::manager::SettingsManager;
 use crate::{Setting, SupportedPlatforms, SyncToCloud, *};
@@ -47,6 +48,31 @@ pub fn init_and_register_preferences(ctx: &mut AppContext) {
     });
 }
 
+struct FailingPreferences;
+
+impl UserPreferences for FailingPreferences {
+    fn write_value(&self, _key: &str, _value: String) -> std::result::Result<(), PreferencesError> {
+        Err(PreferencesError::Unknown(anyhow::anyhow!(
+            "injected preference write failure"
+        )))
+    }
+
+    fn read_value(&self, _key: &str) -> std::result::Result<Option<String>, PreferencesError> {
+        Ok(None)
+    }
+
+    fn remove_value(&self, _key: &str) -> std::result::Result<(), PreferencesError> {
+        Err(PreferencesError::Unknown(anyhow::anyhow!(
+            "injected preference remove failure"
+        )))
+    }
+}
+
+fn init_and_register_failing_preferences(ctx: &mut AppContext) {
+    ctx.add_singleton_model(move |_| crate::PublicPreferences::new(Box::new(FailingPreferences)));
+    ctx.add_singleton_model(move |_| crate::PrivatePreferences::new(Box::new(FailingPreferences)));
+}
+
 /// This is a helper structure that listens to events generated when
 /// SimpleSetting is changed.
 struct EventListener {
@@ -70,6 +96,43 @@ impl EventListener {
 
 impl warpui_core::Entity for EventListener {
     type Event = ();
+}
+
+#[test]
+fn failed_preference_write_preserves_setting_and_does_not_emit() {
+    let direct_error = SimpleSetting::write_to_preferences(&true, &FailingPreferences)
+        .expect_err("failed preference writes must propagate to callers");
+    let direct_error = format!("{direct_error:#}");
+    assert!(direct_error.contains("Failed to write SimpleSetting to storage"));
+    assert!(direct_error.contains("injected preference write failure"));
+
+    warpui_core::App::test((), |mut app| async move {
+        app.update(init_and_register_failing_preferences);
+        app.add_singleton_model(|_| SettingsManager::default());
+        TestSettings::register(&mut app);
+        let handle = app.add_model(EventListener::new);
+
+        app.read(|ctx| {
+            assert!(!*TestSettings::as_ref(ctx).simple_setting.value());
+        });
+
+        let app_direct_error = app.read(|ctx| {
+            SimpleSetting::write_to_preferences(&true, SimpleSetting::preferences_for_setting(ctx))
+        });
+        assert!(app_direct_error.is_err());
+
+        let result = app.update(|ctx| {
+            TestSettings::handle(ctx).update(ctx, |test_settings, ctx| {
+                test_settings.simple_setting.set_value(true, ctx)
+            })
+        });
+        assert!(result.is_err());
+
+        app.read(|ctx| {
+            assert!(!*TestSettings::as_ref(ctx).simple_setting.value());
+            assert!(!handle.as_ref(ctx).got_event);
+        });
+    });
 }
 
 #[test]
