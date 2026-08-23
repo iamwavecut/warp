@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `a69bba1b`.
+- Current local implementation head: `099988b0d`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -242,9 +242,9 @@ deduplication, and ordered local history. The final reviewer approved the
 cumulative implementation without remaining Critical, Important, or Minor
 findings.
 
-Focused default and `local_only` suites each passed all 74 direct-provider
-tests. The all-target and bundle gate is intentionally shared with P1.4 because
-both items extend the same custom-provider capability boundary.
+The final combined P1.3/P1.4 gate passed 81 direct-provider tests in both
+default and `local_only` modes, both all-target builds, bundle creation, and
+strict codesign verification.
 
 Replace string-only message content with OpenAI-compatible content parts. Send
 validated images as bounded `data:` payloads, read text attachments locally,
@@ -255,6 +255,20 @@ and reject unsupported binary content without fallback.
 **Estimate / risk:** 3–5 days / medium-high.
 
 ### P1.4 Add local transcription adapters
+
+**Delivered in code:** `4b8e0271`, `6e893710`, `7eebf5d9`, `67e92af5`,
+`099988b0`. Three semantic fix cycles removed the remaining hosted entitlement
+gate, made provider selection and configured key environments fail closed,
+hardened WAV validation, refreshed existing voice views on route changes, and
+surfaced validation and persistence failures in the provider UI. The final
+independent reviewer approved the cumulative implementation without remaining
+blocking findings.
+
+Focused transcription suites passed all 8 tests in both default and
+`local_only` modes. The shared P1.3/P1.4 gate also passed both all-target builds,
+bundle creation, executable checks, and strict codesign. The verified bundle
+binary SHA-256 was
+`3399d197e0653b837d89d53b22d31fd96d94d82a7074a3b9aa55bc236a8c11c6`.
 
 Use the existing `Transcriber` boundary and voice capture UI with either a
 user-configured `/audio/transcriptions` endpoint or an explicitly configured
