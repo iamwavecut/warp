@@ -64,13 +64,27 @@ fn keyless_provider_validation_enables_model_selection() {
 
 #[test]
 fn provider_connection_with_direct_key_has_stable_signature() {
-    let (first_signature, _, first_api_key) =
-        resolve_provider_connection("http://localhost:1234/v1", " direct-key ", "").unwrap();
-    let (second_signature, _, second_api_key) =
-        resolve_provider_connection("http://localhost:1234/v1", "direct-key", "").unwrap();
+    let (first_signature, _, first_api_key) = resolve_provider_connection(
+        "http://localhost:1234/v1",
+        " synthetic-credential-fixture ",
+        "",
+    )
+    .unwrap();
+    let (second_signature, _, second_api_key) = resolve_provider_connection(
+        "http://localhost:1234/v1",
+        "synthetic-credential-fixture",
+        "",
+    )
+    .unwrap();
 
-    assert_eq!(first_api_key.as_deref(), Some("direct-key"));
-    assert_eq!(second_api_key.as_deref(), Some("direct-key"));
+    assert_eq!(
+        first_api_key.as_deref(),
+        Some("synthetic-credential-fixture")
+    );
+    assert_eq!(
+        second_api_key.as_deref(),
+        Some("synthetic-credential-fixture")
+    );
     assert_eq!(first_signature, second_signature);
     assert!(first_signature.api_key_fingerprint.is_some());
 }
@@ -214,7 +228,7 @@ fn renamed_provider_editor_can_save_later_fields_without_reviving_stale_editors(
 
 #[test]
 fn stale_editor_does_not_restore_secure_key_for_direct_route() {
-    let editor_key = "editor-snapshot-key";
+    let editor_key = "synthetic-editor-credential";
     assert_eq!(
         custom_provider_api_key_update(editor_key, Some(api_key_fingerprint(editor_key))),
         None
@@ -234,7 +248,7 @@ fn stale_editor_does_not_restore_secure_key_for_direct_route() {
     let mut api_keys = ::ai::api_keys::ApiKeys::default();
     api_keys
         .custom
-        .insert("local".to_string(), "live-secure-key".to_string());
+        .insert("local".to_string(), "synthetic-live-credential".to_string());
 
     let route = super::direct_openai::resolve_custom_provider_route(
         "custom/local/model",
@@ -242,7 +256,7 @@ fn stale_editor_does_not_restore_secure_key_for_direct_route() {
         &api_keys,
     )
     .expect("the direct route should use the live secure key");
-    assert_eq!(route.api_key.as_deref(), Some("live-secure-key"));
+    assert_eq!(route.api_key.as_deref(), Some("synthetic-live-credential"));
 }
 
 #[test]
@@ -330,8 +344,10 @@ fn duplicate_provider_key_survives_rename_until_last_legacy_name_is_removed() {
             ..Default::default()
         },
     ];
-    let existing_keys =
-        std::collections::HashMap::from([("legacy".to_string(), "shared-key".to_string())]);
+    let existing_keys = std::collections::HashMap::from([(
+        "legacy".to_string(),
+        "synthetic-credential-fixture".to_string(),
+    )]);
     let migration = plan_custom_provider_key_migration(
         &providers_after_rename,
         "renamed-provider",
@@ -344,7 +360,10 @@ fn duplicate_provider_key_survives_rename_until_last_legacy_name_is_removed() {
     .expect("rename should copy the shared legacy key");
 
     assert!(!migration.remove_original);
-    assert_eq!(migration.current_key.as_deref(), Some("shared-key"));
+    assert_eq!(
+        migration.current_key.as_deref(),
+        Some("synthetic-credential-fixture")
+    );
     assert!(custom_provider_key_is_still_referenced(
         &providers_after_rename,
         "legacy"

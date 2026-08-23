@@ -40,6 +40,8 @@ use crate::view_components::{
     action_button::{ActionButton, ButtonSize, DangerNakedTheme, SecondaryTheme},
     render_warning_box,
 };
+#[cfg(feature = "voice_input")]
+use crate::voice::transcriber::VoiceTranscriber;
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 use ::ai::api_keys::{ApiKeyManager, ApiKeyManagerEvent};
 use enum_iterator::all;
@@ -2854,9 +2856,9 @@ impl TypedActionView for AISettingsPageView {
                         }
                     }
                     if let Err(error) = provider.validate() {
-                        log::warn!(
+                        report_error!(anyhow::anyhow!(
                             "Refusing invalid local custom provider capability change: {error}"
-                        );
+                        ));
                         return;
                     }
                     if let Err(error) = persist_custom_provider_configs(providers, ctx) {
@@ -6502,9 +6504,9 @@ fn sync_llm_provider_editors_to_settings(
         ) {
             Ok(capabilities) => capabilities,
             Err(error) => {
-                log::warn!(
+                report_error!(anyhow::anyhow!(
                     "Keeping existing local custom provider after invalid capability input: {error}"
-                );
+                ));
                 continue;
             }
         };
@@ -6519,7 +6521,9 @@ fn sync_llm_provider_editors_to_settings(
             Ok(Some(config)) => config,
             Ok(None) => continue,
             Err(error) => {
-                log::warn!("Keeping invalid local custom provider unchanged: {error}");
+                report_error!(anyhow::anyhow!(
+                    "Keeping invalid local custom provider unchanged: {error}"
+                ));
                 continue;
             }
         };
@@ -6534,6 +6538,9 @@ fn sync_llm_provider_editors_to_settings(
             .enumerate()
             .any(|(index, existing)| index != live_index && existing.name == config.name)
         {
+            report_error!(anyhow::anyhow!(
+                "A local custom provider with that name already exists. Choose a unique provider name."
+            ));
             continue;
         }
 
@@ -7068,6 +7075,16 @@ impl SettingsWidget for LLMProvidersWidget {
                 true,
                 app,
             ));
+
+        #[cfg(all(feature = "voice_input", not(test)))]
+        {
+            let status = VoiceTranscriber::route_status_text_for_app(app);
+            content.add_child(
+                Text::new_inline(status, appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                    .with_color(appearance.theme().active_ui_text_color().into())
+                    .finish(),
+            );
+        }
 
         if !self.provider_keys_ready {
             content.add_child(

@@ -61,6 +61,8 @@ use crate::terminal::ShellLaunchData;
 use crate::terminal::local_shell::LocalShellState;
 #[cfg(feature = "voice_input")]
 use crate::voice::transcriber::TranscribeError;
+#[cfg(feature = "voice_input")]
+use crate::voice::transcriber::{VoiceTranscriber, VoiceTranscriberEvent};
 use ai::document::{AIDocumentId, AIDocumentVersion};
 use parking_lot::FairMutex;
 use pathfinder_color::ColorU;
@@ -291,6 +293,12 @@ impl AgentInputFooter {
                     me.mic_button.update(ctx, |button, ctx| {
                         button.set_tooltip(Some(tooltip), ctx);
                     });
+                }
+            });
+
+            ctx.subscribe_to_model(&VoiceTranscriber::handle(ctx), |_, _, event, ctx| {
+                if matches!(event, VoiceTranscriberEvent::RouteChanged) {
+                    ctx.notify();
                 }
             });
         }
@@ -1420,10 +1428,6 @@ impl AgentInputFooter {
         source: &voice_input::VoiceInputToggledFrom,
         ctx: &mut ViewContext<Self>,
     ) {
-        if !UserWorkspaces::as_ref(ctx).is_voice_enabled() {
-            return;
-        }
-
         if !AISettings::as_ref(ctx).is_voice_input_enabled(ctx) {
             return;
         }

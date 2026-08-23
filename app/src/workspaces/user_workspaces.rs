@@ -251,10 +251,6 @@ impl UserWorkspaces {
         true
     }
 
-    pub fn is_voice_enabled(&self) -> bool {
-        false
-    }
-
     pub fn is_byo_api_key_enabled(&self) -> bool {
         true
     }

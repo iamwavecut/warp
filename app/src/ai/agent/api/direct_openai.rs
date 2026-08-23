@@ -52,6 +52,8 @@ pub(crate) struct CustomProviderRoute {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CustomProviderRouteError {
     AmbiguousProviderName(String),
+    MissingApiKeyEnvironmentVariable(String),
+    EmptyApiKeyEnvironmentVariable(String),
     KeysNotReady,
 }
 
@@ -61,6 +63,14 @@ impl std::fmt::Display for CustomProviderRouteError {
             Self::AmbiguousProviderName(name) => write!(
                 f,
                 "custom provider name `{name}` is ambiguous; rename one provider before using it"
+            ),
+            Self::MissingApiKeyEnvironmentVariable(name) => write!(
+                f,
+                "local custom provider API-key environment variable `{name}` is not set"
+            ),
+            Self::EmptyApiKeyEnvironmentVariable(name) => write!(
+                f,
+                "local custom provider API-key environment variable `{name}` is empty"
             ),
             Self::KeysNotReady => write!(
                 f,
@@ -182,11 +192,19 @@ pub(crate) fn resolve_custom_provider_route_with_readiness(
         return Ok(None);
     };
 
+    if !provider
+        .models
+        .iter()
+        .any(|model| model == &custom_model.model)
+    {
+        return Ok(None);
+    }
+
     Ok(Some(route_for_provider_model(
         provider,
         custom_model.model,
         api_keys,
-    )))
+    )?))
 }
 
 /// Resolves the transcription endpoint for the provider backing the selected
@@ -232,6 +250,13 @@ pub(crate) fn resolve_custom_provider_transcription_route_with_readiness(
     else {
         return Ok(None);
     };
+    if !provider
+        .models
+        .iter()
+        .any(|model| model == &custom_model.model)
+    {
+        return Ok(None);
+    }
     if provider.validate().is_err() || !provider.capabilities.transcription {
         return Ok(None);
     }
@@ -249,7 +274,7 @@ pub(crate) fn resolve_custom_provider_transcription_route_with_readiness(
         provider,
         transcription_model.to_string(),
         api_keys,
-    )))
+    )?))
 }
 
 pub(crate) fn default_custom_provider_route(
@@ -296,7 +321,7 @@ pub(crate) fn default_custom_provider_route_with_error(
         let Some(model) = provider.models.first().cloned() else {
             continue;
         };
-        return Ok(Some(route_for_provider_model(provider, model, api_keys)));
+        return Ok(Some(route_for_provider_model(provider, model, api_keys)?));
     }
     Ok(None)
 }
@@ -305,21 +330,48 @@ fn route_for_provider_model(
     provider: &CustomProviderConfig,
     model: String,
     api_keys: &ApiKeys,
-) -> CustomProviderRoute {
-    let secure_storage_key = api_keys.custom.get(&provider.name).cloned();
-    let env_key = provider
+) -> Result<CustomProviderRoute, CustomProviderRouteError> {
+    let secure_storage_key = api_keys
+        .custom
+        .get(&provider.name)
+        .filter(|key| !key.trim().is_empty())
+        .cloned();
+    let api_key = if secure_storage_key.is_some() {
+        secure_storage_key
+    } else if let Some(env_var) = provider
         .api_key_env_var
         .as_deref()
         .and_then(normalize_custom_provider_env_var)
-        .and_then(|env_var| std::env::var(env_var).ok());
+    {
+        match std::env::var(&env_var) {
+            Ok(value) if !value.trim().is_empty() => Some(value),
+            Ok(_) => {
+                return Err(CustomProviderRouteError::EmptyApiKeyEnvironmentVariable(
+                    env_var,
+                ));
+            }
+            Err(std::env::VarError::NotPresent) => {
+                return Err(CustomProviderRouteError::MissingApiKeyEnvironmentVariable(
+                    env_var,
+                ));
+            }
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(CustomProviderRouteError::EmptyApiKeyEnvironmentVariable(
+                    env_var,
+                ));
+            }
+        }
+    } else {
+        None
+    };
 
-    CustomProviderRoute {
+    Ok(CustomProviderRoute {
         provider_name: provider.name.clone(),
         base_url: provider.base_url.clone(),
         model,
-        api_key: secure_storage_key.or(env_key),
+        api_key,
         capabilities: provider.capabilities.clone(),
-    }
+    })
 }
 
 pub(super) fn chat_completions_url(base_url: &str) -> String {
@@ -6037,16 +6089,20 @@ mod tests {
             capabilities: Default::default(),
         }];
         let mut api_keys = ApiKeys::default();
-        api_keys
-            .custom
-            .insert("local-openai".to_string(), "stored-key".to_string());
+        api_keys.custom.insert(
+            "local-openai".to_string(),
+            "synthetic-credential-fixture".to_string(),
+        );
 
         let route = default_custom_provider_route(&providers, &api_keys).unwrap();
 
         assert_eq!(route.provider_name, "local-openai");
         assert_eq!(route.base_url, "http://localhost:1234/v1");
         assert_eq!(route.model, "qwen3-coder");
-        assert_eq!(route.api_key.as_deref(), Some("stored-key"));
+        assert_eq!(
+            route.api_key.as_deref(),
+            Some("synthetic-credential-fixture")
+        );
     }
 
     #[test]
@@ -6143,9 +6199,10 @@ mod tests {
             ..Default::default()
         }];
         let mut api_keys = ApiKeys::default();
-        api_keys
-            .custom
-            .insert("local".to_string(), "stored-key".to_string());
+        api_keys.custom.insert(
+            "local".to_string(),
+            "synthetic-credential-fixture".to_string(),
+        );
 
         let loading_error = resolve_custom_provider_route_with_readiness(
             "custom/local/model",
@@ -6166,14 +6223,14 @@ mod tests {
                 true,
             )
             .unwrap()
-            .map(|route| route.api_key.as_deref() == Some("stored-key"))
+            .map(|route| route.api_key.as_deref() == Some("synthetic-credential-fixture"))
             .unwrap_or(false)
         );
         assert!(default_custom_provider_route_when_ready(&providers, &api_keys, false,).is_none());
         assert_eq!(
             default_custom_provider_route_when_ready(&providers, &api_keys, true,)
                 .and_then(|route| route.api_key),
-            Some("stored-key".to_string())
+            Some("synthetic-credential-fixture".to_string())
         );
     }
 
@@ -6232,6 +6289,30 @@ mod tests {
             )
             .expect("missing selected capability should be a local disable")
             .is_none()
+        );
+    }
+
+    #[test]
+    fn transcription_route_requires_the_selected_model_to_be_configured() {
+        let provider = CustomProviderConfig {
+            name: "selected-local".to_string(),
+            models: vec!["configured-chat-model".to_string()],
+            capabilities: CustomProviderCapabilities {
+                transcription: true,
+                transcription_model: Some("local-whisper".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(
+            resolve_custom_provider_transcription_route(
+                "custom/selected-local/stale-chat-model",
+                &[provider],
+                &ApiKeys::default(),
+            )
+            .expect("a stale selected model should be a local disable"),
+            None
         );
     }
 
@@ -6300,7 +6381,7 @@ mod tests {
             name: "keyless-local".to_string(),
             base_url: "http://localhost:1234/v1".to_string(),
             models: vec!["chat-model".to_string()],
-            api_key_env_var: Some("WARPOSS_TRANSCRIPTION_TEST_KEY_UNSET".to_string()),
+            api_key_env_var: None,
             capabilities: CustomProviderCapabilities {
                 transcription: true,
                 transcription_model: Some("local-whisper".to_string()),
@@ -6308,10 +6389,6 @@ mod tests {
             },
             ..Default::default()
         };
-
-        if std::env::var_os("WARPOSS_TRANSCRIPTION_TEST_KEY_UNSET").is_some() {
-            return;
-        }
 
         let route = resolve_custom_provider_transcription_route(
             "custom/keyless-local/chat-model",
@@ -6321,6 +6398,52 @@ mod tests {
         .unwrap()
         .expect("configured keyless provider should remain usable");
         assert_eq!(route.api_key, None);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn configured_transcription_key_environment_must_be_present_and_nonempty() {
+        let env_var = format!(
+            "WARP_OSS_SYNTHETIC_TRANSCRIPTION_KEY_{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        let provider = CustomProviderConfig {
+            name: "keyed-local".to_string(),
+            base_url: "http://localhost:1234/v1".to_string(),
+            models: vec!["chat-model".to_string()],
+            api_key_env_var: Some(env_var.clone()),
+            capabilities: CustomProviderCapabilities {
+                transcription: true,
+                transcription_model: Some("local-whisper".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        unsafe { std::env::remove_var(&env_var) };
+        let missing = resolve_custom_provider_transcription_route(
+            "custom/keyed-local/chat-model",
+            std::slice::from_ref(&provider),
+            &ApiKeys::default(),
+        );
+        assert!(matches!(
+            missing,
+            Err(CustomProviderRouteError::MissingApiKeyEnvironmentVariable(
+                _
+            ))
+        ));
+
+        unsafe { std::env::set_var(&env_var, "   ") };
+        let empty = resolve_custom_provider_transcription_route(
+            "custom/keyed-local/chat-model",
+            &[provider],
+            &ApiKeys::default(),
+        );
+        assert!(matches!(
+            empty,
+            Err(CustomProviderRouteError::EmptyApiKeyEnvironmentVariable(_))
+        ));
+        unsafe { std::env::remove_var(&env_var) };
     }
 
     #[test]
@@ -8212,7 +8335,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let _mock = server
             .mock("POST", "/v1/chat/completions")
-            .match_header("authorization", "Bearer test-key")
+            .match_header("authorization", "Bearer synthetic-credential-fixture")
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
@@ -8232,7 +8355,7 @@ mod tests {
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "test-model".to_string(),
-            api_key: Some("test-key".to_string()),
+            api_key: Some("synthetic-credential-fixture".to_string()),
             capabilities: Default::default(),
         };
 
@@ -10213,7 +10336,7 @@ data: [DONE]
         let mut server = mockito::Server::new_async().await;
         let _mock = server
             .mock("GET", "/v1/models")
-            .match_header("authorization", "Bearer test-key")
+            .match_header("authorization", "Bearer synthetic-credential-fixture")
             .with_status(200)
             .with_body(
                 r#"{
@@ -10229,7 +10352,11 @@ data: [DONE]
             .create_async()
             .await;
 
-        let models = fetch_models(&format!("{}/v1", server.url()), Some("test-key")).await;
+        let models = fetch_models(
+            &format!("{}/v1", server.url()),
+            Some("synthetic-credential-fixture"),
+        )
+        .await;
 
         assert_eq!(
             models.unwrap(),

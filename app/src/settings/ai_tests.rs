@@ -208,6 +208,28 @@ fn custom_provider_transcription_model_round_trips_and_legacy_config_defaults_to
 }
 
 #[test]
+fn local_transcription_configuration_persists_without_credentials() {
+    let provider = CustomProviderConfig {
+        name: "local-transcription".to_string(),
+        base_url: "http://localhost:1234/v1".to_string(),
+        models: vec!["chat-model".to_string()],
+        api_key_env_var: None,
+        capabilities: CustomProviderCapabilities {
+            transcription: true,
+            transcription_model: Some("whisper-local".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let encoded = serde_json::to_string(&provider).expect("local config should serialize");
+    assert!(!encoded.contains("credential"));
+    let restored: CustomProviderConfig =
+        serde_json::from_str(&encoded).expect("local config should deserialize");
+    assert_eq!(restored, provider);
+}
+
+#[test]
 fn custom_provider_capabilities_from_ui_rejects_invalid_context_window() {
     let error = custom_provider_capabilities_from_ui(true, true, false, false, false, "1")
         .expect_err("tiny context window should be rejected before saving settings");

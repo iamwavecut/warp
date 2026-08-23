@@ -244,7 +244,7 @@ use crate::undo_close::UndoCloseStack;
 use crate::user_config::WarpConfig;
 use crate::vim_registers::VimRegisters;
 #[cfg(feature = "voice_input")]
-use crate::voice::transcriber::VoiceTranscriber;
+use crate::voice::transcriber::{VoiceTranscriber, VoiceTranscriberRouteStatus};
 use crate::warp_managed_paths_watcher::{WarpManagedPathsWatcher, ensure_warp_watch_roots_exist};
 use crate::workflows::aliases::WorkflowAliases;
 use crate::workflows::local_workflows::LocalWorkflows;
@@ -1009,24 +1009,97 @@ pub struct UpdateQuakeModeEventArg {
 
 #[cfg(feature = "voice_input")]
 fn refresh_local_voice_transcriber(ctx: &mut AppContext) {
-    let selected_model_id = LLMPreferences::as_ref(ctx)
-        .get_active_base_model(ctx, None)
-        .id
-        .as_str()
-        .to_owned();
     let settings = AISettings::as_ref(ctx);
     let key_manager = ::ai::api_keys::ApiKeyManager::as_ref(ctx);
-    let route = direct_openai::resolve_custom_provider_transcription_route_with_readiness(
-        &selected_model_id,
-        &settings.custom_providers,
-        key_manager.keys(),
-        key_manager.keys_ready(),
-    )
-    .ok()
-    .flatten();
-    VoiceTranscriber::handle(ctx).update(ctx, |transcriber, _| {
-        transcriber.set_route(route);
+    let selected_model_id = AIExecutionProfilesModel::as_ref(ctx)
+        .active_profile(None, ctx)
+        .data()
+        .base_model
+        .as_ref()
+        .map(|model| model.as_str().to_owned());
+
+    let (route, route_status) = match selected_model_id.as_deref() {
+        None => (
+            None,
+            VoiceTranscriberRouteStatus::disabled(
+                "Voice input is disabled: select a configured custom provider model with transcription enabled.",
+            ),
+        ),
+        Some(model_id) if !model_id.starts_with("custom/") => (
+            None,
+            VoiceTranscriberRouteStatus::disabled(
+                "Voice input is disabled: select a custom provider model with transcription enabled.",
+            ),
+        ),
+        Some(model_id) => {
+            match direct_openai::resolve_custom_provider_transcription_route_with_readiness(
+                model_id,
+                &settings.custom_providers,
+                key_manager.keys(),
+                key_manager.keys_ready(),
+            ) {
+                Ok(Some(route)) => {
+                    let status = VoiceTranscriberRouteStatus::ready(
+                        route.provider_name.clone(),
+                        route.model.clone(),
+                    );
+                    (Some(route), status)
+                }
+                Ok(None) => (
+                    None,
+                    VoiceTranscriberRouteStatus::disabled(local_voice_route_unavailable_reason(
+                        model_id,
+                        &settings.custom_providers,
+                    )),
+                ),
+                Err(error) => (
+                    None,
+                    VoiceTranscriberRouteStatus::disabled(error.to_string()),
+                ),
+            }
+        }
+    };
+
+    VoiceTranscriber::handle(ctx).update(ctx, |transcriber, model_ctx| {
+        transcriber.set_route_with_status(route, route_status, model_ctx);
     });
+}
+
+#[cfg(feature = "voice_input")]
+fn local_voice_route_unavailable_reason(
+    selected_model_id: &str,
+    providers: &[crate::settings::CustomProviderConfig],
+) -> String {
+    let Some(remainder) = selected_model_id.strip_prefix("custom/") else {
+        return "Voice input is disabled: select a custom provider model with transcription enabled."
+            .to_string();
+    };
+    let Some((provider_name, model)) = remainder.split_once('/') else {
+        return "Voice input is disabled: the selected custom provider model ID is invalid."
+            .to_string();
+    };
+    let matching_providers = providers
+        .iter()
+        .filter(|provider| provider.name == provider_name)
+        .collect::<Vec<_>>();
+    if matching_providers.is_empty() {
+        return format!(
+            "Voice input is disabled: selected local provider `{provider_name}` is not configured."
+        );
+    }
+    if matching_providers.len() > 1 {
+        return format!(
+            "Voice input is disabled: custom provider name `{provider_name}` is ambiguous; rename one provider."
+        );
+    }
+    let provider = matching_providers[0];
+    if !provider.models.iter().any(|configured| configured == model) {
+        return format!(
+            "Voice input is disabled: selected chat model `{model}` is not listed for provider `{provider_name}`."
+        );
+    }
+    "Voice input is disabled: the selected provider has no valid transcription configuration."
+        .to_string()
 }
 
 pub(crate) fn initialize_app(
@@ -1733,6 +1806,9 @@ pub(crate) fn initialize_app(
     ctx.add_singleton_model(LLMPreferences::new);
     ctx.add_singleton_model(HarnessAvailabilityModel::new);
 
+    #[cfg(feature = "voice_input")]
+    ctx.add_singleton_model(|_| VoiceTranscriber::disabled());
+
     let tip_model_handle = ctx.add_singleton_model(|ctx| {
         ai::agent_tips::AITipModel::<ai::AgentTip>::new_for_agent_tips(ctx)
     });
@@ -1791,24 +1867,7 @@ pub(crate) fn initialize_app(
         }
     });
     #[cfg(feature = "voice_input")]
-    ctx.add_singleton_model(|ctx| {
-        let selected_model_id = LLMPreferences::as_ref(ctx)
-            .get_active_base_model(ctx, None)
-            .id
-            .as_str()
-            .to_owned();
-        let settings = AISettings::as_ref(ctx);
-        let key_manager = ::ai::api_keys::ApiKeyManager::as_ref(ctx);
-        let route = direct_openai::resolve_custom_provider_transcription_route_with_readiness(
-            &selected_model_id,
-            &settings.custom_providers,
-            key_manager.keys(),
-            key_manager.keys_ready(),
-        )
-        .ok()
-        .flatten();
-        VoiceTranscriber::from_route(route)
-    });
+    refresh_local_voice_transcriber(ctx);
     #[cfg(feature = "voice_input")]
     ctx.subscribe_to_model(&LLMPreferences::handle(ctx), |_, event, ctx| {
         if matches!(

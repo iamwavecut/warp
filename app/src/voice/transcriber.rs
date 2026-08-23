@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use async_trait::async_trait;
 use base64::Engine as _;
 use serde::Deserialize;
-use warpui::{Entity, SingletonEntity};
+use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
 
 use crate::ai::agent::api::direct_openai::CustomProviderRoute;
 
@@ -23,6 +23,47 @@ pub trait Transcriber: Send + Sync {
     /// Transcribe the given base64 encoded wav file into text.
     /// This is expected to be async and called off the main thread.
     async fn transcribe(&self, wav_base64: String) -> Result<String, TranscribeError>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum VoiceTranscriberRouteStatus {
+    Ready {
+        provider_name: String,
+        model: String,
+    },
+    Disabled {
+        reason: String,
+    },
+}
+
+impl VoiceTranscriberRouteStatus {
+    pub(crate) fn ready(provider_name: impl Into<String>, model: impl Into<String>) -> Self {
+        Self::Ready {
+            provider_name: provider_name.into(),
+            model: model.into(),
+        }
+    }
+
+    pub(crate) fn disabled(reason: impl Into<String>) -> Self {
+        Self::Disabled {
+            reason: reason.into(),
+        }
+    }
+
+    pub(crate) fn text(&self) -> String {
+        match self {
+            Self::Ready {
+                provider_name,
+                model,
+            } => format!("Voice input ready: {provider_name} / {model}."),
+            Self::Disabled { reason } => reason.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceTranscriberEvent {
+    RouteChanged,
 }
 
 /// Direct OpenAI-compatible transcription adapter for the currently selected
@@ -47,8 +88,14 @@ impl OpenAICompatibleTranscriber {
         if wav.len() < 12 || &wav[..4] != b"RIFF" || &wav[8..12] != b"WAVE" {
             anyhow::bail!("local transcription audio is not a WAV file");
         }
+        let declared_riff_size =
+            u32::from_le_bytes(wav[4..8].try_into().expect("WAV RIFF size is four bytes")) as usize;
+        if declared_riff_size != wav.len() - 8 {
+            anyhow::bail!("local transcription WAV has an invalid RIFF size");
+        }
 
         let mut offset = 12;
+        let mut has_format = false;
         let mut has_audio_data = false;
         while offset < wav.len() {
             if wav.len() - offset < 8 {
@@ -66,13 +113,48 @@ impl OpenAICompatibleTranscriber {
             if data_end > wav.len() {
                 anyhow::bail!("local transcription WAV has a truncated chunk");
             }
-            if &wav[offset..offset + 4] == b"data" && chunk_size > 0 {
-                has_audio_data = true;
-            }
-            offset = data_end + (chunk_size % 2);
-            if offset > wav.len() {
+            let padded_end = data_end
+                .checked_add(chunk_size % 2)
+                .ok_or_else(|| anyhow::anyhow!("local transcription WAV padding is too large"))?;
+            if padded_end > wav.len() {
                 anyhow::bail!("local transcription WAV has invalid chunk padding");
             }
+
+            match &wav[offset..offset + 4] {
+                b"fmt " => {
+                    if chunk_size < 16 {
+                        anyhow::bail!("local transcription WAV fmt chunk is truncated");
+                    }
+                    let fmt = &wav[data_start..data_start + chunk_size];
+                    let audio_format = u16::from_le_bytes(fmt[0..2].try_into().unwrap());
+                    let channels = u16::from_le_bytes(fmt[2..4].try_into().unwrap());
+                    let sample_rate = u32::from_le_bytes(fmt[4..8].try_into().unwrap());
+                    let byte_rate = u32::from_le_bytes(fmt[8..12].try_into().unwrap());
+                    let block_align = u16::from_le_bytes(fmt[12..14].try_into().unwrap());
+                    let bits_per_sample = u16::from_le_bytes(fmt[14..16].try_into().unwrap());
+                    let bytes_per_sample = bits_per_sample / 8;
+                    let expected_block_align = channels.checked_mul(bytes_per_sample);
+                    let expected_byte_rate = sample_rate
+                        .checked_mul(u32::from(expected_block_align.unwrap_or_default()));
+                    if audio_format != 1
+                        || channels == 0
+                        || sample_rate == 0
+                        || bits_per_sample == 0
+                        || bits_per_sample % 8 != 0
+                        || expected_block_align != Some(block_align)
+                        || expected_byte_rate != Some(byte_rate)
+                    {
+                        anyhow::bail!("local transcription WAV fmt fields are invalid");
+                    }
+                    has_format = true;
+                }
+                b"data" if chunk_size > 0 => has_audio_data = true,
+                _ => {}
+            }
+            offset = padded_end;
+        }
+        if !has_format {
+            anyhow::bail!("local transcription WAV contains no valid fmt chunk");
         }
         if !has_audio_data {
             anyhow::bail!("local transcription WAV contains no audio data");
@@ -156,22 +238,42 @@ pub struct VoiceTranscriber {
     /// The transcriber to use. If `None`, the transcriber is disabled.
     #[cfg_attr(not(feature = "voice_input"), allow(dead_code))]
     transcriber: Option<Arc<dyn Transcriber>>,
+    route: Option<CustomProviderRoute>,
+    route_status: VoiceTranscriberRouteStatus,
 }
 
 impl VoiceTranscriber {
     pub fn new(transcriber: Arc<dyn Transcriber>) -> Self {
         Self {
             transcriber: Some(transcriber),
+            route: None,
+            route_status: VoiceTranscriberRouteStatus::ready(
+                "local provider",
+                "configured transcription model",
+            ),
         }
     }
 
     pub fn disabled() -> Self {
-        Self { transcriber: None }
+        Self {
+            transcriber: None,
+            route: None,
+            route_status: VoiceTranscriberRouteStatus::disabled(
+                "Voice input is disabled: select a configured custom provider model with transcription enabled.",
+            ),
+        }
     }
 
     pub(crate) fn from_route(route: Option<CustomProviderRoute>) -> Self {
         match route {
-            Some(route) => Self::new(Arc::new(OpenAICompatibleTranscriber::new(route))),
+            Some(route) => Self {
+                route_status: VoiceTranscriberRouteStatus::ready(
+                    route.provider_name.clone(),
+                    route.model.clone(),
+                ),
+                route: Some(route.clone()),
+                transcriber: Some(Arc::new(OpenAICompatibleTranscriber::new(route))),
+            },
             None => Self::disabled(),
         }
     }
@@ -180,14 +282,43 @@ impl VoiceTranscriber {
         *self = Self::from_route(route);
     }
 
+    pub(crate) fn set_route_with_status(
+        &mut self,
+        route: Option<CustomProviderRoute>,
+        route_status: VoiceTranscriberRouteStatus,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let route_changed = self.route != route || self.route_status != route_status;
+        self.transcriber = route
+            .clone()
+            .map(|route| Arc::new(OpenAICompatibleTranscriber::new(route)) as Arc<dyn Transcriber>);
+        self.route = route;
+        self.route_status = route_status;
+        if route_changed {
+            ctx.emit(VoiceTranscriberEvent::RouteChanged);
+        }
+    }
+
     /// Returns the transcriber if one is set.
     pub fn transcriber(&self) -> Option<&Arc<dyn Transcriber>> {
         self.transcriber.as_ref()
     }
+
+    pub(crate) fn route_status(&self) -> &VoiceTranscriberRouteStatus {
+        &self.route_status
+    }
+
+    pub(crate) fn route_status_text(&self) -> String {
+        self.route_status.text()
+    }
+
+    pub(crate) fn route_status_text_for_app(app: &AppContext) -> String {
+        Self::as_ref(app).route_status_text()
+    }
 }
 
 impl Entity for VoiceTranscriber {
-    type Event = ();
+    type Event = VoiceTranscriberEvent;
 }
 
 impl SingletonEntity for VoiceTranscriber {}

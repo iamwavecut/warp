@@ -3021,6 +3021,7 @@ impl EditorView {
 
         #[cfg(feature = "voice_input")]
         {
+            use crate::voice::transcriber::{VoiceTranscriber, VoiceTranscriberEvent};
             use crate::workspaces::user_workspaces::UserWorkspaces;
 
             ctx.subscribe_to_model(&UserWorkspaces::handle(ctx), |me, _handle, _event, ctx| {
@@ -3039,6 +3040,12 @@ impl EditorView {
                     _ => {}
                 },
             );
+
+            ctx.subscribe_to_model(&VoiceTranscriber::handle(ctx), |editor, _, event, ctx| {
+                if matches!(event, VoiceTranscriberEvent::RouteChanged) {
+                    editor.update_voice_transcription_options(Self::voice_options(ctx), ctx);
+                }
+            });
         }
 
         let editor_model = ctx.add_model(|ctx| {

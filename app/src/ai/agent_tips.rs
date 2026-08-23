@@ -12,7 +12,6 @@ use crate::workspace::WorkspaceAction;
 use crate::workspace::view::{
     TOGGLE_COMMAND_PALETTE_KEYBINDING_NAME, TOGGLE_RIGHT_PANEL_BINDING_NAME,
 };
-use crate::workspaces::user_workspaces::UserWorkspaces;
 use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
 use markdown_parser::FormattedTextFragment;
 use std::path::Path;
@@ -414,10 +413,7 @@ impl WorkspaceAction {
 pub fn get_agent_tips(ctx: &AppContext) -> Vec<AgentTip> {
     let mut tips = DEFAULT_TIPS.clone();
 
-    if cfg!(feature = "voice_input")
-        && UserWorkspaces::as_ref(ctx).is_voice_enabled()
-        && AISettings::as_ref(ctx).is_voice_input_enabled(ctx)
-    {
+    if cfg!(feature = "voice_input") && AISettings::as_ref(ctx).is_voice_input_enabled(ctx) {
         tips.push(AgentTip {
             description: "Hold <keybinding> to speak your prompt directly to the agent."
                 .to_string(),
