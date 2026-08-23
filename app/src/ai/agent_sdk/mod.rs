@@ -4,18 +4,21 @@
 use std::fmt::Write;
 use std::path::Path;
 
+use crate::ai::agent::api::direct_openai::CustomProviderRoute;
 use crate::ai::agent_sdk::driver::harness::{HarnessKind, harness_kind};
 use crate::ai::agent_sdk::driver::{AgentDriverOptions, AgentRunPrompt, Task};
 use crate::ai::agent_sdk::mcp_config::build_mcp_servers_from_specs;
-use crate::ai::llms::LLMId;
+use crate::ai::custom_model_routers::{
+    RouterRequestFacts, is_local_custom_router_id, resolve_router_selection,
+};
+use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
+use crate::ai::llms::{LLMId, LLMPreferences};
 use crate::workflows::{
     command_parser::WorkflowCommandDisplayData, local_saved_prompts::LocalSavedPromptRepository,
 };
-use crate::{
-    ai::execution_profiles::profiles::AIExecutionProfilesModel,
-    server::ids::{ServerId, SyncId},
-};
+use ai::api_keys::ApiKeyManager;
 use anyhow::Context;
+use uuid::Uuid;
 use warp_cli::skill::SkillSpec;
 use warp_cli::{
     CliCommand, GlobalOptions,
@@ -31,12 +34,15 @@ use crate::{ai::ambient_agents::task::HarnessConfig, server::server_api::ai::Age
 use driver::AgentDriverError;
 
 use crate::ai::local_named_agents::{
-    LocalNamedAgentRepository, NamedAgentBundle, NamedAgentRunOverrides, merge_named_agent_config,
-    validate_named_config_file, validate_named_mcp_servers, validate_named_run_args,
+    LocalNamedAgentRepository, LocalNamedAgentRunMetadata, NamedAgentBundle,
+    NamedAgentRunOverrides, merge_named_agent_config, profile_sync_id, validate_named_config_file,
+    validate_named_mcp_servers, validate_named_run_args,
 };
+use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::ai::skills::{
     ResolveSkillError, ResolvedSkill, clone_repo_for_skill, resolve_skill_spec,
 };
+use crate::settings::AISettings;
 
 pub use driver::AgentDriver;
 pub(crate) use driver::harness::{task_env_vars, validate_cli_installed};
@@ -245,9 +251,8 @@ fn build_merged_config_and_task(
         .transpose()?;
 
     if let Some(profile) = merged_config.profile_id.as_deref() {
-        let server_id = ServerId::try_from(profile)
+        let sync_id = profile_sync_id(profile)
             .map_err(|_| anyhow::anyhow!(AgentDriverError::ProfileError(profile.to_owned())))?;
-        let sync_id = SyncId::ServerId(server_id);
         if AIExecutionProfilesModel::as_ref(ctx)
             .get_profile_id_by_sync_id(&sync_id)
             .is_none()
@@ -292,6 +297,88 @@ fn build_merged_config_and_task(
     };
 
     Ok((merged_config, task))
+}
+
+/// Validate every local named-agent dependency before `AgentDriver::new` can
+/// create a terminal, start an MCP process, invoke a harness, or issue HTTP.
+/// This intentionally resolves provider credentials and profile identity only;
+/// it never sends a request or starts a process. The resolved route is carried
+/// into the driver so the later local execution path cannot silently fall back
+/// to a hosted model or re-resolve after terminal startup.
+fn preflight_named_execution(
+    config: &AgentConfigSnapshot,
+    task: &Task,
+    ctx: &AppContext,
+) -> anyhow::Result<CustomProviderRoute> {
+    let model_id = config
+        .model_id
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("named agent requires a concrete local model"))?;
+    let selected_model = common::validate_agent_mode_base_model_id(model_id, ctx)?;
+    let providers = &AISettings::as_ref(ctx).custom_providers;
+    let concrete_model = if is_local_custom_router_id(selected_model.as_str()) {
+        let router = LLMPreferences::as_ref(ctx)
+            .custom_model_router_for_id(&selected_model)
+            .ok_or_else(|| anyhow::anyhow!("local model router is not loaded"))?;
+        let (_, target) =
+            resolve_router_selection(router, &RouterRequestFacts::baseline(), providers)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        format!("custom/{}/{}", target.provider_name, target.model_id)
+    } else {
+        selected_model.to_string()
+    };
+    let route = crate::ai::agent::api::direct_openai::resolve_custom_provider_route_with_readiness(
+        &concrete_model,
+        providers,
+        ApiKeyManager::as_ref(ctx).keys(),
+        ApiKeyManager::as_ref(ctx).keys_ready(),
+    )?
+    .ok_or_else(|| anyhow::anyhow!("local custom provider route is not configured"))?;
+    if !route.effective_capabilities().chat {
+        anyhow::bail!("local custom provider does not support chat");
+    }
+
+    if let Some(profile) = config.profile_id.as_deref() {
+        let sync_id =
+            profile_sync_id(profile).map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if AIExecutionProfilesModel::as_ref(ctx)
+            .get_profile_id_by_sync_id(&sync_id)
+            .is_none()
+        {
+            return Err(anyhow::anyhow!(AgentDriverError::ProfileError(
+                profile.to_owned()
+            )));
+        }
+    }
+
+    let mcp_manager = TemplatableMCPServerManager::as_ref(ctx);
+    for spec in &task.mcp_specs {
+        if let warp_cli::mcp::MCPSpec::Uuid(uuid) = spec
+            && mcp_manager.get_installed_server(uuid).is_none()
+        {
+            return Err(anyhow::anyhow!(AgentDriverError::MCPServerNotFound(*uuid)));
+        }
+    }
+
+    if config.computer_use_enabled == Some(true)
+        && !(FeatureFlag::AgentModeComputerUse.is_enabled()
+            && FeatureFlag::LocalComputerUse.is_enabled()
+            && computer_use::is_supported_on_current_platform())
+    {
+        anyhow::bail!("computer use is unavailable on this local machine");
+    }
+
+    match &task.harness {
+        HarnessKind::ThirdParty(harness) => {
+            harness.validate().map_err(|error| anyhow::anyhow!(error))?
+        }
+        HarnessKind::Unsupported(harness) => {
+            anyhow::bail!("the {harness} harness is not available for a local named agent")
+        }
+        HarnessKind::Oz => {}
+    }
+
+    Ok(route)
 }
 
 /// Resolve a `Prompt` to a plain string.
@@ -435,13 +522,14 @@ impl AgentDriverRunner {
         let mut resolved = Vec::with_capacity(specs.len());
         for spec in specs {
             let skill_spec = spec.clone();
-            let working_dir = working_dir.to_path_buf();
+            let resolve_working_dir = working_dir.to_path_buf();
             let skill = foreground
-                .spawn(move |_, ctx| resolve_skill_spec(&skill_spec, &working_dir, ctx))
+                .spawn(move |_, ctx| resolve_skill_spec(&skill_spec, &resolve_working_dir, ctx))
                 .await?
                 .map_err(|error| {
                     AgentDriverError::SkillResolutionFailed(format_skill_resolution_error(error))
                 })?;
+            ensure_named_skill_containment(&skill, working_dir)?;
             log::debug!(
                 "Resolved named-agent skill '{}' from {}",
                 skill.name,
@@ -472,6 +560,7 @@ impl AgentDriverRunner {
             .transpose()
             .map_err(|error| AgentDriverError::ConfigBuildFailed(anyhow::Error::new(error)))?;
         let named_bundle = named_record.as_ref().map(|record| record.bundle().clone());
+        let named_record_for_metadata = named_record.clone();
 
         if named_bundle.is_some() {
             validate_named_run_args(&args)
@@ -513,6 +602,11 @@ impl AgentDriverRunner {
         // Resolve an explicitly invoked skill after the bundle skills. Its
         // instructions are applied last by the merge function.
         let resolved_invoked_skill = Self::resolve_skill(foreground, &args, &working_dir).await?;
+        if named_bundle.is_some()
+            && let Some(skill) = resolved_invoked_skill.as_ref()
+        {
+            ensure_named_skill_containment(skill, &working_dir)?;
+        }
 
         // Extract variables we want to use later before moving args into the closure
         let prompt = match args.saved_prompt.as_deref() {
@@ -539,6 +633,11 @@ impl AgentDriverRunner {
                     .map(|config| config.harness_type)
                     .unwrap_or(args.harness);
 
+                let direct_provider_route = named_bundle
+                    .is_some()
+                    .then(|| preflight_named_execution(&merged_config, &task, ctx))
+                    .transpose()?;
+
                 let driver_options = driver::AgentDriverOptions {
                     working_dir: working_dir.clone(),
                     task_id: None,
@@ -548,7 +647,20 @@ impl AgentDriverRunner {
                     environment: None,
                     selected_harness,
                     third_party_harness_model_config: None,
+                    local_only: named_bundle.is_some(),
+                    direct_provider_route,
                 };
+
+                if let Some(record) = named_record_for_metadata.as_ref() {
+                    let metadata = LocalNamedAgentRunMetadata::from_record(
+                        Uuid::new_v4(),
+                        record,
+                        &merged_config,
+                    );
+                    LocalNamedAgentRepository::for_user()
+                        .write_run_metadata(&metadata)
+                        .map_err(|error| anyhow::Error::new(error))?;
+                }
 
                 Ok((merged_config, task, driver_options))
             })
@@ -591,6 +703,28 @@ impl AgentDriverRunner {
             });
         });
     }
+}
+
+fn ensure_named_skill_containment(
+    skill: &ResolvedSkill,
+    working_dir: &Path,
+) -> Result<(), AgentDriverError> {
+    let root = dunce::canonicalize(working_dir).map_err(|error| {
+        AgentDriverError::SkillResolutionFailed(format!(
+            "unable to canonicalize local skill working root: {error}"
+        ))
+    })?;
+    let path = dunce::canonicalize(&skill.skill_path).map_err(|_| {
+        AgentDriverError::SkillResolutionFailed(
+            "local named-agent skill path is unavailable".to_owned(),
+        )
+    })?;
+    if !path.starts_with(&root) {
+        return Err(AgentDriverError::SkillResolutionFailed(
+            "local named-agent skill must remain inside the working directory".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Launch a CLI command through local state only.

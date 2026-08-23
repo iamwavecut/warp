@@ -24,6 +24,9 @@ use crate::appearance::Appearance;
 use crate::view_components::action_button::{
     ActionButton, ButtonSize, DangerNakedTheme, NakedTheme, PrimaryTheme, SecondaryTheme,
 };
+use crate::warp_managed_paths_watcher::{
+    WarpManagedPathsWatcher, WarpManagedPathsWatcherEvent, repository_update_touches_prefix,
+};
 use crate::workspace::WorkspaceAction;
 
 const CARD_RADIUS: f32 = 4.;
@@ -93,6 +96,16 @@ impl LocalNamedAgentsView {
             create_button,
             reload_button,
         };
+        let watched_directory = Self::repository().directory().to_path_buf();
+        ctx.subscribe_to_model(
+            &WarpManagedPathsWatcher::handle(ctx),
+            move |me, _, event, ctx| {
+                let WarpManagedPathsWatcherEvent::FilesChanged(update) = event;
+                if repository_update_touches_prefix(update, &watched_directory) {
+                    me.reload(ctx);
+                }
+            },
+        );
         view.reload(ctx);
         view
     }
@@ -312,17 +325,6 @@ impl LocalNamedAgentsView {
                 .with_color(theme.nonactive_ui_text_color().into())
                 .finish(),
             );
-        if let Some(description) = record.bundle().description.as_deref()
-            && !description.is_empty()
-        {
-            body.add_child(
-                Text::new(description.to_owned(), appearance.ui_font_family(), 11.)
-                    .with_color(theme.nonactive_ui_text_color().into())
-                    .soft_wrap(true)
-                    .finish(),
-            );
-        }
-
         let actions = Flex::row()
             .with_spacing(3.)
             .with_cross_axis_alignment(CrossAxisAlignment::Center)
@@ -464,7 +466,7 @@ impl View for LocalNamedAgentsView {
             rows.add_child(detail_text(
                 format!(
                     "Invalid local agent file {}: {}",
-                    error.path.display(),
+                    error.safe_label(),
                     error.message
                 ),
                 appearance,

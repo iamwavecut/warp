@@ -9,11 +9,13 @@ use uuid::Uuid;
 use warp_cli::agent::Harness;
 
 use super::{
-    AgentBundleSecretRefs, LocalNamedAgentRepository, NamedAgentBundle, NamedAgentError,
-    NamedAgentList, NamedAgentRunOverrides, merge_named_agent_config,
+    AgentBundleSecretRefs, LocalNamedAgentRepository, LocalNamedAgentRunMetadata, NamedAgentBundle,
+    NamedAgentError, NamedAgentList, NamedAgentRunOverrides, merge_named_agent_config,
+    profile_sync_id,
 };
 use crate::ai::agent_sdk::config_file::AgentConfigSnapshotFile;
 use crate::ai::ambient_agents::AgentConfigSnapshot;
+use crate::server::ids::SyncId;
 
 fn bundle(name: &str) -> NamedAgentBundle {
     NamedAgentBundle {
@@ -109,7 +111,7 @@ fn local_named_agent_rejects_literal_secrets_and_mcp_env_values() {
         "server".to_owned(),
         json!({
             "url": "https://example.test/sse",
-            "headers": {"Authorization": "Bearer ${MCP_TOKEN}"}
+            "headers": {"Authorization": "${MCP_TOKEN}"}
         }),
     )]));
     repository.create(env_header).unwrap();
@@ -148,6 +150,26 @@ fn local_named_agent_update_is_compare_and_swap_and_delete_rejects_traversal() {
         .delete(&created.id().to_string(), Some(current.revision()))
         .unwrap();
     assert!(repository.get(created.id()).is_err());
+}
+
+#[test]
+fn local_named_agent_external_writer_cannot_bypass_revision_checks() {
+    let dir = TempDir::new().unwrap();
+    let repository = LocalNamedAgentRepository::new(dir.path());
+    let created = repository.create(bundle("External writer")).unwrap();
+    let path = created.path().to_owned();
+    let mut external = created.bundle().clone();
+    external.description = Some("written outside the repository".to_owned());
+    fs::write(&path, serde_yaml::to_string(&external).unwrap()).unwrap();
+
+    let error = repository
+        .update(created.id(), created.revision(), external.clone())
+        .unwrap_err();
+    assert!(matches!(error, NamedAgentError::Conflict { .. }));
+    let error = repository
+        .delete(&created.id().to_string(), Some(created.revision()))
+        .unwrap_err();
+    assert!(matches!(error, NamedAgentError::Conflict { .. }));
 }
 
 #[test]
@@ -194,4 +216,103 @@ fn local_named_agent_list_output_redacts_prompt_and_secret_references() {
     assert!(!output.contains("ENV_NAME"));
     assert!(!output.contains("provider-key"));
     assert!(output.contains("local named agent"));
+}
+
+#[test]
+fn local_named_agent_accepts_server_and_client_profile_sync_ids() {
+    assert!(matches!(
+        profile_sync_id("Client-11111111-1111-1111-1111-111111111111").unwrap(),
+        SyncId::ClientId(_)
+    ));
+    assert!(matches!(
+        profile_sync_id("abcdefghijklmnopqrstuv").unwrap(),
+        SyncId::ServerId(_)
+    ));
+}
+
+#[test]
+fn local_named_agent_rejects_skill_traversal_and_external_filename_shapes() {
+    let dir = TempDir::new().unwrap();
+    let repository = LocalNamedAgentRepository::new(dir.path());
+
+    for skill in [
+        "org/repo:skill/name",
+        "repo:../outside",
+        "repo:/absolute",
+        "repo:\\outside",
+    ] {
+        let mut candidate = bundle(skill);
+        candidate.skills = vec![skill.to_owned()];
+        assert!(matches!(
+            repository.create(candidate),
+            Err(NamedAgentError::InvalidBundle { .. })
+        ));
+    }
+
+    let id = Uuid::new_v4();
+    fs::write(
+        dir.path().join(format!("{}.yml", id)),
+        serde_yaml::to_string(&bundle("wrong extension")).unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        dir.path()
+            .join(format!("{}.yaml", id.to_string().to_uppercase())),
+        serde_yaml::to_string(&bundle("wrong case")).unwrap(),
+    )
+    .unwrap();
+    let list = repository.list_with_errors().unwrap();
+    assert_eq!(list.agents.len(), 0);
+    assert_eq!(list.errors.len(), 2);
+}
+
+#[test]
+fn local_named_agent_run_metadata_round_trips_without_prompt_or_secret_values() {
+    let dir = TempDir::new().unwrap();
+    let repository = LocalNamedAgentRepository::new(dir.path());
+    let mut source = bundle("Metadata");
+    source.secret_refs = Some(AgentBundleSecretRefs {
+        env_vars: BTreeMap::from([("provider".to_owned(), "LOCAL_PROVIDER_KEY".to_owned())]),
+        keychain_entries: vec!["provider-keychain-entry".to_owned()],
+    });
+    let record = repository.create(source).unwrap();
+    let run_id = Uuid::new_v4();
+    let effective = record.bundle().to_snapshot();
+    let metadata = LocalNamedAgentRunMetadata::from_record(run_id, &record, &effective);
+    let path = repository.write_run_metadata(&metadata).unwrap();
+    assert!(path.ends_with(format!("{run_id}.yaml")));
+    let encoded = fs::read_to_string(path).unwrap();
+    assert!(!encoded.contains("bundle prompt"));
+    assert!(encoded.contains("LOCAL_PROVIDER_KEY"));
+    assert!(encoded.contains("provider-keychain-entry"));
+
+    let restarted = LocalNamedAgentRepository::new(dir.path());
+    let restored = restarted.read_run_metadata(run_id).unwrap();
+    assert_eq!(restored, metadata);
+    assert_eq!(restored.named_agent_id, record.id());
+    assert_eq!(restored.bundle_revision, record.revision());
+    assert_eq!(restored.ordered_skills, record.bundle().skills);
+    assert!(restored.effective_config.base_prompt.is_none());
+}
+
+#[test]
+fn local_named_agent_cleans_temporary_files_after_cas_errors() {
+    let dir = TempDir::new().unwrap();
+    let repository = LocalNamedAgentRepository::new(dir.path());
+    let record = repository.create(bundle("Temp cleanup")).unwrap();
+    let mut updated = record.bundle().clone();
+    updated.description = Some("changed".to_owned());
+    assert!(matches!(
+        repository.update(record.id(), "stale", updated),
+        Err(NamedAgentError::Conflict { .. })
+    ));
+    let leftovers = fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(".tmp-") || name.ends_with(".lock"))
+        .collect::<Vec<_>>();
+    assert!(
+        leftovers.is_empty(),
+        "temporary files remain: {leftovers:?}"
+    );
 }

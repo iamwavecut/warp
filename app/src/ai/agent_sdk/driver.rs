@@ -36,8 +36,10 @@ use warpui::{
     r#async::{FutureExt, TimeoutError},
 };
 
+use crate::ai::agent::api::direct_openai::{self, CustomProviderRoute};
 use crate::ai::document::ai_document_model::{AIDocumentModel, AIDocumentModelEvent};
 use crate::ai::llms::{LLMId, LLMPreferences};
+use crate::ai::local_named_agents::profile_sync_id;
 use crate::ai::mcp::{JSONMCPServer, MCPServerState};
 use crate::ai::skills::{
     SkillManager, SkillWatcher, filter_skills_by_spec, read_skills_from_directories,
@@ -81,10 +83,7 @@ use crate::{
         },
     },
     auth::AuthStateProvider,
-    server::{
-        ids::{ServerId, SyncId},
-        server_api::ServerApiProvider,
-    },
+    server::server_api::ServerApiProvider,
 };
 
 pub(crate) mod environment;
@@ -201,6 +200,10 @@ pub struct AgentDriverOptions {
     pub selected_harness: Harness,
     /// Model config for the selected harness. Only used for non-Oz harnesses.
     pub third_party_harness_model_config: Option<HarnessModelConfig>,
+    /// Local named-agent execution bypasses hosted auth and conversation state.
+    pub local_only: bool,
+    /// The direct local provider route validated before terminal creation.
+    pub direct_provider_route: Option<CustomProviderRoute>,
 }
 
 /// `AgentDriver` is a model for driving an ambient Warp agent to completion.
@@ -245,6 +248,8 @@ pub struct AgentDriver {
     parent_run_id: Option<String>,
     /// Model config for the selected harness. Only used for non-Oz harnesses.
     third_party_harness_model_config: Option<HarnessModelConfig>,
+    local_only: bool,
+    direct_provider_route: Option<CustomProviderRoute>,
 }
 
 pub(crate) enum SDKConversationOutputStatus {
@@ -344,6 +349,8 @@ pub enum AgentDriverError {
     SkillResolutionFailed(String),
     #[error("Failed to build agent configuration")]
     ConfigBuildFailed(#[source] anyhow::Error),
+    #[error("Local provider execution failed: {0}")]
+    LocalProviderFailed(String),
     #[error("Harness command exited with code {exit_code}")]
     HarnessCommandFailed { exit_code: i32 },
     #[error("Harness '{harness}' setup failed: {reason}")]
@@ -400,6 +407,8 @@ impl AgentDriver {
             environment,
             selected_harness,
             third_party_harness_model_config,
+            local_only,
+            direct_provider_route,
         } = options;
 
         safe_info!(
@@ -412,7 +421,7 @@ impl AgentDriver {
 
         // If we're not logged in, the root view will go to an auth screen, and all subsequent steps will fail.
         // This should be impossible, since we enforce login before reaching this point.
-        if !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
+        if !local_only && !AuthStateProvider::as_ref(ctx).get().is_logged_in() {
             return Err(AgentDriverError::NotLoggedIn);
         }
 
@@ -466,6 +475,8 @@ impl AgentDriver {
             run_conversation_id: None,
             parent_run_id: parent_run_id_for_self,
             third_party_harness_model_config,
+            local_only,
+            direct_provider_route,
         })
     }
 
@@ -498,6 +509,8 @@ impl AgentDriver {
             run_conversation_id: None,
             parent_run_id: None,
             third_party_harness_model_config: None,
+            local_only: false,
+            direct_provider_route: None,
         }
     }
 
@@ -1399,10 +1412,15 @@ impl AgentDriver {
                     .await??;
             }
 
-            foreground
-                .spawn(|me, ctx| me.start_profile_mcp_servers(ctx))
-                .await?
-                .await?;
+            // A named run starts only the MCP UUIDs declared by its effective
+            // local bundle. The profile allowlist is part of the hosted
+            // Blocklist conversation path and must not leak into local runs.
+            if !task.local_only {
+                foreground
+                    .spawn(|me, ctx| me.start_profile_mcp_servers(ctx))
+                    .await?
+                    .await?;
+            }
         }
 
         let global_skill_resolution = if task.local_only {
@@ -1518,6 +1536,17 @@ impl AgentDriver {
 
         // Run the harness with a prompt.
         match task.harness {
+            HarnessKind::Oz if task.local_only => {
+                let route = foreground
+                    .spawn(|me, _| me.direct_provider_route.clone())
+                    .await?
+                    .ok_or_else(|| {
+                        AgentDriverError::LocalProviderFailed(
+                            "local named-agent provider route was not preflighted".to_owned(),
+                        )
+                    })?;
+                Self::run_local_oz_run(task.prompt, route, &foreground).await
+            }
             HarnessKind::Oz => {
                 let conversation_status = foreground
                     .spawn(move |me, ctx| me.execute_run(task.prompt, ctx))
@@ -1564,6 +1593,44 @@ impl AgentDriver {
                 ),
             }),
         }
+    }
+
+    /// Execute a named Oz bundle through the direct OpenAI-compatible adapter.
+    ///
+    /// This path deliberately does not create a Blocklist conversation or
+    /// register a server token. The terminal and declared local MCP servers
+    /// have already been bootstrapped by `run_internal`; the provider request
+    /// is the only network boundary for this run.
+    async fn run_local_oz_run(
+        prompt: AgentRunPrompt,
+        route: CustomProviderRoute,
+        foreground: &ModelSpawner<Self>,
+    ) -> Result<(), AgentDriverError> {
+        let AgentRunPrompt::Local(user_prompt) = prompt;
+        let content = direct_openai::complete_text(
+            route,
+            "You are a local named agent. Use the local terminal and declared MCP tools when needed. Do not use Warp cloud services, hosted conversations, or upload data.".to_owned(),
+            user_prompt,
+        )
+        .await
+        .map_err(|error| AgentDriverError::LocalProviderFailed(error.to_string()))?;
+
+        let output_format = foreground.spawn(|me, _| me.output_format).await?;
+        output::with_stdout_buffered(|buf| match output_format {
+            OutputFormat::Json | OutputFormat::Ndjson => {
+                serde_json::to_writer(
+                    &mut *buf,
+                    &serde_json::json!({
+                        "type": "local_agent_output",
+                        "content": content,
+                    }),
+                )
+                .map_err(io::Error::other)?;
+                writeln!(buf)
+            }
+            OutputFormat::Text | OutputFormat::Pretty => writeln!(buf, "{content}"),
+        })
+        .map_err(|error| AgentDriverError::LocalProviderFailed(error.to_string()))
     }
 
     /// Run the authentication preflight check for a third-party harness.
@@ -1940,9 +2007,8 @@ impl AgentDriver {
         let terminal_id = self.terminal_driver.as_ref(ctx).terminal_view().id();
 
         if let Some(profile) = profile {
-            let server_id = ServerId::try_from(profile.as_str())
+            let sync_id = profile_sync_id(&profile)
                 .map_err(|_| AgentDriverError::ProfileError(profile.clone()))?;
-            let sync_id = SyncId::ServerId(server_id);
             AIExecutionProfilesModel::handle(ctx).update(ctx, |model, ctx| {
                 if let Some(profile_id) = model.get_profile_id_by_sync_id(&sync_id) {
                     model.set_active_profile(terminal_id, profile_id, ctx);

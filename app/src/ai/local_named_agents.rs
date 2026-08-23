@@ -9,8 +9,21 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
+#[cfg(not(unix))]
+use std::io::Read;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+#[cfg(unix)]
+use nix::fcntl::{AtFlags, FlockArg, OFlag, flock, open, openat, renameat};
+#[cfg(unix)]
+use nix::sys::stat::{Mode, SFlag, fstat, fstatat};
+#[cfg(unix)]
+use nix::unistd::{
+    LinkatFlags, UnlinkatFlags, close, fsync, linkat, read as fd_read, unlinkat, write as fd_write,
+};
+#[cfg(unix)]
+use std::os::unix::io::RawFd;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -27,6 +40,7 @@ use crate::ai::agent_sdk::config_file::{
     AgentConfigSnapshotFile, mcp_specs_from_mcp_servers, merge_mcp_servers,
 };
 use crate::ai::ambient_agents::task::{AgentConfigSnapshot, HarnessConfig};
+use crate::server::ids::{ClientId, HashableId, ServerId, SyncId};
 
 pub const LOCAL_NAMED_AGENTS_DIR: &str = "agents";
 const YAML_EXTENSION: &str = "yaml";
@@ -137,6 +151,11 @@ fn validate_name(name: &str) -> Result<(), NamedAgentError> {
             reason: format!("name exceeds {MAX_NAME_CHARS} characters"),
         });
     }
+    if name.chars().any(char::is_control) {
+        return Err(NamedAgentError::InvalidBundle {
+            reason: "name must not contain control characters".to_owned(),
+        });
+    }
     Ok(())
 }
 
@@ -160,15 +179,29 @@ fn validate_skill_reference(value: &str) -> Result<SkillSpec, String> {
     let spec = value
         .parse::<SkillSpec>()
         .map_err(|error| format!("is invalid: {error}"))?;
-    let identifier = Path::new(&spec.skill_identifier);
-    if identifier.is_absolute()
-        || identifier
-            .components()
-            .any(|component| component == std::path::Component::ParentDir)
-    {
-        return Err("must stay within local skill roots".to_owned());
+    for (field, value) in [
+        ("org", spec.org.as_deref()),
+        ("repo", spec.repo.as_deref()),
+        ("identifier", Some(spec.skill_identifier.as_str())),
+    ] {
+        if let Some(value) = value
+            && !is_safe_skill_component(value)
+        {
+            return Err(format!("{field} must be a single safe local component"));
+        }
     }
     Ok(spec)
+}
+
+fn is_safe_skill_component(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && !Path::new(value).is_absolute()
+        && !value.contains('/')
+        && !value.contains('\\')
+        && !value.chars().any(char::is_control)
 }
 
 fn validate_prompt(prompt: Option<&str>, field: &str) -> Result<(), NamedAgentError> {
@@ -196,25 +229,47 @@ fn literal_secret_like(value: &str) -> bool {
                 || (part.starts_with("ghp_") && part.len() >= 20)
                 || (part.starts_with("xoxb-") && part.len() >= 20)
         })
-        || ["api_key=", "apikey=", "password=", "token="]
-            .iter()
-            .any(|key| {
-                lower.find(key).is_some_and(|offset| {
-                    let value = lower[offset + key.len()..]
-                        .trim_start_matches(|character: char| {
-                            character == '"' || character == '\'' || character == '`'
-                        })
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or_default();
-                    value
-                        .trim_matches(|character: char| {
-                            character == '"' || character == '\'' || character == '`'
-                        })
-                        .len()
-                        >= 12
-                })
+        || [
+            "api_key=",
+            "api_key:",
+            "apikey=",
+            "apikey:",
+            "password=",
+            "password:",
+            "token=",
+            "token:",
+            "secret=",
+            "secret:",
+            "credential=",
+            "credential:",
+        ]
+        .iter()
+        .any(|key| {
+            lower.find(key).is_some_and(|offset| {
+                lower[offset + key.len()..]
+                    .trim_start_matches(|character: char| {
+                        character == '"'
+                            || character == '\''
+                            || character == '`'
+                            || character == ' '
+                    })
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character != '&' && character != '#')
             })
+        })
+        || lower.split("//").skip(1).any(|rest| {
+            rest.split('/')
+                .next()
+                .is_some_and(|authority| authority.contains('@'))
+        })
+        || lower.split(['?', '&']).skip(1).any(|part| {
+            let key = part.split('=').next().unwrap_or_default();
+            matches!(
+                key,
+                "token" | "secret" | "password" | "credential" | "api_key" | "apikey"
+            )
+        })
 }
 
 fn non_empty_segment(segment: &str) -> bool {
@@ -270,7 +325,7 @@ fn reject_secret_values(value: &Value, path: &str) -> Result<(), NamedAgentError
                                     field: format!("{child_path}.{env_key}"),
                                 });
                             };
-                            if !contains_env_ref(raw) {
+                            if !is_strict_secret_reference(raw) {
                                 return Err(NamedAgentError::SecretValueRejected {
                                     field: format!("{child_path}.{env_key}"),
                                 });
@@ -280,9 +335,7 @@ fn reject_secret_values(value: &Value, path: &str) -> Result<(), NamedAgentError
                     continue;
                 }
                 if is_secret_key(key) {
-                    let allowed_reference = child.as_str().is_some_and(contains_env_ref)
-                        || (key.ends_with("_env_var")
-                            && child.as_str().is_some_and(is_env_var_name));
+                    let allowed_reference = child.as_str().is_some_and(is_strict_secret_reference);
                     if !allowed_reference {
                         return Err(NamedAgentError::SecretValueRejected { field: child_path });
                     }
@@ -315,30 +368,23 @@ fn parse_env_ref(value: &str) -> Option<&str> {
         .filter(|name| is_env_var_name(name))
 }
 
-fn contains_env_ref(value: &str) -> bool {
+fn is_strict_secret_reference(value: &str) -> bool {
     if parse_env_ref(value).is_some() {
         return true;
     }
-
-    for (offset, _) in value.match_indices('$') {
-        let remainder = &value[offset + 1..];
-        if let Some(name) = remainder.strip_prefix('{') {
-            if let Some(end) = name.find('}')
-                && is_env_var_name(&name[..end])
-            {
-                return true;
-            }
-        } else {
-            let name = remainder
-                .chars()
-                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
-                .collect::<String>();
-            if is_env_var_name(&name) {
-                return true;
-            }
-        }
-    }
-    false
+    let keychain = value.strip_prefix("keychain:").or_else(|| {
+        value
+            .strip_prefix("${keychain:")
+            .and_then(|v| v.strip_suffix('}'))
+    });
+    keychain.is_some_and(|name| {
+        !name.trim().is_empty()
+            && !name.chars().any(|character| {
+                character.is_control()
+                    || character.is_whitespace()
+                    || matches!(character, '/' | '\\')
+            })
+    })
 }
 
 pub(crate) fn validate_named_mcp_servers(
@@ -448,6 +494,7 @@ fn is_secret_key(key: &str) -> bool {
         "password",
         "credential",
         "api_key",
+        "api-key",
         "apikey",
     ]
     .iter()
@@ -459,6 +506,21 @@ fn btree_to_json_map(value: &BTreeMap<String, Value>) -> Map<String, Value> {
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
+}
+
+/// Resolve both persisted profile identity forms. Local profiles use
+/// `Client-<uuid>` until synced; synced profiles use the fixed-width server
+/// identifier. Treating the string as a server ID first would silently turn a
+/// client ID into a different value, so the client form is checked explicitly.
+pub(crate) fn profile_sync_id(value: &str) -> Result<SyncId, NamedAgentError> {
+    if let Some(client_id) = ClientId::from_hash(value) {
+        return Ok(SyncId::ClientId(client_id));
+    }
+    ServerId::try_from(value)
+        .map(SyncId::ServerId)
+        .map_err(|_| NamedAgentError::InvalidBundle {
+            reason: format!("profile_id '{value}' is neither a valid ServerId nor ClientId"),
+        })
 }
 
 /// A loaded bundle and its content revision.
@@ -493,6 +555,48 @@ impl NamedAgentRecord {
     }
 }
 
+/// Restart-safe local run metadata. This deliberately stores references and a
+/// non-secret effective configuration only; the resolved prompt and credential
+/// values never enter the history directory.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalNamedAgentRunMetadata {
+    pub run_id: Uuid,
+    pub named_agent_id: Uuid,
+    pub bundle_revision: String,
+    pub effective_config: AgentConfigSnapshot,
+    /// Preserve the complete ordered skill reference list; the shared
+    /// snapshot carries only its legacy single `skill_spec` field.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ordered_skills: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret_refs: Option<AgentBundleSecretRefs>,
+}
+
+impl LocalNamedAgentRunMetadata {
+    pub fn from_record(
+        run_id: Uuid,
+        record: &NamedAgentRecord,
+        effective_config: &AgentConfigSnapshot,
+    ) -> Self {
+        let mut effective_config = effective_config.clone();
+        // The prompt is needed by the live request, but is not part of
+        // restart/resume metadata. Secret-bearing harness fields and hosted
+        // worker references are likewise never persisted here.
+        effective_config.base_prompt = None;
+        effective_config.harness_auth_secrets = None;
+        effective_config.worker_host = None;
+        Self {
+            run_id,
+            named_agent_id: record.id,
+            bundle_revision: record.revision.clone(),
+            effective_config,
+            ordered_skills: record.bundle.skills.clone(),
+            secret_refs: record.bundle.secret_refs.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct NamedAgentList {
     pub agents: Vec<NamedAgentRecord>,
@@ -507,7 +611,13 @@ pub struct NamedAgentFileError {
 
 impl std::fmt::Display for NamedAgentFileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.path.display(), self.message)
+        write!(f, "{}: {}", safe_file_label(&self.path), self.message)
+    }
+}
+
+impl NamedAgentFileError {
+    pub(crate) fn safe_label(&self) -> String {
+        safe_file_label(&self.path)
     }
 }
 
@@ -531,13 +641,13 @@ pub enum NamedAgentError {
         expected: String,
         actual: Option<String>,
     },
-    #[error("named agent file {path} is not a regular managed file")]
+    #[error("named agent file is not a regular managed file")]
     NotManaged { path: PathBuf },
-    #[error("named agent file {path} contains multiple YAML documents")]
+    #[error("named agent file contains multiple YAML documents")]
     MultipleDocuments { path: PathBuf },
-    #[error("could not parse named agent file {path} at {location}")]
+    #[error("could not parse named agent file at {location}")]
     Parse { path: PathBuf, location: String },
-    #[error("could not access named agent file {path}: {source}")]
+    #[error("could not access named agent file: {source}")]
     Io {
         path: PathBuf,
         #[source]
@@ -567,20 +677,79 @@ impl LocalNamedAgentRepository {
         &self.directory
     }
 
+    pub fn write_run_metadata(
+        &self,
+        metadata: &LocalNamedAgentRunMetadata,
+    ) -> Result<PathBuf, NamedAgentError> {
+        let directory = self.directory.join("runs");
+        self.ensure_managed_directory(&directory)?;
+        let _directory_lock =
+            acquire_directory_lock(&directory, true).map_err(|source| NamedAgentError::Io {
+                path: directory.clone(),
+                source,
+            })?;
+        let path = directory.join(format!("{}.yaml", metadata.run_id));
+        let bytes = serde_yaml::to_string(metadata)?.into_bytes();
+        if bytes.len() as u64 > MAX_BUNDLE_BYTES {
+            return Err(NamedAgentError::InvalidBundle {
+                reason: "run metadata exceeds size limit".to_owned(),
+            });
+        }
+        write_new_atomic_locked(&_directory_lock, &path, &bytes)?;
+        Ok(path)
+    }
+
+    pub fn read_run_metadata(
+        &self,
+        run_id: Uuid,
+    ) -> Result<LocalNamedAgentRunMetadata, NamedAgentError> {
+        let directory = self.directory.join("runs");
+        self.ensure_managed_directory(&directory)?;
+        let _directory_lock =
+            acquire_directory_lock(&directory, false).map_err(|source| NamedAgentError::Io {
+                path: directory.clone(),
+                source,
+            })?;
+        let path = directory.join(format!("{}.yaml", run_id));
+        let bytes = read_managed_file_locked(&_directory_lock, &path).map_err(|error| {
+            if matches!(error, NamedAgentError::Io { ref source, .. }
+                if source.kind() == io::ErrorKind::NotFound)
+            {
+                NamedAgentError::NotFound { id: run_id }
+            } else {
+                error
+            }
+        })?;
+        parse_run_metadata(&path, &bytes)
+    }
+
     pub fn create(&self, bundle: NamedAgentBundle) -> Result<NamedAgentRecord, NamedAgentError> {
         bundle.validate()?;
         let id = Uuid::new_v4();
         let path = self.path_for_id(id)?;
-        write_new_atomic(&path, &serialize_bundle(&bundle)?)?;
+        let _directory_lock = acquire_directory_lock(&self.directory, true).map_err(|source| {
+            NamedAgentError::Io {
+                path: self.directory.clone(),
+                source,
+            }
+        })?;
+        write_new_atomic_locked(&_directory_lock, &path, &serialize_bundle(&bundle)?)?;
+        drop(_directory_lock);
         self.read(id)
     }
 
     pub fn get(&self, id: Uuid) -> Result<NamedAgentRecord, NamedAgentError> {
-        let path = self.path_for_id(id)?;
-        self.read_path(id, &path)
+        self.read(id)
     }
     pub fn read(&self, id: Uuid) -> Result<NamedAgentRecord, NamedAgentError> {
-        self.get(id)
+        let path = self.path_for_id(id)?;
+        let _directory_lock = acquire_directory_lock(&self.directory, false).map_err(|source| {
+            NamedAgentError::Io {
+                path: self.directory.clone(),
+                source,
+            }
+        })?;
+        self.read_path_locked(id, &path, &_directory_lock)
     }
 
     pub fn resolve(&self, selector: &str) -> Result<NamedAgentRecord, NamedAgentError> {
@@ -612,8 +781,14 @@ impl LocalNamedAgentRepository {
     ) -> Result<NamedAgentRecord, NamedAgentError> {
         bundle.validate()?;
         let path = self.path_for_id(id)?;
+        let _directory_lock = acquire_directory_lock(&self.directory, true).map_err(|source| {
+            NamedAgentError::Io {
+                path: self.directory.clone(),
+                source,
+            }
+        })?;
         let lock = self.acquire_lock(id)?;
-        let current = self.read_path(id, &path)?;
+        let current = self.read_path_locked(id, &path, &_directory_lock)?;
         if current.revision != expected_revision {
             drop(lock);
             return Err(NamedAgentError::Conflict {
@@ -622,8 +797,21 @@ impl LocalNamedAgentRepository {
                 actual: Some(current.revision),
             });
         }
-        write_replace_atomic(&path, &serialize_bundle(&bundle)?)?;
+        // Re-read immediately before publication. The directory lock keeps
+        // cooperating local writers from changing the target between the
+        // expected-revision check and the atomic rename.
+        let latest = self.read_path_locked(id, &path, &_directory_lock)?;
+        if latest.revision != expected_revision {
+            drop(lock);
+            return Err(NamedAgentError::Conflict {
+                id,
+                expected: expected_revision.to_owned(),
+                actual: Some(latest.revision),
+            });
+        }
+        write_replace_atomic_locked(&_directory_lock, &path, &serialize_bundle(&bundle)?)?;
         drop(lock);
+        drop(_directory_lock);
         self.read(id)
     }
 
@@ -636,8 +824,14 @@ impl LocalNamedAgentRepository {
             selector: selector.to_owned(),
         })?;
         let path = self.path_for_id(id)?;
+        let _directory_lock = acquire_directory_lock(&self.directory, true).map_err(|source| {
+            NamedAgentError::Io {
+                path: self.directory.clone(),
+                source,
+            }
+        })?;
         let lock = self.acquire_lock(id)?;
-        let current = self.read_path(id, &path)?;
+        let current = self.read_path_locked(id, &path, &_directory_lock)?;
         if let Some(expected) = expected_revision
             && current.revision != expected
         {
@@ -648,19 +842,9 @@ impl LocalNamedAgentRepository {
                 actual: Some(current.revision),
             });
         }
-        let metadata = fs::symlink_metadata(&path).map_err(|source| NamedAgentError::Io {
-            path: path.clone(),
-            source,
-        })?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            drop(lock);
-            return Err(NamedAgentError::NotManaged { path });
-        }
-        fs::remove_file(&path).map_err(|source| NamedAgentError::Io {
-            path: path.clone(),
-            source,
-        })?;
+        delete_locked(&_directory_lock, &path, &id, expected_revision)?;
         drop(lock);
+        drop(_directory_lock);
         Ok(())
     }
 
@@ -677,6 +861,12 @@ impl LocalNamedAgentRepository {
 
     pub fn list_with_errors(&self) -> Result<NamedAgentList, NamedAgentError> {
         self.ensure_directory()?;
+        let _directory_lock = acquire_directory_lock(&self.directory, false).map_err(|source| {
+            NamedAgentError::Io {
+                path: self.directory.clone(),
+                source,
+            }
+        })?;
         let mut result = NamedAgentList::default();
         let entries = fs::read_dir(&self.directory).map_err(|source| NamedAgentError::Io {
             path: self.directory.clone(),
@@ -694,10 +884,12 @@ impl LocalNamedAgentRepository {
                 }
             };
             let path = entry.path();
-            let is_yaml = matches!(
-                path.extension().and_then(|extension| extension.to_str()),
-                Some("yaml" | "yml")
-            );
+            let is_yaml = path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("yaml") || extension.eq_ignore_ascii_case("yml")
+                });
             if !is_yaml {
                 continue;
             }
@@ -708,23 +900,11 @@ impl LocalNamedAgentRepository {
                 });
                 continue;
             };
-            match fs::symlink_metadata(&path) {
-                Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-                    result.errors.push(NamedAgentFileError {
-                        path,
-                        message: "must be a regular file, not a symlink".to_owned(),
-                    });
-                }
-                Ok(_) => match self.read_path(id, &path) {
-                    Ok(record) => result.agents.push(record),
-                    Err(error) => result.errors.push(NamedAgentFileError {
-                        path,
-                        message: safe_file_error_message(&error),
-                    }),
-                },
-                Err(source) => result.errors.push(NamedAgentFileError {
+            match self.read_path_locked(id, &path, &_directory_lock) {
+                Ok(record) => result.agents.push(record),
+                Err(error) => result.errors.push(NamedAgentFileError {
                     path,
-                    message: source.kind().to_string(),
+                    message: safe_file_error_message(&error),
                 }),
             }
         }
@@ -734,25 +914,20 @@ impl LocalNamedAgentRepository {
         Ok(result)
     }
 
-    fn read_path(&self, id: Uuid, path: &Path) -> Result<NamedAgentRecord, NamedAgentError> {
-        let metadata = fs::symlink_metadata(path).map_err(|source| {
-            if source.kind() == io::ErrorKind::NotFound {
+    fn read_path_locked(
+        &self,
+        id: Uuid,
+        path: &Path,
+        directory: &DirectoryLock,
+    ) -> Result<NamedAgentRecord, NamedAgentError> {
+        let bytes = read_managed_file_locked(directory, path).map_err(|error| {
+            if matches!(error, NamedAgentError::Io { ref source, .. }
+                if source.kind() == io::ErrorKind::NotFound)
+            {
                 NamedAgentError::NotFound { id }
             } else {
-                NamedAgentError::Io {
-                    path: path.to_path_buf(),
-                    source,
-                }
+                error
             }
-        })?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(NamedAgentError::NotManaged {
-                path: path.to_path_buf(),
-            });
-        }
-        let bytes = fs::read(path).map_err(|source| NamedAgentError::Io {
-            path: path.to_path_buf(),
-            source,
         })?;
         if bytes.len() as u64 > MAX_BUNDLE_BYTES {
             return Err(NamedAgentError::InvalidBundle {
@@ -769,20 +944,23 @@ impl LocalNamedAgentRepository {
     }
 
     fn ensure_directory(&self) -> Result<(), NamedAgentError> {
-        if !self.directory.exists() {
-            fs::create_dir_all(&self.directory).map_err(|source| NamedAgentError::Io {
-                path: self.directory.clone(),
+        self.ensure_managed_directory(&self.directory)
+    }
+
+    fn ensure_managed_directory(&self, directory: &Path) -> Result<(), NamedAgentError> {
+        if !directory.exists() {
+            fs::create_dir_all(directory).map_err(|source| NamedAgentError::Io {
+                path: directory.to_path_buf(),
                 source,
             })?;
         }
-        let metadata =
-            fs::symlink_metadata(&self.directory).map_err(|source| NamedAgentError::Io {
-                path: self.directory.clone(),
-                source,
-            })?;
+        let metadata = fs::symlink_metadata(directory).map_err(|source| NamedAgentError::Io {
+            path: directory.to_path_buf(),
+            source,
+        })?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Err(NamedAgentError::NotManaged {
-                path: self.directory.clone(),
+                path: directory.to_path_buf(),
             });
         }
         Ok(())
@@ -795,24 +973,27 @@ impl LocalNamedAgentRepository {
 
     fn acquire_lock(&self, id: Uuid) -> Result<LockFile, NamedAgentError> {
         let path = self.directory.join(format!(".{id}.lock"));
-        let file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|source| {
-                if source.kind() == io::ErrorKind::AlreadyExists {
-                    NamedAgentError::Conflict {
-                        id,
-                        expected: "unlocked".to_owned(),
-                        actual: Some("locked".to_owned()),
-                    }
-                } else {
-                    NamedAgentError::Io {
-                        path: path.clone(),
-                        source,
-                    }
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+        }
+        let file = options.open(&path).map_err(|source| {
+            if source.kind() == io::ErrorKind::AlreadyExists {
+                NamedAgentError::Conflict {
+                    id,
+                    expected: "unlocked".to_owned(),
+                    actual: Some("locked".to_owned()),
                 }
-            })?;
+            } else {
+                NamedAgentError::Io {
+                    path: path.clone(),
+                    source,
+                }
+            }
+        })?;
         Ok(LockFile { path, _file: file })
     }
 }
@@ -825,6 +1006,93 @@ impl Drop for LockFile {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
     }
+}
+
+/// Lock the managed directory while checking and publishing a revision. This
+/// follows the same directory-FD discipline as local router/rule stores: the
+/// lock is held on the directory itself, and all publication remains an
+/// atomic operation within that directory.
+#[cfg(unix)]
+struct FdGuard(RawFd);
+
+#[cfg(unix)]
+impl FdGuard {
+    fn fd(&self) -> RawFd {
+        self.0
+    }
+}
+
+#[cfg(unix)]
+impl Drop for FdGuard {
+    fn drop(&mut self) {
+        let _ = close(self.0);
+    }
+}
+
+#[cfg(unix)]
+struct DirectoryLock {
+    fd: FdGuard,
+}
+
+#[cfg(unix)]
+impl DirectoryLock {
+    fn fd(&self) -> RawFd {
+        self.fd.fd()
+    }
+}
+
+#[cfg(not(unix))]
+struct DirectoryLock;
+
+fn acquire_directory_lock(path: &Path, exclusive: bool) -> io::Result<DirectoryLock> {
+    #[cfg(unix)]
+    {
+        let fd = open_directory_nofollow(path)?;
+        let operation = if exclusive {
+            FlockArg::LockExclusive
+        } else {
+            FlockArg::LockShared
+        };
+        // The directory FD is intentionally kept alive by DirectoryLock for
+        // the whole read/write transaction.
+        flock(fd.fd(), operation).map_err(io::Error::other)?;
+        Ok(DirectoryLock { fd })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, exclusive);
+        Ok(DirectoryLock)
+    }
+}
+
+#[cfg(unix)]
+fn open_directory_nofollow(path: &Path) -> io::Result<FdGuard> {
+    // Resolve benign platform aliases such as macOS `/var` once, then walk
+    // the canonical components with O_NOFOLLOW so a later swap cannot escape
+    // the managed directory.
+    let path = fs::canonicalize(path)?;
+    let mut directory = FdGuard(
+        open(
+            Path::new("/"),
+            OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW,
+            Mode::empty(),
+        )
+        .map_err(io::Error::other)?,
+    );
+    for component in path.components() {
+        let Component::Normal(name) = component else {
+            continue;
+        };
+        let next = openat(
+            directory.fd(),
+            name,
+            OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW,
+            Mode::empty(),
+        )
+        .map_err(io::Error::other)?;
+        directory = FdGuard(next);
+    }
+    Ok(directory)
 }
 
 fn serialize_bundle(bundle: &NamedAgentBundle) -> Result<Vec<u8>, NamedAgentError> {
@@ -863,6 +1131,45 @@ fn parse_bundle(path: &Path, bytes: &[u8]) -> Result<NamedAgentBundle, NamedAgen
     Ok(bundle)
 }
 
+fn parse_run_metadata(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<LocalNamedAgentRunMetadata, NamedAgentError> {
+    let text = std::str::from_utf8(bytes).map_err(|_| NamedAgentError::Parse {
+        path: path.to_path_buf(),
+        location: "invalid UTF-8".to_owned(),
+    })?;
+    let mut documents = serde_yaml::Deserializer::from_str(text);
+    let Some(document) = documents.next() else {
+        return Err(NamedAgentError::Parse {
+            path: path.to_path_buf(),
+            location: "empty YAML".to_owned(),
+        });
+    };
+    let metadata = LocalNamedAgentRunMetadata::deserialize(document).map_err(|error| {
+        NamedAgentError::Parse {
+            path: path.to_path_buf(),
+            location: yaml_error_location(&error),
+        }
+    })?;
+    if documents.next().is_some() {
+        return Err(NamedAgentError::MultipleDocuments {
+            path: path.to_path_buf(),
+        });
+    }
+    let expected_id = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .and_then(|stem| Uuid::parse_str(stem).ok());
+    if expected_id != Some(metadata.run_id) {
+        return Err(NamedAgentError::Parse {
+            path: path.to_path_buf(),
+            location: "run_id does not match its managed filename".to_owned(),
+        });
+    }
+    Ok(metadata)
+}
+
 fn yaml_error_location(error: &serde_yaml::Error) -> String {
     // Keep the parser's actionable reason (for example, an unknown field),
     // but only retain its first line so a malformed scalar can never be
@@ -898,6 +1205,14 @@ fn safe_file_error_message(error: &NamedAgentError) -> String {
     }
 }
 
+fn safe_file_label(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| "<managed-file>".to_owned())
+}
+
 fn hash_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -905,15 +1220,410 @@ fn hash_bytes(bytes: &[u8]) -> String {
 }
 
 fn id_from_path(path: &Path) -> Option<Uuid> {
-    if !matches!(
-        path.extension().and_then(|ext| ext.to_str()),
-        Some("yaml" | "yml")
-    ) {
+    if path.extension().and_then(|ext| ext.to_str()) != Some(YAML_EXTENSION) {
         return None;
     }
-    Uuid::parse_str(path.file_stem()?.to_str()?).ok()
+    let stem = path.file_stem()?.to_str()?;
+    let id = Uuid::parse_str(stem).ok()?;
+    (stem == id.to_string()).then_some(id)
 }
 
+fn read_managed_file(path: &Path) -> Result<Vec<u8>, NamedAgentError> {
+    #[cfg(unix)]
+    {
+        let parent = path.parent().ok_or_else(|| NamedAgentError::Io {
+            path: path.to_path_buf(),
+            source: io::Error::new(io::ErrorKind::InvalidInput, "managed file has no parent"),
+        })?;
+        let fd = open_directory_nofollow(parent).map_err(|source| NamedAgentError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+        return read_managed_file_at(&DirectoryLock { fd }, managed_file_name(path)?, path);
+    }
+    #[cfg(not(unix))]
+    {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        let mut file = options.open(path).map_err(|source| NamedAgentError::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|source| NamedAgentError::Io {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        Ok(bytes)
+    }
+}
+
+fn managed_file_name(path: &Path) -> Result<&str, NamedAgentError> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| NamedAgentError::Io {
+            path: path.to_path_buf(),
+            source: io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "managed file has no valid name",
+            ),
+        })
+}
+
+fn read_managed_file_locked(
+    directory: &DirectoryLock,
+    path: &Path,
+) -> Result<Vec<u8>, NamedAgentError> {
+    #[cfg(unix)]
+    {
+        return read_managed_file_at(directory, managed_file_name(path)?, path);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        read_managed_file(path)
+    }
+}
+
+#[cfg(unix)]
+fn read_managed_file_at(
+    directory: &DirectoryLock,
+    name: &str,
+    path: &Path,
+) -> Result<Vec<u8>, NamedAgentError> {
+    let fd = openat(
+        directory.fd(),
+        name,
+        OFlag::O_RDONLY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW,
+        Mode::empty(),
+    )
+    .map_err(|error| NamedAgentError::Io {
+        path: path.to_path_buf(),
+        source: io::Error::other(error),
+    })?;
+    let file = FdGuard(fd);
+    let initial = fstat(file.fd()).map_err(|error| NamedAgentError::Io {
+        path: path.to_path_buf(),
+        source: io::Error::other(error),
+    })?;
+    if !SFlag::from_bits_truncate(initial.st_mode).contains(SFlag::S_IFREG) {
+        return Err(NamedAgentError::NotManaged {
+            path: path.to_path_buf(),
+        });
+    }
+    if initial.st_size < 0 || initial.st_size as u64 > MAX_BUNDLE_BYTES {
+        return Err(NamedAgentError::InvalidBundle {
+            reason: "bundle exceeds size limit".to_owned(),
+        });
+    }
+    let mut bytes = Vec::with_capacity(initial.st_size as usize);
+    let mut buffer = [0u8; 8192];
+    loop {
+        match fd_read(file.fd(), &mut buffer) {
+            Ok(0) => break,
+            Ok(count) => {
+                if bytes.len().saturating_add(count) as u64 > MAX_BUNDLE_BYTES {
+                    return Err(NamedAgentError::InvalidBundle {
+                        reason: "bundle exceeds size limit".to_owned(),
+                    });
+                }
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            Err(error) if error == nix::errno::Errno::EINTR => continue,
+            Err(error) => {
+                return Err(NamedAgentError::Io {
+                    path: path.to_path_buf(),
+                    source: io::Error::other(error),
+                });
+            }
+        }
+    }
+    let final_stat = fstat(file.fd()).map_err(|error| NamedAgentError::Io {
+        path: path.to_path_buf(),
+        source: io::Error::other(error),
+    })?;
+    if final_stat.st_size < 0 || final_stat.st_size as u64 > MAX_BUNDLE_BYTES {
+        return Err(NamedAgentError::InvalidBundle {
+            reason: "bundle exceeds size limit".to_owned(),
+        });
+    }
+    Ok(bytes)
+}
+
+fn write_new_atomic_locked(
+    directory: &DirectoryLock,
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), NamedAgentError> {
+    #[cfg(unix)]
+    {
+        let name = managed_file_name(path)?;
+        let temporary = format!(".{name}.tmp-{}", Uuid::new_v4());
+        write_temp_at(directory, &temporary, bytes, path)?;
+        match linkat(
+            Some(directory.fd()),
+            temporary.as_str(),
+            Some(directory.fd()),
+            name,
+            LinkatFlags::NoSymlinkFollow,
+        ) {
+            Ok(()) => {
+                cleanup_entry(directory, &temporary);
+                sync_directory(directory, path)?;
+                Ok(())
+            }
+            Err(error) if error == nix::errno::Errno::EEXIST => {
+                cleanup_entry(directory, &temporary);
+                Err(NamedAgentError::AlreadyExists {
+                    id: Uuid::parse_str(
+                        path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or_default(),
+                    )
+                    .unwrap_or_else(|_| Uuid::nil()),
+                })
+            }
+            Err(error) => {
+                cleanup_entry(directory, &temporary);
+                Err(NamedAgentError::Io {
+                    path: path.to_path_buf(),
+                    source: io::Error::other(error),
+                })
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        write_new_atomic(path, bytes)
+    }
+}
+
+fn write_replace_atomic_locked(
+    directory: &DirectoryLock,
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), NamedAgentError> {
+    #[cfg(unix)]
+    {
+        let name = managed_file_name(path)?;
+        let temporary = format!(".{name}.tmp-{}", Uuid::new_v4());
+        write_temp_at(directory, &temporary, bytes, path)?;
+        let backup = format!(".{name}.backup-{}", Uuid::new_v4());
+        if let Err(error) = renameat(
+            Some(directory.fd()),
+            name,
+            Some(directory.fd()),
+            backup.as_str(),
+        ) {
+            cleanup_entry(directory, &temporary);
+            return Err(NamedAgentError::Io {
+                path: path.to_path_buf(),
+                source: io::Error::other(error),
+            });
+        }
+        if let Err(error) = renameat(
+            Some(directory.fd()),
+            temporary.as_str(),
+            Some(directory.fd()),
+            name,
+        ) {
+            let _ = renameat(
+                Some(directory.fd()),
+                backup.as_str(),
+                Some(directory.fd()),
+                name,
+            );
+            cleanup_entry(directory, &temporary);
+            return Err(NamedAgentError::Io {
+                path: path.to_path_buf(),
+                source: io::Error::other(error),
+            });
+        }
+        if let Err(error) = sync_directory(directory, path) {
+            if renameat(
+                Some(directory.fd()),
+                backup.as_str(),
+                Some(directory.fd()),
+                name,
+            )
+            .is_ok()
+            {
+                let _ = sync_directory(directory, path);
+                return Err(error);
+            }
+            return Ok(());
+        }
+        cleanup_entry(directory, &backup);
+        let _ = sync_directory(directory, path);
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        write_replace_atomic(path, bytes)
+    }
+}
+
+fn delete_locked(
+    directory: &DirectoryLock,
+    path: &Path,
+    id: &Uuid,
+    expected_revision: Option<&str>,
+) -> Result<(), NamedAgentError> {
+    #[cfg(unix)]
+    {
+        let name = managed_file_name(path)?;
+        let Some((bytes, _)) = snapshot_at(directory, name, path)? else {
+            return Err(NamedAgentError::NotFound { id: *id });
+        };
+        if let Some(expected) = expected_revision
+            && hash_bytes(&bytes) != expected
+        {
+            return Err(NamedAgentError::Conflict {
+                id: *id,
+                expected: expected.to_owned(),
+                actual: Some(hash_bytes(&bytes)),
+            });
+        }
+        let backup = format!(".{name}.delete-{}", Uuid::new_v4());
+        renameat(
+            Some(directory.fd()),
+            name,
+            Some(directory.fd()),
+            backup.as_str(),
+        )
+        .map_err(|error| NamedAgentError::Io {
+            path: path.to_path_buf(),
+            source: io::Error::other(error),
+        })?;
+        if let Err(error) = sync_directory(directory, path) {
+            if renameat(
+                Some(directory.fd()),
+                backup.as_str(),
+                Some(directory.fd()),
+                name,
+            )
+            .is_ok()
+            {
+                let _ = sync_directory(directory, path);
+                return Err(error);
+            }
+            return Ok(());
+        }
+        cleanup_entry(directory, &backup);
+        let _ = sync_directory(directory, path);
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = directory;
+        let _ = id;
+        let _ = expected_revision;
+        fs::remove_file(path).map_err(|source| NamedAgentError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+}
+
+#[cfg(unix)]
+fn snapshot_at(
+    directory: &DirectoryLock,
+    name: &str,
+    path: &Path,
+) -> Result<Option<(Vec<u8>, String)>, NamedAgentError> {
+    let stat = match fstatat(directory.fd(), name, AtFlags::AT_SYMLINK_NOFOLLOW) {
+        Ok(stat) => stat,
+        Err(error) if error == nix::errno::Errno::ENOENT => return Ok(None),
+        Err(error) => {
+            return Err(NamedAgentError::Io {
+                path: path.to_path_buf(),
+                source: io::Error::other(error),
+            });
+        }
+    };
+    if SFlag::from_bits_truncate(stat.st_mode).contains(SFlag::S_IFLNK)
+        || !SFlag::from_bits_truncate(stat.st_mode).contains(SFlag::S_IFREG)
+    {
+        return Err(NamedAgentError::NotManaged {
+            path: path.to_path_buf(),
+        });
+    }
+    let bytes = read_managed_file_at(directory, name, path)?;
+    let revision = hash_bytes(&bytes);
+    Ok(Some((bytes, revision)))
+}
+
+#[cfg(unix)]
+fn write_temp_at(
+    directory: &DirectoryLock,
+    name: &str,
+    bytes: &[u8],
+    path: &Path,
+) -> Result<(), NamedAgentError> {
+    if bytes.len() as u64 > MAX_BUNDLE_BYTES {
+        return Err(NamedAgentError::InvalidBundle {
+            reason: "bundle exceeds size limit".to_owned(),
+        });
+    }
+    let fd = openat(
+        directory.fd(),
+        name,
+        OFlag::O_WRONLY | OFlag::O_CREAT | OFlag::O_EXCL | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW,
+        Mode::from_bits_truncate(0o600),
+    )
+    .map_err(|error| NamedAgentError::Io {
+        path: path.to_path_buf(),
+        source: io::Error::other(error),
+    })?;
+    let file = FdGuard(fd);
+    let mut offset = 0;
+    while offset < bytes.len() {
+        match fd_write(file.fd(), &bytes[offset..]) {
+            Ok(0) => {
+                cleanup_entry(directory, name);
+                return Err(NamedAgentError::Io {
+                    path: path.to_path_buf(),
+                    source: io::Error::new(io::ErrorKind::WriteZero, "short managed file write"),
+                });
+            }
+            Ok(count) => offset += count,
+            Err(error) if error == nix::errno::Errno::EINTR => continue,
+            Err(error) => {
+                cleanup_entry(directory, name);
+                return Err(NamedAgentError::Io {
+                    path: path.to_path_buf(),
+                    source: io::Error::other(error),
+                });
+            }
+        }
+    }
+    if let Err(error) = fsync(file.fd()) {
+        cleanup_entry(directory, name);
+        return Err(NamedAgentError::Io {
+            path: path.to_path_buf(),
+            source: io::Error::other(error),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_directory(directory: &DirectoryLock, path: &Path) -> Result<(), NamedAgentError> {
+    fsync(directory.fd()).map_err(|error| NamedAgentError::Io {
+        path: path.to_path_buf(),
+        source: io::Error::other(error),
+    })
+}
+
+#[cfg(unix)]
+fn cleanup_entry(directory: &DirectoryLock, name: &str) {
+    let _ = unlinkat(Some(directory.fd()), name, UnlinkatFlags::NoRemoveDir);
+}
+
+#[cfg(not(unix))]
 fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), NamedAgentError> {
     let file_name = path
         .file_name()
@@ -948,6 +1658,7 @@ fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), NamedAgentError> {
     }
 }
 
+#[cfg(not(unix))]
 fn write_replace_atomic(path: &Path, bytes: &[u8]) -> Result<(), NamedAgentError> {
     let file_name = path
         .file_name()
@@ -967,14 +1678,17 @@ fn write_replace_atomic(path: &Path, bytes: &[u8]) -> Result<(), NamedAgentError
 }
 
 fn write_temp(path: &Path, bytes: &[u8]) -> Result<(), NamedAgentError> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|source| NamedAgentError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(path).map_err(|source| NamedAgentError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
     file.write_all(bytes)
         .and_then(|_| file.flush())
         .and_then(|_| file.sync_all())
@@ -1218,6 +1932,7 @@ fn create_from_cli(ctx: &mut AppContext, args: CreateNamedAgentArgs) -> anyhow::
 fn show_from_cli(ctx: &mut AppContext, args: NamedAgentSelectorArgs) -> anyhow::Result<()> {
     let record = LocalNamedAgentRepository::for_user().resolve(&args.selector)?;
     let mut bundle = record.bundle.clone();
+    bundle.base_prompt = None;
     bundle.secret_refs = None;
     println!("id: {}\nrevision: {}", record.id, record.revision);
     println!("{}", serde_yaml::to_string(&bundle)?);

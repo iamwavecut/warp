@@ -134,6 +134,11 @@ struct CardState {
 }
 
 pub struct AgentManagementView {
+    /// Native Warp builds expose only the local named-agent surface here. The
+    /// legacy task-management fields remain for the wasm implementation until
+    /// that target has an equivalent local store, but are never subscribed or
+    /// rendered on the local-first desktop path.
+    local_only: bool,
     #[cfg(not(target_family = "wasm"))]
     local_named_agents: ViewHandle<LocalNamedAgentsView>,
     list_state: ListState<()>,
@@ -188,17 +193,23 @@ impl AgentManagementView {
         persisted_filters: Option<PersistedAgentManagementFilters>,
         ctx: &mut ViewContext<Self>,
     ) -> Self {
-        ctx.subscribe_to_model(
-            &AgentConversationsModel::handle(ctx),
-            Self::handle_agent_management_model_event,
-        );
+        let local_only = !cfg!(target_family = "wasm");
 
-        ctx.subscribe_to_model(
-            &HarnessAvailabilityModel::handle(ctx),
-            |me, _, _event, ctx| {
-                me.update_harness_dropdown(ctx);
-            },
-        );
+        if !local_only {
+            ctx.subscribe_to_model(
+                &AgentConversationsModel::handle(ctx),
+                Self::handle_agent_management_model_event,
+            );
+        }
+
+        if !local_only {
+            ctx.subscribe_to_model(
+                &HarnessAvailabilityModel::handle(ctx),
+                |me, _, _event, ctx| {
+                    me.update_harness_dropdown(ctx);
+                },
+            );
+        }
 
         let list_state = Self::construct_fresh_list_state(ctx.handle());
 
@@ -296,6 +307,7 @@ impl AgentManagementView {
         ctx.subscribe_to_view(&details_panel, Self::handle_details_panel_event);
 
         let mut view = Self {
+            local_only,
             #[cfg(not(target_family = "wasm"))]
             local_named_agents,
             list_state,
@@ -322,21 +334,26 @@ impl AgentManagementView {
             selected_item_id: None,
         };
 
-        view.update_filter_buttons(ctx);
-        view.sync_with_loaded_filters(ctx);
-        view.update_creator_dropdown(ctx);
+        if !view.local_only {
+            view.update_filter_buttons(ctx);
+            view.sync_with_loaded_filters(ctx);
+            view.update_creator_dropdown(ctx);
 
-        // Trigger server fetch if persisted filters differ from defaults
-        // (team tasks are not loaded at startup, so we need to fetch them)
-        if view.filters != AgentManagementFilters::default() {
-            view.trigger_filter_fetch(ctx);
+            // Hosted task filters are intentionally unreachable on the
+            // local-first desktop surface.
+            if view.filters != AgentManagementFilters::default() {
+                view.trigger_filter_fetch(ctx);
+            }
+
+            view.get_tasks_from_model(ctx);
         }
-
-        view.get_tasks_from_model(ctx);
         view
     }
 
     fn get_view_state(&self, app: &AppContext) -> ViewState {
+        if self.local_only {
+            return ViewState::NoFilterMatches;
+        }
         let model = AgentConversationsModel::as_ref(app);
         let has_items = model.has_items();
 
@@ -672,6 +689,9 @@ impl AgentManagementView {
     }
 
     fn update_creator_dropdown(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.local_only {
+            return;
+        }
         let creators = AgentConversationsModel::as_ref(ctx).get_all_creators(ctx);
         let creator_filter_name = match &self.filters.creator {
             CreatorFilter::All => "All",
@@ -703,6 +723,9 @@ impl AgentManagementView {
     }
 
     fn handle_search_editor_event(&mut self, event: &EditorEvent, ctx: &mut ViewContext<Self>) {
+        if self.local_only {
+            return;
+        }
         if let EditorEvent::Edited(_) = event {
             let new_query = self.search_editor.as_ref(ctx).buffer_text(ctx);
             if new_query != self.search_query {
@@ -714,6 +737,9 @@ impl AgentManagementView {
 
     /// Common handler for filter changes: fetch, refresh tasks, and save.
     fn on_filter_changed(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.local_only {
+            return;
+        }
         self.trigger_filter_fetch(ctx);
         self.get_tasks_from_model(ctx);
         ctx.dispatch_global_action("workspace:save_app", ());
@@ -721,6 +747,9 @@ impl AgentManagementView {
 
     /// Trigger a server fetch for tasks matching current filters.
     fn trigger_filter_fetch(&self, ctx: &mut ViewContext<Self>) {
+        if self.local_only {
+            return;
+        }
         let current_user_uid = AuthStateProvider::handle(ctx)
             .as_ref(ctx)
             .get()
@@ -736,6 +765,9 @@ impl AgentManagementView {
 
     /// Sync all tasks from the management model, and update the ListState
     fn get_tasks_from_model(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.local_only {
+            return;
+        }
         // Collect all card data we need
         struct CardData {
             item_id: ManagementCardItemId,
@@ -988,6 +1020,9 @@ impl AgentManagementView {
         event: &AgentConversationsModelEvent,
         ctx: &mut ViewContext<Self>,
     ) {
+        if self.local_only {
+            return;
+        }
         match event {
             AgentConversationsModelEvent::ConversationsLoaded
             | AgentConversationsModelEvent::TasksUpdated => {
@@ -1836,12 +1871,19 @@ impl View for AgentManagementView {
     }
 
     fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {
-        if focus_ctx.is_self_focused() {
+        if !self.local_only && focus_ctx.is_self_focused() {
             ctx.focus(&self.search_editor);
         }
     }
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
+        #[cfg(not(target_family = "wasm"))]
+        if self.local_only {
+            return Container::new(ChildView::new(&self.local_named_agents).finish())
+                .with_uniform_margin(16.)
+                .finish();
+        }
+
         let main_content = match self.get_view_state(app) {
             ViewState::Loading => self.render_loading_state(app),
             ViewState::NoFilterMatches => self.render_no_results_view(app),
@@ -1917,6 +1959,9 @@ impl TypedActionView for AgentManagementView {
     type Action = AgentManagementViewAction;
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut ViewContext<Self>) {
+        if self.local_only {
+            return;
+        }
         match action {
             AgentManagementViewAction::SetOwnerFilter(filter) => {
                 self.filters.owners = *filter;
