@@ -2797,9 +2797,10 @@ impl TypedActionView for AISettingsPageView {
                 }
                 let mut providers = AISettings::as_ref(ctx).custom_providers.clone();
                 let name = unique_custom_provider_name(&providers);
+                let new_provider_id = new_custom_provider_id();
                 providers.push(CustomProviderConfig {
-                    local_id: Some(new_custom_provider_id()),
-                    name,
+                    local_id: Some(new_provider_id),
+                    name: name.clone(),
                     base_url: "http://localhost:1234/v1".to_string(),
                     models: Vec::new(),
                     api_key_env_var: None,
@@ -2807,9 +2808,13 @@ impl TypedActionView for AISettingsPageView {
                     capabilities: Default::default(),
                 });
                 if let Err(error) = persist_custom_provider_configs(providers, ctx) {
+                    self.provider_editor_error_state
+                        .set_global(provider_editor_persistence_error(&name));
                     report_error!(error);
+                    ctx.notify();
                     return;
                 }
+                self.provider_editor_error_state.clear_global();
                 self.page = Self::build_page(
                     self.active_subpage,
                     self.provider_editor_error_state.clone(),
@@ -2832,8 +2837,17 @@ impl TypedActionView for AISettingsPageView {
                     let removed = providers.remove(index);
                     let should_clear_key =
                         !custom_provider_key_is_still_referenced(&providers, &removed.name);
-                    if let Err(error) = persist_custom_provider_configs(providers, ctx) {
+                    let persistence_targets = vec![(
+                        provider_id.clone(),
+                        removed.name.clone(),
+                        self.provider_editor_error_state.clone(),
+                    )];
+                    if let Err(error) = apply_provider_editor_persistence_result(
+                        persist_custom_provider_configs(providers, ctx),
+                        &persistence_targets,
+                    ) {
                         report_error!(error);
+                        ctx.notify();
                         return;
                     }
                     if should_clear_key {
@@ -2891,18 +2905,19 @@ impl TypedActionView for AISettingsPageView {
                         ctx.notify();
                         return;
                     }
-                    if let Err(_error) = persist_custom_provider_configs(providers, ctx) {
-                        self.provider_editor_error_state.set(
-                            provider_id,
-                            provider_editor_error_message(
-                                &provider_name,
-                                "local settings could not be saved",
-                            ),
-                        );
+                    let persistence_targets = vec![(
+                        provider_id.to_string(),
+                        provider_name.clone(),
+                        self.provider_editor_error_state.clone(),
+                    )];
+                    if let Err(error) = apply_provider_editor_persistence_result(
+                        persist_custom_provider_configs(providers, ctx),
+                        &persistence_targets,
+                    ) {
+                        report_error!(error);
                         ctx.notify();
                         return;
                     }
-                    self.provider_editor_error_state.clear(provider_id);
                     self.page = Self::build_page(
                         self.active_subpage,
                         self.provider_editor_error_state.clone(),
@@ -5669,6 +5684,7 @@ impl SettingsWidget for CloudAgentComputerUseWidget {
 #[derive(Clone, Default)]
 struct ProviderEditorErrorState {
     messages: Rc<RefCell<HashMap<String, String>>>,
+    global_message: Rc<RefCell<Option<String>>>,
 }
 
 impl ProviderEditorErrorState {
@@ -5684,6 +5700,18 @@ impl ProviderEditorErrorState {
 
     fn message(&self, provider_id: &str) -> Option<String> {
         self.messages.borrow().get(provider_id).cloned()
+    }
+
+    fn set_global(&self, message: impl Into<String>) {
+        *self.global_message.borrow_mut() = Some(message.into());
+    }
+
+    fn clear_global(&self) {
+        *self.global_message.borrow_mut() = None;
+    }
+
+    fn global_message(&self) -> Option<String> {
+        self.global_message.borrow().clone()
     }
 }
 
@@ -5704,6 +5732,35 @@ fn provider_editor_duplicate_name_error(provider_name: &str) -> String {
         provider_name,
         "a provider with this name already exists; choose a unique name",
     )
+}
+
+type ProviderEditorPersistenceTarget = (String, String, ProviderEditorErrorState);
+
+fn provider_editor_persistence_error(provider_name: &str) -> String {
+    provider_editor_error_message(provider_name, "local settings could not be saved")
+}
+
+fn apply_provider_editor_persistence_result<T>(
+    result: anyhow::Result<T>,
+    targets: &[ProviderEditorPersistenceTarget],
+) -> anyhow::Result<T> {
+    match result {
+        Ok(value) => {
+            for (provider_id, _, error_state) in targets {
+                error_state.clear(provider_id);
+            }
+            Ok(value)
+        }
+        Err(error) => {
+            for (provider_id, provider_name, error_state) in targets {
+                error_state.set(
+                    provider_id,
+                    provider_editor_persistence_error(provider_name),
+                );
+            }
+            Err(error)
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -6352,6 +6409,7 @@ fn provider_connection_is_valid(
 struct LLMProvidersWidget {
     providers: Vec<LLMProviderEditorHandles>,
     add_provider_button: ViewHandle<ActionButton>,
+    editor_error_state: ProviderEditorErrorState,
     provider_keys_ready: bool,
     provider_ids_persisted: bool,
     provider_editing_enabled: bool,
@@ -6553,6 +6611,7 @@ fn sync_llm_provider_editors_to_settings(
     }
     let mut configs = live_providers.clone();
     let mut key_updates = Vec::new();
+    let mut persistence_targets = Vec::new();
 
     for provider in providers {
         let name = provider.name_editor.as_ref(ctx).buffer_text(ctx);
@@ -6638,13 +6697,21 @@ fn sync_llm_provider_editors_to_settings(
             custom_provider_api_key_update(&api_key, provider.initial_api_key_fingerprint),
         ));
         configs[live_index] = config;
-        provider.editor_error_state.clear(&provider.provider_id);
+        persistence_targets.push((
+            provider.provider_id.clone(),
+            name.clone(),
+            provider.editor_error_state.clone(),
+        ));
     }
 
-    let final_configs = match persist_custom_provider_configs(configs, ctx) {
+    let final_configs = match apply_provider_editor_persistence_result(
+        persist_custom_provider_configs(configs, ctx),
+        &persistence_targets,
+    ) {
         Ok(configs) => configs,
         Err(error) => {
             report_error!(error);
+            ctx.notify();
             return;
         }
     };
@@ -6862,6 +6929,7 @@ impl LLMProvidersWidget {
         Self {
             providers: std::mem::take(&mut editor_handles),
             add_provider_button,
+            editor_error_state,
             provider_keys_ready,
             provider_ids_persisted,
             provider_editing_enabled,
@@ -7168,6 +7236,14 @@ impl SettingsWidget for LLMProvidersWidget {
                 true,
                 app,
             ));
+
+        if let Some(error) = self.editor_error_state.global_message() {
+            content.add_child(
+                Text::new_inline(error, appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                    .with_color(appearance.theme().ui_error_color().into())
+                    .finish(),
+            );
+        }
 
         #[cfg(all(feature = "voice_input", not(test)))]
         {

@@ -1,13 +1,13 @@
 use super::{
     AgentAttributionToggleState, ProviderConnectionSignature, ProviderEditorErrorState,
-    ProviderModelsValidationState, api_key_fingerprint, custom_provider_api_key_update,
-    custom_provider_editing_allowed, custom_provider_editor_actions_allowed,
-    custom_provider_ids_are_persisted, custom_provider_key_is_still_referenced,
-    derive_agent_attribution_toggle_state, find_live_provider_index,
-    merge_provider_editor_config_with_live, normalize_custom_provider_ids,
-    plan_custom_provider_key_migration, provider_connection_is_valid,
-    provider_editor_duplicate_name_error, provider_editor_error_message,
-    resolve_provider_connection,
+    ProviderModelsValidationState, api_key_fingerprint, apply_provider_editor_persistence_result,
+    custom_provider_api_key_update, custom_provider_editing_allowed,
+    custom_provider_editor_actions_allowed, custom_provider_ids_are_persisted,
+    custom_provider_key_is_still_referenced, derive_agent_attribution_toggle_state,
+    find_live_provider_index, merge_provider_editor_config_with_live,
+    normalize_custom_provider_ids, plan_custom_provider_key_migration,
+    provider_connection_is_valid, provider_editor_duplicate_name_error,
+    provider_editor_error_message, resolve_provider_connection,
 };
 use crate::settings::{
     CustomProviderCapabilities, CustomProviderConfig, CustomProviderConfigError,
@@ -395,8 +395,41 @@ fn provider_editor_error_state_is_visible_and_clears_after_success() {
     assert!(visible.contains("transcription"));
     assert!(visible.contains("Fix the provider settings"));
 
-    state.clear("provider-a");
+    let targets = vec![(
+        "provider-a".to_string(),
+        "provider-a".to_string(),
+        state.clone(),
+    )];
+    assert!(apply_provider_editor_persistence_result(Ok(()), &targets).is_ok());
     assert_eq!(state.message("provider-a"), None);
+}
+
+#[test]
+fn provider_editor_persistence_failure_keeps_provider_error_visible() {
+    let state = ProviderEditorErrorState::default();
+    state.set("provider-a", "stale provider error");
+    let targets = vec![(
+        "provider-a".to_string(),
+        "provider-a".to_string(),
+        state.clone(),
+    )];
+
+    let result = apply_provider_editor_persistence_result::<()>(
+        Err(anyhow::anyhow!("synthetic local settings write failure")),
+        &targets,
+    );
+
+    assert!(result.is_err());
+    let visible = state
+        .message("provider-a")
+        .expect("persistence failure should remain visible for its provider");
+    assert!(visible.contains("could not be saved"));
+    assert!(visible.contains("Fix the provider settings"));
+
+    state.set_global(visible.clone());
+    assert_eq!(state.global_message(), Some(visible));
+    state.clear_global();
+    assert_eq!(state.global_message(), None);
 }
 
 #[test]
