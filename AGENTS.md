@@ -422,11 +422,14 @@ target/debug/warp-oss
 ## Build Cache Cleanup
 
 Avoid full `cargo clean` when the current `.app` bundle should be preserved.
-After final successful local builds or bundle builds, clean reproducible Cargo
-cache and debug-output leftovers before ending the work iteration. This repo's
-debug artifacts can grow by tens of gigabytes per build because `incremental`,
-hashed `deps` outputs, and top-level debug binaries keep multiple feature-set
-generations side by side.
+After every agent-owned verification batch that runs Cargo tests, checks,
+builds, or bundle builds, clean reproducible Cargo cache and debug-output
+leftovers before ending the batch. A sequence of immediately adjacent commands
+for the same verification gate counts as one batch; clean once after its final
+command, not between commands. Do not leave cleanup for a later task or turn.
+This repo's debug artifacts can grow by hundreds of gigabytes because
+`incremental`, hashed `deps` outputs, and top-level debug binaries keep multiple
+feature-set generations side by side.
 
 Safe cleanup after successful heavy builds:
 
