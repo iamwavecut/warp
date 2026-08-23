@@ -492,6 +492,7 @@ struct StreamCompletionState {
     tool_calls: Vec<StreamingToolCall>,
     finish_reason: Option<String>,
     content_chars: usize,
+    has_content: bool,
     parsed_events: usize,
 }
 
@@ -511,6 +512,7 @@ impl StreamCompletionState {
 
             if let Some(delta) = choice.delta.content.filter(|text| !text.is_empty()) {
                 self.content_chars += delta.len();
+                self.has_content |= !delta.trim().is_empty();
                 if let Some(message_id) = &self.content_message_id {
                     events.push(append_agent_output_event(task_id, message_id, delta));
                 } else {
@@ -960,6 +962,7 @@ fn stream_chat_completion_with_tool_policy(
         tool_calls,
         finish_reason,
         content_chars,
+        has_content,
         parsed_events,
         ..
     } = state;
@@ -968,6 +971,12 @@ fn stream_chat_completion_with_tool_policy(
         if finish_reason.as_deref() == Some("tool_calls") {
             yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
                 "malformed OpenAI-compatible stream ended with tool_calls but no tool call"
+            ))));
+            return;
+        }
+        if !has_content {
+            yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
+                "malformed OpenAI-compatible stream contained no assistant content or tool call"
             ))));
             return;
         }
@@ -1083,20 +1092,33 @@ fn events_from_non_streaming_response(
     supported_tools: &[api::ToolType],
     long_running_shell_controls_advertised: bool,
 ) -> Result<Vec<api::ResponseEvent>, AIApiError> {
+    if response.choices.len() != 1 {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "OpenAI-compatible completion must contain exactly one choice"
+        )));
+    }
     let mut events = Vec::new();
-    let Some(choice) = response.choices.into_iter().next() else {
-        if !prefix_actions.is_empty() {
-            events.push(client_actions_event(prefix_actions));
-        }
-        events.push(finished_event_for_openai_finish_reason(None, 0));
-        return Ok(events);
-    };
+    let choice = response
+        .choices
+        .into_iter()
+        .next()
+        .expect("completion choice count was checked above");
     let ChatChoice {
         message,
         finish_reason,
     } = choice;
     let tool_call_count = message.tool_calls.len();
     let content_chars = message.content.as_ref().map(|text| text.len()).unwrap_or(0);
+    let has_content = message
+        .content
+        .as_deref()
+        .is_some_and(|text| !text.trim().is_empty());
+
+    if !has_content && tool_call_count == 0 {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "OpenAI-compatible completion contained no assistant content or tool call"
+        )));
+    }
 
     let mut messages = Vec::new();
     if let Some(text) = message.content.filter(|text| !text.is_empty()) {
@@ -1183,9 +1205,16 @@ fn apply_openai_sse_event(
         }
 
         state.parsed_events += 1;
-        let chunk: ChatCompletionChunk = serde_json::from_str(&data).with_context(|| {
-            format!("failed to decode OpenAI-compatible SSE event JSON: {data}")
+        let chunk: ChatCompletionChunk = serde_json::from_str(&data).map_err(|error| {
+            AIApiError::Other(anyhow::anyhow!(
+                "failed to decode OpenAI-compatible SSE event JSON: {error}"
+            ))
         })?;
+        if chunk.choices.len() != 1 {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "OpenAI-compatible SSE completion chunk must contain exactly one choice"
+            )));
+        }
         events.extend(state.apply_chunk(chunk, task_id, request_id, prefix_actions));
     }
     Ok(events)
@@ -3081,20 +3110,19 @@ fn ask_user_question_arg(args: &Value) -> Result<api::AskUserQuestion, AIApiErro
         questions: questions
             .iter()
             .map(|question| {
-                let multiple_choice = match optional_value_strict(question, "multiple_choice")? {
-                    None => {
-                        return Ok(api::ask_user_question::Question {
-                            question_id: required_string(question, "question_id")?,
-                            question: required_string(question, "question")?,
-                            question_type: None,
-                        });
-                    }
-                    Some(multiple_choice) => multiple_choice.as_object().ok_or_else(|| {
+                let multiple_choice = question
+                    .get("multiple_choice")
+                    .ok_or_else(|| {
                         AIApiError::Other(anyhow::anyhow!(
-                            "ask_user_question `multiple_choice` must be an object or null"
+                            "ask_user_question requires non-null `multiple_choice`"
                         ))
-                    })?,
-                };
+                    })?
+                    .as_object()
+                    .ok_or_else(|| {
+                        AIApiError::Other(anyhow::anyhow!(
+                            "ask_user_question `multiple_choice` must be a non-null object"
+                        ))
+                    })?;
                 let multiple_choice_value = Value::Object(multiple_choice.clone());
                 let options = array(&multiple_choice_value, "options")?;
                 if options.is_empty() {
@@ -3105,10 +3133,10 @@ fn ask_user_question_arg(args: &Value) -> Result<api::AskUserQuestion, AIApiErro
                 let recommended_option_index =
                     optional_i64_strict(&multiple_choice_value, "recommended_option_index")?
                         .unwrap_or(0);
-                if recommended_option_index < 0 || recommended_option_index >= options.len() as i64
+                if recommended_option_index < -1 || recommended_option_index >= options.len() as i64
                 {
                     return Err(AIApiError::Other(anyhow::anyhow!(
-                        "recommended_option_index must point to an available option"
+                        "recommended_option_index must be -1 or point to an available option"
                     )));
                 }
                 Ok(api::ask_user_question::Question {
@@ -4590,7 +4618,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                         json!({
                             "oneOf": [
                                 {"type": "string", "enum": ["on_completion"]},
-                                {"type": "object", "properties": {"kind": {"type": "string", "enum": ["duration"]}, "seconds": {"type": "integer", "minimum": 0}}, "required": ["seconds"], "additionalProperties": false}
+                                {"type": "object", "properties": {"kind": {"type": "string", "enum": ["duration"]}, "seconds": {"type": "integer", "minimum": 0}, "nanos": {"type": "integer", "minimum": 0, "maximum": 999999999}}, "required": ["seconds"], "additionalProperties": false}
                             ]
                         }),
                     ),
@@ -4722,7 +4750,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
             json_schema_object(
                 [(
                     "questions",
-                    json!({"type": "array", "items": {"type": "object", "properties": {"question_id": {"type": "string"}, "question": {"type": "string"}, "multiple_choice": {"type": "object", "properties": {"options": {"type": "array", "items": {"type": "object", "properties": {"label": {"type": "string"}}, "required": ["label"], "additionalProperties": false}}, "recommended_option_index": {"type": "integer", "minimum": 0}, "is_multiselect": {"type": "boolean"}, "supports_other": {"type": "boolean"}}, "required": ["options"], "additionalProperties": false}}, "required": ["question_id", "question", "multiple_choice"], "additionalProperties": false}}),
+                    json!({"type": "array", "items": {"type": "object", "properties": {"question_id": {"type": "string"}, "question": {"type": "string"}, "multiple_choice": {"type": "object", "properties": {"options": {"type": "array", "items": {"type": "object", "properties": {"label": {"type": "string"}}, "required": ["label"], "additionalProperties": false}}, "recommended_option_index": {"type": "integer", "minimum": -1}, "is_multiselect": {"type": "boolean"}, "supports_other": {"type": "boolean"}}, "required": ["options"], "additionalProperties": false}}, "required": ["question_id", "question", "multiple_choice"], "additionalProperties": false}}),
                 )],
                 ["questions"],
             ),
@@ -5323,6 +5351,54 @@ mod tests {
         assert!(local_error.contains("not advertised"));
     }
 
+    #[tokio::test]
+    async fn public_generate_non_streaming_rejects_empty_or_ambiguous_completions() {
+        for (label, body) in [
+            ("empty choices", json!({"choices": []})),
+            (
+                "multiple choices",
+                json!({
+                    "choices": [
+                        {"message": {"content": "first"}, "finish_reason": "stop"},
+                        {"message": {"content": "second"}, "finish_reason": "stop"}
+                    ]
+                }),
+            ),
+            (
+                "empty content",
+                json!({
+                    "choices": [{"message": {"content": ""}, "finish_reason": "stop"}]
+                }),
+            ),
+        ] {
+            let mut server = mockito::Server::new_async().await;
+            let _mock = server
+                .mock("POST", "/v1/chat/completions")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(body.to_string())
+                .create_async()
+                .await;
+            let route = CustomProviderRoute {
+                provider_name: "local".to_string(),
+                base_url: format!("{}/v1", server.url()),
+                model: "model".to_string(),
+                api_key: None,
+                capabilities: Default::default(),
+            };
+            let mut response = generate(route, super::super::RequestParams::new_for_test(), vec![])
+                .await
+                .expect("public generate should return a response stream");
+            let mut error = None;
+            while let Some(event) = response.next().await {
+                if let Err(error_value) = event {
+                    error = Some(error_value.to_string());
+                }
+            }
+            assert!(error.is_some(), "{label} must fail closed");
+        }
+    }
+
     #[test]
     fn openai_tool_call_envelope_rejects_non_function_or_empty_fields() {
         let call = |id: &str, kind: &str, name: &str, arguments: &str| OpenAIToolCall {
@@ -5605,6 +5681,82 @@ mod tests {
             }
             assert!(error.is_some(), "malformed SSE must fail locally");
         }
+    }
+
+    #[tokio::test]
+    async fn public_generate_streamed_rejects_empty_or_ambiguous_completions() {
+        for (label, body) in [
+            ("done without a completion", "data: [DONE]\n\n"),
+            (
+                "empty choices",
+                "data: {\"choices\":[]}\n\ndata: [DONE]\n\n",
+            ),
+            (
+                "multiple choices",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"first\"}},{\"delta\":{\"content\":\"second\"}}]}\n\ndata: [DONE]\n\n",
+            ),
+            (
+                "empty content",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+            ),
+        ] {
+            let mut server = mockito::Server::new_async().await;
+            let _mock = server
+                .mock("POST", "/v1/chat/completions")
+                .with_status(200)
+                .with_header("content-type", "text/event-stream")
+                .with_body(body)
+                .create_async()
+                .await;
+            let route = CustomProviderRoute {
+                provider_name: "local".to_string(),
+                base_url: format!("{}/v1", server.url()),
+                model: "model".to_string(),
+                api_key: None,
+                capabilities: Default::default(),
+            };
+            let mut response = generate(route, super::super::RequestParams::new_for_test(), vec![])
+                .await
+                .expect("public generate should return a response stream");
+            let mut error = None;
+            while let Some(event) = response.next().await {
+                if let Err(error_value) = event {
+                    error = Some(error_value.to_string());
+                }
+            }
+            assert!(error.is_some(), "{label} must fail closed");
+        }
+    }
+
+    #[tokio::test]
+    async fn public_generate_streamed_malformed_json_does_not_echo_payload() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "text/event-stream")
+            .with_body("data: {\"user_argument\":\"sensitive-local-text\"\n\n")
+            .create_async()
+            .await;
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: Default::default(),
+        };
+        let mut response = generate(route, super::super::RequestParams::new_for_test(), vec![])
+            .await
+            .expect("public generate should return a response stream");
+        let mut error = None;
+        while let Some(event) = response.next().await {
+            if let Err(error_value) = event {
+                error = Some(error_value.to_string());
+            }
+        }
+        let error = error.expect("malformed JSON must fail locally");
+        assert!(error.contains("failed to decode OpenAI-compatible SSE event JSON"));
+        assert!(!error.contains("sensitive-local-text"));
     }
 
     #[tokio::test]
@@ -6031,6 +6183,18 @@ mod tests {
                 json!({"questions":[{"question_id":"q-1","question":"Choose","multiple_choice":{"options":[{"label":"yes"}],"supports_other":1}}]}),
             ),
             (
+                "ask_user_question",
+                json!({"questions":[{"question_id":"q-1","question":"Choose"}]}),
+            ),
+            (
+                "ask_user_question",
+                json!({"questions":[{"question_id":"q-1","question":"Choose","multiple_choice":null}]}),
+            ),
+            (
+                "ask_user_question",
+                json!({"questions":[{"question_id":"q-1","question":"Choose","multiple_choice":{"options":[{"label":"yes"}],"recommended_option_index":-2}}]}),
+            ),
+            (
                 "use_computer",
                 json!({"actions":[{"type":"wait","seconds":1}],"post_actions_screenshot_params":"full-screen"}),
             ),
@@ -6050,6 +6214,49 @@ mod tests {
                 "{name} should reject an optional field with the wrong JSON type"
             );
         }
+    }
+
+    #[test]
+    fn ask_user_question_requires_multiple_choice_and_preserves_no_recommendation() {
+        let call = |arguments: Value| OpenAIToolCall {
+            id: "call-ask".to_string(),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: "ask_user_question".to_string(),
+                arguments: arguments.to_string(),
+            },
+        };
+
+        for arguments in [
+            json!({"questions":[{"question_id":"q-1","question":"Choose"}]}),
+            json!({"questions":[{"question_id":"q-1","question":"Choose","multiple_choice":null}]}),
+        ] {
+            assert!(
+                api_tool_from_openai_tool_call(&call(arguments)).is_err(),
+                "missing or null multiple_choice must fail closed"
+            );
+        }
+
+        let parsed = api_tool_from_openai_tool_call(&call(json!({
+            "questions": [{
+                "question_id": "q-1",
+                "question": "Choose",
+                "multiple_choice": {
+                    "options": [{"label": "yes"}],
+                    "recommended_option_index": -1
+                }
+            }]
+        })))
+        .expect("-1 is the explicit no-recommendation sentinel");
+        let api::message::tool_call::Tool::AskUserQuestion(question) = parsed else {
+            panic!("expected ask_user_question tool");
+        };
+        let Some(api::ask_user_question::question::QuestionType::MultipleChoice(multiple_choice)) =
+            question.questions[0].question_type.as_ref()
+        else {
+            panic!("expected multiple-choice question");
+        };
+        assert_eq!(multiple_choice.recommended_option_index, -1);
     }
 
     #[test]
@@ -6394,8 +6601,19 @@ mod tests {
             api::message::tool_call::Tool::AskUserQuestion(api::AskUserQuestion {
                 questions: vec![api::ask_user_question::Question {
                     question_id: "q-2".to_string(),
-                    question: "No type".to_string(),
-                    question_type: None,
+                    question: "No recommendation".to_string(),
+                    question_type: Some(
+                        api::ask_user_question::question::QuestionType::MultipleChoice(
+                            api::ask_user_question::MultipleChoice {
+                                options: vec![api::ask_user_question::Option {
+                                    label: "yes".to_string(),
+                                }],
+                                recommended_option_index: -1,
+                                is_multiselect: false,
+                                supports_other: false,
+                            },
+                        ),
+                    ),
                 }],
             }),
             api::message::tool_call::Tool::UseComputer(
@@ -6760,6 +6978,45 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn ask_question_and_shell_delay_schemas_publish_local_wire_contracts() {
+        let tools = openai_tools_for_supported_tools(&[
+            api::ToolType::AskUserQuestion,
+            api::ToolType::ReadShellCommandOutput,
+        ]);
+        let ask = tools
+            .iter()
+            .find(|tool| tool.function.name == "ask_user_question")
+            .expect("ask_user_question schema");
+        let multiple_choice = &ask.function.parameters["properties"]["questions"]["items"]["properties"]
+            ["multiple_choice"];
+        assert_eq!(multiple_choice["type"], "object");
+        assert_eq!(
+            multiple_choice["properties"]["recommended_option_index"]["minimum"],
+            -1
+        );
+        assert_eq!(
+            ask.function.parameters["properties"]["questions"]["items"]["required"],
+            json!(["question_id", "question", "multiple_choice"])
+        );
+
+        let read_output = tools
+            .iter()
+            .find(|tool| tool.function.name == "read_shell_command_output")
+            .expect("read_shell_command_output schema");
+        let delay = &read_output.function.parameters["properties"]["delay"];
+        let duration = delay["oneOf"]
+            .as_array()
+            .expect("delay should publish duration variants")
+            .iter()
+            .find(|variant| variant["type"] == "object")
+            .expect("duration object schema");
+        assert_eq!(
+            duration["properties"]["nanos"],
+            json!({"type": "integer", "minimum": 0, "maximum": 999999999_i64})
+        );
     }
 
     #[test]
