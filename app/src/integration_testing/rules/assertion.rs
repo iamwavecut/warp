@@ -1,64 +1,68 @@
+use std::path::PathBuf;
+
+use ai::project_context::local_rule_repository::LocalRuleRepository;
 use warpui::{
-    AppContext, SingletonEntity, async_assert, async_assert_eq,
+    async_assert, async_assert_eq,
     integration::{AssertionCallback, AssertionWithDataCallback},
 };
 
 use crate::{
-    ai::facts::{CloudAIFactModel, view::AIFactPage},
-    cloud_object::model::{generic_string_model::GenericStringObjectId, persistence::CloudModel},
-    integration_testing::view_getters::workspace_view,
-    server::ids::SyncId,
+    ai::facts::view::AIFactPage,
+    integration_testing::{rules::step::registered_rule_count, view_getters::workspace_view},
 };
 
-/// Assert that a specific AI fact exists with the given content
+/// Assert that a specific local rule exists at its captured exact path.
 pub fn assert_rule_exists(
-    expected_id_key: impl Into<String>,
+    expected_path_key: impl Into<String>,
     expected_content: impl Into<String>,
 ) -> AssertionWithDataCallback {
-    let expected_id_key = expected_id_key.into();
+    let expected_path_key = expected_path_key.into();
     let expected_content = expected_content.into();
-    Box::new(move |app, _window_id, data| {
-        let sync_id: &SyncId = data.get(&expected_id_key).expect("No saved AI fact ID");
-        CloudModel::handle(app).read(app, |cloud_model, _| {
-            if let Some(ai_fact) =
-                cloud_model.get_object_of_type::<GenericStringObjectId, CloudAIFactModel>(sync_id)
-            {
-                let content = match &ai_fact.model().string_model {
-                    crate::ai::facts::AIFact::Memory(memory) => &memory.content,
-                };
-                async_assert_eq!(content, &expected_content, "AI fact content should match")
-            } else {
-                async_assert!(false, "AI fact should exist")
+    Box::new(move |_, _window_id, data| {
+        let path: &PathBuf = data
+            .get(&expected_path_key)
+            .expect("No saved local rule path");
+        let root = path.parent().expect("local rule must have a parent");
+        let repository = LocalRuleRepository::new_for_test(Vec::new(), [root.to_path_buf()]);
+        match repository.read(path) {
+            Ok(rule) => {
+                async_assert_eq!(rule.path, *path, "Local rule path should match");
+                async_assert_eq!(
+                    rule.content,
+                    expected_content,
+                    "Local rule content should match"
+                )
             }
-        })
+            Err(error) => async_assert!(false, "Local rule should exist: {error}"),
+        }
     })
 }
 
-/// Assert that the total number of AI facts matches the expected count
+/// Assert the number of local fixtures created by this integration process.
 pub fn assert_rule_count(expected_count: usize) -> AssertionCallback {
-    Box::new(move |app, _| {
-        CloudModel::handle(app).read(app, |cloud_model, ctx| {
-            let count = rule_count(cloud_model, ctx);
-            async_assert_eq!(count, expected_count, "Rule count should match")
-        })
+    Box::new(move |_, _| {
+        async_assert_eq!(
+            registered_rule_count(),
+            expected_count,
+            "Local rule count should match"
+        )
     })
-}
-
-/// Helper function to count AI facts in the cloud model
-pub fn rule_count(cloud_model: &CloudModel, _ctx: &AppContext) -> usize {
-    cloud_model
-        .get_all_objects_of_type::<GenericStringObjectId, CloudAIFactModel>()
-        .count()
 }
 
 pub fn assert_rule_pane_open(key: impl Into<String>) -> AssertionWithDataCallback {
     let key = key.into();
     Box::new(move |app, window_id, data| {
+        let path: &PathBuf = data.get(&key).expect("No saved local rule path");
+        let root = path.parent().expect("local rule must have a parent");
+        let repository = LocalRuleRepository::new_for_test(Vec::new(), [root.to_path_buf()]);
+        let path_is_readable = repository.read(path).is_ok();
         workspace_view(app, window_id).read(app, |workspace, _ctx| {
-            let _sync_id: &SyncId = data.get(&key).expect("No saved AI fact ID");
             workspace.ai_fact_view().read(app, |ai_fact_view, _ctx| {
                 let current_page = ai_fact_view.current_page();
-                async_assert_eq!(current_page, AIFactPage::Rules, "Rule pane should be open")
+                async_assert!(
+                    path_is_readable && current_page == AIFactPage::Rules,
+                    "Local rule pane should be open for the exact path"
+                )
             })
         })
     })

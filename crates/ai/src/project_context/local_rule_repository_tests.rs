@@ -113,3 +113,33 @@ fn rejects_symlink_replacement_before_edit() {
     assert!(matches!(error, LocalRuleError::SymlinkEscape { .. }));
     assert_eq!(fs::read_to_string(outside).unwrap(), "outside");
 }
+
+#[cfg(unix)]
+#[test]
+fn rejects_project_root_replacement_at_the_same_path() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("project");
+    let moved_root = temp.path().join("moved-project");
+    fs::create_dir(&root).unwrap();
+    let target = root.join("WARP.md");
+    fs::write(&target, "original").unwrap();
+    let mut repository = LocalRuleRepository::new_for_test(Vec::new(), [root.clone()]);
+    let opened = repository.read(&target).unwrap();
+
+    fs::rename(&root, &moved_root).unwrap();
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("WARP.md"), "replacement").unwrap();
+
+    assert!(matches!(
+        repository.update(&target, &opened.revision, "draft"),
+        Err(LocalRuleError::RootChanged { .. })
+    ));
+    assert_eq!(
+        fs::read_to_string(root.join("WARP.md")).unwrap(),
+        "replacement"
+    );
+    assert_eq!(
+        fs::read_to_string(moved_root.join("WARP.md")).unwrap(),
+        "original"
+    );
+}

@@ -76,7 +76,10 @@ pub enum RuleViewEvent {
 #[derive(Debug, Clone)]
 pub enum RuleViewAction {
     AddRule,
-    AddProjectAgents,
+    AddProject {
+        root: PathBuf,
+        file: ProjectRuleFile,
+    },
     InitializeProject,
     Edit(PathBuf),
     OpenSettings,
@@ -91,18 +94,26 @@ pub struct MouseStateHandles {
 
 #[derive(Debug, Clone)]
 struct FileBackedRow {
-    rule: LocalRule,
+    path: PathBuf,
+    rule: Option<LocalRule>,
+    error: Option<String>,
     mouse_states: MouseStateHandles,
 }
 
 impl FileBackedRow {
     fn matches_search_term(&self, search_term: &str) -> bool {
-        self.rule
-            .path
+        self.path
             .to_string_lossy()
             .to_lowercase()
             .contains(search_term)
-            || self.rule.content.to_lowercase().contains(search_term)
+            || self
+                .rule
+                .as_ref()
+                .is_some_and(|rule| rule.content.to_lowercase().contains(search_term))
+            || self
+                .error
+                .as_deref()
+                .is_some_and(|error| error.to_lowercase().contains(search_term))
     }
 }
 
@@ -114,7 +125,6 @@ pub struct RuleView {
     search_editor: ViewHandle<EditorView>,
     search_bar: ViewHandle<SearchBar>,
     add_button: ViewHandle<ActionButton>,
-    add_agents_button: ViewHandle<ActionButton>,
     initialize_button: ViewHandle<ActionButton>,
     current_scope: RuleScope,
     global_tab_mouse_state: MouseStateHandle,
@@ -133,8 +143,8 @@ impl RuleView {
             | ProjectContextModelEvent::GlobalRulesChanged(_) => {
                 let model = model.as_ref(ctx);
                 let global_paths = model.global_rule_paths().collect::<Vec<_>>();
-                let indexed = model.all_indexed_rule_paths().collect::<Vec<_>>();
-                me.refresh_local_rules(global_paths, indexed, ctx);
+                let project_roots = model.indexed_project_roots().collect::<Vec<_>>();
+                me.refresh_local_rules(global_paths, project_roots, ctx);
             }
             ProjectContextModelEvent::KnownRulesChanged(_) => {}
         });
@@ -174,12 +184,6 @@ impl RuleView {
                 .with_icon(Icon::Plus)
                 .on_click(|ctx| ctx.dispatch_typed_action(RuleViewAction::InitializeProject))
         });
-        let add_agents_button = ctx.add_typed_action_view(|_| {
-            ActionButton::new("Add AGENTS.md", NakedTheme)
-                .with_icon(Icon::Plus)
-                .on_click(|ctx| ctx.dispatch_typed_action(RuleViewAction::AddProjectAgents))
-        });
-
         Self {
             repository,
             file_backed_global_rules,
@@ -188,7 +192,6 @@ impl RuleView {
             search_editor,
             search_bar,
             add_button,
-            add_agents_button,
             initialize_button,
             current_scope: RuleScope::Global,
             global_tab_mouse_state: Default::default(),
@@ -201,50 +204,54 @@ impl RuleView {
         model: &ProjectContextModel,
     ) -> (Vec<FileBackedRow>, Vec<FileBackedRow>, Vec<PathBuf>) {
         let global_paths = model.global_rule_paths().collect::<Vec<_>>();
-        let indexed = model.all_indexed_rule_paths().collect::<Vec<_>>();
-        Self::load_rows_from_paths(repository, global_paths, indexed)
+        let project_roots = model.indexed_project_roots().collect::<Vec<_>>();
+        Self::load_rows_from_paths(repository, global_paths, project_roots)
     }
 
     fn load_rows_from_paths(
         repository: &mut LocalRuleRepository,
         global_paths: Vec<PathBuf>,
-        indexed: Vec<ai::project_context::model::ProjectRulePath>,
+        project_roots: Vec<PathBuf>,
     ) -> (Vec<FileBackedRow>, Vec<FileBackedRow>, Vec<PathBuf>) {
-        let project_roots = indexed
-            .iter()
-            .map(|rule| rule.project_root.clone())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>();
         repository.set_surfaced_paths(global_paths.clone(), project_roots.clone());
-
-        let global_rules = global_paths
-            .into_iter()
-            .filter_map(|path| repository.read(&path).ok())
-            .map(|rule| FileBackedRow {
-                rule,
-                mouse_states: Default::default(),
-            })
-            .collect();
-        let project_rules = indexed
-            .into_iter()
-            .filter_map(|indexed| repository.read(&indexed.path).ok())
-            .map(|rule| FileBackedRow {
-                rule,
-                mouse_states: Default::default(),
-            })
-            .collect();
+        let mut global_rules = Vec::new();
+        let mut project_rules = Vec::new();
+        for path in repository.surfaced_paths().cloned().collect::<Vec<_>>() {
+            let is_global = repository.is_global_path(&path);
+            let row = match repository.read(&path) {
+                Ok(rule) => Some(FileBackedRow {
+                    path: path.clone(),
+                    rule: Some(rule),
+                    error: None,
+                    mouse_states: Default::default(),
+                }),
+                Err(LocalRuleError::NotFound { .. }) => None,
+                Err(error) => Some(FileBackedRow {
+                    path: path.clone(),
+                    rule: None,
+                    error: Some(error.to_string()),
+                    mouse_states: Default::default(),
+                }),
+            };
+            if let Some(row) = row {
+                if is_global {
+                    global_rules.push(row);
+                } else {
+                    project_rules.push(row);
+                }
+            }
+        }
         (global_rules, project_rules, project_roots)
     }
 
     fn refresh_local_rules(
         &mut self,
         global_paths: Vec<PathBuf>,
-        indexed: Vec<ai::project_context::model::ProjectRulePath>,
+        project_roots: Vec<PathBuf>,
         ctx: &mut ViewContext<Self>,
     ) {
         let (global, project, roots) =
-            Self::load_rows_from_paths(&mut self.repository, global_paths, indexed);
+            Self::load_rows_from_paths(&mut self.repository, global_paths, project_roots);
         self.file_backed_global_rules = global;
         self.project_rules = project;
         self.project_roots = roots;
@@ -310,33 +317,36 @@ impl RuleView {
             .surfaced_paths()
             .cloned()
             .collect::<Vec<_>>();
-        let global = paths
-            .iter()
-            .filter(|path| self.is_global_path(path))
-            .filter_map(|path| self.repository.read(path).ok())
-            .map(|rule| FileBackedRow {
-                rule,
-                mouse_states: Default::default(),
-            })
-            .collect();
-        let project = paths
-            .iter()
-            .filter(|path| !self.is_global_path(path))
-            .filter_map(|path| self.repository.read(path).ok())
-            .map(|rule| FileBackedRow {
-                rule,
-                mouse_states: Default::default(),
-            })
-            .collect();
+        let mut global = Vec::new();
+        let mut project = Vec::new();
+        for path in paths {
+            let is_global = self.repository.is_global_path(&path);
+            let row = match self.repository.read(&path) {
+                Ok(rule) => Some(FileBackedRow {
+                    path: path.clone(),
+                    rule: Some(rule),
+                    error: None,
+                    mouse_states: Default::default(),
+                }),
+                Err(LocalRuleError::NotFound { .. }) => None,
+                Err(error) => Some(FileBackedRow {
+                    path: path.clone(),
+                    rule: None,
+                    error: Some(error.to_string()),
+                    mouse_states: Default::default(),
+                }),
+            };
+            if let Some(row) = row {
+                if is_global {
+                    global.push(row);
+                } else {
+                    project.push(row);
+                }
+            }
+        }
         self.file_backed_global_rules = global;
         self.project_rules = project;
         ctx.notify();
-    }
-
-    fn is_global_path(&self, path: &std::path::Path) -> bool {
-        dirs::home_dir()
-            .map(|home| home.join(".agents/AGENTS.md") == path)
-            .unwrap_or(false)
     }
 
     fn select_scope(&mut self, scope: RuleScope, ctx: &mut ViewContext<Self>) {
@@ -449,15 +459,54 @@ impl RuleView {
         .finish()
     }
 
-    fn render_add_buttons(&self) -> Box<dyn Element> {
+    fn render_add_buttons(&self, appearance: &Appearance) -> Box<dyn Element> {
         let children = match self.current_scope {
-            RuleScope::Global => Flex::row().with_child(ChildView::new(&self.add_button).finish()),
+            RuleScope::Global => {
+                let mut row = Flex::row();
+                if self.repository.global_target_missing() {
+                    row.add_child(ChildView::new(&self.add_button).finish());
+                }
+                row
+            }
             RuleScope::ProjectBased if self.project_roots.is_empty() => {
                 Flex::row().with_child(ChildView::new(&self.initialize_button).finish())
             }
-            RuleScope::ProjectBased => Flex::row()
-                .with_child(ChildView::new(&self.add_button).finish())
-                .with_child(ChildView::new(&self.add_agents_button).finish()),
+            RuleScope::ProjectBased => {
+                let mut roots = Flex::column();
+                for root in &self.project_roots {
+                    let mut buttons = Flex::row();
+                    for file in [ProjectRuleFile::Warp, ProjectRuleFile::Agents] {
+                        let Ok(path) = self.repository.project_rule_path(root, file) else {
+                            continue;
+                        };
+                        let missing = matches!(
+                            self.repository.read(&path),
+                            Err(LocalRuleError::NotFound { .. })
+                        );
+                        if !missing {
+                            continue;
+                        }
+                        let root = root.clone();
+                        let label = format!("Add {} ({})", file.file_name(), root.display());
+                        buttons.add_child(
+                            appearance
+                                .ui_builder()
+                                .button(ButtonVariant::Outlined, Default::default())
+                                .with_text_label(label)
+                                .build()
+                                .on_click(move |ctx, _, _| {
+                                    ctx.dispatch_typed_action(RuleViewAction::AddProject {
+                                        root: root.clone(),
+                                        file,
+                                    })
+                                })
+                                .finish(),
+                        );
+                    }
+                    roots.add_child(buttons.finish());
+                }
+                roots
+            }
         };
         Container::new(children.finish())
             .with_margin_left(style::SECTION_MARGIN)
@@ -469,11 +518,11 @@ impl RuleView {
         row: FileBackedRow,
         appearance: &Appearance,
     ) -> Box<dyn Element> {
-        let path = row.rule.path.clone();
+        let path = row.path.clone();
         let path_text = path.to_string_lossy().to_string();
         let edit_path = path.clone();
         let mut controls = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-        if row.rule.writable {
+        if row.rule.as_ref().is_some_and(|rule| rule.writable) {
             controls.add_child(
                 appearance
                     .ui_builder()
@@ -490,6 +539,16 @@ impl RuleView {
                 appearance
                     .ui_builder()
                     .wrappable_text("Read-only", true)
+                    .with_style(style::fact_project_based_row_text(appearance))
+                    .build()
+                    .finish(),
+            );
+        }
+        if let Some(error) = row.error {
+            controls.add_child(
+                appearance
+                    .ui_builder()
+                    .wrappable_text(error, true)
                     .with_style(style::fact_project_based_row_text(appearance))
                     .build()
                     .finish(),
@@ -554,7 +613,7 @@ impl RuleView {
         if !search.is_empty() {
             rows.retain(|row| row.matches_search_term(&search));
         }
-        rows.sort_by(|a, b| a.rule.path.cmp(&b.rule.path));
+        rows.sort_by(|a, b| a.path.cmp(&b.path));
         let mut col = Flex::column();
         for row in rows {
             col.add_child(self.render_file_backed_row(row, appearance));
@@ -582,7 +641,7 @@ impl RuleView {
                                 .build()
                                 .finish(),
                         )
-                        .with_child(self.render_add_buttons())
+                        .with_child(self.render_add_buttons(appearance))
                         .finish(),
                 )
                 .finish(),
@@ -645,7 +704,7 @@ impl View for RuleView {
                                     Expanded::new(1., ChildView::new(&self.search_bar).finish())
                                         .finish(),
                                 )
-                                .with_child(self.render_add_buttons())
+                                .with_child(self.render_add_buttons(appearance))
                                 .finish(),
                         )
                         .with_margin_bottom(style::SECTION_MARGIN)
@@ -665,32 +724,23 @@ impl TypedActionView for RuleView {
     fn handle_action(&mut self, action: &RuleViewAction, ctx: &mut ViewContext<Self>) {
         match action {
             RuleViewAction::AddRule => {
-                let target = match self.current_scope {
-                    RuleScope::Global => Some(RuleTarget::Global),
-                    RuleScope::ProjectBased => {
-                        self.project_roots
-                            .first()
-                            .cloned()
-                            .map(|root| RuleTarget::Project {
-                                root,
-                                file: ProjectRuleFile::Warp,
-                            })
-                    }
-                };
-                if let Some(target) = target {
-                    ctx.emit(RuleViewEvent::AddRule(target));
-                } else {
-                    self.handle_action(&RuleViewAction::InitializeProject, ctx);
+                if self.current_scope == RuleScope::Global
+                    && self.repository.global_target_missing()
+                {
+                    ctx.emit(RuleViewEvent::AddRule(RuleTarget::Global));
                 }
             }
-            RuleViewAction::AddProjectAgents => {
-                if let Some(root) = self.project_roots.first().cloned() {
+            RuleViewAction::AddProject { root, file } => {
+                if let Ok(path) = self.repository.project_rule_path(root, *file)
+                    && matches!(
+                        self.repository.read(&path),
+                        Err(LocalRuleError::NotFound { .. })
+                    )
+                {
                     ctx.emit(RuleViewEvent::AddRule(RuleTarget::Project {
-                        root,
-                        file: ProjectRuleFile::Agents,
+                        root: root.clone(),
+                        file: *file,
                     }));
-                } else {
-                    self.handle_action(&RuleViewAction::InitializeProject, ctx);
                 }
             }
             RuleViewAction::InitializeProject => {

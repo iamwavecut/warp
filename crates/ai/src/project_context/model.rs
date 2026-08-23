@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 #[cfg(feature = "local_fs")]
 use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -165,6 +165,10 @@ impl ProjectRules {
 pub struct ProjectContextModel {
     /// Mapping from directory path to list of rule files found in that directory
     path_to_rules: HashMap<PathBuf, ProjectRules>,
+    /// Project roots that have been indexed, including roots that currently
+    /// have no WARP.md/AGENTS.md file. The Rules UI uses this to offer an
+    /// exact create target without selecting an arbitrary root.
+    indexed_project_roots: BTreeSet<PathBuf>,
     /// Latest metadata-backed async refresh per project root.
     #[cfg(feature = "local_fs")]
     rule_refresh_generations: HashMap<PathBuf, u64>,
@@ -239,6 +243,10 @@ impl ProjectContextModel {
         persisted_rules: Vec<ProjectRulePath>,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
+        let indexed_project_roots = persisted_rules
+            .iter()
+            .map(|rule| rule.project_root.clone())
+            .collect::<BTreeSet<_>>();
         #[cfg(feature = "local_fs")]
         {
             ctx.subscribe_to_model(
@@ -287,7 +295,10 @@ impl ProjectContextModel {
             );
         }
 
-        Self::default()
+        Self {
+            indexed_project_roots,
+            ..Default::default()
+        }
     }
 
     /// Reconciles project rule contents from the repository metadata standing result set.
@@ -297,6 +308,7 @@ impl ProjectContextModel {
         root_path: PathBuf,
         ctx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        self.indexed_project_roots.insert(root_path.clone());
         #[cfg(feature = "local_fs")]
         {
             let repo_path = StandardizedPath::from_local_canonicalized(&root_path)?;
@@ -445,6 +457,7 @@ impl ProjectContextModel {
             }));
             ctx.emit(ProjectContextModelEvent::PathIndexed);
         }
+        self.indexed_project_roots.remove(&project_root);
     }
 
     /// Index all configured global rule sources.
@@ -574,17 +587,20 @@ impl ProjectContextModel {
     /// Shadowing remains a context/prompt concern; the Rules UI needs both
     /// exact files so an editor can explicitly select the managed filename.
     pub fn all_indexed_rule_paths(&self) -> impl Iterator<Item = ProjectRulePath> + '_ {
-        self.path_to_rules.iter().flat_map(|(project_root, rules)| {
-            rules.rules.iter().flat_map(move |rule| {
-                rule.warp_md
-                    .iter()
-                    .chain(rule.agents_md.iter())
-                    .map(move |project_rule| ProjectRulePath {
-                        path: project_rule.path.clone(),
-                        project_root: project_root.clone(),
-                    })
-            })
+        self.indexed_project_roots.iter().flat_map(|project_root| {
+            ["WARP.md", "AGENTS.md"]
+                .into_iter()
+                .map(move |file_name| ProjectRulePath {
+                    path: project_root.join(file_name),
+                    project_root: project_root.clone(),
+                })
         })
+    }
+
+    /// Absolute roots that have been indexed, even when no managed rule file
+    /// exists yet.
+    pub fn indexed_project_roots(&self) -> impl Iterator<Item = PathBuf> + '_ {
+        self.indexed_project_roots.iter().cloned()
     }
 
     /// Absolute paths of every indexed global rule file (e.g. `~/.agents/AGENTS.md`).

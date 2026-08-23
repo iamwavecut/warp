@@ -1,26 +1,12 @@
 use crate::ai::agent::SuggestedRule;
-use crate::ai::facts::CloudAIFactModel;
-use crate::cloud_object::Owner;
-use crate::cloud_object::model::generic_string_model::GenericStringObjectId;
-use crate::cloud_object::model::persistence::{CloudModel, CloudModelEvent};
-use crate::drive::CloudObjectTypeAndId;
 use crate::editor::{
     EditorOptions, EditorView, EnterAction, EnterSettings, Event as EditorEvent, InteractionState,
     PropagateAndNoOpNavigationKeys, SingleLineEditorOptions, TextOptions,
 };
 use crate::modal::{Modal, ModalEvent};
-use crate::network::NetworkStatus;
-use crate::server::cloud_objects::update_manager::{
-    ObjectOperation, OperationSuccessType, UpdateManagerEvent,
-};
 use crate::server::ids::SyncId;
+use crate::ui_components::blended_colors;
 use crate::view_components::action_button::{ActionButton, PrimaryTheme};
-use crate::workspaces::user_workspaces::UserWorkspaces;
-use crate::{
-    ai::facts::{AIFact, AIMemory},
-    server::cloud_objects::update_manager::UpdateManager,
-    ui_components::blended_colors,
-};
 use pathfinder_geometry::vector::vec2f;
 use warp_core::ui::appearance::Appearance;
 use warp_editor::editor::NavigationKey;
@@ -64,7 +50,6 @@ enum EditorType {
 
 #[derive(Debug, Clone)]
 pub enum SuggestedRuleModalEvent {
-    AddNewRule,
     OpenRuleForEditing,
     Close,
 }
@@ -164,7 +149,6 @@ impl SuggestedRuleModal {
 
     fn handle_view_event(&mut self, event: &SuggestedRuleDialogEvent, ctx: &mut ViewContext<Self>) {
         match event {
-            SuggestedRuleDialogEvent::AddNewRule => ctx.emit(SuggestedRuleModalEvent::AddNewRule),
             SuggestedRuleDialogEvent::OpenRuleForEditing => {
                 ctx.emit(SuggestedRuleModalEvent::OpenRuleForEditing)
             }
@@ -203,14 +187,12 @@ impl TypedActionView for SuggestedRuleModal {
 
 #[derive(Debug, Clone)]
 enum SuggestedRuleDialogAction {
-    Add,
-    Edit,
+    OpenLocal,
     Close,
 }
 
 #[derive(Debug, Clone)]
 pub enum SuggestedRuleDialogEvent {
-    AddNewRule,
     OpenRuleForEditing,
     Close,
 }
@@ -223,45 +205,15 @@ pub struct SuggestedRuleAndId {
 
 struct SuggestedRuleView {
     rule_and_id: Option<SuggestedRuleAndId>,
-    owner: Option<Owner>,
-    is_saved: bool,
     current_editor: EditorType,
     name_editor: ViewHandle<EditorView>,
     content_editor: ViewHandle<EditorView>,
-    add_button: ViewHandle<ActionButton>,
-    edit_button: ViewHandle<ActionButton>,
+    open_button: ViewHandle<ActionButton>,
     clipped_scroll_state: ClippedScrollStateHandle,
 }
 
 impl SuggestedRuleView {
     fn new(ctx: &mut ViewContext<Self>) -> Self {
-        let update_manager = UpdateManager::handle(ctx);
-        ctx.subscribe_to_model(&update_manager, |me, _, event, ctx| {
-            me.handle_update_manager_event(event, ctx);
-        });
-
-        let cloud_model = CloudModel::handle(ctx);
-        ctx.subscribe_to_model(&cloud_model, |me, _, event, ctx| {
-            me.handle_cloud_model_event(event, ctx);
-        });
-
-        let owner = UserWorkspaces::as_ref(ctx).personal_drive(ctx);
-
-        let network_status = NetworkStatus::handle(ctx);
-        ctx.subscribe_to_model(&network_status, |me, _, _event, ctx| {
-            let is_edit_allowed = me.is_edit_allowed(ctx);
-            let tooltip = if !is_edit_allowed {
-                Some("Editing is disabled while offline.".to_string())
-            } else {
-                None
-            };
-            me.edit_button.update(ctx, |edit_button, ctx| {
-                edit_button.set_disabled(!is_edit_allowed, ctx);
-                edit_button.set_tooltip(tooltip, ctx);
-            });
-            ctx.notify();
-        });
-
         let appearance = Appearance::as_ref(ctx);
         let font_family = appearance.ui_font_family();
         let font_size = appearance.ui_font_size();
@@ -312,25 +264,17 @@ impl SuggestedRuleView {
             me.handle_editor_event(event, ctx);
         });
 
-        let add_button = ctx.add_typed_action_view(|_| {
-            ActionButton::new("Add rule", PrimaryTheme)
-                .on_click(|ctx| ctx.dispatch_typed_action(SuggestedRuleDialogAction::Add))
-        });
-
-        let edit_button = ctx.add_typed_action_view(|_| {
-            ActionButton::new("Edit rule", PrimaryTheme)
-                .on_click(|ctx| ctx.dispatch_typed_action(SuggestedRuleDialogAction::Edit))
+        let open_button = ctx.add_typed_action_view(|_| {
+            ActionButton::new("Open local Rules", PrimaryTheme)
+                .on_click(|ctx| ctx.dispatch_typed_action(SuggestedRuleDialogAction::OpenLocal))
         });
 
         Self {
             rule_and_id: None,
-            owner,
-            is_saved: false,
             current_editor: EditorType::Name,
             name_editor,
             content_editor,
-            add_button,
-            edit_button,
+            open_button,
             clipped_scroll_state: Default::default(),
         }
     }
@@ -344,15 +288,6 @@ impl SuggestedRuleView {
         self.reset_rule(ctx);
         ctx.focus_self();
         ctx.notify();
-    }
-
-    pub fn is_edit_allowed(&self, ctx: &mut ViewContext<Self>) -> bool {
-        let Some(SuggestedRuleAndId { sync_id, .. }) = &self.rule_and_id else {
-            return false;
-        };
-
-        let is_online = NetworkStatus::as_ref(ctx).is_online();
-        is_online || sync_id.into_server().is_none()
     }
 
     fn handle_editor_event(&mut self, event: &EditorEvent, ctx: &mut ViewContext<Self>) {
@@ -392,63 +327,8 @@ impl SuggestedRuleView {
         }
     }
 
-    fn handle_update_manager_event(
-        &mut self,
-        event: &UpdateManagerEvent,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        let UpdateManagerEvent::ObjectOperationComplete { result } = event;
-
-        if let (ObjectOperation::Create { .. }, OperationSuccessType::Success) =
-            (&result.operation, &result.success_type)
-            && let Some(rule_and_id) = &self.rule_and_id
-            && rule_and_id.sync_id.into_client() == result.client_id
-            && let Some(server_id) = result.server_id
-        {
-            self.rule_and_id = Some(SuggestedRuleAndId {
-                rule: rule_and_id.rule.clone(),
-                sync_id: SyncId::ServerId(server_id),
-            });
-            // Reload the rule from the cloud model.
-            self.load_rule(ctx);
-        }
-    }
-
-    fn handle_cloud_model_event(&mut self, event: &CloudModelEvent, ctx: &mut ViewContext<Self>) {
-        match event {
-            CloudModelEvent::ObjectUpdated {
-                type_and_id: CloudObjectTypeAndId::GenericStringObject { id, .. },
-                ..
-            } => {
-                if let Some(rule_and_id) = &self.rule_and_id
-                    && rule_and_id.sync_id.into_client() == id.into_client()
-                {
-                    self.load_rule(ctx);
-                }
-            }
-            CloudModelEvent::ObjectTrashed {
-                type_and_id: CloudObjectTypeAndId::GenericStringObject { id, .. },
-                ..
-            }
-            | CloudModelEvent::ObjectDeleted {
-                type_and_id: CloudObjectTypeAndId::GenericStringObject { id, .. },
-                ..
-            } => {
-                // If the rule has been deleted, then we should reset the rule such that
-                // the suggestion can be added again.
-                if let Some(rule_and_id) = &self.rule_and_id
-                    && rule_and_id.sync_id == *id
-                {
-                    self.reset_rule(ctx);
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// Resets the rule to its initial state.
     fn reset_rule(&mut self, ctx: &mut ViewContext<Self>) {
-        self.is_saved = false;
         let name = self
             .rule_and_id
             .as_ref()
@@ -466,71 +346,6 @@ impl SuggestedRuleView {
         self.content_editor.update(ctx, |content_editor, ctx| {
             content_editor.set_buffer_text(&content, ctx);
             content_editor.set_interaction_state(InteractionState::Editable, ctx);
-        });
-        ctx.notify();
-    }
-
-    /// Fetches the rule from the cloud model, and updates the UI to reflect that.
-    fn load_rule(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(SuggestedRuleAndId { sync_id, .. }) = &self.rule_and_id else {
-            return;
-        };
-
-        let cloud_model = CloudModel::handle(ctx);
-        if let Some(rule) = cloud_model
-            .as_ref(ctx)
-            .get_object_of_type::<GenericStringObjectId, CloudAIFactModel>(sync_id)
-        {
-            let AIFact::Memory(AIMemory { name, content, .. }) = rule.model().string_model.clone();
-            self.name_editor.update(ctx, |name_editor, ctx| {
-                name_editor.set_buffer_text(&name.unwrap_or("Untitled".to_string()), ctx);
-            });
-            self.content_editor.update(ctx, |content_editor, ctx| {
-                content_editor.set_buffer_text(&content, ctx);
-            });
-            ctx.notify();
-        }
-    }
-
-    pub fn add_rule(&mut self, ctx: &mut ViewContext<Self>) {
-        let Some(SuggestedRuleAndId { rule, sync_id }) = self.rule_and_id.clone() else {
-            log::warn!("No rule to add in suggested rule dialog");
-            return;
-        };
-
-        // Add rule as a WD object.
-        let update_manager = UpdateManager::handle(ctx);
-        let name = if self.name_editor.as_ref(ctx).buffer_text(ctx).is_empty() {
-            None
-        } else {
-            Some(self.name_editor.as_ref(ctx).buffer_text(ctx).clone())
-        };
-        let content = self.content_editor.as_ref(ctx).buffer_text(ctx);
-        if let Some(owner) = self.owner {
-            let ai_fact = AIFact::Memory(AIMemory {
-                is_autogenerated: false,
-                name,
-                content,
-                suggested_logging_id: Some(rule.logging_id.clone()),
-            });
-            update_manager.update(ctx, |update_manager, ctx| {
-                if let Some(client_id) = sync_id.into_client() {
-                    update_manager.create_ai_fact(ai_fact, client_id, owner, ctx);
-                }
-            });
-        }
-        self.on_add_rule(ctx);
-        ctx.emit(SuggestedRuleDialogEvent::AddNewRule);
-    }
-
-    /// Updates the UI state to reflect that a rule has been added.
-    fn on_add_rule(&mut self, ctx: &mut ViewContext<Self>) {
-        self.is_saved = true;
-        self.name_editor.update(ctx, |name_editor, ctx| {
-            name_editor.set_interaction_state(InteractionState::Disabled, ctx);
-        });
-        self.content_editor.update(ctx, |content_editor, ctx| {
-            content_editor.set_interaction_state(InteractionState::Disabled, ctx);
         });
         ctx.notify();
     }
@@ -602,30 +417,21 @@ impl View for SuggestedRuleView {
 
     fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {
         if focus_ctx.is_self_focused() {
-            if self.is_saved {
-                ctx.focus_self();
-            } else {
-                match self.current_editor {
-                    EditorType::Name => ctx.focus(&self.name_editor),
-                    EditorType::Content => ctx.focus(&self.content_editor),
-                }
+            match self.current_editor {
+                EditorType::Name => ctx.focus(&self.name_editor),
+                EditorType::Content => ctx.focus(&self.content_editor),
             }
         }
     }
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
         let appearance = Appearance::as_ref(app);
-        let add_edit_button = if self.is_saved {
-            &self.edit_button
-        } else {
-            &self.add_button
-        };
 
         Flex::column()
             .with_child(self.render_rule_form(appearance))
             .with_child(
                 Container::new(
-                    Align::new(ChildView::new(add_edit_button).finish())
+                    Align::new(ChildView::new(&self.open_button).finish())
                         .right()
                         .finish(),
                 )
@@ -640,15 +446,8 @@ impl TypedActionView for SuggestedRuleView {
 
     fn handle_action(&mut self, action: &SuggestedRuleDialogAction, ctx: &mut ViewContext<Self>) {
         match action {
-            SuggestedRuleDialogAction::Add => {
-                self.add_rule(ctx);
-            }
-            SuggestedRuleDialogAction::Edit => {
-                if self.rule_and_id.is_some() {
-                    ctx.emit(SuggestedRuleDialogEvent::OpenRuleForEditing);
-                } else {
-                    log::warn!("No rule to edit in suggested rule dialog");
-                }
+            SuggestedRuleDialogAction::OpenLocal => {
+                ctx.emit(SuggestedRuleDialogEvent::OpenRuleForEditing);
             }
             SuggestedRuleDialogAction::Close => {
                 ctx.emit(SuggestedRuleDialogEvent::Close);

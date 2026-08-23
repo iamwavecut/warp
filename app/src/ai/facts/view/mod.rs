@@ -274,3 +274,122 @@ impl BackingView for AIFactView {
         self.focus_handle = Some(focus_handle);
     }
 }
+
+#[cfg(test)]
+mod local_rule_tests {
+    use std::fs;
+
+    use ai::project_context::local_rule_repository::{
+        LocalRuleError, LocalRuleRepository, ProjectRuleFile,
+    };
+    use tempfile::tempdir;
+
+    #[test]
+    fn local_rule_add_edit_delete_uses_the_exact_managed_path() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("one");
+        fs::create_dir(&root).unwrap();
+        let mut repository = LocalRuleRepository::new_for_test(Vec::new(), [root.clone()]);
+        let created = repository
+            .create_project(&root, ProjectRuleFile::Warp, "one")
+            .unwrap();
+        let updated = repository
+            .update(&created.path, &created.revision, "two")
+            .unwrap();
+        assert_eq!(
+            updated.path,
+            fs::canonicalize(&root).unwrap().join("WARP.md")
+        );
+        repository.delete(&updated.path, &updated.revision).unwrap();
+        assert!(!updated.path.exists());
+        let recreated = repository
+            .create_project(&root, ProjectRuleFile::Warp, "three")
+            .unwrap();
+        assert_eq!(recreated.path, updated.path);
+        assert_eq!(recreated.content, "three");
+    }
+
+    #[test]
+    fn local_rule_conflict_does_not_overwrite_external_content() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("one");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("WARP.md"), "original").unwrap();
+        let mut repository = LocalRuleRepository::new_for_test(Vec::new(), [root.clone()]);
+        let opened = repository.read(&root.join("WARP.md")).unwrap();
+        fs::write(root.join("WARP.md"), "external").unwrap();
+        assert!(matches!(
+            repository.update(&opened.path, &opened.revision, "draft"),
+            Err(LocalRuleError::Conflict { .. })
+        ));
+        assert_eq!(
+            fs::read_to_string(root.join("WARP.md")).unwrap(),
+            "external"
+        );
+    }
+
+    #[test]
+    fn local_rule_read_failure_keeps_open_file_path_visible() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("one");
+        fs::create_dir(&root).unwrap();
+        let path = root.join("WARP.md");
+        fs::write(&path, [0xff, 0xfe]).unwrap();
+        let repository = LocalRuleRepository::new_for_test(Vec::new(), [root]);
+        assert!(matches!(
+            repository.read(&path),
+            Err(LocalRuleError::InvalidUtf8 { .. })
+        ));
+        assert_eq!(path.file_name().unwrap(), "WARP.md");
+    }
+
+    #[test]
+    fn local_rule_dirty_error_keeps_compare_and_swap_revision() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("one");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("WARP.md"), "original").unwrap();
+        let mut repository = LocalRuleRepository::new_for_test(Vec::new(), [root.clone()]);
+        let opened = repository.read(&root.join("WARP.md")).unwrap();
+        assert!(
+            repository
+                .update(&opened.path, &opened.revision, "draft")
+                .is_ok()
+        );
+        assert!(matches!(
+            repository.update(&opened.path, &opened.revision, "stale"),
+            Err(LocalRuleError::Conflict { .. })
+        ));
+    }
+
+    #[test]
+    fn local_rule_watcher_refresh_preserves_both_managed_filenames() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("one");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("AGENTS.md"), "agents").unwrap();
+        let repository = LocalRuleRepository::new_for_test(Vec::new(), [root.clone()]);
+        let surfaced = repository.surfaced_paths().cloned().collect::<Vec<_>>();
+        let root = fs::canonicalize(root).unwrap();
+        assert!(surfaced.contains(&root.join("WARP.md")));
+        assert!(surfaced.contains(&root.join("AGENTS.md")));
+    }
+
+    #[test]
+    fn local_rule_precedence_remains_file_based_without_a_provider() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("one");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("AGENTS.md"), "agents").unwrap();
+        fs::write(root.join("WARP.md"), "warp").unwrap();
+        let repository = LocalRuleRepository::new_for_test(Vec::new(), [root.clone()]);
+        assert_eq!(
+            repository.read(&root.join("WARP.md")).unwrap().content,
+            "warp"
+        );
+        assert_eq!(
+            repository.read(&root.join("AGENTS.md")).unwrap().content,
+            "agents"
+        );
+    }
+}
