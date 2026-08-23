@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `b5083388`.
+- Current local implementation head: `a69bba1b`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -234,6 +234,17 @@ has started.
 **Estimate / risk:** 4–7 days / medium-high.
 
 ### P1.3 Deliver vision attachments to custom providers
+
+**Delivered in code:** `20fe7848`, `4437101c`, `a69bba1b`. Two semantic
+fix cycles resolved the independent review findings around persisted context,
+aggregate text budgeting, MIME validation, parallel tool chronology, context
+deduplication, and ordered local history. The final reviewer approved the
+cumulative implementation without remaining Critical, Important, or Minor
+findings.
+
+Focused default and `local_only` suites each passed all 74 direct-provider
+tests. The all-target and bundle gate is intentionally shared with P1.4 because
+both items extend the same custom-provider capability boundary.
 
 Replace string-only message content with OpenAI-compatible content parts. Send
 validated images as bounded `data:` payloads, read text attachments locally,
