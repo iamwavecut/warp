@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `d4b611c1`.
+- Current local implementation head: `68f477ba`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -307,6 +307,18 @@ queued item.
 ## P1 — Local Productivity
 
 ### P1.6 Local saved-prompt/workflow CRUD
+
+**Delivered in code:** `67c086afb`, `68f477ba`. Managed AgentMode prompts use
+stable UUID files and atomic local writes, preserve complete workflow and
+argument metadata, support local editor create/update/delete and UUID-backed
+pane restore, and resolve CLI `--saved-prompt` by UUID or unique exact name.
+The semantic fix pass preserved identity for duplicate-content prompts, added
+dirty-delete confirmation and actionable filesystem errors, and coalesced the
+watcher to one effective refresh.
+
+Focused repository/UI suites passed 11 tests in both default and `local_only`
+modes; the CLI suite passed 4 tests. The all-target and bundle gate remains
+batched with P1.7.
 
 Reuse the existing workflow editor but write `Workflow::AgentMode` YAML
 atomically to the local workflows directory. Add stable local IDs and CLI
