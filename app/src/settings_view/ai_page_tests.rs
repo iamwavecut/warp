@@ -1,10 +1,12 @@
 use super::{
     AgentAttributionToggleState, ProviderConnectionSignature, ProviderModelsValidationState,
-    derive_agent_attribution_toggle_state, provider_connection_is_valid,
+    derive_agent_attribution_toggle_state, find_live_provider_index,
+    merge_provider_editor_config_with_live, provider_connection_is_valid,
     resolve_provider_connection,
 };
 use crate::settings::{
-    CustomProviderCapabilities, custom_provider_config_from_ui_with_capabilities,
+    CustomProviderCapabilities, CustomProviderConfig,
+    custom_provider_config_from_ui_with_capabilities,
 };
 use crate::workspaces::workspace::AdminEnablementSetting;
 use std::ffi::OsString;
@@ -132,6 +134,77 @@ fn provider_editor_save_preserves_capabilities_when_provider_is_renamed() {
 
     assert_eq!(config.name, "renamed-local");
     assert_eq!(config.capabilities, capabilities);
+}
+
+#[test]
+fn stale_provider_editor_does_not_reenable_tools_for_next_direct_route() {
+    let initial = CustomProviderConfig {
+        name: "local".to_string(),
+        base_url: "http://localhost:1234/v1".to_string(),
+        models: vec!["model".to_string()],
+        capabilities: CustomProviderCapabilities::default(),
+        ..Default::default()
+    };
+    let after_capability_toggle = CustomProviderConfig {
+        capabilities: CustomProviderCapabilities {
+            tools: false,
+            ..initial.capabilities.clone()
+        },
+        ..initial.clone()
+    };
+    let after_context_update = CustomProviderConfig {
+        capabilities: CustomProviderCapabilities {
+            context_window_tokens: Some(32_768),
+            ..after_capability_toggle.capabilities.clone()
+        },
+        ..after_capability_toggle
+    };
+    let stale_editor = initial.clone();
+
+    let merged =
+        merge_provider_editor_config_with_live(stale_editor, &initial, Some(&after_context_update));
+
+    assert!(!merged.capabilities.tools);
+    assert_eq!(merged.capabilities.context_window_tokens, Some(32_768));
+
+    let route = super::direct_openai::resolve_custom_provider_route(
+        "custom/local/model",
+        &[merged],
+        &::ai::api_keys::ApiKeys::default(),
+    )
+    .expect("the direct route should use the live provider capabilities");
+    assert!(!route.effective_capabilities().tools);
+}
+
+#[test]
+fn edited_provider_field_is_not_replaced_by_live_snapshot() {
+    let initial = CustomProviderConfig {
+        name: "local".to_string(),
+        base_url: "http://localhost:1234/v1".to_string(),
+        models: vec!["model".to_string()],
+        ..Default::default()
+    };
+    let live = CustomProviderConfig {
+        base_url: "http://localhost:5678/v1".to_string(),
+        ..initial.clone()
+    };
+    let mut edited = initial.clone();
+    edited.base_url = "http://localhost:9999/v1".to_string();
+
+    let merged = merge_provider_editor_config_with_live(edited, &initial, Some(&live));
+
+    assert_eq!(merged.base_url, "http://localhost:9999/v1");
+}
+
+#[test]
+fn renamed_provider_editor_can_save_later_fields_without_reviving_stale_editors() {
+    let live = vec![CustomProviderConfig {
+        name: "renamed".to_string(),
+        ..Default::default()
+    }];
+
+    assert_eq!(find_live_provider_index(&live, "local", "renamed"), Some(0));
+    assert_eq!(find_live_provider_index(&live, "local", "local"), None);
 }
 
 #[test]

@@ -5570,6 +5570,9 @@ impl SettingsWidget for CloudAgentComputerUseWidget {
 #[derive(Clone)]
 struct LLMProviderEditorHandles {
     original_name: String,
+    // Editor subscriptions outlive page rebuilds, so compare against this snapshot
+    // and merge only fields that this editor actually changed into live settings.
+    initial_config: CustomProviderConfig,
     capabilities: CustomProviderCapabilities,
     name_editor: ViewHandle<EditorView>,
     base_url_editor: ViewHandle<EditorView>,
@@ -6183,15 +6186,97 @@ fn create_llm_provider_editor<V: View>(
     })
 }
 
+fn merge_provider_editor_config_with_live(
+    mut edited: CustomProviderConfig,
+    initial: &CustomProviderConfig,
+    live: Option<&CustomProviderConfig>,
+) -> CustomProviderConfig {
+    // A provider editor can emit after its page was rebuilt. Preserve newer values
+    // for every field that still matches the editor's initial snapshot.
+    let Some(live) = live else {
+        return edited;
+    };
+
+    if edited.name == initial.name {
+        edited.name = live.name.clone();
+    }
+    if edited.base_url == initial.base_url {
+        edited.base_url = live.base_url.clone();
+    }
+    if edited.models == initial.models {
+        edited.models = live.models.clone();
+    }
+    if edited.api_key_env_var == initial.api_key_env_var {
+        edited.api_key_env_var = live.api_key_env_var.clone();
+    }
+    if edited.api_type == initial.api_type {
+        edited.api_type = live.api_type.clone();
+    }
+
+    if edited.capabilities.chat == initial.capabilities.chat {
+        edited.capabilities.chat = live.capabilities.chat;
+    }
+    if edited.capabilities.tools == initial.capabilities.tools {
+        edited.capabilities.tools = live.capabilities.tools;
+    }
+    if edited.capabilities.vision == initial.capabilities.vision {
+        edited.capabilities.vision = live.capabilities.vision;
+    }
+    if edited.capabilities.embeddings == initial.capabilities.embeddings {
+        edited.capabilities.embeddings = live.capabilities.embeddings;
+    }
+    if edited.capabilities.transcription == initial.capabilities.transcription {
+        edited.capabilities.transcription = live.capabilities.transcription;
+    }
+    if edited.capabilities.context_window_tokens == initial.capabilities.context_window_tokens {
+        edited.capabilities.context_window_tokens = live.capabilities.context_window_tokens;
+    }
+
+    edited
+}
+
+fn find_live_provider_index(
+    live_providers: &[CustomProviderConfig],
+    original_name: &str,
+    edited_name: &str,
+) -> Option<usize> {
+    if let Some(index) = live_providers
+        .iter()
+        .position(|existing| existing.name == original_name)
+    {
+        return Some(index);
+    }
+
+    // A rename is saved without rebuilding the page. Resolve later edits from
+    // the same editor by its new name, but do not let an unchanged stale editor
+    // attach itself to a provider that was renamed or removed elsewhere.
+    let edited_name = edited_name.trim();
+    (edited_name != original_name)
+        .then(|| {
+            live_providers
+                .iter()
+                .position(|existing| existing.name == edited_name)
+        })
+        .flatten()
+}
+
 fn sync_llm_provider_editors_to_settings(
     providers: &[LLMProviderEditorHandles],
     ctx: &mut ViewContext<AISettingsPageView>,
 ) {
-    let mut configs = Vec::new();
+    let live_providers = AISettings::as_ref(ctx).custom_providers.clone();
+    let mut configs = live_providers.clone();
     let mut key_updates = Vec::new();
 
     for provider in providers {
         let name = provider.name_editor.as_ref(ctx).buffer_text(ctx);
+        let Some(live_index) =
+            find_live_provider_index(&live_providers, &provider.original_name, &name)
+        else {
+            // The editor belongs to an older page instance. If its provider was
+            // renamed or removed since then, do not resurrect the stale entry.
+            continue;
+        };
         let base_url = provider.base_url_editor.as_ref(ctx).buffer_text(ctx);
         let models = provider
             .models_picker
@@ -6214,13 +6299,6 @@ fn sync_llm_provider_editors_to_settings(
                 log::warn!(
                     "Keeping existing local custom provider after invalid capability input: {error}"
                 );
-                if let Some(existing) = AISettings::as_ref(ctx)
-                    .custom_providers
-                    .iter()
-                    .find(|existing| existing.name == provider.original_name)
-                {
-                    configs.push(existing.clone());
-                }
                 continue;
             }
         };
@@ -6236,20 +6314,19 @@ fn sync_llm_provider_editors_to_settings(
             Ok(None) => continue,
             Err(error) => {
                 log::warn!("Keeping invalid local custom provider unchanged: {error}");
-                if let Some(existing) = AISettings::as_ref(ctx)
-                    .custom_providers
-                    .iter()
-                    .find(|existing| existing.name == provider.original_name)
-                {
-                    configs.push(existing.clone());
-                }
                 continue;
             }
         };
+        let config = merge_provider_editor_config_with_live(
+            config,
+            &provider.initial_config,
+            live_providers.get(live_index),
+        );
 
         if configs
             .iter()
-            .any(|existing: &CustomProviderConfig| existing.name == config.name)
+            .enumerate()
+            .any(|(index, existing)| index != live_index && existing.name == config.name)
         {
             continue;
         }
@@ -6259,7 +6336,7 @@ fn sync_llm_provider_editors_to_settings(
             config.name.clone(),
             api_key.trim().is_empty().not().then_some(api_key),
         ));
-        configs.push(config);
+        configs[live_index] = config;
     }
 
     persist_custom_provider_configs(configs, ctx);
@@ -6359,6 +6436,7 @@ impl LLMProvidersWidget {
 
                 LLMProviderEditorHandles {
                     original_name: provider.name.clone(),
+                    initial_config: provider.clone(),
                     capabilities: provider.capabilities.clone(),
                     name_editor,
                     base_url_editor,
