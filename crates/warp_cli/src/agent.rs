@@ -255,6 +255,14 @@ pub enum AgentProfileCommand {
 pub enum AgentCommand {
     /// Run a new Oz agent.
     Run(RunAgentArgs),
+    /// Create a local named-agent bundle.
+    Create(CreateNamedAgentArgs),
+    /// Show one local named-agent bundle.
+    Show(NamedAgentSelectorArgs),
+    /// Update a local named-agent bundle using an expected revision.
+    Update(UpdateNamedAgentArgs),
+    /// Delete a local named-agent bundle using an expected revision.
+    Delete(DeleteNamedAgentArgs),
     /// Manage agent profiles.
     #[command(subcommand)]
     Profile(AgentProfileCommand),
@@ -266,6 +274,10 @@ impl AgentCommand {
     pub(crate) fn as_str_for_tracing(&self) -> &'static str {
         match self {
             AgentCommand::Run(_) => "agent run",
+            AgentCommand::Create(_) => "agent create",
+            AgentCommand::Show(_) => "agent show",
+            AgentCommand::Update(_) => "agent update",
+            AgentCommand::Delete(_) => "agent delete",
             AgentCommand::Profile(_) => "agent profile",
             AgentCommand::List(_) => "agent list",
         }
@@ -279,7 +291,7 @@ impl AgentCommand {
         clap::ArgGroup::new("prompt_group")
             .required(true)
             .multiple(true)
-            .args(["prompt", "skill", "saved_prompt"])
+            .args(["prompt", "skill", "saved_prompt", "agent"])
     )
 )]
 pub struct RunAgentArgs {
@@ -293,6 +305,10 @@ pub struct RunAgentArgs {
         conflicts_with_all = ["prompt", "skill"]
     )]
     pub saved_prompt: Option<String>,
+
+    /// Run a persisted local named agent by UUID or unique exact name.
+    #[arg(long = "agent", value_name = "ID_OR_NAME")]
+    pub agent: Option<String>,
 
     #[command(flatten)]
     pub model: ModelArgs,
@@ -386,4 +402,94 @@ pub struct ListAgentConfigsArgs {
     /// directories under the current directory.
     #[arg(long = "repo", short = 'r', value_name = "REPO")]
     pub repo: Option<String>,
+}
+
+/// Fields shared by local named-agent create/update commands.
+#[derive(Debug, Clone, Args, Default)]
+pub struct NamedAgentFieldsArgs {
+    /// User-facing local agent name.
+    #[arg(long = "name")]
+    pub name: Option<String>,
+    /// Optional non-secret description.
+    #[arg(long = "description")]
+    pub description: Option<String>,
+    /// Base instructions stored in the local bundle.
+    #[arg(long = "base-prompt")]
+    pub base_prompt: Option<String>,
+    /// Concrete custom model ID.
+    #[arg(long = "model", value_name = "MODEL_ID")]
+    pub model_id: Option<String>,
+    /// Local execution profile ID.
+    #[arg(long = "profile", value_name = "ID")]
+    pub profile_id: Option<String>,
+    /// Ordered local skill reference; may be repeated.
+    #[arg(long = "skill", value_name = "SPEC")]
+    pub skills: Vec<SkillSpec>,
+    /// Local/configured MCP specification; may be repeated.
+    #[arg(long = "mcp", value_name = "SPEC")]
+    pub mcp_specs: Vec<MCPSpec>,
+    /// Local harness to use.
+    #[arg(long = "harness", value_name = "HARNESS")]
+    pub harness: Option<Harness>,
+    /// Enable computer use for the local bundle.
+    #[arg(long = "computer-use", conflicts_with = "no_computer_use")]
+    pub computer_use: bool,
+    /// Disable computer use for the local bundle.
+    #[arg(long = "no-computer-use", conflicts_with = "computer_use")]
+    pub no_computer_use: bool,
+    /// Environment-variable secret reference in NAME=ENV_VAR form.
+    #[arg(long = "secret-env", value_name = "NAME=ENV_VAR")]
+    pub secret_env: Vec<String>,
+    /// Existing keychain entry reference.
+    #[arg(long = "secret-keychain", value_name = "ENTRY")]
+    pub secret_keychain: Vec<String>,
+}
+
+impl NamedAgentFieldsArgs {
+    pub fn computer_use_override(&self) -> Option<bool> {
+        match (self.computer_use, self.no_computer_use) {
+            (true, false) => Some(true),
+            (false, true) => Some(false),
+            _ => None,
+        }
+    }
+}
+
+/// Arguments for `agent create`.
+#[derive(Debug, Clone, Args)]
+pub struct CreateNamedAgentArgs {
+    #[command(flatten)]
+    pub fields: NamedAgentFieldsArgs,
+}
+
+/// A UUID or unique exact local name.
+#[derive(Debug, Clone, Args)]
+pub struct NamedAgentSelectorArgs {
+    #[arg(value_name = "ID_OR_NAME")]
+    pub selector: String,
+}
+
+/// Arguments for `agent update`.
+#[derive(Debug, Clone, Args)]
+pub struct UpdateNamedAgentArgs {
+    #[arg(value_name = "ID_OR_NAME")]
+    pub selector: String,
+    /// Revision returned by `agent show`.
+    #[arg(long = "revision", required = true)]
+    pub revision: String,
+    #[command(flatten)]
+    pub fields: NamedAgentFieldsArgs,
+}
+
+/// Arguments for `agent delete`.
+#[derive(Debug, Clone, Args)]
+pub struct DeleteNamedAgentArgs {
+    #[arg(value_name = "ID")]
+    pub selector: String,
+    /// Revision returned by `agent show`; protects against concurrent edits.
+    #[arg(long = "revision", required = true)]
+    pub revision: String,
+    /// Confirm deletion without an interactive prompt.
+    #[arg(long = "yes", short = 'y')]
+    pub yes: bool,
 }

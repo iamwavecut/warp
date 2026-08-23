@@ -192,7 +192,7 @@ impl super::WarpConfig {
     /// silently overwrite a watcher or another process update.
     #[cfg(feature = "local_fs")]
     pub fn save_custom_model_router(
-        _name: &str,
+        name: &str,
         yaml: &str,
         existing_path: Option<&Path>,
     ) -> Result<PathBuf> {
@@ -226,7 +226,7 @@ impl super::WarpConfig {
     /// caller.
     #[cfg(feature = "local_fs")]
     pub fn save_custom_model_router_with_revision(
-        name: &str,
+        _name: &str,
         yaml: &str,
         existing_path: &Path,
         expected: &RouterFileRevision,

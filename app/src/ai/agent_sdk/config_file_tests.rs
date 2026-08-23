@@ -95,12 +95,12 @@ fn merge_precedence_cli_over_file_and_merges_mcp() {
         name: Some("cli-name".to_string()),
         environment_id: None,
         model_id: Some("cli-model".to_string()),
+        profile_id: None,
         base_prompt: None,
         mcp_servers: Some(serde_json::Map::from_iter([(
             "a".to_string(),
             json!({"command": "npx", "args": []}),
         )])),
-        profile_id: None,
         worker_host: None,
         skill_spec: None,
         computer_use_enabled: None,

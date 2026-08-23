@@ -23,6 +23,8 @@ use crate::ai::agent_management::agent_type_selector::{
 use crate::ai::agent_management::details_action_buttons::{
     ActionButtonsConfig, AgentDetailsButtonEvent, ConversationActionButtonsRow,
 };
+#[cfg(not(target_family = "wasm"))]
+use crate::ai::agent_management::local_named_agents::LocalNamedAgentsView;
 use crate::ai::ambient_agents::{AgentSource, cancel_task_with_toast};
 use crate::ai::artifacts::{Artifact, ArtifactButtonsRow, ArtifactButtonsRowEvent};
 use crate::ai::blocklist::format_credits;
@@ -132,6 +134,8 @@ struct CardState {
 }
 
 pub struct AgentManagementView {
+    #[cfg(not(target_family = "wasm"))]
+    local_named_agents: ViewHandle<LocalNamedAgentsView>,
     list_state: ListState<()>,
     loading_icon_mouse_state: MouseStateHandle,
     scroll_state: ScrollStateHandle,
@@ -279,6 +283,9 @@ impl AgentManagementView {
         let agent_type_selector = ctx.add_typed_action_view(AgentTypeSelector::new);
         ctx.subscribe_to_view(&agent_type_selector, Self::handle_agent_type_selector_event);
 
+        #[cfg(not(target_family = "wasm"))]
+        let local_named_agents = ctx.add_typed_action_view(LocalNamedAgentsView::new);
+
         let filters = persisted_filters.map(|p| p.filters).unwrap_or_default();
 
         let details_panel: ViewHandle<ConversationDetailsPanel> =
@@ -289,6 +296,8 @@ impl AgentManagementView {
         ctx.subscribe_to_view(&details_panel, Self::handle_details_panel_event);
 
         let mut view = Self {
+            #[cfg(not(target_family = "wasm"))]
+            local_named_agents,
             list_state,
             scroll_state: ScrollStateHandle::default(),
             items: Vec::new(),
@@ -1839,18 +1848,24 @@ impl View for AgentManagementView {
             ViewState::HasTasks => self.render_default_scroll_view(app),
         };
 
-        let content = Flex::column()
+        let mut content = Flex::column()
             .with_main_axis_size(MainAxisSize::Max)
-            .with_cross_axis_alignment(CrossAxisAlignment::Stretch)
-            .with_child(self.render_header(app))
-            .with_child(
-                Shrinkable::new(
-                    1.,
-                    Container::new(main_content).with_margin_top(12.).finish(),
-                )
+            .with_cross_axis_alignment(CrossAxisAlignment::Stretch);
+        #[cfg(not(target_family = "wasm"))]
+        content.add_child(
+            Container::new(ChildView::new(&self.local_named_agents).finish())
+                .with_margin_bottom(12.)
                 .finish(),
+        );
+        content.add_child(self.render_header(app));
+        content.add_child(
+            Shrinkable::new(
+                1.,
+                Container::new(main_content).with_margin_top(12.).finish(),
             )
-            .finish();
+            .finish(),
+        );
+        let content = content.finish();
 
         let centered = Align::new(content).top_center().finish();
 

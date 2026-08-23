@@ -6,6 +6,7 @@ use anyhow::{Context, anyhow};
 use warp_cli::agent::ListAgentConfigsArgs;
 use warpui::{AppContext, ModelContext, SingletonEntity, platform::TerminationMode};
 
+use crate::ai::local_named_agents::{LocalNamedAgentRepository, format_named_agent_list};
 use crate::ai::skills::{SkillDescriptor, SkillManager, read_skills_from_directories};
 use crate::server::server_api::ai::{
     AgentListEnvironment, AgentListItem, AgentListSource, AgentListVariant,
@@ -24,12 +25,18 @@ pub fn list_agents(ctx: &mut AppContext, args: ListAgentConfigsArgs) -> anyhow::
 
 impl AgentConfigRunner {
     fn list(&self, repo: Option<String>, ctx: &mut ModelContext<Self>) -> anyhow::Result<()> {
-        let agents = match repo {
-            Some(repo_spec) => self.list_repo_agents(&repo_spec)?,
-            None => self.list_visible_agents(ctx)?,
-        };
-
-        Self::print_agents_table(&agents);
+        match repo {
+            Some(repo_spec) => {
+                let skills = self.list_repo_agents(&repo_spec)?;
+                Self::print_skills_table(&skills);
+            }
+            None => {
+                let named_agents = LocalNamedAgentRepository::for_user().list_with_errors()?;
+                Self::print_named_agents(&named_agents);
+                let skills = self.list_visible_agents(ctx)?;
+                Self::print_skills_table(&skills);
+            }
+        }
         ctx.terminate_app(TerminationMode::ForceTerminate, None);
         Ok(())
     }
@@ -80,17 +87,36 @@ impl AgentConfigRunner {
             .collect()
     }
 
-    /// Print a list of agents in a card-style format.
-    fn print_agents_table(agents: &[AgentListItem]) {
+    fn print_named_agents(named_agents: &crate::ai::local_named_agents::NamedAgentList) {
+        println!("\nLocal named agents ({}):", named_agents.agents.len());
+        let list = format_named_agent_list(&named_agents.agents);
+        if list.is_empty() {
+            println!("No local named agents found.");
+        } else {
+            for line in list.lines() {
+                let mut fields = line.split('\t');
+                let _kind = fields.next();
+                let id = fields.next().unwrap_or_default();
+                let name = fields.next().unwrap_or_default();
+                println!("- {name} ({id})");
+            }
+        }
+        for error in &named_agents.errors {
+            eprintln!("warning: local named agent skipped: {error}");
+        }
+    }
+
+    /// Print a list of discovered skills in a card-style format.
+    fn print_skills_table(agents: &[AgentListItem]) {
         if agents.is_empty() {
             println!("No skills found.");
             return;
         }
 
         if agents.len() == 1 {
-            println!("\nAgent:");
+            println!("\nSkill:");
         } else {
-            println!("\nAgents ({}):", agents.len());
+            println!("\nSkills ({}):", agents.len());
         }
 
         for agent in agents {

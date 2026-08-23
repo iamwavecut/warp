@@ -31,6 +31,8 @@ pub mod harness_availability;
 pub(crate) mod harness_display;
 pub(crate) mod llms;
 pub(crate) mod local_child_harnesses;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod local_named_agents;
 pub mod onboarding;
 pub(crate) mod persisted_workspace;
 pub(crate) mod predict;

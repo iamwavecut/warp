@@ -1,6 +1,8 @@
 mod agent_management_model;
 pub(crate) mod agent_type_selector;
 pub(crate) mod details_action_buttons;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod local_named_agents;
 pub(crate) mod notifications;
 
 pub(crate) mod view;

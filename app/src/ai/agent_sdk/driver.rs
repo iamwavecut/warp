@@ -284,6 +284,12 @@ pub struct Task {
     pub mcp_specs: Vec<MCPSpec>,
     /// Which harness to use for executing the agent run.
     pub harness: HarnessKind,
+    /// Whether this run came from a local named-agent bundle.
+    ///
+    /// Named bundles must not inherit globally configured skill repositories,
+    /// which may be backed by hosted account state or require a clone before
+    /// the local harness starts.
+    pub local_only: bool,
 }
 
 struct GlobalSkillResolution {
@@ -1399,7 +1405,14 @@ impl AgentDriver {
                 .await?;
         }
 
-        let global_skill_resolution = Self::resolve_global_skills(&foreground).await?;
+        let global_skill_resolution = if task.local_only {
+            GlobalSkillResolution {
+                specs: Vec::new(),
+                repos: Vec::new(),
+            }
+        } else {
+            Self::resolve_global_skills(&foreground).await?
+        };
         // Clone global skill repos before environment prep can change the
         // terminal's cwd into a single environment repo.
         // We do this for all harnesses, so that the skills *may* be discovered by third-party

@@ -11,7 +11,12 @@ use crate::ai::llms::LLMId;
 use crate::workflows::{
     command_parser::WorkflowCommandDisplayData, local_saved_prompts::LocalSavedPromptRepository,
 };
+use crate::{
+    ai::execution_profiles::profiles::AIExecutionProfilesModel,
+    server::ids::{ServerId, SyncId},
+};
 use anyhow::Context;
+use warp_cli::skill::SkillSpec;
 use warp_cli::{
     CliCommand, GlobalOptions,
     agent::{AgentCommand, OutputFormat},
@@ -19,12 +24,16 @@ use warp_cli::{
 use warp_core::features::FeatureFlag;
 #[cfg(not(target_family = "wasm"))]
 use warp_logging::log_file_path;
-use warpui::ModelSpawner;
 use warpui::{AppContext, platform::TerminationMode};
+use warpui::{ModelSpawner, SingletonEntity};
 
 use crate::{ai::ambient_agents::task::HarnessConfig, server::server_api::ai::AgentConfigSnapshot};
 use driver::AgentDriverError;
 
+use crate::ai::local_named_agents::{
+    LocalNamedAgentRepository, NamedAgentBundle, NamedAgentRunOverrides, merge_named_agent_config,
+    validate_named_config_file, validate_named_mcp_servers, validate_named_run_args,
+};
 use crate::ai::skills::{
     ResolveSkillError, ResolvedSkill, clone_repo_for_skill, resolve_skill_spec,
 };
@@ -36,10 +45,10 @@ use warp_cli::agent::{Harness, Prompt, RunAgentArgs};
 mod admin;
 mod agent_config;
 mod common;
-mod config_file;
+pub(crate) mod config_file;
 pub(crate) mod driver;
 mod mcp;
-mod mcp_config;
+pub(crate) mod mcp_config;
 mod model;
 pub mod output;
 mod profiles;
@@ -144,17 +153,25 @@ fn run_agent(
 
             Ok(())
         }
+        command @ (AgentCommand::Create(_)
+        | AgentCommand::Show(_)
+        | AgentCommand::Update(_)
+        | AgentCommand::Delete(_)) => {
+            crate::ai::local_named_agents::run_named_agent_crud(ctx, command)
+        }
         AgentCommand::Profile(sub) => profiles::run(ctx, global_options, sub),
         AgentCommand::List(args) => agent_config::list_agents(ctx, args),
     }
 }
 
 /// Build the merged agent configuration from all sources and the Task for the driver.
-/// Merge precedence: file < CLI < skill
+/// Merge precedence: bundle < one-shot file < CLI/UI < invoked skill.
 fn build_merged_config_and_task(
     args: &RunAgentArgs,
-    resolved_skill: &Option<ResolvedSkill>,
+    resolved_bundle_skills: &[ResolvedSkill],
+    resolved_invoked_skill: &Option<ResolvedSkill>,
     prompt: &Option<Prompt>,
+    named_bundle: Option<&NamedAgentBundle>,
     ctx: &mut AppContext,
 ) -> anyhow::Result<(AgentConfigSnapshot, Task)> {
     let loaded_file = match args.config_file.file.as_deref() {
@@ -164,35 +181,56 @@ fn build_merged_config_and_task(
 
     let cli_mcp_servers = build_mcp_servers_from_specs(&args.all_mcp_specs())?;
 
-    // Merge precedence: file < CLI < skill
-    let file_merged = config_file::merge_with_precedence(loaded_file.as_ref(), Default::default());
-
-    // Skill provides base_prompt and optionally name
-    let (skill_name, runtime_base_prompt) = match resolved_skill {
-        Some(skill) => (Some(skill.name.clone()), Some(skill.instructions.clone())),
-        None => (None, None),
-    };
+    let skill_name = resolved_invoked_skill
+        .as_ref()
+        .or_else(|| resolved_bundle_skills.first())
+        .map(|skill| skill.name.clone());
+    let bundle_skill_instructions = (!resolved_bundle_skills.is_empty()).then(|| {
+        resolved_bundle_skills
+            .iter()
+            .map(|skill| skill.instructions.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    });
+    let invoked_skill_instructions = resolved_invoked_skill
+        .as_ref()
+        .map(|skill| skill.instructions.clone());
 
     let harness_override =
         (args.harness != Harness::Oz).then_some(HarnessConfig::from_harness_type(args.harness));
 
-    let mut merged_config = AgentConfigSnapshot {
-        // CLI name > skill name > file name
-        name: args.name.clone().or(skill_name).or(file_merged.name),
-        environment_id: file_merged.environment_id,
-        model_id: args.model.model.clone().or(file_merged.model_id),
-        // Skill base_prompt takes precedence over file base_prompt
-        base_prompt: runtime_base_prompt.clone().or(file_merged.base_prompt),
-        mcp_servers: config_file::merge_mcp_servers(file_merged.mcp_servers, cli_mcp_servers),
+    let cli_config = AgentConfigSnapshot {
+        name: args.name.clone(),
+        environment_id: None,
+        model_id: args.model.model.clone(),
+        base_prompt: None,
+        mcp_servers: cli_mcp_servers,
         profile_id: args.profile.clone(),
-        worker_host: file_merged.worker_host,
-        skill_spec: file_merged.skill_spec,
-        computer_use_enabled: args
-            .computer_use
-            .computer_use_override()
-            .or(file_merged.computer_use_enabled),
+        worker_host: None,
+        skill_spec: args.skill.as_ref().map(ToString::to_string),
+        computer_use_enabled: args.computer_use.computer_use_override(),
         harness: harness_override,
         harness_auth_secrets: None,
+    };
+
+    let mut merged_config = if let Some(bundle) = named_bundle {
+        let overrides = NamedAgentRunOverrides {
+            one_shot: loaded_file.as_ref().map(|file| file.file.clone()),
+            cli: cli_config,
+            bundle_skill_instructions,
+            invoked_skill_instructions,
+        };
+        merge_named_agent_config(bundle, &overrides)?
+    } else {
+        let file_merged = config_file::merge_with_precedence(loaded_file.as_ref(), cli_config);
+        let mut merged = file_merged;
+        if let Some(instructions) = &invoked_skill_instructions {
+            merged.base_prompt = Some(instructions.clone());
+        }
+        if let Some(name) = args.name.clone().or(skill_name) {
+            merged.name = Some(name);
+        }
+        merged
     };
 
     let runtime_mcp_specs = match merged_config.mcp_servers.as_ref() {
@@ -205,6 +243,20 @@ fn build_merged_config_and_task(
         .as_deref()
         .map(|model_id| common::validate_agent_mode_base_model_id(model_id, ctx))
         .transpose()?;
+
+    if let Some(profile) = merged_config.profile_id.as_deref() {
+        let server_id = ServerId::try_from(profile)
+            .map_err(|_| anyhow::anyhow!(AgentDriverError::ProfileError(profile.to_owned())))?;
+        let sync_id = SyncId::ServerId(server_id);
+        if AIExecutionProfilesModel::as_ref(ctx)
+            .get_profile_id_by_sync_id(&sync_id)
+            .is_none()
+        {
+            return Err(anyhow::anyhow!(AgentDriverError::ProfileError(
+                profile.to_owned()
+            )));
+        }
+    }
 
     // Keep the task config snapshot aligned with the effective model selection.
     merged_config.model_id = model_override.clone().map(|id| id.to_string());
@@ -227,9 +279,16 @@ fn build_merged_config_and_task(
     let task = Task {
         prompt: AgentRunPrompt::Local(resolve_prompt(&local_prompt, ctx)?),
         model: model_override,
-        profile: args.profile.clone(),
+        profile: merged_config.profile_id.clone(),
         mcp_specs: runtime_mcp_specs,
-        harness: harness_kind(args.harness)?,
+        harness: harness_kind(
+            merged_config
+                .harness
+                .as_ref()
+                .map(|config| config.harness_type)
+                .unwrap_or(args.harness),
+        )?,
+        local_only: named_bundle.is_some(),
     };
 
     Ok((merged_config, task))
@@ -355,6 +414,44 @@ impl AgentDriverRunner {
         Ok(Some(skill))
     }
 
+    /// Resolve every skill persisted in a named bundle before starting the
+    /// driver. Bundle references are local-only: unlike an explicitly
+    /// sandboxed CLI skill they never clone a repository or perform network
+    /// I/O.
+    async fn resolve_named_skills(
+        foreground: &ModelSpawner<Self>,
+        specs: &[SkillSpec],
+        working_dir: &Path,
+    ) -> Result<Vec<ResolvedSkill>, AgentDriverError> {
+        if specs.is_empty() {
+            return Ok(Vec::new());
+        }
+        if !FeatureFlag::OzPlatformSkills.is_enabled() {
+            return Err(AgentDriverError::SkillResolutionFailed(
+                "local named agent skills are disabled".to_owned(),
+            ));
+        }
+
+        let mut resolved = Vec::with_capacity(specs.len());
+        for spec in specs {
+            let skill_spec = spec.clone();
+            let working_dir = working_dir.to_path_buf();
+            let skill = foreground
+                .spawn(move |_, ctx| resolve_skill_spec(&skill_spec, &working_dir, ctx))
+                .await?
+                .map_err(|error| {
+                    AgentDriverError::SkillResolutionFailed(format_skill_resolution_error(error))
+                })?;
+            log::debug!(
+                "Resolved named-agent skill '{}' from {}",
+                skill.name,
+                skill.skill_path.display()
+            );
+            resolved.push(skill);
+        }
+        Ok(resolved)
+    }
+
     /// Build the AgentDriverOptions and Task for a local CLI agent run.
     async fn build_driver_options_and_task(
         foreground: &ModelSpawner<Self>,
@@ -368,8 +465,54 @@ impl AgentDriverRunner {
         }
         .map_err(AgentDriverError::ConfigBuildFailed)?;
 
-        // Resolve the skill, if we have one
-        let resolved_skill = Self::resolve_skill(foreground, &args, &working_dir).await?;
+        let named_record = args
+            .agent
+            .as_deref()
+            .map(|selector| LocalNamedAgentRepository::for_user().resolve(selector))
+            .transpose()
+            .map_err(|error| AgentDriverError::ConfigBuildFailed(anyhow::Error::new(error)))?;
+        let named_bundle = named_record.as_ref().map(|record| record.bundle().clone());
+
+        if named_bundle.is_some() {
+            validate_named_run_args(&args)
+                .map_err(|error| AgentDriverError::ConfigBuildFailed(anyhow::Error::new(error)))?;
+            if let Some(path) = args.config_file.file.as_deref() {
+                let loaded = config_file::load_config_file(path)
+                    .map_err(AgentDriverError::ConfigBuildFailed)?;
+                validate_named_config_file(&loaded.file).map_err(|error| {
+                    AgentDriverError::ConfigBuildFailed(anyhow::Error::new(error))
+                })?;
+            }
+            let cli_mcp_servers = build_mcp_servers_from_specs(&args.all_mcp_specs())
+                .map_err(AgentDriverError::ConfigBuildFailed)?;
+            if let Some(mcp_servers) = cli_mcp_servers.as_ref() {
+                validate_named_mcp_servers(mcp_servers).map_err(|error| {
+                    AgentDriverError::ConfigBuildFailed(anyhow::Error::new(error))
+                })?;
+            }
+        }
+
+        let bundle_skill_specs = named_bundle
+            .as_ref()
+            .map(|bundle| {
+                bundle
+                    .skills
+                    .iter()
+                    .map(|skill| {
+                        skill
+                            .parse()
+                            .map_err(|error: String| AgentDriverError::SkillResolutionFailed(error))
+                    })
+                    .collect::<Result<Vec<SkillSpec>, AgentDriverError>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let resolved_bundle_skills =
+            Self::resolve_named_skills(foreground, &bundle_skill_specs, &working_dir).await?;
+
+        // Resolve an explicitly invoked skill after the bundle skills. Its
+        // instructions are applied last by the merge function.
+        let resolved_invoked_skill = Self::resolve_skill(foreground, &args, &working_dir).await?;
 
         // Extract variables we want to use later before moving args into the closure
         let prompt = match args.saved_prompt.as_deref() {
@@ -381,8 +524,20 @@ impl AgentDriverRunner {
         let prompt_clone = prompt.clone();
         let (merged_config, task, driver_options) = foreground
             .spawn(move |_, ctx| -> anyhow::Result<_> {
-                let (merged_config, task) =
-                    build_merged_config_and_task(&args, &resolved_skill, &prompt_clone, ctx)?;
+                let (merged_config, task) = build_merged_config_and_task(
+                    &args,
+                    &resolved_bundle_skills,
+                    &resolved_invoked_skill,
+                    &prompt_clone,
+                    named_bundle.as_ref(),
+                    ctx,
+                )?;
+
+                let selected_harness = merged_config
+                    .harness
+                    .as_ref()
+                    .map(|config| config.harness_type)
+                    .unwrap_or(args.harness);
 
                 let driver_options = driver::AgentDriverOptions {
                     working_dir: working_dir.clone(),
@@ -391,7 +546,7 @@ impl AgentDriverRunner {
                     idle_on_complete: args.idle_on_complete.map(|d| d.into()),
                     secrets: Default::default(),
                     environment: None,
-                    selected_harness: args.harness,
+                    selected_harness,
                     third_party_harness_model_config: None,
                 };
 

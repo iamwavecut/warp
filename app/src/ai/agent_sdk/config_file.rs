@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 use warp_cli::mcp::MCPSpec;
 
 use crate::ai::ambient_agents::AgentConfigSnapshot;
+use crate::ai::ambient_agents::task::{HarnessAuthSecretsConfig, HarnessConfig};
 
 /// A strict, file-based representation of `AgentConfigSnapshot`.
 ///
@@ -20,13 +21,21 @@ pub struct AgentConfigSnapshotFile {
     #[serde(default)]
     pub model_id: Option<String>,
     #[serde(default)]
+    pub profile_id: Option<String>,
+    #[serde(default)]
     pub base_prompt: Option<String>,
     #[serde(default)]
     pub mcp_servers: Option<Map<String, Value>>,
     #[serde(default)]
     pub host: Option<String>,
     #[serde(default)]
+    pub skill_spec: Option<String>,
+    #[serde(default)]
     pub computer_use_enabled: Option<bool>,
+    #[serde(default)]
+    pub harness: Option<HarnessConfig>,
+    #[serde(default)]
+    pub harness_auth_secrets: Option<HarnessAuthSecretsConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,7 +100,7 @@ fn parse_yaml(input: &str) -> anyhow::Result<AgentConfigSnapshotFile> {
 }
 
 fn supported_keys_context() -> String {
-    "Supported keys: name, model_id, base_prompt, mcp_servers, host, computer_use_enabled"
+    "Supported keys: name, model_id, profile_id, base_prompt, mcp_servers, host, skill_spec, computer_use_enabled, harness, harness_auth_secrets"
         .to_string()
 }
 
@@ -159,12 +168,14 @@ pub fn merge_with_precedence(
         model_id,
         base_prompt,
         mcp_servers,
-        profile_id: None,
+        profile_id: cli.profile_id.or_else(|| file.profile_id.clone()),
         worker_host,
-        skill_spec: cli.skill_spec,
+        skill_spec: cli.skill_spec.or_else(|| file.skill_spec.clone()),
         computer_use_enabled,
-        harness: cli.harness,
-        harness_auth_secrets: cli.harness_auth_secrets,
+        harness: cli.harness.or_else(|| file.harness.clone()),
+        harness_auth_secrets: cli
+            .harness_auth_secrets
+            .or_else(|| file.harness_auth_secrets.clone()),
     }
 }
 

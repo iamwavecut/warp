@@ -12,7 +12,7 @@ use crate::ai::mcp::TemplatableMCPServer;
 /// Notes:
 /// - UUID specs are coerced into `{"<uuid>": {"warp_id": "<uuid>"}}`.
 /// - We do light validation to catch obvious config errors before sending the request.
-pub(super) fn build_mcp_servers_from_specs(
+pub(crate) fn build_mcp_servers_from_specs(
     specs: &[MCPSpec],
 ) -> anyhow::Result<Option<Map<String, Value>>> {
     if specs.is_empty() {
@@ -112,7 +112,7 @@ fn normalize_mcp_json_for_single_server(input: &str) -> anyhow::Result<String> {
     }
 }
 
-pub(super) fn validate_mcp_servers(mcp_servers: &Map<String, Value>) -> anyhow::Result<()> {
+pub(crate) fn validate_mcp_servers(mcp_servers: &Map<String, Value>) -> anyhow::Result<()> {
     for (name, config) in mcp_servers {
         validate_server_config(name, config)?;
     }
