@@ -11,6 +11,10 @@ cfg_if::cfg_if! {
     }
 }
 
+#[cfg(not(feature = "local_fs"))]
+#[path = "local_prompt_queue_no_fs.rs"]
+pub mod local_prompt_queue;
+
 pub use persistence::model;
 #[cfg_attr(not(feature = "local_fs"), expect(unused_imports))]
 pub use persistence::schema;

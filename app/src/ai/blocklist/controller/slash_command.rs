@@ -135,6 +135,7 @@ impl SlashCommandRequest {
             ctx,
         );
         let model_id = request_input.model_id.clone();
+        let conversation_id = request_input.conversation_id;
 
         match controller.send_request_input(
             request_input,
@@ -159,9 +160,10 @@ impl SlashCommandRequest {
                     });
                 }
                 // Emit SentRequest event to trigger buffer clearing
-                if is_summarize {
+                if is_summarize || is_queued_prompt {
                     ctx.emit(BlocklistAIControllerEvent::SentRequest {
                         contains_user_query: true,
+                        conversation_id,
                         is_queued_prompt,
                         model_id,
                         stream_id,

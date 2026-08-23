@@ -425,6 +425,13 @@ impl BlocklistAIContextModel {
             if let Some(selected_text) = &self.pending_context_selected_text {
                 context.push(AIAgentContext::SelectedText(selected_text.clone()));
             }
+
+            // Pending images are part of the request context just like selected blocks and text.
+            // Keeping this conversion here makes queued prompts and direct submissions share the
+            // same AIAgentInput path instead of dropping captured images at dispatch time.
+            for image in self.pending_images() {
+                context.push(AIAgentContext::Image(image.clone()));
+            }
         }
 
         context

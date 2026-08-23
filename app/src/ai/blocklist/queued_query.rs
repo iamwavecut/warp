@@ -9,6 +9,7 @@ use crate::ai::agent::ImageContext;
 use crate::ai::agent::conversation::AIConversationId;
 use crate::ai::blocklist::{
     BlocklistAIHistoryEvent, BlocklistAIHistoryModel, PendingAttachment, PendingFile,
+    ResponseStreamId,
 };
 use crate::persistence::local_prompt_queue::{
     LocalPromptQueueAttachment, LocalPromptQueueKind, LocalPromptQueueRepository,
@@ -38,8 +39,6 @@ impl QueuedQueryId {
 /// The origin is informational for UI behavior; FIFO ordering and firing semantics are uniform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueuedQueryOrigin {
-    /// Filed while the initial Cloud Mode prompt waits to be handed off.
-    InitialCloudMode,
     /// Filed via the `/queue <prompt>` slash command.
     QueueSlashCommand,
     /// Filed via the auto-queue toggle in the warping indicator.
@@ -49,7 +48,6 @@ pub enum QueuedQueryOrigin {
 impl QueuedQueryOrigin {
     fn as_str(self) -> &'static str {
         match self {
-            Self::InitialCloudMode => "initial_cloud_mode",
             Self::QueueSlashCommand => "queue_slash_command",
             Self::AutoQueueToggle => "auto_queue_toggle",
         }
@@ -57,7 +55,6 @@ impl QueuedQueryOrigin {
 
     fn parse(value: &str) -> anyhow::Result<Self> {
         match value {
-            "initial_cloud_mode" => Ok(Self::InitialCloudMode),
             "queue_slash_command" => Ok(Self::QueueSlashCommand),
             "auto_queue_toggle" => Ok(Self::AutoQueueToggle),
             other => Err(anyhow::anyhow!("unknown queued prompt origin {other}")),
@@ -112,7 +109,7 @@ impl QueuedQuery {
             origin,
             kind: QueuedQueryKind::Prompt { attachments },
             file_fingerprints,
-            locked: matches!(origin, QueuedQueryOrigin::InitialCloudMode),
+            locked: false,
             attempt_count: 0,
             created_at: now,
             updated_at: now,
@@ -129,7 +126,7 @@ impl QueuedQuery {
             origin,
             kind: QueuedQueryKind::Command,
             file_fingerprints: Vec::new(),
-            locked: matches!(origin, QueuedQueryOrigin::InitialCloudMode),
+            locked: false,
             attempt_count: 0,
             created_at: now,
             updated_at: now,
@@ -174,7 +171,22 @@ impl QueuedQuery {
     }
 
     pub fn is_locked(&self) -> bool {
-        self.locked || matches!(self.origin, QueuedQueryOrigin::InitialCloudMode)
+        self.locked
+    }
+
+    pub fn is_dispatched(&self) -> bool {
+        self.dispatched_at.is_some()
+    }
+
+    pub fn is_in_flight(&self) -> bool {
+        self.dispatched_at.is_some() && self.local_error.is_none()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_locked_for_test(text: String, origin: QueuedQueryOrigin) -> Self {
+        let mut query = Self::new(text, origin);
+        query.locked = true;
+        query
     }
 
     fn to_repository_row(
@@ -274,6 +286,24 @@ struct ConversationQueueState {
     editing: Option<QueuedQueryId>,
     queue_next_prompt_enabled: bool,
     command_in_flight: bool,
+    command_marker: Option<CommandDispatchMarker>,
+    /// Runtime-only prompt correlation. A dispatched row loaded after restart has no marker and
+    /// therefore cannot be completed by an unrelated terminal event; it must be retried
+    /// explicitly by the user.
+    prompt_in_flight: Option<QueuedQueryId>,
+    /// Runtime-only response identity for the current prompt attempt. Conversation IDs alone are
+    /// insufficient because an unrelated stream can finish while this row is in flight.
+    prompt_dispatch_marker: Option<ResponseStreamId>,
+}
+
+/// Runtime identity for a queued shell command. The durable row records that an attempt is in
+/// flight, while this marker ties completion to the exact terminal block that was started. It is
+/// intentionally rebuilt after an explicit retry; a restart leaves the uncertain row retained.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CommandDispatchMarker {
+    query_id: QueuedQueryId,
+    block_id: String,
+    session_id: Option<u64>,
 }
 
 /// App-wide singleton owning the queued prompts and auto-queue toggle for every conversation,
@@ -283,6 +313,8 @@ struct ConversationQueueState {
 pub struct QueuedQueryModel {
     queues: HashMap<AIConversationId, ConversationQueueState>,
     repository: LocalPromptQueueRepository,
+    persistence_errors: HashMap<AIConversationId, String>,
+    startup_persistence_error: Option<String>,
 }
 
 /// Events emitted by [`QueuedQueryModel`]. Every variant carries the `conversation_id` it applies
@@ -325,6 +357,7 @@ pub enum QueuedQueryEvent {
     },
     PersistenceError {
         conversation_id: AIConversationId,
+        message: String,
     },
 }
 
@@ -344,15 +377,29 @@ impl QueuedQueryModel {
     /// Builds the production model against the app-scoped SQLite database. Tests use [`Self::new`]
     /// so they never write queue fixtures into the user's database.
     pub fn new_persistent(ctx: &mut ModelContext<Self>) -> Self {
-        let repository = crate::persistence::local_prompt_queue::LocalPromptQueueRepository::open(
-            crate::persistence::database_file_path_for_current_scope(),
-        )
-        .unwrap_or_else(|error| {
-            log::error!("failed to open durable local prompt queue: {error:#}");
-            LocalPromptQueueRepository::in_memory()
-                .expect("in-memory queue repository should be available")
-        });
-        Self::new_with_repository(repository, ctx)
+        #[cfg(feature = "local_fs")]
+        {
+            return match crate::persistence::local_prompt_queue::LocalPromptQueueRepository::open(
+                crate::persistence::database_file_path_for_current_scope(),
+            ) {
+                Ok(repository) => Self::new_with_repository(repository, ctx),
+                Err(error) => {
+                    let message = format!("durable queue is unavailable: {error:#}");
+                    log::error!("{message}");
+                    Self::new_with_repository(LocalPromptQueueRepository::unavailable(message), ctx)
+                }
+            };
+        }
+
+        #[cfg(not(feature = "local_fs"))]
+        {
+            Self::new_with_repository(
+                LocalPromptQueueRepository::unavailable(
+                    "durable local prompt queue requires native filesystem support",
+                ),
+                ctx,
+            )
+        }
     }
 
     pub fn new_with_repository(
@@ -368,6 +415,7 @@ impl QueuedQueryModel {
         });
 
         let mut queues = HashMap::new();
+        let mut startup_persistence_error = repository.startup_error();
         match repository.load_all() {
             Ok(snapshots) => {
                 for (conversation_id, snapshot) in snapshots {
@@ -391,14 +439,53 @@ impl QueuedQueryModel {
                             editing: None,
                             queue_next_prompt_enabled: snapshot.settings.queue_next_prompt_enabled,
                             command_in_flight: snapshot.settings.command_in_flight,
+                            command_marker: None,
+                            prompt_in_flight: None,
+                            prompt_dispatch_marker: None,
                         },
                     );
                 }
             }
-            Err(error) => log::error!("failed to load durable local prompt queue: {error:#}"),
+            Err(error) => {
+                let message = format!("durable queue could not be loaded: {error:#}");
+                log::error!("{message}");
+                startup_persistence_error.get_or_insert(message);
+            }
         }
 
-        Self { queues, repository }
+        Self {
+            queues,
+            repository,
+            persistence_errors: HashMap::new(),
+            startup_persistence_error,
+        }
+    }
+
+    pub fn persistence_error(&self, conversation_id: AIConversationId) -> Option<&str> {
+        self.persistence_errors
+            .get(&conversation_id)
+            .map(String::as_str)
+            .or(self.startup_persistence_error.as_deref())
+    }
+
+    fn record_persistence_error(
+        &mut self,
+        conversation_id: AIConversationId,
+        error: &anyhow::Error,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let message = format!("Queue could not be saved: {error:#}. Retry the action.");
+        log::error!("{message}");
+        self.persistence_errors
+            .insert(conversation_id, message.clone());
+        ctx.emit(QueuedQueryEvent::PersistenceError {
+            conversation_id,
+            message,
+        });
+    }
+
+    fn clear_persistence_error(&mut self, conversation_id: AIConversationId) {
+        self.persistence_errors.remove(&conversation_id);
     }
 
     fn handle_history_event(
@@ -439,6 +526,7 @@ impl QueuedQueryModel {
         if self.queues.remove(&conversation_id).is_some() {
             ctx.emit(QueuedQueryEvent::Cleared { conversation_id });
         }
+        self.persistence_errors.remove(&conversation_id);
     }
 
     fn persist_state(
@@ -521,26 +609,6 @@ impl QueuedQueryModel {
         &mut self,
         conversation_id: AIConversationId,
         ctx: &mut ModelContext<Self>,
-    ) {
-        let mut next = self
-            .queues
-            .get(&conversation_id)
-            .cloned()
-            .unwrap_or_default();
-        next.queue_next_prompt_enabled = !next.queue_next_prompt_enabled;
-        if let Err(error) = self.persist_state(conversation_id, &next) {
-            log::error!("failed to persist queued prompt toggle: {error:#}");
-            ctx.emit(QueuedQueryEvent::PersistenceError { conversation_id });
-            return;
-        }
-        self.queues.insert(conversation_id, next);
-        ctx.emit(QueuedQueryEvent::QueueNextPromptToggled { conversation_id });
-    }
-
-    pub fn try_toggle_queue_next_prompt(
-        &mut self,
-        conversation_id: AIConversationId,
-        ctx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
         let mut next = self
             .queues
@@ -548,10 +616,20 @@ impl QueuedQueryModel {
             .cloned()
             .unwrap_or_default();
         next.queue_next_prompt_enabled = !next.queue_next_prompt_enabled;
-        self.persist_state(conversation_id, &next)?;
+        self.persist_state(conversation_id, &next)
+            .inspect_err(|error| self.record_persistence_error(conversation_id, error, ctx))?;
         self.queues.insert(conversation_id, next);
+        self.clear_persistence_error(conversation_id);
         ctx.emit(QueuedQueryEvent::QueueNextPromptToggled { conversation_id });
         Ok(())
+    }
+
+    pub fn try_toggle_queue_next_prompt(
+        &mut self,
+        conversation_id: AIConversationId,
+        ctx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<()> {
+        self.toggle_queue_next_prompt(conversation_id, ctx)
     }
 
     /// Appends `query` to the tail of `conversation_id`'s queue.
@@ -560,13 +638,8 @@ impl QueuedQueryModel {
         conversation_id: AIConversationId,
         query: QueuedQuery,
         ctx: &mut ModelContext<Self>,
-    ) -> QueuedQueryId {
-        let query_id = query.id;
-        if let Err(error) = self.try_append(conversation_id, query, ctx) {
-            log::error!("failed to append local prompt queue row: {error:#}");
-            ctx.emit(QueuedQueryEvent::PersistenceError { conversation_id });
-        }
-        query_id
+    ) -> anyhow::Result<QueuedQueryId> {
+        self.try_append(conversation_id, query, ctx)
     }
 
     pub fn try_append(
@@ -582,8 +655,10 @@ impl QueuedQueryModel {
             .cloned()
             .unwrap_or_default();
         next.queue.push(query);
-        self.persist_state(conversation_id, &next)?;
+        self.persist_state(conversation_id, &next)
+            .inspect_err(|error| self.record_persistence_error(conversation_id, error, ctx))?;
         self.queues.insert(conversation_id, next);
+        self.clear_persistence_error(conversation_id);
         ctx.emit(QueuedQueryEvent::Appended {
             conversation_id,
             query_id,
@@ -597,27 +672,29 @@ impl QueuedQueryModel {
         &mut self,
         conversation_id: AIConversationId,
         ctx: &mut ModelContext<Self>,
-    ) -> Option<QueuedQuery> {
-        let mut next = self.queues.get(&conversation_id)?.clone();
-        let head = next.queue.first()?;
-        if head.is_locked() {
-            return None;
+    ) -> anyhow::Result<Option<QueuedQuery>> {
+        let Some(mut next) = self.queues.get(&conversation_id).cloned() else {
+            return Ok(None);
+        };
+        let Some(head) = next.queue.first() else {
+            return Ok(None);
+        };
+        if head.is_locked() || head.is_in_flight() {
+            return Ok(None);
         }
         let popped = next.queue.remove(0);
         if next.editing == Some(popped.id) {
             next.editing = None;
         }
-        if let Err(error) = self.persist_state(conversation_id, &next) {
-            log::error!("failed to persist queued prompt removal: {error:#}");
-            ctx.emit(QueuedQueryEvent::PersistenceError { conversation_id });
-            return None;
-        }
+        self.persist_state(conversation_id, &next)
+            .inspect_err(|error| self.record_persistence_error(conversation_id, error, ctx))?;
         self.queues.insert(conversation_id, next);
+        self.clear_persistence_error(conversation_id);
         ctx.emit(QueuedQueryEvent::Removed {
             conversation_id,
             query_id: popped.id,
         });
-        Some(popped)
+        Ok(Some(popped))
     }
 
     /// Auto-fire drain entry point for `conversation_id`. Pops the first row and tells the caller
@@ -630,7 +707,8 @@ impl QueuedQueryModel {
     ) -> Option<AutofireAction> {
         let action = self.peek_autofire(conversation_id)?;
         let query_id = self.queues.get(&conversation_id)?.queue.first()?.id;
-        self.remove_fired_row(conversation_id, query_id, ctx)?;
+        self.remove_fired_row(conversation_id, query_id, ctx)
+            .ok()??;
         Some(action)
     }
 
@@ -664,6 +742,7 @@ impl QueuedQueryModel {
 
     /// Commits the attempt marker before an external prompt or command dispatch. The head remains
     /// in memory and on disk until [`Self::complete_dispatch`] confirms the side effect.
+    #[cfg(test)]
     pub fn begin_dispatch(
         &mut self,
         conversation_id: AIConversationId,
@@ -708,8 +787,13 @@ impl QueuedQueryModel {
             return Err(error);
         }
         let command = row.is_command();
-        self.repository
-            .dispatch_row(conversation_id, query_id.as_uuid(), command)?;
+        if let Err(error) =
+            self.repository
+                .dispatch_row(conversation_id, query_id.as_uuid(), command)
+        {
+            self.record_persistence_error(conversation_id, &error, ctx);
+            return Err(error);
+        }
         let next = self
             .queues
             .get_mut(&conversation_id)
@@ -724,8 +808,13 @@ impl QueuedQueryModel {
         row.local_error = None;
         if command {
             next.command_in_flight = true;
+            next.command_marker = None;
+        } else {
+            next.prompt_in_flight = Some(query_id);
+            next.prompt_dispatch_marker = None;
         }
         ctx.notify();
+        self.clear_persistence_error(conversation_id);
         Ok(())
     }
 
@@ -742,12 +831,15 @@ impl QueuedQueryModel {
             .get(&conversation_id)
             .and_then(|state| state.queue.iter().find(|row| row.id == query_id))
             .is_some_and(QueuedQuery::is_command);
-        self.repository.set_local_error_with_command_state(
+        if let Err(error) = self.repository.set_local_error_with_command_state(
             conversation_id,
             query_id.as_uuid(),
             message,
             clear_command_in_flight,
-        )?;
+        ) {
+            self.record_persistence_error(conversation_id, &error, ctx);
+            return Err(error);
+        }
         let state = self
             .queues
             .get_mut(&conversation_id)
@@ -760,11 +852,16 @@ impl QueuedQueryModel {
         row.local_error = Some(message.to_owned());
         if clear_command_in_flight {
             state.command_in_flight = false;
+            state.command_marker = None;
+        } else if state.prompt_in_flight == Some(query_id) {
+            state.prompt_in_flight = None;
+            state.prompt_dispatch_marker = None;
         }
         ctx.emit(QueuedQueryEvent::LocalError {
             conversation_id,
             query_id,
         });
+        self.clear_persistence_error(conversation_id);
         Ok(())
     }
 
@@ -775,8 +872,16 @@ impl QueuedQueryModel {
         query_id: QueuedQueryId,
         ctx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
-        self.repository
-            .retry_row(conversation_id, query_id.as_uuid())?;
+        if !self.is_retryable(conversation_id, query_id) {
+            return Err(anyhow::anyhow!("queued row has no failed attempt to retry"));
+        }
+        if let Err(error) = self
+            .repository
+            .retry_row(conversation_id, query_id.as_uuid())
+        {
+            self.record_persistence_error(conversation_id, &error, ctx);
+            return Err(error);
+        }
         let state = self
             .queues
             .get_mut(&conversation_id)
@@ -789,6 +894,10 @@ impl QueuedQueryModel {
         row.dispatched_at = None;
         row.local_error = None;
         state.command_in_flight = false;
+        state.command_marker = None;
+        state.prompt_in_flight = None;
+        state.prompt_dispatch_marker = None;
+        self.clear_persistence_error(conversation_id);
         ctx.notify();
         Ok(())
     }
@@ -808,9 +917,17 @@ impl QueuedQueryModel {
         let Some(index) = state.queue.iter().position(|row| row.id == query_id) else {
             return Ok(None);
         };
+        if !state.queue[index].is_dispatched() || state.queue[index].has_local_error() {
+            return Ok(None);
+        }
         let is_command = state.queue[index].is_command();
-        self.repository
-            .complete_row(conversation_id, query_id.as_uuid(), is_command)?;
+        if let Err(error) =
+            self.repository
+                .complete_row(conversation_id, query_id.as_uuid(), is_command)
+        {
+            self.record_persistence_error(conversation_id, &error, ctx);
+            return Err(error);
+        }
         let state = self
             .queues
             .get_mut(&conversation_id)
@@ -821,11 +938,16 @@ impl QueuedQueryModel {
         }
         if is_command {
             state.command_in_flight = false;
+            state.command_marker = None;
+        } else if state.prompt_in_flight == Some(query_id) {
+            state.prompt_in_flight = None;
+            state.prompt_dispatch_marker = None;
         }
         ctx.emit(QueuedQueryEvent::Removed {
             conversation_id,
             query_id,
         });
+        self.clear_persistence_error(conversation_id);
         Ok(Some(removed))
     }
 
@@ -833,6 +955,79 @@ impl QueuedQueryModel {
         self.queues
             .get(&conversation_id)
             .is_some_and(|state| state.command_in_flight)
+    }
+
+    pub fn any_command_in_flight(&self) -> bool {
+        self.queues.values().any(|state| state.command_in_flight)
+    }
+
+    /// Returns true when a failed or restart-uncertain row can be retried explicitly. Active
+    /// runtime attempts remain non-retryable so the panel cannot duplicate a side effect.
+    pub fn is_retryable(&self, conversation_id: AIConversationId, query_id: QueuedQueryId) -> bool {
+        let Some(state) = self.queues.get(&conversation_id) else {
+            return false;
+        };
+        let Some(row) = state.queue.iter().find(|row| row.id() == query_id) else {
+            return false;
+        };
+        let runtime_in_flight = if row.is_command() {
+            state.command_in_flight
+        } else {
+            state.prompt_in_flight == Some(query_id)
+        };
+        !runtime_in_flight && (row.local_error().is_some() || row.is_dispatched())
+    }
+
+    /// Associates a dispatched command row with the terminal block created by the local shell.
+    /// This marker is runtime-only: an uncertain row is never auto-retried after restart.
+    pub fn set_command_dispatch_marker(
+        &mut self,
+        conversation_id: AIConversationId,
+        query_id: QueuedQueryId,
+        block_id: String,
+        session_id: Option<u64>,
+    ) -> anyhow::Result<()> {
+        let state = self
+            .queues
+            .get_mut(&conversation_id)
+            .ok_or_else(|| anyhow::anyhow!("conversation queue is missing"))?;
+        let row = state
+            .queue
+            .iter()
+            .find(|row| row.id() == query_id && row.is_command() && row.is_dispatched())
+            .ok_or_else(|| anyhow::anyhow!("queued command is not in flight"))?;
+        let _ = row;
+        if !state.command_in_flight {
+            return Err(anyhow::anyhow!("queued command gate is not in flight"));
+        }
+        state.command_marker = Some(CommandDispatchMarker {
+            query_id,
+            block_id,
+            session_id,
+        });
+        Ok(())
+    }
+
+    /// Completes the command only when a terminal completion matches its recorded block/session.
+    /// Unrelated user blocks, including those from another conversation, are ignored.
+    pub fn complete_command_for_block(
+        &mut self,
+        block_id: &str,
+        session_id: Option<u64>,
+        ctx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<Option<(AIConversationId, QueuedQuery)>> {
+        let Some((conversation_id, query_id)) =
+            self.queues.iter().find_map(|(conversation_id, state)| {
+                state.command_marker.as_ref().and_then(|marker| {
+                    (marker.block_id == block_id && marker.session_id == session_id)
+                        .then_some((*conversation_id, marker.query_id))
+                })
+            })
+        else {
+            return Ok(None);
+        };
+        let completed = self.complete_dispatch(conversation_id, query_id, ctx)?;
+        Ok(completed.map(|query| (conversation_id, query)))
     }
 
     /// Completes the command currently holding the per-conversation gate. This is called from
@@ -865,6 +1060,7 @@ impl QueuedQueryModel {
     pub fn complete_prompt_in_flight(
         &mut self,
         conversation_id: AIConversationId,
+        stream_id: &ResponseStreamId,
         ctx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Option<QueuedQuery>> {
         let Some(state) = self.queues.get(&conversation_id) else {
@@ -873,7 +1069,12 @@ impl QueuedQueryModel {
         let Some(row_id) = state
             .queue
             .first()
-            .filter(|row| !row.is_command() && row.dispatched_at.is_some())
+            .filter(|row| {
+                !row.is_command()
+                    && row.dispatched_at.is_some()
+                    && state.prompt_in_flight == Some(row.id())
+                    && state.prompt_dispatch_marker.as_ref() == Some(stream_id)
+            })
             .map(QueuedQuery::id)
         else {
             return Ok(None);
@@ -886,20 +1087,46 @@ impl QueuedQueryModel {
     pub fn fail_prompt_in_flight(
         &mut self,
         conversation_id: AIConversationId,
+        stream_id: &ResponseStreamId,
         message: &str,
         ctx: &mut ModelContext<Self>,
     ) -> anyhow::Result<bool> {
         let Some(row_id) = self
             .queues
             .get(&conversation_id)
-            .and_then(|state| state.queue.first())
-            .filter(|row| !row.is_command() && row.dispatched_at.is_some())
+            .and_then(|state| {
+                state.queue.first().filter(|row| {
+                    !row.is_command()
+                        && row.dispatched_at.is_some()
+                        && state.prompt_in_flight == Some(row.id())
+                        && state.prompt_dispatch_marker.as_ref() == Some(stream_id)
+                })
+            })
             .map(QueuedQuery::id)
         else {
             return Ok(false);
         };
         self.mark_local_error(conversation_id, row_id, message, ctx)?;
         Ok(true)
+    }
+
+    /// Associates a queued prompt with the exact response stream created by its dispatch. This
+    /// marker is runtime-only; a restart leaves the durable row uncertain and therefore requires
+    /// explicit retry.
+    pub fn set_prompt_dispatch_marker(
+        &mut self,
+        conversation_id: AIConversationId,
+        stream_id: ResponseStreamId,
+    ) -> anyhow::Result<()> {
+        let state = self
+            .queues
+            .get_mut(&conversation_id)
+            .ok_or_else(|| anyhow::anyhow!("conversation queue is missing"))?;
+        if state.prompt_in_flight.is_none() {
+            return Err(anyhow::anyhow!("queued prompt is not in flight"));
+        }
+        state.prompt_dispatch_marker = Some(stream_id);
+        Ok(())
     }
 
     /// Removes a row after a confirmed dispatch. This is separate from [`Self::begin_dispatch`]
@@ -909,25 +1136,30 @@ impl QueuedQueryModel {
         conversation_id: AIConversationId,
         query_id: QueuedQueryId,
         ctx: &mut ModelContext<Self>,
-    ) -> Option<QueuedQuery> {
-        let state = self.queues.get(&conversation_id)?.clone();
-        let index = state.queue.iter().position(|row| row.id == query_id)?;
+    ) -> anyhow::Result<Option<QueuedQuery>> {
+        let Some(state) = self.queues.get(&conversation_id).cloned() else {
+            return Ok(None);
+        };
+        let Some(index) = state.queue.iter().position(|row| row.id == query_id) else {
+            return Ok(None);
+        };
+        if state.queue[index].is_in_flight() {
+            return Ok(None);
+        }
         let mut next = state.clone();
         let removed = next.queue.remove(index);
         if next.editing == Some(query_id) {
             next.editing = None;
         }
-        if let Err(error) = self.persist_state(conversation_id, &next) {
-            log::error!("failed to persist queued prompt removal: {error:#}");
-            ctx.emit(QueuedQueryEvent::PersistenceError { conversation_id });
-            return None;
-        }
+        self.persist_state(conversation_id, &next)
+            .inspect_err(|error| self.record_persistence_error(conversation_id, error, ctx))?;
         self.queues.insert(conversation_id, next);
         ctx.emit(QueuedQueryEvent::Removed {
             conversation_id,
             query_id,
         });
-        Some(removed)
+        self.clear_persistence_error(conversation_id);
+        Ok(Some(removed))
     }
 
     /// Removes a specific row by id within `conversation_id`'s queue, if present.
@@ -936,28 +1168,30 @@ impl QueuedQueryModel {
         conversation_id: AIConversationId,
         query_id: QueuedQueryId,
         ctx: &mut ModelContext<Self>,
-    ) -> Option<QueuedQuery> {
-        let state = self.queues.get(&conversation_id)?.clone();
-        let idx = state.queue.iter().position(|q| q.id == query_id)?;
-        if state.queue[idx].is_locked() {
-            return None;
+    ) -> anyhow::Result<Option<QueuedQuery>> {
+        let Some(state) = self.queues.get(&conversation_id).cloned() else {
+            return Ok(None);
+        };
+        let Some(idx) = state.queue.iter().position(|q| q.id == query_id) else {
+            return Ok(None);
+        };
+        if state.queue[idx].is_locked() || state.queue[idx].is_in_flight() {
+            return Ok(None);
         }
         let mut next = state;
         let removed = next.queue.remove(idx);
         if next.editing == Some(query_id) {
             next.editing = None;
         }
-        if let Err(error) = self.persist_state(conversation_id, &next) {
-            log::error!("failed to persist queued prompt removal: {error:#}");
-            ctx.emit(QueuedQueryEvent::PersistenceError { conversation_id });
-            return None;
-        }
+        self.persist_state(conversation_id, &next)
+            .inspect_err(|error| self.record_persistence_error(conversation_id, error, ctx))?;
         self.queues.insert(conversation_id, next);
         ctx.emit(QueuedQueryEvent::Removed {
             conversation_id,
             query_id,
         });
-        Some(removed)
+        self.clear_persistence_error(conversation_id);
+        Ok(Some(removed))
     }
 
     /// Moves the row identified by `source_id` to position `target_index` within
@@ -969,27 +1203,29 @@ impl QueuedQueryModel {
         source_id: QueuedQueryId,
         target_index: usize,
         ctx: &mut ModelContext<Self>,
-    ) {
+    ) -> anyhow::Result<()> {
         let Some(state) = self.queues.get(&conversation_id).cloned() else {
-            return;
+            return Ok(());
         };
         let Some(source_idx) = state.queue.iter().position(|q| q.id == source_id) else {
-            return;
+            return Ok(());
         };
-        if state.queue[source_idx].is_locked() {
-            return;
+        if state.queue.iter().any(QueuedQuery::is_in_flight)
+            || state.queue[source_idx].is_locked()
+            || state.queue[source_idx].is_in_flight()
+        {
+            return Ok(());
         }
         let mut next = state;
         let row = next.queue.remove(source_idx);
         let clamped = target_index.min(next.queue.len());
         next.queue.insert(clamped, row);
-        if let Err(error) = self.persist_state(conversation_id, &next) {
-            log::error!("failed to persist queued prompt reorder: {error:#}");
-            ctx.emit(QueuedQueryEvent::PersistenceError { conversation_id });
-            return;
-        }
+        self.persist_state(conversation_id, &next)
+            .inspect_err(|error| self.record_persistence_error(conversation_id, error, ctx))?;
         self.queues.insert(conversation_id, next);
         ctx.emit(QueuedQueryEvent::Reordered { conversation_id });
+        self.clear_persistence_error(conversation_id);
+        Ok(())
     }
 
     /// Enters edit mode for `query_id` in `conversation_id`'s queue. If another row was being
@@ -999,12 +1235,17 @@ impl QueuedQueryModel {
         conversation_id: AIConversationId,
         query_id: QueuedQueryId,
         ctx: &mut ModelContext<Self>,
-    ) {
+    ) -> anyhow::Result<()> {
         let Some(state) = self.queues.get_mut(&conversation_id) else {
-            return;
+            return Ok(());
         };
-        if !state.queue.iter().any(|q| q.id == query_id) {
-            return;
+        if state
+            .queue
+            .iter()
+            .find(|q| q.id == query_id)
+            .is_none_or(QueuedQuery::is_in_flight)
+        {
+            return Ok(());
         }
         let prev_edit = state.editing.replace(query_id);
         if let Some(prev) = prev_edit
@@ -1019,6 +1260,7 @@ impl QueuedQueryModel {
             conversation_id,
             query_id,
         });
+        Ok(())
     }
 
     /// Commits the in-progress edit in `conversation_id` by replacing the row's text with
@@ -1029,55 +1271,67 @@ impl QueuedQueryModel {
         conversation_id: AIConversationId,
         new_text: String,
         ctx: &mut ModelContext<Self>,
-    ) {
+    ) -> anyhow::Result<()> {
         let Some(state) = self.queues.get(&conversation_id).cloned() else {
-            return;
+            return Ok(());
         };
         let Some(query_id) = state.editing else {
-            return;
+            return Ok(());
         };
         if new_text.is_empty() {
-            if let Some(state) = self.queues.get_mut(&conversation_id) {
-                state.editing = None;
-            }
+            let mut next = state;
+            next.editing = None;
+            self.persist_state(conversation_id, &next)
+                .inspect_err(|error| self.record_persistence_error(conversation_id, error, ctx))?;
+            self.queues.insert(conversation_id, next);
             ctx.emit(QueuedQueryEvent::EditCancelled {
                 conversation_id,
                 query_id,
             });
-            return;
+            self.clear_persistence_error(conversation_id);
+            return Ok(());
         }
         let mut next = state;
         next.editing = None;
         if let Some(row) = next.queue.iter_mut().find(|q| q.id == query_id) {
+            if row.is_in_flight() {
+                return Ok(());
+            }
             row.text = new_text;
             row.updated_at = now_millis();
+            row.dispatched_at = None;
+            row.local_error = None;
         } else {
-            return;
+            return Ok(());
         }
-        if let Err(error) = self.persist_state(conversation_id, &next) {
-            log::error!("failed to persist queued prompt edit: {error:#}");
-            ctx.emit(QueuedQueryEvent::PersistenceError { conversation_id });
-            return;
-        }
+        self.persist_state(conversation_id, &next)
+            .inspect_err(|error| self.record_persistence_error(conversation_id, error, ctx))?;
         self.queues.insert(conversation_id, next);
         ctx.emit(QueuedQueryEvent::EditCommitted {
             conversation_id,
             query_id,
         });
+        self.clear_persistence_error(conversation_id);
+        Ok(())
     }
 
     /// Cancels the in-progress edit in `conversation_id` without modifying the row's text.
-    pub fn cancel_edit(&mut self, conversation_id: AIConversationId, ctx: &mut ModelContext<Self>) {
+    pub fn cancel_edit(
+        &mut self,
+        conversation_id: AIConversationId,
+        ctx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<()> {
         let Some(state) = self.queues.get_mut(&conversation_id) else {
-            return;
+            return Ok(());
         };
         let Some(query_id) = state.editing.take() else {
-            return;
+            return Ok(());
         };
         ctx.emit(QueuedQueryEvent::EditCancelled {
             conversation_id,
             query_id,
         });
+        Ok(())
     }
 }
 

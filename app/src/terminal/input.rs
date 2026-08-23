@@ -114,7 +114,7 @@ use crate::{
             BlocklistAIController, BlocklistAIControllerEvent, BlocklistAIHistoryEvent,
             BlocklistAIHistoryModel, BlocklistAIInputEvent, BlocklistAIInputModel,
             DIFF_HUNK_ATTACHMENT_REGEX, DRIVE_OBJECT_ATTACHMENT_REGEX, InputConfig, InputType,
-            PendingAttachment, QueuedQuery, QueuedQueryModel, QueuedQueryOrigin,
+            PendingAttachment, QueuedQuery, QueuedQueryId, QueuedQueryModel, QueuedQueryOrigin,
             prompt::prompt_alert::{PromptAlertEvent, PromptAlertView},
             render_ai_agent_mode_icon, render_ai_follow_up_icon,
         },
@@ -12254,12 +12254,77 @@ impl Input {
             });
         }
         self.submit_queued_prompt(prompt, ctx);
+        if !self
+            .ai_context_model
+            .as_ref(ctx)
+            .pending_attachments()
+            .is_empty()
+        {
+            self.ai_context_model.update(ctx, |model, ctx| {
+                model.clear_pending_attachments(ctx);
+            });
+        }
+    }
+
+    /// Sends a durable queued prompt to an explicit conversation. This path never consults the
+    /// selected conversation, so a completion for conversation A cannot dispatch or consume B's
+    /// queue while the user is viewing B.
+    pub(crate) fn submit_queued_prompt_for_conversation(
+        &mut self,
+        prompt: String,
+        conversation_id: AIConversationId,
+        attachments: Vec<PendingAttachment>,
+        ctx: &mut ViewContext<Self>,
+    ) -> anyhow::Result<()> {
+        self.ai_controller.update(ctx, |controller, ctx| {
+            controller.cancel_conversation_progress(
+                conversation_id,
+                CancellationReason::FollowUpSubmitted {
+                    is_for_same_conversation: true,
+                },
+                ctx,
+            );
+        });
+
+        let had_attachments = !attachments.is_empty();
+        if had_attachments {
+            self.ai_context_model.update(ctx, |model, ctx| {
+                model.append_pending_attachments(attachments, ctx);
+            });
+        }
+
+        let send_result = self.ai_controller.update(ctx, |controller, ctx| {
+            controller.send_queued_user_query_in_conversation_with_attachments(
+                prompt,
+                conversation_id,
+                None,
+                HashMap::new(),
+                ctx,
+            )
+        });
+        if let Err(error) = send_result {
+            if had_attachments {
+                self.ai_context_model.update(ctx, |model, ctx| {
+                    model.clear_pending_attachments(ctx);
+                });
+            }
+            return Err(error);
+        }
+        if had_attachments {
+            self.ai_context_model.update(ctx, |model, ctx| {
+                model.clear_pending_attachments(ctx);
+            });
+        }
+        ctx.emit(Event::ExecuteAIQuery);
+        Ok(())
     }
 
     /// Executes a durable queued shell command without replacing an existing user draft. The
     /// terminal completion path restores that draft after the command block finishes.
     pub(crate) fn execute_queued_command(
         &mut self,
+        conversation_id: AIConversationId,
+        query_id: QueuedQueryId,
         command: &str,
         ctx: &mut ViewContext<Self>,
     ) -> bool {
@@ -12268,14 +12333,29 @@ impl Input {
         if started && !draft.is_empty() {
             self.input_contents_before_prompt_chip_command = Some(draft);
         }
+        if started {
+            let (block_id, session_id) = {
+                let model = self.model.lock();
+                let block = model.block_list().active_block();
+                (block.id().to_string(), block.session_id().map(Into::into))
+            };
+            if let Err(error) = QueuedQueryModel::handle(ctx).update(ctx, |model, _| {
+                model.set_command_dispatch_marker(conversation_id, query_id, block_id, session_id)
+            }) {
+                log::error!("failed to correlate queued command terminal block: {error:#}");
+                return false;
+            }
+        }
         started
     }
 
-    /// Checks whether the current input should be queued instead of executed.
-    /// Returns true (and queues the prompt) when the queue-next-prompt toggle is
-    /// on and the active conversation is still in progress.
-    /// Only queues when AI input is active — if the user is in shell mode the
-    /// input is not queued (so e.g. `ls` still runs in the terminal).
+    pub(crate) fn can_execute_queued_command(&self, ctx: &mut ViewContext<Self>) -> bool {
+        !self.can_execute_command(ctx).is_no()
+    }
+
+    /// Checks whether the current input should be queued instead of executed. AI-mode input is a
+    /// prompt row; shell-mode input is a command row. Both use the same per-conversation toggle
+    /// and remain FIFO while the current agent/command action is still running.
     fn maybe_queue_input_for_in_progress_conversation(
         &mut self,
         ctx: &mut ViewContext<Self>,
@@ -12284,9 +12364,7 @@ impl Input {
             return false;
         }
 
-        if !self.ai_input_model.as_ref(ctx).is_ai_input_enabled() {
-            return false;
-        }
+        let is_command = !self.ai_input_model.as_ref(ctx).is_ai_input_enabled();
 
         let Some(conversation_id) = self
             .ai_context_model
@@ -12300,13 +12378,15 @@ impl Input {
             return false;
         }
 
-        let should_queue = BlocklistAIHistoryModel::as_ref(ctx)
+        let conversation_in_progress = BlocklistAIHistoryModel::as_ref(ctx)
             .conversation(&conversation_id)
             .is_some_and(|c| {
                 !c.is_empty() && (c.status().is_in_progress() || c.status().is_blocked())
             });
+        let command_in_flight =
+            QueuedQueryModel::as_ref(ctx).has_command_in_flight(conversation_id);
 
-        if !should_queue {
+        if !conversation_in_progress && !command_in_flight {
             return false;
         }
 
@@ -12318,7 +12398,9 @@ impl Input {
         // If the input is itself a /queue command, unwrap the argument so we
         // queue "fix the tests" directly instead of "/queue fix the tests"
         // (which would double-hop through the /queue handler on re-submission).
-        let prompt = if let SlashCommandEntryState::SlashCommand(ref detected) = self
+        let prompt = if is_command {
+            prompt
+        } else if let SlashCommandEntryState::SlashCommand(ref detected) = self
             .slash_command_model
             .as_ref(ctx)
             .detect_command(&prompt, ctx)
@@ -12344,26 +12426,36 @@ impl Input {
             prompt
         };
 
+        let attachments = self
+            .ai_context_model
+            .as_ref(ctx)
+            .pending_attachments()
+            .to_vec();
+        let query = if is_command {
+            QueuedQuery::new_command(prompt, QueuedQueryOrigin::AutoQueueToggle)
+        } else {
+            QueuedQuery::new_with_attachments(
+                prompt,
+                QueuedQueryOrigin::AutoQueueToggle,
+                attachments,
+            )
+        };
+        let append_result = QueuedQueryModel::handle(ctx)
+            .update(ctx, |model, ctx| model.append(conversation_id, query, ctx));
+        if append_result.is_err() {
+            // Keep both the editor text and attachment chips intact so the user can retry after
+            // the repository becomes available. PersistenceError is rendered by the queue panel.
+            return true;
+        }
+
         self.ai_input_model.update(ctx, |model, ctx| {
             model.handle_input_buffer_submitted(ctx);
         });
         self.editor.update(ctx, |editor, ctx| {
             editor.clear_buffer(ctx);
         });
-
-        let attachments = self
-            .ai_context_model
-            .update(ctx, |model, ctx| model.take_pending_attachments(ctx));
-        QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
-            model.append(
-                conversation_id,
-                QueuedQuery::new_with_attachments(
-                    prompt,
-                    QueuedQueryOrigin::AutoQueueToggle,
-                    attachments,
-                ),
-                ctx,
-            );
+        self.ai_context_model.update(ctx, |model, ctx| {
+            model.clear_pending_attachments(ctx);
         });
 
         true
@@ -12912,7 +13004,8 @@ impl Input {
         // size of the cleared input box.
         if let BlockType::User(user_block) = &block_completed_event.block_type {
             // Only clear the input buffer for user-executed commands, not agent-executed ones.
-            let should_clear_buffer = !user_block.was_part_of_agent_interaction;
+            let should_clear_buffer = !user_block.was_part_of_agent_interaction
+                && !QueuedQueryModel::as_ref(ctx).any_command_in_flight();
             let latest_block_id = self.model.lock().block_list().active_block_id().clone();
             let input_contents_before_prompt_chip_command =
                 self.input_contents_before_prompt_chip_command.take();

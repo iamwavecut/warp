@@ -140,6 +140,9 @@ pub enum BlocklistAIControllerEvent {
     /// Emitted when a request is sent to the AI agent API.
     SentRequest {
         contains_user_query: bool,
+        /// Conversation that owns the response stream. This lets local queue dispatch correlate
+        /// completion to the exact conversation even when another pane is selected.
+        conversation_id: AIConversationId,
         /// True when this request is the first send of a previously queued prompt (e.g.
         /// via `/queue` or the auto-queue toggle) rather than a direct user submission.
         /// Subscribers that perform user-submission side effects (e.g. clearing the input
@@ -576,7 +579,7 @@ impl BlocklistAIController {
         shared_session_participant_id: Option<ParticipantId>,
         is_queued_prompt: bool,
         ctx: &mut ModelContext<Self>,
-    ) {
+    ) -> anyhow::Result<()> {
         // Store the participant who initiated this query before sending
         // so that send_query can use it when creating the exchange.
         if let Some(participant_id) = shared_session_participant_id {
@@ -616,7 +619,7 @@ impl BlocklistAIController {
 
         if let Some(slash_command_request) = SlashCommandRequest::from_query(query.as_str()) {
             slash_command_request.send_request(self, is_queued_prompt, ctx);
-            return;
+            return Ok(());
         }
 
         let (query, user_query_mode) = extract_user_query_mode(query);
@@ -742,6 +745,7 @@ impl BlocklistAIController {
                 });
             }
         }
+        send_result.map(|_| ())
     }
 
     /// Populates plan documents from user query to AIDocumentModel if not already present.
@@ -893,7 +897,7 @@ impl BlocklistAIController {
                     return;
                 }
             };
-            self.send_query(
+            let _ = self.send_query(
                 InputQuery {
                     which_task: WhichTask::Task {
                         conversation_id,
@@ -912,7 +916,7 @@ impl BlocklistAIController {
                 ctx,
             );
         } else {
-            self.send_query(
+            let _ = self.send_query(
                 InputQuery {
                     which_task: WhichTask::NewConversation,
                     input_query: InputQueryType::UserSubmittedQueryFromInput {
@@ -938,7 +942,7 @@ impl BlocklistAIController {
         conversation_id: AIConversationId,
         ctx: &mut ModelContext<Self>,
     ) {
-        self.send_user_query_in_conversation_internal(
+        let _ = self.send_user_query_in_conversation_internal(
             query,
             conversation_id,
             None,
@@ -958,7 +962,7 @@ impl BlocklistAIController {
         participant_id: Option<ParticipantId>,
         ctx: &mut ModelContext<Self>,
     ) {
-        self.send_user_query_in_conversation_internal(
+        let _ = self.send_user_query_in_conversation_internal(
             query,
             conversation_id,
             participant_id,
@@ -981,7 +985,7 @@ impl BlocklistAIController {
         participant_id: Option<ParticipantId>,
         ctx: &mut ModelContext<Self>,
     ) {
-        self.send_user_query_in_conversation_internal(
+        let _ = self.send_user_query_in_conversation_internal(
             query,
             conversation_id,
             participant_id,
@@ -993,6 +997,29 @@ impl BlocklistAIController {
         );
     }
 
+    /// Sends a queued prompt with attachments into an explicit conversation. The queued marker
+    /// is preserved while the input context is built, so images/files captured at enqueue time
+    /// reach the same [`AIAgentInput`] as an ordinary user submission.
+    pub fn send_queued_user_query_in_conversation_with_attachments(
+        &mut self,
+        query: String,
+        conversation_id: AIConversationId,
+        participant_id: Option<ParticipantId>,
+        additional_attachments: HashMap<String, AIAgentAttachment>,
+        ctx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<()> {
+        self.send_user_query_in_conversation_internal(
+            query,
+            conversation_id,
+            participant_id,
+            false, // skip_running_command_detection
+            additional_attachments,
+            EntrypointType::UserInitiated,
+            /*is_queued_prompt*/ true,
+            ctx,
+        )
+    }
+
     /// Sends the given user query to the AI model, with additional referenced attachments.
     pub fn send_user_query_in_conversation_with_attachments(
         &mut self,
@@ -1002,7 +1029,7 @@ impl BlocklistAIController {
         additional_attachments: HashMap<String, AIAgentAttachment>,
         ctx: &mut ModelContext<Self>,
     ) {
-        self.send_user_query_in_conversation_internal(
+        let _ = self.send_user_query_in_conversation_internal(
             query,
             conversation_id,
             participant_id,
@@ -1025,7 +1052,7 @@ impl BlocklistAIController {
         participant_id: Option<ParticipantId>,
         ctx: &mut ModelContext<Self>,
     ) {
-        self.send_user_query_in_conversation_internal(
+        let _ = self.send_user_query_in_conversation_internal(
             query,
             conversation_id,
             participant_id,
@@ -1048,7 +1075,7 @@ impl BlocklistAIController {
         entrypoint_type: EntrypointType,
         is_queued_prompt: bool,
         ctx: &mut ModelContext<Self>,
-    ) {
+    ) -> anyhow::Result<()> {
         let is_viewer = self
             .terminal_model
             .lock()
@@ -1096,11 +1123,10 @@ impl BlocklistAIController {
                 }) {
                     Ok(task_id) => (task_id, Some(running_command)),
                     Err(e) => {
-                        report_error!(
-                            anyhow::Error::new(e)
-                                .context("Could not create CLI subagent task optimistically")
-                        );
-                        return;
+                        let message =
+                            format!("Could not create CLI subagent task optimistically: {e}");
+                        report_error!(anyhow!(message.clone()));
+                        return Err(anyhow!(message));
                     }
                 }
             } else if let Some(task_id) = active_block
@@ -1118,7 +1144,9 @@ impl BlocklistAIController {
                         "Tried to send follow-up query for non-existent conversation",
                         extra: { "conversation_id" => ?conversation_id }
                     );
-                    return;
+                    return Err(anyhow!(
+                        "Tried to send follow-up query for non-existent conversation"
+                    ));
                 };
 
                 (conversation.get_root_task_id().clone(), None)
@@ -1165,7 +1193,7 @@ impl BlocklistAIController {
             participant_id,
             is_queued_prompt,
             ctx,
-        );
+        )
     }
 
     /// Sends a request triggered by a zero-state prompt suggestion.
@@ -1175,7 +1203,7 @@ impl BlocklistAIController {
         ctx: &mut ModelContext<Self>,
     ) {
         let participant_id = self.get_sharer_participant_id();
-        self.send_query(
+        let _ = self.send_query(
             InputQuery {
                 which_task: WhichTask::NewConversation,
                 input_query: InputQueryType::UserSubmittedQueryFromInput {
@@ -1215,7 +1243,7 @@ impl BlocklistAIController {
             }
             None => WhichTask::NewConversation,
         };
-        self.send_query(
+        let _ = self.send_query(
             InputQuery {
                 which_task,
                 input_query: InputQueryType::AIInputType { ai_input },
@@ -1225,7 +1253,7 @@ impl BlocklistAIController {
             participant_id,
             /*is_queued_prompt*/ false,
             ctx,
-        )
+        );
     }
 
     pub fn send_slash_command_request(
@@ -1342,7 +1370,7 @@ impl BlocklistAIController {
             if trigger.is_some() { "Some" } else { "None" },
             trigger_type,
         );
-        self.send_query(
+        let _ = self.send_query(
             InputQuery {
                 which_task,
                 input_query: InputQueryType::AIInputType {
@@ -1950,6 +1978,7 @@ impl BlocklistAIController {
 
         ctx.emit(BlocklistAIControllerEvent::SentRequest {
             contains_user_query: input_contains_user_query,
+            conversation_id: conversation_data.id,
             is_queued_prompt,
             model_id: request_params.model.clone(),
             stream_id: response_stream_id.clone(),

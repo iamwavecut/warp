@@ -3028,19 +3028,23 @@ fn question_mark_does_not_toggle_shortcuts_while_editing_queued_prompt() {
         });
 
         // Queue a prompt and put it into inline edit mode; the main input buffer stays empty.
-        let query_id = QueuedQueryModel::handle(&app).update(&mut app, |model, ctx| {
-            model.append(
-                conversation_id,
-                QueuedQuery::new(
-                    "queued prompt".to_owned(),
-                    QueuedQueryOrigin::QueueSlashCommand,
-                ),
-                ctx,
-            )
-        });
-        QueuedQueryModel::handle(&app).update(&mut app, |model, ctx| {
-            model.enter_edit_mode(conversation_id, query_id, ctx);
-        });
+        let query_id = QueuedQueryModel::handle(&app)
+            .update(&mut app, |model, ctx| {
+                model.append(
+                    conversation_id,
+                    QueuedQuery::new(
+                        "queued prompt".to_owned(),
+                        QueuedQueryOrigin::QueueSlashCommand,
+                    ),
+                    ctx,
+                )
+            })
+            .expect("queue append should persist");
+        QueuedQueryModel::handle(&app)
+            .update(&mut app, |model, ctx| {
+                model.enter_edit_mode(conversation_id, query_id, ctx)
+            })
+            .expect("queue edit setup should persist");
 
         let focus_path = [terminal.id(), input.id(), editor.id()];
 

@@ -70,11 +70,21 @@ fn build_row_state(
                 ctx.dispatch_typed_action(QueuedPromptsPanelAction::DeleteRow(query_id));
             })
     });
+    let retry_button = ctx.add_typed_action_view(move |_| {
+        ActionButton::new("Retry", NakedTheme)
+            .with_icon(TerminalIcon::Refresh)
+            .with_tooltip("Retry queued prompt")
+            .with_size(ButtonSize::XSmall)
+            .on_click(move |ctx| {
+                ctx.dispatch_typed_action(QueuedPromptsPanelAction::RetryRow(query_id));
+            })
+    });
 
     QueuedPromptRowState {
         mouse_state: MouseStateHandle::default(),
         edit_button,
         delete_button,
+        retry_button,
         draggable_state: DraggableState::default(),
     }
 }
@@ -84,6 +94,7 @@ struct QueuedPromptRowState {
     mouse_state: MouseStateHandle,
     edit_button: ViewHandle<ActionButton>,
     delete_button: ViewHandle<ActionButton>,
+    retry_button: ViewHandle<ActionButton>,
     draggable_state: DraggableState,
 }
 
@@ -116,6 +127,7 @@ pub enum QueuedPromptsPanelAction {
     ToggleCollapsed,
     StartEditingRow(QueuedQueryId),
     DeleteRow(QueuedQueryId),
+    RetryRow(QueuedQueryId),
     StartDrag(QueuedQueryId),
     DragMoved { rect: RectF },
     DropEnd,
@@ -264,7 +276,9 @@ impl QueuedPromptsPanelView {
             | QueuedQueryEvent::LocalError {
                 conversation_id, ..
             }
-            | QueuedQueryEvent::PersistenceError { conversation_id } => *conversation_id,
+            | QueuedQueryEvent::PersistenceError {
+                conversation_id, ..
+            } => *conversation_id,
         };
         if event_conv_id != active_conv_id {
             return;
@@ -358,10 +372,11 @@ impl QueuedPromptsPanelView {
         let new_text = self
             .edit_editor
             .read(ctx, |editor, ctx| editor.buffer_text(ctx).trim().to_owned());
-        QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
-            model.commit_edit(conv_id, new_text, ctx);
-        });
-        ctx.emit(QueuedPromptsPanelEvent::EditEnded);
+        let result = QueuedQueryModel::handle(ctx)
+            .update(ctx, |model, ctx| model.commit_edit(conv_id, new_text, ctx));
+        if result.is_ok() {
+            ctx.emit(QueuedPromptsPanelEvent::EditEnded);
+        }
     }
 
     fn cancel_edit(&mut self, ctx: &mut ViewContext<Self>) {
@@ -371,10 +386,11 @@ impl QueuedPromptsPanelView {
         if self.editing_row_id(ctx).is_none() {
             return;
         }
-        QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
-            model.cancel_edit(conv_id, ctx);
-        });
-        ctx.emit(QueuedPromptsPanelEvent::EditEnded);
+        let result =
+            QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| model.cancel_edit(conv_id, ctx));
+        if result.is_ok() {
+            ctx.emit(QueuedPromptsPanelEvent::EditEnded);
+        }
     }
 
     /// Visibility predicate used by the host to decide whether to render the panel.
@@ -393,6 +409,9 @@ impl QueuedPromptsPanelView {
             return false;
         };
         QueuedQueryModel::as_ref(ctx).has_queue(conv_id)
+            || QueuedQueryModel::as_ref(ctx)
+                .persistence_error(conv_id)
+                .is_some()
     }
 }
 
@@ -411,17 +430,26 @@ impl TypedActionView for QueuedPromptsPanelView {
             QueuedPromptsPanelAction::StartEditingRow(query_id) => {
                 let query_id = *query_id;
                 QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.enter_edit_mode(conv_id, query_id, ctx);
+                    if let Err(error) = model.enter_edit_mode(conv_id, query_id, ctx) {
+                        log::error!("failed to enter queued prompt edit: {error:#}");
+                    }
                 });
             }
             QueuedPromptsPanelAction::DeleteRow(query_id) => {
                 let query_id = *query_id;
                 let removed = QueuedQueryModel::handle(ctx)
                     .update(ctx, |model, ctx| model.remove_by_id(conv_id, query_id, ctx));
-                if let Some(removed) = removed {
+                if let Ok(Some(removed)) = removed {
                     ctx.emit(QueuedPromptsPanelEvent::RowDeleted {
                         text: removed.text().to_owned(),
                     });
+                }
+            }
+            QueuedPromptsPanelAction::RetryRow(query_id) => {
+                if let Err(error) = QueuedQueryModel::handle(ctx)
+                    .update(ctx, |model, ctx| model.retry_row(conv_id, *query_id, ctx))
+                {
+                    log::error!("failed to retry queued prompt: {error:#}");
                 }
             }
             QueuedPromptsPanelAction::StartDrag(query_id) => {
@@ -429,9 +457,8 @@ impl TypedActionView for QueuedPromptsPanelView {
                 // If the row is in edit mode, cancel that edit so dragging is unambiguous.
                 let editing = QueuedQueryModel::as_ref(ctx).editing_row(conv_id);
                 if editing == Some(query_id) {
-                    QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
-                        model.cancel_edit(conv_id, ctx);
-                    });
+                    let _ = QueuedQueryModel::handle(ctx)
+                        .update(ctx, |model, ctx| model.cancel_edit(conv_id, ctx));
                 }
                 let from_index = QueuedQueryModel::as_ref(ctx)
                     .queue(conv_id)
@@ -460,10 +487,13 @@ impl TypedActionView for QueuedPromptsPanelView {
                 if new_index == current_index {
                     return;
                 }
-                QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.reorder(conv_id, source_id, new_index, ctx);
-                });
-                ctx.notify();
+                if let Err(error) = QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.reorder(conv_id, source_id, new_index, ctx)
+                }) {
+                    log::error!("failed to reorder queued prompts: {error:#}");
+                } else {
+                    ctx.notify();
+                }
             }
             QueuedPromptsPanelAction::DropEnd => {
                 let Some(source_id) = self.dragging_query_id.take() else {
@@ -507,6 +537,7 @@ impl View for QueuedPromptsPanelView {
         let appearance = Appearance::as_ref(app);
         let queue_model = QueuedQueryModel::as_ref(app);
         let queue: Vec<_> = queue_model.queue(conv_id).to_vec();
+        let persistence_error = queue_model.persistence_error(conv_id).map(str::to_owned);
         let editing_row_id = queue_model.editing_row(conv_id);
         let collapsed = self.collapsed;
 
@@ -518,6 +549,19 @@ impl View for QueuedPromptsPanelView {
 
         if !collapsed {
             let mut body = Flex::column();
+
+            if let Some(message) = persistence_error {
+                body.add_child(
+                    Text::new(
+                        message,
+                        appearance.ui_font_family(),
+                        appearance.ui_font_size(),
+                    )
+                    .with_color(appearance.theme().ui_error_color().into())
+                    .with_selectable(false)
+                    .finish(),
+                );
+            }
 
             for (index, query) in queue.iter().enumerate() {
                 let row_state = self
@@ -533,6 +577,8 @@ impl View for QueuedPromptsPanelView {
                     index,
                     text: query.text().to_owned(),
                     local_error: query.local_error().map(str::to_owned),
+                    is_dispatched: query.is_dispatched(),
+                    is_retryable: queue_model.is_retryable(conv_id, query.id()),
                     is_in_edit_mode,
                     is_being_dragged,
                     edit_editor: &self.edit_editor,
@@ -674,6 +720,8 @@ struct RenderRowProps<'a> {
     index: usize,
     text: String,
     local_error: Option<String>,
+    is_dispatched: bool,
+    is_retryable: bool,
     is_in_edit_mode: bool,
     is_being_dragged: bool,
     edit_editor: &'a ViewHandle<EditorView>,
@@ -690,6 +738,8 @@ fn render_row(props: RenderRowProps<'_>) -> Box<dyn Element> {
         index,
         text,
         local_error,
+        is_dispatched,
+        is_retryable,
         is_in_edit_mode,
         is_being_dragged,
         edit_editor,
@@ -708,6 +758,7 @@ fn render_row(props: RenderRowProps<'_>) -> Box<dyn Element> {
     let editor_line_height = ui_font_size * DEFAULT_UI_LINE_HEIGHT_RATIO;
     let max_prompt_height = editor_line_height * MAX_PROMPT_LINES;
     let preview_text = truncate_from_end(&text, 200);
+    let has_local_error = local_error.is_some();
     let editor_handle = edit_editor.clone();
     let editor_scroll_state = edit_editor_scroll_state.clone();
 
@@ -715,6 +766,7 @@ fn render_row(props: RenderRowProps<'_>) -> Box<dyn Element> {
         mouse_state,
         edit_button,
         delete_button,
+        retry_button,
         draggable_state,
     } = row_state;
 
@@ -766,6 +818,18 @@ fn render_row(props: RenderRowProps<'_>) -> Box<dyn Element> {
                     .finish(),
                 );
             }
+            if is_retryable {
+                content.add_child(
+                    Text::new(
+                        "Previous attempt was uncertain; retry explicitly.",
+                        ui_font_family,
+                        ui_font_size * 0.9,
+                    )
+                    .with_color(theme.sub_text_color(theme.surface_1()).into())
+                    .with_selectable(false)
+                    .finish(),
+                );
+            }
             ConstrainedBox::new(content.finish())
                 .with_max_height(max_prompt_height)
                 .finish()
@@ -790,10 +854,16 @@ fn render_row(props: RenderRowProps<'_>) -> Box<dyn Element> {
             let mut buttons = Flex::row()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_spacing(4.);
-            if !is_in_edit_mode {
+            let row_is_mutable = !is_dispatched || has_local_error;
+            if !is_in_edit_mode && row_is_mutable {
                 buttons.add_child(ChildView::new(&edit_button).finish());
             }
-            buttons.add_child(ChildView::new(&delete_button).finish());
+            if row_is_mutable {
+                buttons.add_child(ChildView::new(&delete_button).finish());
+            }
+            if is_retryable {
+                buttons.add_child(ChildView::new(&retry_button).finish());
+            }
             row.add_child(buttons.finish());
         }
 
@@ -814,6 +884,10 @@ fn render_row(props: RenderRowProps<'_>) -> Box<dyn Element> {
     let position_id = queue_row_position_id(panel_view_id, index);
 
     if is_in_edit_mode {
+        return SavePosition::new(row_inner, &position_id).finish();
+    }
+
+    if is_dispatched && !has_local_error {
         return SavePosition::new(row_inner, &position_id).finish();
     }
 

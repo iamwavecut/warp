@@ -193,7 +193,7 @@ pub struct LocalPromptQueueRepository {
 
 enum RepositoryInner {
     Sqlite(SqliteConnection),
-    Fail,
+    Unavailable(String),
 }
 
 impl LocalPromptQueueRepository {
@@ -224,11 +224,27 @@ impl LocalPromptQueueRepository {
         })
     }
 
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(RepositoryInner::Unavailable(message.into()))),
+        }
+    }
+
+    pub fn startup_error(&self) -> Option<String> {
+        let inner = self.inner.borrow();
+        match &*inner {
+            RepositoryInner::Unavailable(message) => Some(message.clone()),
+            RepositoryInner::Sqlite(_) => None,
+        }
+    }
+
     /// A deterministic failure repository used by model tests to prove persistence-before-state.
     #[cfg(test)]
     pub fn failing_for_test() -> Self {
         Self {
-            inner: Rc::new(RefCell::new(RepositoryInner::Fail)),
+            inner: Rc::new(RefCell::new(RepositoryInner::Unavailable(
+                "injected local prompt queue write failure".to_owned(),
+            ))),
         }
     }
 
@@ -553,6 +569,12 @@ impl LocalPromptQueueRepository {
                 .bind::<sql_types::Text, _>(conversation_id.to_string())
                 .execute(connection)
                 .context("deleting local prompt queue settings")?;
+                diesel::sql_query(format!(
+                    "DELETE FROM {QUARANTINE_TABLE} WHERE conversation_id = ?"
+                ))
+                .bind::<sql_types::Text, _>(conversation_id.to_string())
+                .execute(connection)
+                .context("deleting local prompt queue quarantine diagnostics")?;
                 Ok(())
             })
         })
@@ -658,7 +680,7 @@ impl LocalPromptQueueRepository {
             .map_err(|_| anyhow!("queue repository is already in use"))?;
         match &mut *inner {
             RepositoryInner::Sqlite(connection) => f(connection),
-            RepositoryInner::Fail => Err(anyhow!("injected local prompt queue write failure")),
+            RepositoryInner::Unavailable(message) => Err(anyhow!(message.clone())),
         }
     }
 }
@@ -668,29 +690,31 @@ fn quarantine_invalid_conversation_rows(
     conversation_id: &str,
     reason: &str,
 ) -> Result<()> {
-    diesel::sql_query(format!(
-        "INSERT INTO {QUARANTINE_TABLE} (row_id, conversation_id, raw_row, reason, quarantined_at)
-         SELECT id, conversation_id, kind || ':' || position || ':' || text, ?, ?
-           FROM {QUEUE_TABLE} WHERE conversation_id = ?"
-    ))
-    .bind::<sql_types::Text, _>(reason)
-    .bind::<sql_types::BigInt, _>(now_millis())
-    .bind::<sql_types::Text, _>(conversation_id)
-    .execute(connection)
-    .context("quarantining rows with an invalid conversation id")?;
-    diesel::sql_query(format!(
-        "DELETE FROM {QUEUE_TABLE} WHERE conversation_id = ?"
-    ))
-    .bind::<sql_types::Text, _>(conversation_id)
-    .execute(connection)
-    .context("removing rows with an invalid conversation id")?;
-    diesel::sql_query(format!(
-        "DELETE FROM {SETTINGS_TABLE} WHERE conversation_id = ?"
-    ))
-    .bind::<sql_types::Text, _>(conversation_id)
-    .execute(connection)
-    .context("removing settings with an invalid conversation id")?;
-    Ok(())
+    connection.transaction::<_, anyhow::Error, _>(|connection| {
+        diesel::sql_query(format!(
+            "INSERT INTO {QUARANTINE_TABLE} (row_id, conversation_id, raw_row, reason, quarantined_at)
+             SELECT id, conversation_id, kind || ':' || position || ':' || text, ?, ?
+               FROM {QUEUE_TABLE} WHERE conversation_id = ?"
+        ))
+        .bind::<sql_types::Text, _>(reason)
+        .bind::<sql_types::BigInt, _>(now_millis())
+        .bind::<sql_types::Text, _>(conversation_id)
+        .execute(connection)
+        .context("quarantining rows with an invalid conversation id")?;
+        diesel::sql_query(format!(
+            "DELETE FROM {QUEUE_TABLE} WHERE conversation_id = ?"
+        ))
+        .bind::<sql_types::Text, _>(conversation_id)
+        .execute(connection)
+        .context("removing rows with an invalid conversation id")?;
+        diesel::sql_query(format!(
+            "DELETE FROM {SETTINGS_TABLE} WHERE conversation_id = ?"
+        ))
+        .bind::<sql_types::Text, _>(conversation_id)
+        .execute(connection)
+        .context("removing settings with an invalid conversation id")?;
+        Ok(())
+    })
 }
 
 fn create_tables(connection: &mut SqliteConnection) -> Result<()> {
@@ -902,7 +926,7 @@ fn convert_db_row(
     }
     if !matches!(
         db_row.origin.as_str(),
-        "initial_cloud_mode" | "queue_slash_command" | "auto_queue_toggle"
+        "queue_slash_command" | "auto_queue_toggle"
     ) {
         return Err(format!("unknown queue row origin {}", db_row.origin));
     }

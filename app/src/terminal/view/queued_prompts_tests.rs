@@ -30,10 +30,13 @@ where
 fn complete_drain_pops_head_and_returns_submit_action() {
     // On Complete, the next queued prompt fires via Submit.
     with_singleton(|mut app, model, conv| {
-        model.update(&mut app, |m, ctx| {
-            m.append(conv, user_query("first"), ctx);
-            m.append(conv, user_query("second"), ctx);
-        });
+        model
+            .update(&mut app, |m, ctx| {
+                m.append(conv, user_query("first"), ctx)?;
+                m.append(conv, user_query("second"), ctx)?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .expect("queue append should persist");
 
         let action = model.update(&mut app, |m, ctx| m.pop_for_autofire(conv, ctx));
         match action {
@@ -52,11 +55,16 @@ fn complete_drain_with_first_row_in_edit_mode_returns_pop_from_edit_mode() {
     // When the first row is being edited, drain produces a PopFromEditMode action carrying the
     // row's last-committed text (per spec, NOT any uncommitted live-editor buffer text).
     with_singleton(|mut app, model, conv| {
-        let id_a = model.update(&mut app, |m, ctx| m.append(conv, user_query("first"), ctx));
-        model.update(&mut app, |m, ctx| {
-            m.append(conv, user_query("second"), ctx);
-            m.enter_edit_mode(conv, id_a, ctx);
-        });
+        let id_a = model
+            .update(&mut app, |m, ctx| m.append(conv, user_query("first"), ctx))
+            .expect("queue append should persist");
+        model
+            .update(&mut app, |m, ctx| {
+                m.append(conv, user_query("second"), ctx)?;
+                m.enter_edit_mode(conv, id_a, ctx)?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .expect("queue edit setup should persist");
 
         let action = model.update(&mut app, |m, ctx| m.pop_for_autofire(conv, ctx));
         match action {
@@ -77,11 +85,16 @@ fn complete_drain_with_non_empty_input_preserves_edited_head_row() {
     // The host skips autofire when the queue head is being edited and the input already contains
     // text, which leaves the queued row in place for the next completion.
     with_singleton(|mut app, model, conv| {
-        let id_a = model.update(&mut app, |m, ctx| m.append(conv, user_query("first"), ctx));
-        model.update(&mut app, |m, ctx| {
-            m.append(conv, user_query("second"), ctx);
-            m.enter_edit_mode(conv, id_a, ctx);
-        });
+        let id_a = model
+            .update(&mut app, |m, ctx| m.append(conv, user_query("first"), ctx))
+            .expect("queue append should persist");
+        model
+            .update(&mut app, |m, ctx| {
+                m.append(conv, user_query("second"), ctx)?;
+                m.enter_edit_mode(conv, id_a, ctx)?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .expect("queue edit setup should persist");
 
         let simulated_input_is_non_empty = true;
         if !(simulated_input_is_non_empty
@@ -112,13 +125,18 @@ fn error_or_cancel_drain_pops_front_when_input_is_empty() {
     // On Error/Cancelled with an empty input, the next queued prompt's text is restored to the
     // input by popping it (which the host then writes into the buffer).
     with_singleton(|mut app, model, conv| {
-        model.update(&mut app, |m, ctx| {
-            m.append(conv, user_query("first"), ctx);
-            m.append(conv, user_query("second"), ctx);
-        });
+        model
+            .update(&mut app, |m, ctx| {
+                m.append(conv, user_query("first"), ctx)?;
+                m.append(conv, user_query("second"), ctx)?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .expect("queue append should persist");
 
-        let popped = model.update(&mut app, |m, ctx| m.pop_front(conv, ctx));
-        let popped = popped.expect("queue had a head");
+        let popped = model
+            .update(&mut app, |m, ctx| m.pop_front(conv, ctx))
+            .expect("queue removal should persist")
+            .expect("queue had a head");
         assert_eq!(popped.text(), "first");
         model.read(&app, |m, _| {
             assert_eq!(m.queue(conv).len(), 1);
@@ -134,10 +152,13 @@ fn error_or_cancel_drain_leaves_queue_intact_when_input_is_non_empty() {
     // The host (`TerminalView`) gates the pop on input-empty. We model that here by simply not
     // popping when the simulated input is non-empty, and asserting the queue remains unchanged.
     with_singleton(|mut app, model, conv| {
-        model.update(&mut app, |m, ctx| {
-            m.append(conv, user_query("first"), ctx);
-            m.append(conv, user_query("second"), ctx);
-        });
+        model
+            .update(&mut app, |m, ctx| {
+                m.append(conv, user_query("first"), ctx)?;
+                m.append(conv, user_query("second"), ctx)?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .expect("queue append should persist");
 
         let simulated_input_is_non_empty = true;
         if !simulated_input_is_non_empty {
@@ -156,14 +177,19 @@ fn complete_drain_after_error_drain_continues_with_next_row() {
     // After an Error/Cancelled drain pops one row and the user later submits successfully, the
     // *next* Complete drain pops the following row.
     with_singleton(|mut app, model, conv| {
-        model.update(&mut app, |m, ctx| {
-            m.append(conv, user_query("first"), ctx);
-            m.append(conv, user_query("second"), ctx);
-            m.append(conv, user_query("third"), ctx);
-        });
+        model
+            .update(&mut app, |m, ctx| {
+                m.append(conv, user_query("first"), ctx)?;
+                m.append(conv, user_query("second"), ctx)?;
+                m.append(conv, user_query("third"), ctx)?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .expect("queue append should persist");
 
         // Error: input is empty, pop "first" and restore to input.
-        let popped = model.update(&mut app, |m, ctx| m.pop_front(conv, ctx));
+        let popped = model
+            .update(&mut app, |m, ctx| m.pop_front(conv, ctx))
+            .expect("queue removal should persist");
         assert_eq!(
             popped.map(|q| q.text().to_owned()),
             Some("first".to_owned())
@@ -194,10 +220,13 @@ fn drain_is_isolated_per_conversation() {
     // A drain for conversation A must not pop rows from conversation B.
     with_singleton(|mut app, model, conv_a| {
         let conv_b = AIConversationId::new();
-        model.update(&mut app, |m, ctx| {
-            m.append(conv_a, user_query("a-first"), ctx);
-            m.append(conv_b, user_query("b-first"), ctx);
-        });
+        model
+            .update(&mut app, |m, ctx| {
+                m.append(conv_a, user_query("a-first"), ctx)?;
+                m.append(conv_b, user_query("b-first"), ctx)?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .expect("queue append should persist");
 
         let action = model.update(&mut app, |m, ctx| m.pop_for_autofire(conv_a, ctx));
         match action {

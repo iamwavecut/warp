@@ -794,8 +794,10 @@ impl Input {
                 if should_queue {
                     let attachments = self
                         .ai_context_model
-                        .update(ctx, |model, ctx| model.take_pending_attachments(ctx));
-                    QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+                        .as_ref(ctx)
+                        .pending_attachments()
+                        .to_vec();
+                    let append_result = QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
                         model.append(
                             conversation_id,
                             QueuedQuery::new_with_attachments(
@@ -804,7 +806,18 @@ impl Input {
                                 attachments,
                             ),
                             ctx,
-                        );
+                        )
+                    });
+                    if append_result.is_err() {
+                        // PersistenceError is rendered by the queue panel. Keep the editor and
+                        // attachment chips so the user can retry after the repository recovers.
+                        return true;
+                    }
+                    self.editor.update(ctx, |editor, ctx| {
+                        editor.clear_buffer(ctx);
+                    });
+                    self.ai_context_model.update(ctx, |model, ctx| {
+                        model.clear_pending_attachments(ctx);
                     });
                 } else {
                     self.submit_queued_prompt(prompt, ctx);

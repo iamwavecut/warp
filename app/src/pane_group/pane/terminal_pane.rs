@@ -359,12 +359,9 @@ impl PaneContent for TerminalPane {
         ctx: &mut ViewContext<PaneGroup>,
     ) {
         if matches!(detach_type, DetachType::Closed) {
-            // Only immediately clear conversations and delete blocks if the session is being
-            // permanently closed.
-            BlocklistAIHistoryModel::handle(ctx).update(ctx, |history_model, ctx| {
-                history_model
-                    .clear_conversations_for_terminal_surface(self.terminal_view(ctx).id(), ctx);
-            });
+            // Pane closure is reversible from the queue's perspective. Durable queued prompts
+            // are removed only by explicit conversation/history deletion, not by detaching the
+            // terminal pane or clearing its rendered blocks.
             self.delete_blocks(ctx);
         }
 

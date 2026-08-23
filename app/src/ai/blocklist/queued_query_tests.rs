@@ -12,7 +12,9 @@ use super::{
     QueuedQueryOrigin,
 };
 use crate::ai::agent::conversation::AIConversationId;
-use crate::ai::blocklist::{BlocklistAIHistoryModel, PendingAttachment, PendingFile};
+use crate::ai::blocklist::{
+    BlocklistAIHistoryModel, PendingAttachment, PendingFile, ResponseStreamId,
+};
 use crate::persistence::local_prompt_queue::{
     LocalPromptQueueAttachment, LocalPromptQueueKind, LocalPromptQueueRepository,
     LocalPromptQueueRow,
@@ -49,8 +51,8 @@ fn user_query(text: &str) -> QueuedQuery {
     QueuedQuery::new(text.to_owned(), QueuedQueryOrigin::QueueSlashCommand)
 }
 
-fn initial_cloud_mode_query(text: &str) -> QueuedQuery {
-    QueuedQuery::new(text.to_owned(), QueuedQueryOrigin::InitialCloudMode)
+fn locked_query(text: &str) -> QueuedQuery {
+    QueuedQuery::new_locked_for_test(text.to_owned(), QueuedQueryOrigin::QueueSlashCommand)
 }
 
 fn append_user(
@@ -59,9 +61,11 @@ fn append_user(
     conversation_id: AIConversationId,
     text: &str,
 ) -> QueuedQueryId {
-    model.update(app, |model, ctx| {
-        model.append(conversation_id, user_query(text), ctx)
-    })
+    model
+        .update(app, |model, ctx| {
+            model.append(conversation_id, user_query(text), ctx)
+        })
+        .expect("queue append should persist")
 }
 
 #[test]
@@ -96,9 +100,11 @@ fn append_from_each_user_origin_lands_in_the_queue() {
         ];
         for (i, origin) in origins.iter().enumerate() {
             let text = format!("p{i}");
-            model.update(&mut app, |m, ctx| {
-                m.append(conv, QueuedQuery::new(text, *origin), ctx)
-            });
+            model
+                .update(&mut app, |m, ctx| {
+                    m.append(conv, QueuedQuery::new(text, *origin), ctx)
+                })
+                .expect("queue append should persist");
         }
         model.read(&app, |model, _| {
             let queue = model.queue(conv);
@@ -118,9 +124,11 @@ fn queue_next_prompt_toggle_defaults_false_and_emits_event() {
             assert!(!model.is_queue_next_prompt_enabled(conv));
         });
 
-        model.update(&mut app, |model, ctx| {
-            model.toggle_queue_next_prompt(conv, ctx);
-        });
+        model
+            .update(&mut app, |model, ctx| {
+                model.toggle_queue_next_prompt(conv, ctx)
+            })
+            .expect("queue toggle should persist");
 
         model.read(&app, |model, _| {
             assert!(model.is_queue_next_prompt_enabled(conv));
@@ -141,7 +149,9 @@ fn toggle_state_is_isolated_per_conversation() {
         let conv_a = AIConversationId::new();
         let conv_b = AIConversationId::new();
 
-        model.update(&mut app, |m, ctx| m.toggle_queue_next_prompt(conv_a, ctx));
+        model
+            .update(&mut app, |m, ctx| m.toggle_queue_next_prompt(conv_a, ctx))
+            .expect("queue toggle should persist");
         model.read(&app, |m, _| {
             assert!(m.is_queue_next_prompt_enabled(conv_a));
             assert!(!m.is_queue_next_prompt_enabled(conv_b));
@@ -180,8 +190,10 @@ fn pop_front_removes_head_and_emits_removed() {
         let _id_b = append_user(&model, &mut app, conv, "second");
         events.borrow_mut().clear();
 
-        let popped = model.update(&mut app, |m, ctx| m.pop_front(conv, ctx));
-        let popped = popped.expect("queue had a head");
+        let popped = model
+            .update(&mut app, |m, ctx| m.pop_front(conv, ctx))
+            .expect("queue removal should persist")
+            .expect("queue had a head");
         assert_eq!(popped.id(), id_a);
         assert_eq!(popped.text(), "first");
 
@@ -345,7 +357,9 @@ fn remove_by_id_removes_only_the_targeted_row() {
         let _id_b = append_user(&model, &mut app, conv, "second");
         let _id_c = append_user(&model, &mut app, conv, "third");
 
-        let removed = model.update(&mut app, |m, ctx| m.remove_by_id(conv, id_a, ctx));
+        let removed = model
+            .update(&mut app, |m, ctx| m.remove_by_id(conv, id_a, ctx))
+            .expect("queue removal should persist");
         assert_eq!(
             removed.map(|r| r.text().to_owned()),
             Some("first".to_owned())
@@ -494,7 +508,7 @@ fn has_autofireable_prompt_is_false_when_only_a_locked_head_is_queued() {
     with_model(|mut app, model, _events| {
         let conv = AIConversationId::new();
         model.update(&mut app, |m, ctx| {
-            m.append(conv, initial_cloud_mode_query("initial"), ctx)
+            m.append(conv, locked_query("initial"), ctx)
         });
         model.read(&app, |m, _| assert!(!m.has_autofireable_prompt(conv)));
     });
@@ -506,7 +520,7 @@ fn has_autofireable_prompt_is_false_when_a_locked_head_precedes_a_prompt() {
     with_model(|mut app, model, _events| {
         let conv = AIConversationId::new();
         model.update(&mut app, |m, ctx| {
-            m.append(conv, initial_cloud_mode_query("initial"), ctx)
+            m.append(conv, locked_query("initial"), ctx)
         });
         append_user(&model, &mut app, conv, "follow up");
         model.read(&app, |m, _| assert!(!m.has_autofireable_prompt(conv)));
@@ -626,6 +640,104 @@ fn durable_repository_retains_dispatched_row_and_attempt_after_restart() {
 }
 
 #[test]
+fn restart_uncertain_prompt_requires_explicit_retry_and_cannot_be_completed_by_unrelated_event() {
+    let repository = LocalPromptQueueRepository::in_memory().expect("queue database");
+    let conversation_id = AIConversationId::new();
+    let row_id = uuid::Uuid::new_v4();
+    repository
+        .replace_conversation(
+            conversation_id,
+            &[LocalPromptQueueRow::prompt(
+                row_id,
+                conversation_id,
+                0,
+                "uncertain prompt",
+                "queue_slash_command",
+                vec![],
+            )],
+            false,
+        )
+        .expect("row should persist");
+    repository
+        .dispatch_row(conversation_id, row_id, false)
+        .expect("dispatch marker should persist");
+
+    App::test((), |mut app| async move {
+        initialize_history_persistence_for_tests(&mut app);
+        app.add_singleton_model(|_| BlocklistAIHistoryModel::new_for_test());
+        let model =
+            app.add_singleton_model(|ctx| QueuedQueryModel::new_with_repository(repository, ctx));
+
+        model.read(&app, |model, _| {
+            assert!(model.queue(conversation_id)[0].is_dispatched());
+            assert!(!model.has_autofireable_prompt(conversation_id));
+            assert!(model.is_retryable(conversation_id, QueuedQueryId::from_uuid(row_id)));
+        });
+        let unrelated_completion = model.update(&mut app, |model, ctx| {
+            model.complete_prompt_in_flight(conversation_id, &ResponseStreamId::new_for_test(), ctx)
+        });
+        assert!(matches!(unrelated_completion, Ok(None)));
+
+        model
+            .update(&mut app, |model, ctx| {
+                model.retry_row(conversation_id, QueuedQueryId::from_uuid(row_id), ctx)
+            })
+            .expect("explicit retry should clear the uncertain marker");
+        model.read(&app, |model, _| {
+            assert!(model.has_autofireable_prompt(conversation_id));
+            assert_eq!(model.queue(conversation_id)[0].attempt_count(), 1);
+        });
+    });
+}
+
+#[test]
+fn prompt_completion_requires_the_dispatched_response_stream_marker() {
+    with_model(|mut app, model, _events| {
+        let conversation_id = AIConversationId::new();
+        let query_id = model
+            .update(&mut app, |model, ctx| {
+                model.append(
+                    conversation_id,
+                    QueuedQuery::new(
+                        "stream-correlated prompt".to_owned(),
+                        QueuedQueryOrigin::QueueSlashCommand,
+                    ),
+                    ctx,
+                )
+            })
+            .expect("prompt should append");
+        model
+            .update(&mut app, |model, ctx| {
+                model.begin_dispatch(conversation_id, query_id, ctx)
+            })
+            .expect("prompt should dispatch");
+
+        let dispatched_stream = ResponseStreamId::new_for_test();
+        let unrelated_stream = ResponseStreamId::new_for_test();
+        model
+            .update(&mut app, |model, _| {
+                model.set_prompt_dispatch_marker(conversation_id, dispatched_stream.clone())
+            })
+            .expect("stream marker should attach");
+        let unrelated_completion = model.update(&mut app, |model, ctx| {
+            model.complete_prompt_in_flight(conversation_id, &unrelated_stream, ctx)
+        });
+        assert!(matches!(unrelated_completion, Ok(None)));
+        model.read(&app, |model, _| {
+            assert_eq!(model.queue(conversation_id).len(), 1);
+        });
+
+        let completion = model.update(&mut app, |model, ctx| {
+            model.complete_prompt_in_flight(conversation_id, &dispatched_stream, ctx)
+        });
+        assert!(matches!(completion, Ok(Some(_))));
+        model.read(&app, |model, _| {
+            assert!(model.queue(conversation_id).is_empty());
+        });
+    });
+}
+
+#[test]
 fn durable_model_keeps_state_and_events_unchanged_when_persistence_fails() {
     let repository = LocalPromptQueueRepository::failing_for_test();
     App::test((), |mut app| async move {
@@ -657,7 +769,16 @@ fn durable_model_keeps_state_and_events_unchanged_when_persistence_fails() {
         model.read(&app, |model, _| {
             assert!(model.queue(conversation_id).is_empty())
         });
-        assert!(events.borrow().is_empty());
+        assert!(events.borrow().iter().any(|event| matches!(
+            event,
+            QueuedQueryEvent::PersistenceError {
+                conversation_id: event_conversation_id,
+                ..
+            } if *event_conversation_id == conversation_id
+        )));
+        model.read(&app, |model, _| {
+            assert!(model.persistence_error(conversation_id).is_some());
+        });
     });
 }
 
@@ -677,9 +798,11 @@ fn queued_file_attachment_change_retains_row_and_records_local_error() {
             })],
         );
         let query_id = query.id();
-        model.update(&mut app, |model, ctx| {
-            model.append(conversation_id, query, ctx);
-        });
+        model
+            .update(&mut app, |model, ctx| {
+                model.append(conversation_id, query, ctx)
+            })
+            .expect("queue append should persist");
         fs::write(&path, "after with a different size").expect("test attachment should change");
 
         let result = model.update(&mut app, |model, ctx| {
@@ -705,23 +828,27 @@ fn queued_file_attachment_change_retains_row_and_records_local_error() {
 fn queued_command_blocks_next_row_until_completion_and_retry_is_explicit() {
     with_model(|mut app, model, _events| {
         let conversation_id = AIConversationId::new();
-        let command_id = model.update(&mut app, |model, ctx| {
-            model.append(
-                conversation_id,
-                QueuedQuery::new_command(
-                    "printf queued".into(),
-                    QueuedQueryOrigin::QueueSlashCommand,
-                ),
-                ctx,
-            )
-        });
-        model.update(&mut app, |model, ctx| {
-            model.append(
-                conversation_id,
-                QueuedQuery::new("after command".into(), QueuedQueryOrigin::QueueSlashCommand),
-                ctx,
-            );
-        });
+        let command_id = model
+            .update(&mut app, |model, ctx| {
+                model.append(
+                    conversation_id,
+                    QueuedQuery::new_command(
+                        "printf queued".into(),
+                        QueuedQueryOrigin::QueueSlashCommand,
+                    ),
+                    ctx,
+                )
+            })
+            .expect("command append should persist");
+        model
+            .update(&mut app, |model, ctx| {
+                model.append(
+                    conversation_id,
+                    QueuedQuery::new("after command".into(), QueuedQueryOrigin::QueueSlashCommand),
+                    ctx,
+                )
+            })
+            .expect("prompt append should persist");
 
         model
             .update(&mut app, |model, ctx| {
@@ -746,6 +873,58 @@ fn queued_command_blocks_next_row_until_completion_and_retry_is_explicit() {
                 model.peek_autofire(conversation_id),
                 Some(AutofireAction::Submit { .. })
             ));
+        });
+    });
+}
+
+#[test]
+fn queued_command_completion_requires_its_terminal_block_marker() {
+    with_model(|mut app, model, _events| {
+        let conversation_id = AIConversationId::new();
+        let command_id = model
+            .update(&mut app, |model, ctx| {
+                model.append(
+                    conversation_id,
+                    QueuedQuery::new_command(
+                        "printf marker".into(),
+                        QueuedQueryOrigin::QueueSlashCommand,
+                    ),
+                    ctx,
+                )
+            })
+            .expect("command append should persist");
+        model
+            .update(&mut app, |model, ctx| {
+                model.begin_dispatch(conversation_id, command_id, ctx)
+            })
+            .expect("command dispatch marker should persist");
+        model
+            .update(&mut app, |model, _| {
+                model.set_command_dispatch_marker(
+                    conversation_id,
+                    command_id,
+                    "queued-block".into(),
+                    Some(7),
+                )
+            })
+            .expect("command block marker should be recorded");
+
+        let unrelated = model.update(&mut app, |model, ctx| {
+            model.complete_command_for_block("other-block", Some(7), ctx)
+        });
+        assert!(matches!(unrelated, Ok(None)));
+        model.read(&app, |model, _| {
+            assert_eq!(model.queue(conversation_id).len(), 1);
+        });
+
+        let completed = model
+            .update(&mut app, |model, ctx| {
+                model.complete_command_for_block("queued-block", Some(7), ctx)
+            })
+            .expect("matching command completion should persist");
+        assert!(completed.is_some());
+        model.read(&app, |model, _| {
+            assert!(model.queue(conversation_id).is_empty());
         });
     });
 }
