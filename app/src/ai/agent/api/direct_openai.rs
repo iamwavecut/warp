@@ -1389,15 +1389,13 @@ fn openai_messages_from_api_message_with_tool_policy(
 
 fn historical_tool_call_conversion_error(tool_call: &api::message::ToolCall) -> anyhow::Error {
     match tool_call.tool.as_ref() {
-        Some(api::message::tool_call::Tool::AskUserQuestion(question))
-            if question
-                .questions
-                .iter()
-                .any(|question| question.question_type.is_none()) =>
-        {
-            anyhow::anyhow!(
-                "historical ask_user_question contains a question without multiple_choice"
-            )
+        Some(api::message::tool_call::Tool::AskUserQuestion(question)) => {
+            match validate_ask_user_question(question) {
+                Ok(()) => anyhow::anyhow!(
+                    "historical ask_user_question cannot be represented by the OpenAI-compatible provider"
+                ),
+                Err(error) => error,
+            }
         }
         Some(_) => anyhow::anyhow!(
             "historical local tool call cannot be represented by the OpenAI-compatible provider"
@@ -2063,11 +2061,7 @@ fn openai_tool_call_from_api_tool_call(
 ) -> Option<OpenAIToolCall> {
     let tool = tool_call.tool.as_ref()?;
     if let api::message::tool_call::Tool::AskUserQuestion(question) = tool {
-        if question
-            .questions
-            .iter()
-            .any(|question| question.question_type.is_none())
-        {
+        if validate_ask_user_question(question).is_err() {
             return None;
         }
     }
@@ -3143,7 +3137,7 @@ fn ask_user_question_arg(args: &Value) -> Result<api::AskUserQuestion, AIApiErro
             "ask_user_question requires at least one question"
         )));
     }
-    Ok(api::AskUserQuestion {
+    let question = api::AskUserQuestion {
         questions: questions
             .iter()
             .map(|question| {
@@ -3213,7 +3207,60 @@ fn ask_user_question_arg(args: &Value) -> Result<api::AskUserQuestion, AIApiErro
                 })
             })
             .collect::<Result<Vec<_>, AIApiError>>()?,
-    })
+    };
+    validate_ask_user_question(&question).map_err(AIApiError::Other)?;
+    Ok(question)
+}
+
+fn validate_ask_user_question(question: &api::AskUserQuestion) -> Result<(), anyhow::Error> {
+    if question.questions.is_empty() {
+        return Err(anyhow::anyhow!(
+            "ask_user_question requires at least one question"
+        ));
+    }
+    for question in &question.questions {
+        if question.question_id.is_empty() {
+            return Err(anyhow::anyhow!(
+                "ask_user_question question_id must not be empty"
+            ));
+        }
+        if question.question.is_empty() {
+            return Err(anyhow::anyhow!(
+                "ask_user_question question text must not be empty"
+            ));
+        }
+        let Some(api::ask_user_question::question::QuestionType::MultipleChoice(multiple_choice)) =
+            question.question_type.as_ref()
+        else {
+            return Err(anyhow::anyhow!(
+                "ask_user_question requires a multiple_choice question type"
+            ));
+        };
+        if multiple_choice.options.is_empty() {
+            return Err(anyhow::anyhow!(
+                "ask_user_question multiple_choice requires at least one option"
+            ));
+        }
+        if multiple_choice
+            .options
+            .iter()
+            .any(|option| option.label.is_empty())
+        {
+            return Err(anyhow::anyhow!(
+                "ask_user_question option labels must not be empty"
+            ));
+        }
+        let recommended_option_index = i64::from(multiple_choice.recommended_option_index);
+        if recommended_option_index != -1
+            && (recommended_option_index < 0
+                || recommended_option_index >= multiple_choice.options.len() as i64)
+        {
+            return Err(anyhow::anyhow!(
+                "ask_user_question recommended_option_index must be -1 or point to an available option"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn use_computer_arg(args: &Value) -> Result<api::message::tool_call::UseComputer, AIApiError> {
@@ -4713,6 +4760,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                     "documents",
                     json!({
                         "type": "array",
+                        "minItems": 1,
                         "items": {
                             "type": "object",
                             "properties": {
@@ -4736,7 +4784,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
             json_schema_object(
                 [(
                     "diffs",
-                    json!({"type": "array", "items": {"type": "object", "properties": {"document_id": {"type": "string"}, "search": {"type": "string"}, "replace": {"type": "string"}}, "required": ["document_id", "search", "replace"], "additionalProperties": false}}),
+                    json!({"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"document_id": {"type": "string"}, "search": {"type": "string"}, "replace": {"type": "string"}}, "required": ["document_id", "search", "replace"], "additionalProperties": false}}),
                 )],
                 ["diffs"],
             ),
@@ -4750,7 +4798,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
             json_schema_object(
                 [(
                     "documents",
-                    json!({"type": "array", "items": {"type": "object", "properties": {"content": {"type": "string"}, "title": {"type": "string"}}, "required": ["content"], "additionalProperties": false}}),
+                    json!({"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"content": {"type": "string"}, "title": {"type": "string"}}, "required": ["content"], "additionalProperties": false}}),
                 )],
                 ["documents"],
             ),
@@ -4767,7 +4815,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                     ("base_branch", json!({"type": "string"})),
                     (
                         "comments",
-                        json!({"type": "array", "items": {"type": "object", "properties": {"comment_id": {"type": "string"}, "author": {"type": "string"}, "last_modified_timestamp": {"type": "string"}, "comment_body": {"type": "string"}, "parent_comment_id": {"type": "string"}, "html_url": {"type": "string"}, "location": {"type": "object", "properties": {"file_path": {"type": "string"}, "line": {"type": "object", "properties": {"diff_hunk": {"type": "string"}, "range": {"type": "object", "properties": {"start": {"type": "integer", "minimum": 0}, "end": {"type": "integer", "minimum": 0}}, "required": ["start", "end"], "additionalProperties": false}, "side": {"type": "string", "enum": ["NEW", "OLD"]}}, "required": ["range"], "additionalProperties": false}}, "required": ["file_path"], "additionalProperties": false}}, "required": ["comment_id", "comment_body"], "additionalProperties": false}}),
+                        json!({"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"comment_id": {"type": "string"}, "author": {"type": "string"}, "last_modified_timestamp": {"type": "string"}, "comment_body": {"type": "string"}, "parent_comment_id": {"type": "string"}, "html_url": {"type": "string"}, "location": {"type": "object", "properties": {"file_path": {"type": "string"}, "line": {"type": "object", "properties": {"diff_hunk": {"type": "string"}, "range": {"type": "object", "properties": {"start": {"type": "integer", "minimum": 0}, "end": {"type": "integer", "minimum": 0}}, "required": ["start", "end"], "additionalProperties": false}, "side": {"type": "string", "enum": ["NEW", "OLD"]}}, "required": ["range"], "additionalProperties": false}}, "required": ["file_path"], "additionalProperties": false}}, "required": ["comment_id", "comment_body"], "additionalProperties": false}}),
                     ),
                 ],
                 ["repo_path", "comments"],
@@ -4793,7 +4841,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
             json_schema_object(
                 [(
                     "questions",
-                    json!({"type": "array", "items": {"type": "object", "properties": {"question_id": {"type": "string"}, "question": {"type": "string"}, "multiple_choice": {"type": "object", "properties": {"options": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"label": {"type": "string"}}, "required": ["label"], "additionalProperties": false}}, "recommended_option_index": {"type": "integer", "minimum": -1}, "is_multiselect": {"type": "boolean"}, "supports_other": {"type": "boolean"}}, "required": ["options"], "additionalProperties": false}}, "required": ["question_id", "question", "multiple_choice"], "additionalProperties": false}}),
+                    json!({"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"question_id": {"type": "string"}, "question": {"type": "string"}, "multiple_choice": {"type": "object", "properties": {"options": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"label": {"type": "string"}}, "required": ["label"], "additionalProperties": false}}, "recommended_option_index": {"type": "integer", "minimum": -1}, "is_multiselect": {"type": "boolean"}, "supports_other": {"type": "boolean"}}, "required": ["options"], "additionalProperties": false}}, "required": ["question_id", "question", "multiple_choice"], "additionalProperties": false}}),
                 )],
                 ["questions"],
             ),
@@ -4808,7 +4856,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                 [
                     (
                         "actions",
-                        json!({"type": "array", "items": computer_action_json_schema()}),
+                        json!({"type": "array", "minItems": 1, "items": computer_action_json_schema()}),
                     ),
                     ("action_summary", json!({"type": "string"})),
                     (
@@ -6636,45 +6684,241 @@ mod tests {
             .expect(0)
             .create_async()
             .await;
-        let malformed_tool_call = api::Message {
-            id: "call-message".to_string(),
-            task_id: "task-1".to_string(),
-            request_id: "request-1".to_string(),
-            timestamp: None,
-            server_message_data: String::new(),
-            citations: vec![],
-            message: Some(api::message::Message::ToolCall(api::message::ToolCall {
-                tool_call_id: "call-1".to_string(),
-                tool: Some(api::message::tool_call::Tool::AskUserQuestion(
-                    api::AskUserQuestion {
-                        questions: vec![api::ask_user_question::Question {
-                            question_id: "q-1".to_string(),
-                            question: "Choose".to_string(),
-                            question_type: None,
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: Default::default(),
+        };
+
+        let valid_question = || api::ask_user_question::Question {
+            question_id: "q-1".to_string(),
+            question: "Choose".to_string(),
+            question_type: Some(
+                api::ask_user_question::question::QuestionType::MultipleChoice(
+                    api::ask_user_question::MultipleChoice {
+                        options: vec![api::ask_user_question::Option {
+                            label: "yes".to_string(),
                         }],
+                        recommended_option_index: 0,
+                        is_multiselect: false,
+                        supports_other: false,
                     },
-                )),
-            })),
+                ),
+            ),
         };
-        let orphan_result = api::Message {
-            id: "result-message".to_string(),
-            task_id: "task-1".to_string(),
-            request_id: "request-2".to_string(),
-            timestamp: None,
-            server_message_data: String::new(),
-            citations: vec![],
-            message: Some(api::message::Message::ToolCallResult(
-                api::message::ToolCallResult {
-                    tool_call_id: "call-1".to_string(),
-                    context: None,
-                    result: None,
+        let invalid_cases = vec![
+            (
+                "empty questions",
+                api::AskUserQuestion { questions: vec![] },
+            ),
+            (
+                "empty question id",
+                api::AskUserQuestion {
+                    questions: vec![api::ask_user_question::Question {
+                        question_id: String::new(),
+                        question: "history-secret-question".to_string(),
+                        ..valid_question()
+                    }],
                 },
-            )),
+            ),
+            (
+                "empty question text",
+                api::AskUserQuestion {
+                    questions: vec![api::ask_user_question::Question {
+                        question: String::new(),
+                        ..valid_question()
+                    }],
+                },
+            ),
+            (
+                "missing multiple choice",
+                api::AskUserQuestion {
+                    questions: vec![api::ask_user_question::Question {
+                        question_type: None,
+                        ..valid_question()
+                    }],
+                },
+            ),
+            (
+                "empty options",
+                api::AskUserQuestion {
+                    questions: vec![api::ask_user_question::Question {
+                        question_type: Some(
+                            api::ask_user_question::question::QuestionType::MultipleChoice(
+                                api::ask_user_question::MultipleChoice {
+                                    options: vec![],
+                                    ..match valid_question().question_type.unwrap() {
+                                        api::ask_user_question::question::QuestionType::MultipleChoice(
+                                            multiple_choice,
+                                        ) => multiple_choice,
+                                    }
+                                },
+                            ),
+                        ),
+                        ..valid_question()
+                    }],
+                },
+            ),
+            (
+                "empty option label",
+                api::AskUserQuestion {
+                    questions: vec![api::ask_user_question::Question {
+                        question_type: Some(
+                            api::ask_user_question::question::QuestionType::MultipleChoice(
+                                api::ask_user_question::MultipleChoice {
+                                    options: vec![api::ask_user_question::Option {
+                                        label: String::new(),
+                                    }],
+                                    ..match valid_question().question_type.unwrap() {
+                                        api::ask_user_question::question::QuestionType::MultipleChoice(
+                                            multiple_choice,
+                                        ) => multiple_choice,
+                                    }
+                                },
+                            ),
+                        ),
+                        ..valid_question()
+                    }],
+                },
+            ),
+            (
+                "recommended index below sentinel",
+                api::AskUserQuestion {
+                    questions: vec![api::ask_user_question::Question {
+                        question_type: Some(
+                            api::ask_user_question::question::QuestionType::MultipleChoice(
+                                api::ask_user_question::MultipleChoice {
+                                    recommended_option_index: -2,
+                                    ..match valid_question().question_type.unwrap() {
+                                        api::ask_user_question::question::QuestionType::MultipleChoice(
+                                            multiple_choice,
+                                        ) => multiple_choice,
+                                    }
+                                },
+                            ),
+                        ),
+                        ..valid_question()
+                    }],
+                },
+            ),
+            (
+                "recommended index out of range",
+                api::AskUserQuestion {
+                    questions: vec![api::ask_user_question::Question {
+                        question_type: Some(
+                            api::ask_user_question::question::QuestionType::MultipleChoice(
+                                api::ask_user_question::MultipleChoice {
+                                    recommended_option_index: 1,
+                                    ..match valid_question().question_type.unwrap() {
+                                        api::ask_user_question::question::QuestionType::MultipleChoice(
+                                            multiple_choice,
+                                        ) => multiple_choice,
+                                    }
+                                },
+                            ),
+                        ),
+                        ..valid_question()
+                    }],
+                },
+            ),
+        ];
+        let params_for = |question: api::AskUserQuestion| super::super::RequestParams {
+            tasks: vec![api::Task {
+                id: "task-1".to_string(),
+                messages: vec![
+                    api::Message {
+                        id: "call-message".to_string(),
+                        task_id: "task-1".to_string(),
+                        request_id: "request-1".to_string(),
+                        timestamp: None,
+                        server_message_data: String::new(),
+                        citations: vec![],
+                        message: Some(api::message::Message::ToolCall(api::message::ToolCall {
+                            tool_call_id: "call-1".to_string(),
+                            tool: Some(api::message::tool_call::Tool::AskUserQuestion(question)),
+                        })),
+                    },
+                    api::Message {
+                        id: "result-message".to_string(),
+                        task_id: "task-1".to_string(),
+                        request_id: "request-2".to_string(),
+                        timestamp: None,
+                        server_message_data: String::new(),
+                        citations: vec![],
+                        message: Some(api::message::Message::ToolCallResult(
+                            api::message::ToolCallResult {
+                                tool_call_id: "call-1".to_string(),
+                                context: None,
+                                result: None,
+                            },
+                        )),
+                    },
+                ],
+                ..Default::default()
+            }],
+            ..super::super::RequestParams::new_for_test()
         };
+
+        for (label, question) in invalid_cases {
+            let error = generate(
+                route.clone(),
+                params_for(question),
+                vec![api::ToolType::AskUserQuestion],
+            )
+            .await
+            .err()
+            .expect("invalid persisted history must fail before creating a response stream");
+            assert!(
+                error.to_string().contains("ask_user_question"),
+                "{label} should identify the malformed local tool"
+            );
+            assert!(
+                !error.to_string().contains("history-secret-question"),
+                "{label} must not echo persisted user content"
+            );
+        }
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn public_generate_round_trips_valid_historical_ask_user_question() {
+        let mut server = mockito::Server::new_async().await;
+        let question = api::ask_user_question::Question {
+            question_id: "q-1".to_string(),
+            question: "Choose".to_string(),
+            question_type: Some(
+                api::ask_user_question::question::QuestionType::MultipleChoice(
+                    api::ask_user_question::MultipleChoice {
+                        options: vec![api::ask_user_question::Option {
+                            label: "yes".to_string(),
+                        }],
+                        recommended_option_index: -1,
+                        is_multiselect: false,
+                        supports_other: true,
+                    },
+                ),
+            ),
+        };
+        let expected_tool = api::message::tool_call::Tool::AskUserQuestion(api::AskUserQuestion {
+            questions: vec![question],
+        });
         let params = super::super::RequestParams {
             tasks: vec![api::Task {
                 id: "task-1".to_string(),
-                messages: vec![malformed_tool_call, orphan_result],
+                messages: vec![api::Message {
+                    id: "call-message".to_string(),
+                    task_id: "task-1".to_string(),
+                    request_id: "request-1".to_string(),
+                    timestamp: None,
+                    server_message_data: String::new(),
+                    citations: vec![],
+                    message: Some(api::message::Message::ToolCall(api::message::ToolCall {
+                        tool_call_id: "call-1".to_string(),
+                        tool: Some(expected_tool.clone()),
+                    })),
+                }],
                 ..Default::default()
             }],
             ..super::super::RequestParams::new_for_test()
@@ -6686,12 +6930,47 @@ mod tests {
             api_key: None,
             capabilities: Default::default(),
         };
+        let tools = openai_tools_for_supported_tools(&[api::ToolType::AskUserQuestion]);
+        let expected_messages = openai_messages_from_params_with_tool_policy(
+            &params,
+            &tools,
+            route.context_char_budget(),
+            false,
+        )
+        .expect("valid historical question should serialize");
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_body(Matcher::Json(
+                serde_json::to_value(ChatCompletionRequest {
+                    model: route.model.clone(),
+                    messages: expected_messages.clone(),
+                    stream: true,
+                    tools,
+                    tool_choice: Some("auto"),
+                    parallel_tool_calls: Some(true),
+                })
+                .unwrap(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"choices":[{"message":{"content":"done"},"finish_reason":"stop"}]}"#)
+            .expect(1)
+            .create_async()
+            .await;
 
-        let error = generate(route, params, vec![api::ToolType::AskUserQuestion])
+        let mut response = generate(route, params, vec![api::ToolType::AskUserQuestion])
             .await
-            .err()
-            .expect("invalid persisted history must fail before creating a response stream");
-        assert!(error.to_string().contains("multiple_choice"));
+            .expect("valid historical question should reach the local endpoint");
+        while let Some(event) = response.next().await {
+            event.expect("valid historical question response should decode");
+        }
+        let assistant = expected_messages
+            .iter()
+            .find(|message| message.role == "assistant")
+            .expect("serialized history should contain the assistant tool call");
+        let parsed = api_tool_from_openai_tool_call(&assistant.tool_calls[0])
+            .expect("serialized historical question should parse back");
+        assert_eq!(parsed, expected_tool);
         mock.assert_async().await;
     }
 
@@ -7250,6 +7529,10 @@ mod tests {
         let multiple_choice = &ask.function.parameters["properties"]["questions"]["items"]["properties"]
             ["multiple_choice"];
         assert_eq!(multiple_choice["type"], "object");
+        assert_eq!(
+            ask.function.parameters["properties"]["questions"]["minItems"],
+            1
+        );
         assert_eq!(multiple_choice["properties"]["options"]["minItems"], 1);
         assert_eq!(
             multiple_choice["properties"]["recommended_option_index"]["minimum"],
@@ -7275,6 +7558,35 @@ mod tests {
             duration["properties"]["nanos"],
             json!({"type": "integer", "minimum": 0, "maximum": 999999999_i64})
         );
+    }
+
+    #[test]
+    fn non_empty_parser_arrays_publish_min_items_in_local_tool_schemas() {
+        let tools = openai_tools_for_supported_tools(&[
+            api::ToolType::ReadDocuments,
+            api::ToolType::EditDocuments,
+            api::ToolType::CreateDocuments,
+            api::ToolType::InsertReviewComments,
+            api::ToolType::AskUserQuestion,
+            api::ToolType::UseComputer,
+        ]);
+        for (tool_name, property) in [
+            ("read_documents", "documents"),
+            ("edit_documents", "diffs"),
+            ("create_documents", "documents"),
+            ("insert_review_comments", "comments"),
+            ("ask_user_question", "questions"),
+            ("use_computer", "actions"),
+        ] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.function.name == tool_name)
+                .unwrap_or_else(|| panic!("{tool_name} schema"));
+            assert_eq!(
+                tool.function.parameters["properties"][property]["minItems"], 1,
+                "{tool_name}.{property} must reject the empty array"
+            );
+        }
     }
 
     #[test]
