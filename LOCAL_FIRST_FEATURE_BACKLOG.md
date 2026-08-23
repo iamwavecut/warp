@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `099988b0d`.
+- Current local implementation head: `d4b611c1`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -279,6 +279,18 @@ local process. Do not bundle or silently download a model.
 **Estimate / risk:** 3–5 days / medium.
 
 ### P1.5 Persist and enable the prompt queue
+
+**Delivered in code:** `bdd6b8357`, `71f73b3c4`, `e3ed1578b`, `d4b611c1`.
+The local SQLite queue now persists prompt and command rows, attachments,
+ordering, retries, lock and dispatch state, and per-conversation settings.
+Semantic fixes made persistence fail closed, isolated queued attachments from
+the current draft, correlated dispatch/completion with the owning conversation
+and shell block, preserved uncertain rows for explicit retry, and kept pane
+closure distinct from conversation deletion.
+
+Focused default and `local_only` suites passed 35 queue tests and 8 panel tests
+in each mode; the final conversation-scoped shell regression also passed. The
+all-target and bundle gate is batched with P1.6 and P1.7.
 
 The queue model, panel, reorder/edit behavior, and `/queue` path already exist,
 but the feature is not default and its state lives only in memory. Add a local
