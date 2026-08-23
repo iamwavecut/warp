@@ -14,7 +14,8 @@ use warp_multi_agent_api as api;
 
 use crate::ai::agent::{
     AIAgentActionResult, AIAgentActionResultType, AIAgentAttachment, AIAgentContext, AIAgentInput,
-    AnyFileContent, DriveObjectPayload, MarkdownActionResult, UserQueryMode,
+    AnyFileContent, DriveObjectPayload, MarkdownActionResult, PassiveSuggestionResultType,
+    PassiveSuggestionTrigger, UserQueryMode,
 };
 use crate::ai::llms::LLMId;
 use crate::server::server_api::AIApiError;
@@ -762,7 +763,7 @@ pub(super) async fn generate(
     };
     let long_running_shell_controls_advertised =
         supports_complete_long_running_shell_family(&advertised_supported_tools);
-    let input_messages = api_messages_from_inputs(&task_id, &request_id, &params.input);
+    let input_messages = api_messages_from_inputs(&task_id, &request_id, &params.input)?;
     let chat_messages = openai_messages_from_params_with_tool_policy_and_vision(
         &params,
         &tools,
@@ -887,6 +888,15 @@ fn tasks_contain_image(tasks: &[api::Task]) -> bool {
                     .context
                     .as_ref()
                     .is_some_and(|context| !context.images.is_empty()),
+                Some(api::message::Message::PassiveSuggestionResult(result)) => result
+                    .context
+                    .as_ref()
+                    .is_some_and(|context| !context.images.is_empty()),
+                Some(api::message::Message::InvokeSkill(invoke_skill)) => invoke_skill
+                    .user_query
+                    .as_ref()
+                    .and_then(|query| query.context.as_ref())
+                    .is_some_and(|context| !context.images.is_empty()),
                 _ => false,
             })
     })
@@ -928,6 +938,13 @@ fn validate_openai_contexts(
                 Some(api::message::Message::UserQuery(query)) => query.context.as_ref(),
                 Some(api::message::Message::SystemQuery(query)) => query.context.as_ref(),
                 Some(api::message::Message::ToolCallResult(result)) => result.context.as_ref(),
+                Some(api::message::Message::PassiveSuggestionResult(result)) => {
+                    result.context.as_ref()
+                }
+                Some(api::message::Message::InvokeSkill(invoke_skill)) => invoke_skill
+                    .user_query
+                    .as_ref()
+                    .and_then(|query| query.context.as_ref()),
                 _ => None,
             };
             if let Some(context) = context {
@@ -1002,6 +1019,25 @@ fn validate_image_context(image: &crate::ai::agent::ImageContext) -> Result<(), 
     if decoded.len() > MAX_IMAGE_SIZE_BYTES {
         return Err(anyhow::anyhow!(
             "OpenAI-compatible image context exceeds the local image byte limit"
+        ));
+    }
+    let format = image::guess_format(&decoded).map_err(|_| {
+        anyhow::anyhow!(
+            "OpenAI-compatible local adapter received image data that cannot be decoded"
+        )
+    })?;
+    let mime_matches_format = match format {
+        image::ImageFormat::Jpeg => {
+            matches!(image.mime_type.as_str(), "image/jpeg" | "image/jpg")
+        }
+        image::ImageFormat::Png => image.mime_type == "image/png",
+        image::ImageFormat::Gif => image.mime_type == "image/gif",
+        image::ImageFormat::WebP => image.mime_type == "image/webp",
+        _ => false,
+    };
+    if !mime_matches_format {
+        return Err(anyhow::anyhow!(
+            "OpenAI-compatible local adapter image MIME type does not match its decoded format"
         ));
     }
     image::load_from_memory(&decoded).map_err(|_| {
@@ -1595,11 +1631,7 @@ fn openai_messages_from_api_message_with_tool_policy_and_vision(
                 _ => (String::new(), query_context),
             };
             let context = super::convert_conversation::convert_input_context(context);
-            if content.is_empty()
-                && !context
-                    .iter()
-                    .any(|item| matches!(item, AIAgentContext::Image(_)))
-            {
+            if content.is_empty() && context.is_empty() {
                 Vec::new()
             } else {
                 vec![user_message_with_context(
@@ -1620,13 +1652,60 @@ fn openai_messages_from_api_message_with_tool_policy_and_vision(
             vec![ChatMessage::assistant_tool_call(openai_tool_call)]
         }
         Some(api::message::Message::ToolCallResult(result)) => {
-            vec![ChatMessage::tool(
+            let mut output = vec![ChatMessage::tool(
                 result.tool_call_id.clone(),
                 tool_call_result_to_text_with_tool_policy(
                     result,
                     long_running_shell_controls_advertised,
                 ),
-            )]
+            )];
+            let context =
+                super::convert_conversation::convert_input_context(result.context.as_ref());
+            if !context.is_empty() {
+                output.push(user_message_with_context(
+                    "Attached local tool result context".to_string(),
+                    &context,
+                    context_char_budget,
+                    vision_enabled,
+                )?);
+            }
+            output
+        }
+        Some(api::message::Message::PassiveSuggestionResult(result)) => {
+            let context =
+                super::convert_conversation::convert_input_context(result.context.as_ref());
+            let content = format!("Passive suggestion result: {:?}", result.result);
+            vec![user_message_with_context(
+                content,
+                &context,
+                context_char_budget,
+                vision_enabled,
+            )?]
+        }
+        Some(api::message::Message::InvokeSkill(invoke_skill)) => {
+            let context = invoke_skill
+                .user_query
+                .as_ref()
+                .map(|query| {
+                    super::convert_conversation::convert_input_context(query.context.as_ref())
+                })
+                .unwrap_or_default();
+            let content = invoke_skill
+                .user_query
+                .as_ref()
+                .map(|query| query.query.clone())
+                .filter(|query| !query.is_empty())
+                .unwrap_or_else(|| "Invoke local skill".to_string());
+            if context.is_empty() && content == "Invoke local skill" {
+                Vec::new()
+            } else {
+                vec![user_message_with_context(
+                    content,
+                    &context,
+                    context_char_budget,
+                    vision_enabled,
+                )?]
+            }
         }
         Some(api::message::Message::AgentReasoning(reasoning)) => (!reasoning.reasoning.is_empty())
             .then(|| ChatMessage::assistant(format!("Reasoning: {}", reasoning.reasoning)))
@@ -1719,11 +1798,19 @@ fn openai_messages_from_inputs_with_vision(
                     vision_enabled,
                 )?);
             }
-            AIAgentInput::ActionResult { result, .. } => {
+            AIAgentInput::ActionResult { result, context } => {
                 messages.push(ChatMessage::tool(
                     result.id.clone().into(),
                     format!("{}", MarkdownActionResult(&result.result)),
                 ));
+                if !context.is_empty() {
+                    messages.push(user_message_with_context(
+                        "Attached local action result context".to_string(),
+                        context,
+                        context_char_budget,
+                        vision_enabled,
+                    )?);
+                }
             }
             AIAgentInput::MessagesReceivedFromAgents { messages: received } => {
                 let content = received
@@ -1757,10 +1844,17 @@ fn openai_messages_from_inputs_with_vision(
                     )));
                 }
             }
-            AIAgentInput::PassiveSuggestionResult { suggestion, .. } => {
-                messages.push(ChatMessage::user(format!(
-                    "Passive suggestion result: {suggestion:?}"
-                )));
+            AIAgentInput::PassiveSuggestionResult {
+                suggestion,
+                context,
+                ..
+            } => {
+                messages.push(user_message_with_context(
+                    format!("Passive suggestion result: {suggestion:?}"),
+                    context,
+                    context_char_budget,
+                    vision_enabled,
+                )?);
             }
             AIAgentInput::OrchestrationConfigUpdate {
                 plan_id,
@@ -1777,34 +1871,23 @@ fn openai_messages_from_inputs_with_vision(
             | AIAgentInput::TriggerPassiveSuggestion { .. }
             | AIAgentInput::CodeReview { .. }
             | AIAgentInput::StartFromAmbientRunPrompt { .. } => {
+                let context = match item {
+                    AIAgentInput::ResumeConversation { context }
+                    | AIAgentInput::InitProjectRules { context, .. }
+                    | AIAgentInput::CreateEnvironment { context, .. }
+                    | AIAgentInput::TriggerPassiveSuggestion { context, .. }
+                    | AIAgentInput::CodeReview { context, .. }
+                    | AIAgentInput::StartFromAmbientRunPrompt { context, .. } => context,
+                    _ => unreachable!(),
+                };
                 if let Some(query) = item.user_query() {
-                    let context = match item {
-                        AIAgentInput::ResumeConversation { context }
-                        | AIAgentInput::InitProjectRules { context, .. }
-                        | AIAgentInput::CreateEnvironment { context, .. }
-                        | AIAgentInput::TriggerPassiveSuggestion { context, .. }
-                        | AIAgentInput::CodeReview { context, .. }
-                        | AIAgentInput::StartFromAmbientRunPrompt { context, .. } => context,
-                        _ => unreachable!(),
-                    };
                     messages.push(user_message_with_context(
                         query,
                         context,
                         context_char_budget,
                         vision_enabled,
                     )?);
-                } else if let Some(context) = match item {
-                    AIAgentInput::ResumeConversation { context }
-                    | AIAgentInput::InitProjectRules { context, .. }
-                    | AIAgentInput::CreateEnvironment { context, .. }
-                    | AIAgentInput::TriggerPassiveSuggestion { context, .. }
-                    | AIAgentInput::CodeReview { context, .. }
-                    | AIAgentInput::StartFromAmbientRunPrompt { context, .. } => context
-                        .iter()
-                        .any(|item| matches!(item, AIAgentContext::Image(_)))
-                        .then_some(context),
-                    _ => None,
-                } {
+                } else if !context.is_empty() {
                     messages.push(user_message_with_context(
                         "Attached local context".to_string(),
                         context,
@@ -1821,7 +1904,7 @@ fn openai_messages_from_inputs_with_vision(
 fn user_message_with_context(
     query: String,
     context: &[AIAgentContext],
-    context_char_budget: usize,
+    mut context_char_budget: usize,
     vision_enabled: bool,
 ) -> Result<ChatMessage, anyhow::Error> {
     let mut image_count = 0;
@@ -1843,7 +1926,7 @@ fn user_message_with_context(
         match item {
             AIAgentContext::Image(image) => parts.push(image_content_part(image)?),
             _ => {
-                let Some(text) = context_item_text(item, context_char_budget) else {
+                let Some(text) = context_item_text(item) else {
                     continue;
                 };
                 let text = if context_prefix_pending {
@@ -1852,10 +1935,9 @@ fn user_message_with_context(
                 } else {
                     text
                 };
-                parts.push(text_content_part(truncate_context_to(
-                    &text,
-                    context_char_budget,
-                )));
+                if let Some(text) = take_context_text_budget(text, &mut context_char_budget) {
+                    parts.push(text_content_part(text));
+                }
             }
         }
     }
@@ -1874,7 +1956,7 @@ fn with_context(mut query: String, context: Option<&str>) -> String {
 fn context_text(context: &[AIAgentContext], context_char_budget: usize) -> Option<String> {
     let parts = context
         .iter()
-        .filter_map(|item| context_item_text(item, context_char_budget))
+        .filter_map(context_item_text)
         .collect::<Vec<_>>();
 
     if parts.is_empty() {
@@ -1887,7 +1969,7 @@ fn context_text(context: &[AIAgentContext], context_char_budget: usize) -> Optio
     }
 }
 
-fn context_item_text(item: &AIAgentContext, context_char_budget: usize) -> Option<String> {
+fn context_item_text(item: &AIAgentContext) -> Option<String> {
     Some(match item {
         AIAgentContext::Directory {
             pwd,
@@ -1899,10 +1981,7 @@ fn context_item_text(item: &AIAgentContext, context_char_budget: usize) -> Optio
             home_dir.as_deref().unwrap_or("unknown"),
             are_file_symbols_indexed
         ),
-        AIAgentContext::SelectedText(text) => format!(
-            "Selected text:\n{}",
-            truncate_context_to(text, context_char_budget)
-        ),
+        AIAgentContext::SelectedText(text) => format!("Selected text:\n{text}"),
         AIAgentContext::ExecutionEnvironment(env) => format!("Execution environment: {env:?}"),
         AIAgentContext::CurrentTime { current_time } => {
             format!("Current time: {}", current_time.to_rfc3339())
@@ -1919,7 +1998,7 @@ fn context_item_text(item: &AIAgentContext, context_char_budget: usize) -> Optio
                 text.push_str(&format!(
                     "\n\n{}:\n{}",
                     rule.file_name,
-                    file_context_content(rule, context_char_budget)
+                    file_context_content(rule)
                 ));
             }
             if !additional_rule_paths.is_empty() {
@@ -1930,11 +2009,9 @@ fn context_item_text(item: &AIAgentContext, context_char_budget: usize) -> Optio
             }
             text
         }
-        AIAgentContext::File(file) => format!(
-            "File {}:\n{}",
-            file.file_name,
-            file_context_content(file, context_char_budget)
-        ),
+        AIAgentContext::File(file) => {
+            format!("File {}:\n{}", file.file_name, file_context_content(file))
+        }
         AIAgentContext::Git { head, branch } => format!(
             "Git: head={}, branch={}",
             head,
@@ -1945,31 +2022,53 @@ fn context_item_text(item: &AIAgentContext, context_char_budget: usize) -> Optio
             "Terminal block:\ncommand: {}\nexit_code: {}\noutput:\n{}",
             block.command,
             block.exit_code.value(),
-            truncate_context_to(&block.output, context_char_budget)
+            block.output
         ),
     })
 }
 
-fn file_context_content(
-    file: &crate::ai::agent::FileContext,
-    context_char_budget: usize,
-) -> String {
+fn file_context_content(file: &crate::ai::agent::FileContext) -> String {
     match &file.content {
-        AnyFileContent::StringContent(content) => truncate_context_to(content, context_char_budget),
+        AnyFileContent::StringContent(content) => content.clone(),
         AnyFileContent::BinaryContent(_) => "[binary file content omitted]".to_string(),
     }
 }
 
+fn take_context_text_budget(mut text: String, remaining: &mut usize) -> Option<String> {
+    if *remaining == 0 {
+        return None;
+    }
+    let text_len = text.chars().count();
+    if text_len <= *remaining {
+        *remaining -= text_len;
+        return Some(text);
+    }
+
+    let marker = "\n[truncated]";
+    let marker_len = marker.chars().count();
+    if *remaining <= marker_len {
+        text = text.chars().take(*remaining).collect();
+    } else {
+        let keep = *remaining - marker_len;
+        text = text.chars().take(keep).collect();
+        text.push_str(marker);
+    }
+    *remaining = 0;
+    Some(text)
+}
+
 fn truncate_context_to(text: &str, max_chars: usize) -> String {
-    if text.len() <= max_chars {
+    if text.chars().count() <= max_chars {
         return text.to_string();
     }
-    let mut truncated = text
-        .char_indices()
-        .take_while(|(idx, _)| *idx < max_chars)
-        .map(|(_, ch)| ch)
-        .collect::<String>();
-    truncated.push_str("\n[truncated]");
+    let marker = "\n[truncated]";
+    let marker_len = marker.chars().count();
+    let keep = max_chars.saturating_sub(marker_len);
+    let mut truncated = text.chars().take(keep).collect::<String>();
+    if max_chars <= marker_len {
+        return text.chars().take(max_chars).collect();
+    }
+    truncated.push_str(marker);
     truncated
 }
 
@@ -2070,27 +2169,24 @@ fn api_messages_from_inputs(
     task_id: &str,
     request_id: &str,
     input: &[AIAgentInput],
-) -> Vec<api::Message> {
+) -> Result<Vec<api::Message>, anyhow::Error> {
     let mut messages = Vec::new();
     for item in input {
         match item {
             AIAgentInput::UserQuery {
                 query,
+                context,
                 referenced_attachments,
                 user_query_mode,
                 intended_agent,
                 ..
             } => {
-                messages.push(api::Message {
-                    id: Uuid::new_v4().to_string(),
-                    task_id: task_id.to_string(),
-                    request_id: request_id.to_string(),
-                    timestamp: None,
-                    server_message_data: String::new(),
-                    citations: vec![],
-                    message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                messages.push(api_message(
+                    task_id,
+                    request_id,
+                    api::message::Message::UserQuery(api::message::UserQuery {
                         query: query.clone(),
-                        context: None,
+                        context: api_input_context_from_agent_context(context)?,
                         referenced_attachments: referenced_attachments
                             .iter()
                             .map(|(key, attachment)| {
@@ -2104,40 +2200,379 @@ fn api_messages_from_inputs(
                         intended_agent: intended_agent
                             .map(|agent| agent.into())
                             .unwrap_or_default(),
-                    })),
-                });
+                    }),
+                ));
             }
-            AIAgentInput::ActionResult { result, .. } => {
-                if let Some(tool_result) = api_tool_call_result_from_action_result(result) {
-                    messages.push(api::Message {
-                        id: Uuid::new_v4().to_string(),
-                        task_id: task_id.to_string(),
-                        request_id: request_id.to_string(),
-                        timestamp: None,
-                        server_message_data: String::new(),
-                        citations: vec![],
-                        message: Some(api::message::Message::ToolCallResult(tool_result)),
-                    });
+            AIAgentInput::ActionResult { result, context } => {
+                if let Some(tool_result) = api_tool_call_result_from_action_result(result, context)?
+                {
+                    messages.push(api_message(
+                        task_id,
+                        request_id,
+                        api::message::Message::ToolCallResult(tool_result),
+                    ));
+                } else if !context.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "OpenAI-compatible local adapter cannot persist this action result context"
+                    ));
                 }
             }
-            _ => {}
+            AIAgentInput::PassiveSuggestionResult {
+                trigger,
+                suggestion,
+                context,
+            } => {
+                let Some(result) = api_passive_suggestion_result(trigger.as_ref(), suggestion)
+                else {
+                    return Err(anyhow::anyhow!(
+                        "OpenAI-compatible local adapter cannot persist this passive suggestion result"
+                    ));
+                };
+                messages.push(api_message(
+                    task_id,
+                    request_id,
+                    api::message::Message::PassiveSuggestionResult(
+                        api::message::PassiveSuggestionResult {
+                            result: Some(result),
+                            context: api_input_context_from_agent_context(context)?,
+                        },
+                    ),
+                ));
+            }
+            AIAgentInput::AutoCodeDiffQuery { query, context } => messages.push(api_message(
+                task_id,
+                request_id,
+                api::message::Message::SystemQuery(api::message::SystemQuery {
+                    context: api_input_context_from_agent_context(context)?,
+                    r#type: Some(api::message::system_query::Type::AutoCodeDiff(
+                        api::message::AutoCodeDiff {
+                            query: query.clone(),
+                        },
+                    )),
+                }),
+            )),
+            AIAgentInput::CreateNewProject { query, context } => messages.push(api_message(
+                task_id,
+                request_id,
+                api::message::Message::SystemQuery(api::message::SystemQuery {
+                    context: api_input_context_from_agent_context(context)?,
+                    r#type: Some(api::message::system_query::Type::CreateNewProject(
+                        api::message::CreateNewProject {
+                            query: query.clone(),
+                        },
+                    )),
+                }),
+            )),
+            AIAgentInput::CloneRepository {
+                clone_repo_url,
+                context,
+            } => messages.push(api_message(
+                task_id,
+                request_id,
+                api::message::Message::SystemQuery(api::message::SystemQuery {
+                    context: api_input_context_from_agent_context(context)?,
+                    r#type: Some(api::message::system_query::Type::CloneRepository(
+                        api::message::CloneRepository {
+                            url: clone_repo_url.clone().into_url(),
+                        },
+                    )),
+                }),
+            )),
+            AIAgentInput::SummarizeConversation { prompt, context } => messages.push(api_message(
+                task_id,
+                request_id,
+                api::message::Message::SystemQuery(api::message::SystemQuery {
+                    context: api_input_context_from_agent_context(context)?,
+                    r#type: Some(api::message::system_query::Type::SummarizeConversation(
+                        api::message::SummarizeConversation {
+                            prompt: prompt.clone().unwrap_or_default(),
+                        },
+                    )),
+                }),
+            )),
+            AIAgentInput::InvokeSkill {
+                skill,
+                user_query,
+                context,
+            } => messages.push(api_message(
+                task_id,
+                request_id,
+                api::message::Message::InvokeSkill(api::message::InvokeSkill {
+                    skill: Some(skill.clone().into()),
+                    user_query: Some(api::message::UserQuery {
+                        query: user_query
+                            .as_ref()
+                            .map(|query| query.query.clone())
+                            .unwrap_or_default(),
+                        context: api_input_context_from_agent_context(context)?,
+                        ..Default::default()
+                    }),
+                }),
+            )),
+            item => {
+                let (query, context) = match item {
+                    AIAgentInput::ResumeConversation { context } => {
+                        ("Resume local conversation".to_string(), context)
+                    }
+                    AIAgentInput::InitProjectRules {
+                        context,
+                        display_query,
+                    } => (
+                        display_query
+                            .clone()
+                            .unwrap_or_else(|| "Initialize project rules".to_string()),
+                        context,
+                    ),
+                    AIAgentInput::CreateEnvironment {
+                        context,
+                        display_query,
+                        ..
+                    } => (
+                        display_query
+                            .clone()
+                            .unwrap_or_else(|| "Create local environment".to_string()),
+                        context,
+                    ),
+                    AIAgentInput::TriggerPassiveSuggestion { context, .. } => {
+                        ("Generate local passive suggestions".to_string(), context)
+                    }
+                    AIAgentInput::CodeReview { context, .. } => {
+                        ("Review local code changes".to_string(), context)
+                    }
+                    AIAgentInput::StartFromAmbientRunPrompt { context, .. } => {
+                        ("Start local ambient run".to_string(), context)
+                    }
+                    AIAgentInput::MessagesReceivedFromAgents { .. }
+                    | AIAgentInput::EventsFromAgents { .. }
+                    | AIAgentInput::OrchestrationConfigUpdate { .. } => continue,
+                    _ => unreachable!("all serializable input variants are handled above"),
+                };
+                messages.push(api_message(
+                    task_id,
+                    request_id,
+                    api::message::Message::UserQuery(api::message::UserQuery {
+                        query,
+                        context: api_input_context_from_agent_context(context)?,
+                        ..Default::default()
+                    }),
+                ));
+            }
         }
     }
-    messages
+    Ok(messages)
+}
+
+fn api_message(task_id: &str, request_id: &str, message: api::message::Message) -> api::Message {
+    api::Message {
+        id: Uuid::new_v4().to_string(),
+        task_id: task_id.to_string(),
+        request_id: request_id.to_string(),
+        timestamp: None,
+        server_message_data: String::new(),
+        citations: vec![],
+        message: Some(message),
+    }
+}
+
+fn api_input_context_from_agent_context(
+    context: &[AIAgentContext],
+) -> Result<Option<api::InputContext>, anyhow::Error> {
+    let mut result = api::InputContext::default();
+    for item in context {
+        match item {
+            AIAgentContext::Directory {
+                pwd,
+                home_dir,
+                are_file_symbols_indexed,
+            } => {
+                result.directory = Some(api::input_context::Directory {
+                    pwd: pwd.clone().unwrap_or_default(),
+                    home: home_dir.clone().unwrap_or_default(),
+                    pwd_file_symbols_indexed: *are_file_symbols_indexed,
+                });
+            }
+            AIAgentContext::SelectedText(text) => result
+                .selected_text
+                .push(api::input_context::SelectedText { text: text.clone() }),
+            AIAgentContext::ExecutionEnvironment(environment) => {
+                result.operating_system = Some(api::input_context::OperatingSystem {
+                    platform: environment.os.category.clone().unwrap_or_default(),
+                    distribution: environment.os.distribution.clone().unwrap_or_default(),
+                });
+                result.shell = Some(api::input_context::Shell {
+                    name: environment.shell_name.clone(),
+                    version: environment.shell_version.clone().unwrap_or_default(),
+                });
+            }
+            AIAgentContext::CurrentTime { current_time } => {
+                result.current_time = Some(local_datetime_to_timestamp(*current_time));
+            }
+            AIAgentContext::Image(image) => {
+                validate_image_context(image)?;
+                let data = base64::engine::general_purpose::STANDARD
+                    .decode(image.data.as_bytes())
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "OpenAI-compatible local adapter cannot persist invalid image context"
+                        )
+                    })?;
+                result.images.push(api::input_context::Image {
+                    data,
+                    mime_type: image.mime_type.clone(),
+                });
+            }
+            AIAgentContext::Codebase { path, name } => {
+                result.codebases.push(api::input_context::Codebase {
+                    name: name.clone(),
+                    path: path.clone(),
+                });
+            }
+            AIAgentContext::ProjectRules {
+                root_path,
+                active_rules,
+                additional_rule_paths,
+            } => {
+                let active_rule_files = active_rules
+                    .iter()
+                    .map(api_file_content_from_file)
+                    .collect::<Result<Vec<_>, _>>()?;
+                result.project_rules.push(api::input_context::ProjectRules {
+                    root_path: root_path.clone(),
+                    active_rule_files,
+                    additional_rule_file_paths: additional_rule_paths.clone(),
+                });
+            }
+            AIAgentContext::File(file) => {
+                result.files.push(api::input_context::File {
+                    content: Some(api_file_content_from_file(file)?),
+                });
+            }
+            AIAgentContext::Git { head, branch } => {
+                result.git = Some(api::input_context::Git {
+                    head: head.clone(),
+                    branch: branch.clone().unwrap_or_default(),
+                    ..Default::default()
+                });
+            }
+            AIAgentContext::Skills { skills } => {
+                result.updated_skills_context = Some(api::input_context::SkillsContext {
+                    available_skills: skills
+                        .iter()
+                        .map(|skill| api::SkillDescriptor {
+                            skill_reference: Some(skill.reference.clone().into()),
+                            name: skill.name.clone(),
+                            description: skill.description.clone(),
+                            scope: Some(skill.scope.into()),
+                            provider: Some(skill.provider.into()),
+                        })
+                        .collect(),
+                });
+            }
+            AIAgentContext::Block(block) => {
+                #[allow(deprecated)]
+                result
+                    .executed_shell_commands
+                    .push(api_executed_shell_command_from_block((**block).clone()));
+            }
+        }
+    }
+    if context.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(result))
+    }
+}
+
+fn api_file_content_from_file(
+    file: &crate::ai::agent::FileContext,
+) -> Result<api::FileContent, anyhow::Error> {
+    let AnyFileContent::StringContent(content) = &file.content else {
+        return Err(anyhow::anyhow!(
+            "OpenAI-compatible local adapter cannot persist binary file context"
+        ));
+    };
+    Ok(api::FileContent {
+        file_path: file.file_name.clone(),
+        content: content.clone(),
+        line_range: file
+            .line_range
+            .clone()
+            .map(|range| api::FileContentLineRange {
+                start: range.start as u32,
+                end: range.end as u32,
+            }),
+    })
+}
+
+fn api_passive_suggestion_result(
+    trigger: Option<&PassiveSuggestionTrigger>,
+    suggestion: &PassiveSuggestionResultType,
+) -> Option<api::PassiveSuggestionResultType> {
+    let trigger = match trigger? {
+        PassiveSuggestionTrigger::ShellCommandCompleted(trigger) => {
+            api::passive_suggestion_result_type::Trigger::ExecutedShellCommand(
+                api_executed_shell_command_from_block((*trigger.executed_shell_command).clone()),
+            )
+        }
+        PassiveSuggestionTrigger::AgentResponseCompleted { .. } => {
+            api::passive_suggestion_result_type::Trigger::AgentResponseCompleted(
+                api::passive_suggestion_result_type::AgentResponseCompleted {},
+            )
+        }
+        PassiveSuggestionTrigger::FilesChanged | PassiveSuggestionTrigger::CommandRun => {
+            return None;
+        }
+    };
+    let suggestion = match suggestion {
+        PassiveSuggestionResultType::Prompt { prompt } => {
+            api::passive_suggestion_result_type::Suggestion::Prompt(
+                api::passive_suggestion_result_type::Prompt {
+                    prompt: prompt.clone(),
+                },
+            )
+        }
+        PassiveSuggestionResultType::CodeDiff {
+            diffs,
+            summary,
+            accepted,
+        } => api::passive_suggestion_result_type::Suggestion::CodeDiff(
+            api::passive_suggestion_result_type::CodeDiff {
+                diffs: diffs
+                    .iter()
+                    .map(
+                        |diff| api::passive_suggestion_result_type::code_diff::Diff {
+                            file_path: diff.file_path.clone(),
+                            search: diff.search.clone(),
+                            replace: diff.replace.clone(),
+                        },
+                    )
+                    .collect(),
+                summary: summary.clone(),
+                accepted: *accepted,
+            },
+        ),
+    };
+    Some(api::PassiveSuggestionResultType {
+        trigger: Some(trigger),
+        suggestion: Some(suggestion),
+    })
 }
 
 fn api_tool_call_result_from_action_result(
     result: &AIAgentActionResult,
-) -> Option<api::message::ToolCallResult> {
-    let result = request_tool_call_result_from_action_result(result)?;
+    context: &[AIAgentContext],
+) -> Result<Option<api::message::ToolCallResult>, anyhow::Error> {
+    let Some(result) = request_tool_call_result_from_action_result(result) else {
+        return Ok(None);
+    };
 
-    Some(api::message::ToolCallResult {
+    Ok(Some(api::message::ToolCallResult {
         tool_call_id: result.tool_call_id,
-        context: None,
+        context: api_input_context_from_agent_context(context)?,
         result: result
             .result
             .map(request_tool_result_to_message_tool_result),
-    })
+    }))
 }
 
 fn api_user_query_mode(value: UserQueryMode) -> api::UserQueryMode {
@@ -5240,7 +5675,7 @@ fn json_schema_object<const N: usize, const M: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::agent::{AnyFileContent, FileContext, ImageContext};
+    use crate::ai::agent::{AIAgentExchangeId, AnyFileContent, FileContext, ImageContext};
     use mockito::Matcher;
 
     #[test]
@@ -5701,6 +6136,363 @@ mod tests {
             .expect("binary file context must fail before creating an HTTP stream");
         assert!(binary_error.to_string().contains("binary file context"));
         mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn public_generate_rejects_all_invalid_image_contexts_before_http() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .expect(0)
+            .create_async()
+            .await;
+        let route = vision_test_route(format!("{}/v1", server.url()));
+        let oversized =
+            base64::engine::general_purpose::STANDARD.encode(vec![0u8; MAX_IMAGE_SIZE_BYTES + 1]);
+        let too_many_images = (0..=MAX_IMAGE_COUNT_FOR_QUERY)
+            .map(|_| AIAgentContext::Image(vision_test_image(valid_test_png_base64())))
+            .collect::<Vec<_>>();
+        let cases = [
+            (
+                "unsupported MIME",
+                vec![AIAgentContext::Image(ImageContext {
+                    mime_type: "image/bmp".to_string(),
+                    ..vision_test_image(valid_test_png_base64())
+                })],
+            ),
+            (
+                "oversized image",
+                vec![AIAgentContext::Image(vision_test_image(&oversized))],
+            ),
+            ("too many images", too_many_images),
+            (
+                "signature mismatch",
+                vec![AIAgentContext::Image(ImageContext {
+                    mime_type: "image/jpeg".to_string(),
+                    ..vision_test_image(valid_test_png_base64())
+                })],
+            ),
+            (
+                "binary file",
+                vec![AIAgentContext::File(FileContext::new(
+                    "local.bin".to_string(),
+                    AnyFileContent::BinaryContent(vec![1, 2, 3]),
+                    None,
+                    None,
+                ))],
+            ),
+            (
+                "malformed base64",
+                vec![AIAgentContext::Image(vision_test_image("not-valid-base64"))],
+            ),
+        ];
+
+        for (label, context) in cases {
+            let mut params = super::super::RequestParams::new_for_test();
+            params.input = vec![AIAgentInput::AutoCodeDiffQuery {
+                query: format!("Reject {label}"),
+                context: context.into(),
+            }];
+            let error = generate(route.clone(), params, vec![])
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{label} must fail before creating an HTTP stream"));
+            assert!(!error.to_string().contains("local.bin"));
+            assert!(!error.to_string().contains("not-valid-base64"));
+        }
+
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn public_generate_accepts_the_image_count_boundary() {
+        let mut server = mockito::Server::new_async().await;
+        let mut params = super::super::RequestParams::new_for_test();
+        params.input = vec![AIAgentInput::AutoCodeDiffQuery {
+            query: "Inspect these images".to_string(),
+            context: (0..MAX_IMAGE_COUNT_FOR_QUERY)
+                .map(|_| AIAgentContext::Image(vision_test_image(valid_test_png_base64())))
+                .collect::<Vec<_>>()
+                .into(),
+        }];
+        let route = vision_test_route(format!("{}/v1", server.url()));
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"choices":[{"message":{"content":"ok"}}]}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let mut response = generate(route, params, vec![])
+            .await
+            .expect("the image count boundary should be accepted");
+        while let Some(event) = response.next().await {
+            event.expect("the image count boundary response should decode");
+        }
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn public_generate_roundtrips_current_image_context_through_add_messages() {
+        let mut server = mockito::Server::new_async().await;
+        let mut params = super::super::RequestParams::new_for_test();
+        params.input = vec![AIAgentInput::UserQuery {
+            query: "Remember this image".to_string(),
+            context: vec![
+                AIAgentContext::SelectedText("before".to_string()),
+                AIAgentContext::Image(vision_test_image(valid_test_png_base64())),
+                AIAgentContext::SelectedText("after".to_string()),
+            ]
+            .into(),
+            static_query_type: None,
+            referenced_attachments: Default::default(),
+            user_query_mode: UserQueryMode::Normal,
+            running_command: None,
+            intended_agent: None,
+        }];
+        let route = vision_test_route(format!("{}/v1", server.url()));
+        let first_mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"choices":[{"message":{"content":"ok"}}]}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let mut first = generate(route.clone(), params, vec![])
+            .await
+            .expect("the first local request should start");
+        let mut persisted_messages = None;
+        while let Some(event) = first.next().await {
+            let event = event.expect("the first local request should decode");
+            if let Some(api::response_event::Type::ClientActions(actions)) = event.r#type {
+                for action in actions.actions {
+                    if let Some(api::client_action::Action::AddMessagesToTask(add)) = action.action
+                    {
+                        if add.messages.iter().any(|message| {
+                            matches!(message.message, Some(api::message::Message::UserQuery(_)))
+                        }) {
+                            persisted_messages = Some(add.messages);
+                        }
+                    }
+                }
+            }
+        }
+        let persisted_messages = persisted_messages.expect("the input must be persisted locally");
+        let persisted_context = match persisted_messages[0].message.as_ref() {
+            Some(api::message::Message::UserQuery(query)) => query
+                .context
+                .as_ref()
+                .expect("the persisted query should retain context"),
+            other => panic!("expected persisted user query, got {other:?}"),
+        };
+        assert_eq!(persisted_context.images.len(), 1);
+        assert_eq!(persisted_context.selected_text.len(), 2);
+        first_mock.assert_async().await;
+
+        let restored_params = super::super::RequestParams {
+            tasks: vec![api::Task {
+                id: "local-root-task".to_string(),
+                messages: persisted_messages,
+                ..Default::default()
+            }],
+            ..super::super::RequestParams::new_for_test()
+        };
+        let expected_second_body = serde_json::to_value(ChatCompletionRequest {
+            model: route.model.clone(),
+            messages: openai_messages_from_params_with_tool_policy_and_vision(
+                &restored_params,
+                &[],
+                route.context_char_budget(),
+                false,
+                true,
+            )
+            .expect("restored image context should convert"),
+            stream: true,
+            tools: vec![],
+            tool_choice: None,
+            parallel_tool_calls: None,
+        })
+        .expect("restored request should serialize");
+        let second_mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_body(Matcher::Json(expected_second_body))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"choices":[{"message":{"content":"ok"}}]}"#)
+            .expect(1)
+            .create_async()
+            .await;
+        let mut second = generate(route, restored_params, vec![])
+            .await
+            .expect("the restored local request should start");
+        while let Some(event) = second.next().await {
+            event.expect("the restored local request should decode");
+        }
+        second_mock.assert_async().await;
+    }
+
+    #[test]
+    fn multimodal_context_uses_one_aggregate_character_budget() {
+        let mut params = super::super::RequestParams::new_for_test();
+        params.input = vec![AIAgentInput::AutoCodeDiffQuery {
+            query: "Inspect".to_string(),
+            context: vec![
+                AIAgentContext::SelectedText("a".repeat(2_500)),
+                AIAgentContext::Image(vision_test_image(valid_test_png_base64())),
+                AIAgentContext::SelectedText("b".repeat(2_500)),
+            ]
+            .into(),
+        }];
+        let messages = openai_messages_from_params_with_tool_policy_and_vision(
+            &params,
+            &[],
+            3_000,
+            false,
+            true,
+        )
+        .expect("multimodal context should convert");
+        let Some(ChatMessageContent::Parts(parts)) =
+            messages.last().and_then(|m| m.content.as_ref())
+        else {
+            panic!("expected multimodal content parts");
+        };
+        let text_chars = parts
+            .iter()
+            .filter_map(|part| part.text.as_ref())
+            .skip(1)
+            .map(|text| text.chars().count())
+            .sum::<usize>();
+        assert!(
+            text_chars <= 3_000,
+            "context text exceeded aggregate budget"
+        );
+        assert!(parts.iter().any(|part| part.image_url.is_some()));
+    }
+
+    #[test]
+    fn historical_tool_context_follows_tool_message_without_changing_tool_shape() {
+        let params = super::super::RequestParams {
+            tasks: vec![api::Task {
+                id: "task-1".to_string(),
+                messages: vec![api::Message {
+                    id: "result-1".to_string(),
+                    task_id: "task-1".to_string(),
+                    request_id: "request-1".to_string(),
+                    timestamp: None,
+                    server_message_data: String::new(),
+                    citations: vec![],
+                    message: Some(api::message::Message::ToolCallResult(
+                        api::message::ToolCallResult {
+                            tool_call_id: "call-1".to_string(),
+                            context: Some(api::InputContext {
+                                images: vec![api::input_context::Image {
+                                    data: base64::engine::general_purpose::STANDARD
+                                        .decode(valid_test_png_base64())
+                                        .unwrap(),
+                                    mime_type: "image/png".to_string(),
+                                }],
+                                ..Default::default()
+                            }),
+                            result: None,
+                        },
+                    )),
+                }],
+                ..Default::default()
+            }],
+            ..super::super::RequestParams::new_for_test()
+        };
+        let messages = openai_messages_from_params_with_tool_policy_and_vision(
+            &params,
+            &[],
+            MAX_CONTEXT_CHARS,
+            false,
+            true,
+        )
+        .expect("historical tool context should convert");
+        assert_eq!(
+            messages.iter().map(|m| m.role).collect::<Vec<_>>(),
+            ["system", "tool", "user"]
+        );
+        assert!(matches!(
+            messages[1].content,
+            Some(ChatMessageContent::Text(_))
+        ));
+        assert!(matches!(
+            messages[2].content,
+            Some(ChatMessageContent::Parts(_))
+        ));
+    }
+
+    #[test]
+    fn current_action_and_passive_result_contexts_are_persisted_and_rendered() {
+        let image_context: std::sync::Arc<[AIAgentContext]> = vec![AIAgentContext::Image(
+            vision_test_image(valid_test_png_base64()),
+        )]
+        .into();
+        let action = AIAgentActionResult {
+            id: "action-1".to_string().into(),
+            task_id: crate::ai::agent::task::TaskId::new("task-1".to_string()),
+            result: AIAgentActionResultType::OpenCodeReview,
+        };
+        let passive = AIAgentInput::PassiveSuggestionResult {
+            trigger: Some(PassiveSuggestionTrigger::AgentResponseCompleted {
+                exchange_id: AIAgentExchangeId::default(),
+            }),
+            suggestion: PassiveSuggestionResultType::Prompt {
+                prompt: "Try this".to_string(),
+            },
+            context: image_context.clone(),
+        };
+        let input = vec![
+            AIAgentInput::ActionResult {
+                result: action,
+                context: image_context.clone(),
+            },
+            passive,
+        ];
+        let persisted = api_messages_from_inputs("task-1", "request-1", &input)
+            .expect("result contexts should persist");
+        assert!(matches!(
+            persisted[0].message,
+            Some(api::message::Message::ToolCallResult(_))
+        ));
+        let Some(api::message::Message::ToolCallResult(result)) = persisted[0].message.as_ref()
+        else {
+            panic!("expected persisted action result");
+        };
+        assert_eq!(result.context.as_ref().unwrap().images.len(), 1);
+        assert!(matches!(
+            persisted[1].message,
+            Some(api::message::Message::PassiveSuggestionResult(_))
+        ));
+
+        let params = super::super::RequestParams {
+            input,
+            ..super::super::RequestParams::new_for_test()
+        };
+        let chat = openai_messages_from_params_with_tool_policy_and_vision(
+            &params,
+            &[],
+            MAX_CONTEXT_CHARS,
+            false,
+            true,
+        )
+        .expect("result contexts should render");
+        assert_eq!(
+            chat.iter().map(|message| message.role).collect::<Vec<_>>(),
+            ["system", "tool", "user", "user"]
+        );
+        assert!(matches!(
+            chat[2].content,
+            Some(ChatMessageContent::Parts(_))
+        ));
+        assert!(matches!(
+            chat[3].content,
+            Some(ChatMessageContent::Parts(_))
+        ));
     }
 
     #[test]
