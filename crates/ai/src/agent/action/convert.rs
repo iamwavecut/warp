@@ -380,9 +380,9 @@ impl From<api::message::tool_call::ReadShellCommandOutput> for AIAgentActionType
     fn from(value: api::message::tool_call::ReadShellCommandOutput) -> Self {
         let delay = match value.delay {
             Some(api::message::tool_call::read_shell_command_output::Delay::Duration(duration)) => {
-                Some(ShellCommandDelay::Duration(Duration::from_secs(
-                    duration.seconds as u64,
-                )))
+                let seconds = duration.seconds.max(0) as u64;
+                let nanos = duration.nanos.clamp(0, 999_999_999) as u32;
+                Some(ShellCommandDelay::Duration(Duration::new(seconds, nanos)))
             }
             Some(api::message::tool_call::read_shell_command_output::Delay::OnCompletion(_)) => {
                 Some(ShellCommandDelay::OnCompletion)

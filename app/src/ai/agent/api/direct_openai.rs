@@ -3,8 +3,10 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use async_stream::stream;
+use base64::Engine as _;
 use chrono::{DateTime, Local};
 use futures_util::StreamExt as _;
+use prost::Message as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -311,10 +313,14 @@ impl ChatMessage {
     }
 
     fn assistant_tool_call(tool_call: OpenAIToolCall) -> Self {
+        Self::assistant_tool_calls(vec![tool_call])
+    }
+
+    fn assistant_tool_calls(tool_calls: Vec<OpenAIToolCall>) -> Self {
         Self {
             role: "assistant",
             content: None,
-            tool_calls: vec![tool_call],
+            tool_calls,
             tool_call_id: None,
         }
     }
@@ -411,6 +417,7 @@ struct StreamingFunctionDelta {
 
 #[derive(Debug, Clone, Default)]
 struct StreamingToolCall {
+    seen: bool,
     id: Option<String>,
     kind: Option<String>,
     name: Option<String>,
@@ -419,6 +426,7 @@ struct StreamingToolCall {
 
 impl StreamingToolCall {
     fn apply_delta(&mut self, delta: StreamingToolCallDelta) {
+        self.seen = true;
         if let Some(id) = delta.id {
             self.id = Some(id);
         }
@@ -436,20 +444,45 @@ impl StreamingToolCall {
     }
 
     fn finish(self) -> Result<OpenAIToolCall, AIApiError> {
-        let id = self.id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let id = self.id.ok_or_else(|| {
+            AIApiError::Other(anyhow::anyhow!(
+                "OpenAI-compatible tool call was missing a non-empty id"
+            ))
+        })?;
+        if id.trim().is_empty() {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "OpenAI-compatible tool call was missing a non-empty id"
+            )));
+        }
+        let kind = self.kind.ok_or_else(|| {
+            AIApiError::Other(anyhow::anyhow!(
+                "OpenAI-compatible tool call was missing type `function`"
+            ))
+        })?;
+        if kind != "function" {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "OpenAI-compatible tool call type must be exactly `function`, got `{kind}`"
+            )));
+        }
         let name = self.name.ok_or_else(|| {
             AIApiError::Other(anyhow::anyhow!(
                 "OpenAI-compatible tool call was missing a function name"
             ))
         })?;
-        Ok(OpenAIToolCall {
+        if name.trim().is_empty() {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "OpenAI-compatible tool call was missing a non-empty function name"
+            )));
+        }
+        let tool_call = OpenAIToolCall {
             id,
-            kind: self.kind.unwrap_or_else(|| "function".to_string()),
+            kind,
             function: OpenAIFunctionCall {
                 name,
                 arguments: self.arguments,
             },
-        })
+        };
+        validate_openai_tool_call_envelope(&tool_call).map(|_| tool_call)
     }
 }
 
@@ -848,7 +881,7 @@ fn stream_chat_completion_with_tool_policy(
     }
 
     let mut bytes = response.bytes_stream();
-    let mut buffer = String::new();
+    let mut buffer = Vec::new();
     let mut state = StreamCompletionState::default();
 
     while let Some(chunk) = bytes.next().await {
@@ -860,34 +893,65 @@ fn stream_chat_completion_with_tool_policy(
                 return;
             }
         };
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        buffer.extend_from_slice(&chunk);
 
-        while let Some(event_end) = buffer.find("\n\n") {
-            let event = buffer[..event_end].to_string();
-            buffer.drain(..event_end + 2);
+        while let Some((event_end, delimiter_len)) = sse_event_end(&buffer) {
+            let event_bytes = buffer[..event_end].to_vec();
+            buffer.drain(..event_end + delimiter_len);
+            let event = match String::from_utf8(event_bytes) {
+                Ok(event) => event,
+                Err(error) => {
+                    yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
+                        "malformed OpenAI-compatible SSE event is not valid UTF-8: {error}"
+                    ))));
+                    return;
+                }
+            };
 
-            for event in apply_openai_sse_event(
+            let events = match apply_openai_sse_event(
                 &event,
                 &mut state,
                 &task_id,
                 &request_id,
                 &mut prefix_actions,
             ) {
+                Ok(events) => events,
+                Err(error) => {
+                    yield Err(Arc::new(error));
+                    return;
+                }
+            };
+            for event in events {
                 yield Ok(event);
             }
         }
     }
 
     let residual_buffer_bytes = buffer.len();
-    if !buffer.trim().is_empty() {
-        let residual_event = std::mem::take(&mut buffer);
-        for event in apply_openai_sse_event(
+    if !buffer.is_empty() && !buffer.iter().all(u8::is_ascii_whitespace) {
+        let residual_event = match String::from_utf8(std::mem::take(&mut buffer)) {
+            Ok(event) => event,
+            Err(error) => {
+                yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
+                    "malformed OpenAI-compatible SSE event is not valid UTF-8: {error}"
+                ))));
+                return;
+            }
+        };
+        let events = match apply_openai_sse_event(
             &residual_event,
             &mut state,
             &task_id,
             &request_id,
             &mut prefix_actions,
         ) {
+            Ok(events) => events,
+            Err(error) => {
+                yield Err(Arc::new(error));
+                return;
+            }
+        };
+        for event in events {
             yield Ok(event);
         }
     }
@@ -899,9 +963,44 @@ fn stream_chat_completion_with_tool_policy(
         parsed_events,
         ..
     } = state;
+    let Some(last_tool_call_index) = tool_calls.iter().rposition(|tool_call| tool_call.seen)
+    else {
+        if finish_reason.as_deref() == Some("tool_calls") {
+            yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
+                "malformed OpenAI-compatible stream ended with tool_calls but no tool call"
+            ))));
+            return;
+        }
+        log::info!(
+            "OpenAI-compatible stream finished: request_id={}, finish_reason={:?}, content_chars={}, tool_calls={}, parsed_events={}, residual_buffer_bytes={}",
+            request_id,
+            finish_reason,
+            content_chars,
+            0,
+            parsed_events,
+            residual_buffer_bytes
+        );
+        if !prefix_actions.is_empty() {
+            yield Ok(client_actions_event(take_prefix_actions(&mut prefix_actions)));
+        }
+        yield Ok(finished_event_for_openai_finish_reason(
+            finish_reason.as_deref(),
+            0,
+        ));
+        return;
+    };
+    if tool_calls[..=last_tool_call_index]
+        .iter()
+        .any(|tool_call| !tool_call.seen)
+    {
+        yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
+            "malformed OpenAI-compatible stream omitted a tool call index"
+        ))));
+        return;
+    }
     let completed_tool_calls = match tool_calls
         .into_iter()
-        .filter(|tool_call| tool_call.name.is_some() || tool_call.id.is_some())
+        .take(last_tool_call_index + 1)
         .map(StreamingToolCall::finish)
         .collect::<Result<Vec<_>, _>>()
     {
@@ -1040,13 +1139,34 @@ fn events_from_non_streaming_response(
     Ok(events)
 }
 
-fn sse_data_payloads(event: &str) -> Vec<String> {
-    event
-        .lines()
-        .filter_map(|line| line.strip_prefix("data:"))
-        .map(str::trim_start)
-        .map(ToString::to_string)
-        .collect()
+fn sse_event_end(buffer: &[u8]) -> Option<(usize, usize)> {
+    let lf = buffer.windows(2).position(|window| window == b"\n\n");
+    let crlf = buffer.windows(4).position(|window| window == b"\r\n\r\n");
+    match (lf, crlf) {
+        (Some(lf), Some(crlf)) if lf <= crlf => Some((lf, 2)),
+        (Some(lf), _) => Some((lf, 2)),
+        (None, Some(crlf)) => Some((crlf, 4)),
+        (None, None) => None,
+    }
+}
+
+fn sse_data_payloads(event: &str) -> Result<Vec<String>, AIApiError> {
+    let mut payloads = Vec::new();
+    for line in event.lines() {
+        if let Some(data) = line.strip_prefix("data:") {
+            payloads.push(data.trim_start().to_string());
+        } else if !line.trim().is_empty() {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "malformed OpenAI-compatible SSE event field `{line}`"
+            )));
+        }
+    }
+    if payloads.is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "malformed OpenAI-compatible SSE event: missing data field"
+        )));
+    }
+    Ok(payloads)
 }
 
 fn apply_openai_sse_event(
@@ -1055,24 +1175,20 @@ fn apply_openai_sse_event(
     task_id: &str,
     request_id: &str,
     prefix_actions: &mut Vec<api::ClientAction>,
-) -> Vec<api::ResponseEvent> {
+) -> Result<Vec<api::ResponseEvent>, AIApiError> {
     let mut events = Vec::new();
-    for data in sse_data_payloads(event) {
+    for data in sse_data_payloads(event)? {
         if data.trim() == "[DONE]" {
             continue;
         }
 
         state.parsed_events += 1;
-        let chunk: ChatCompletionChunk = match serde_json::from_str(&data) {
-            Ok(chunk) => chunk,
-            Err(error) => {
-                log::warn!("Skipping malformed OpenAI-compatible stream event: {error}");
-                continue;
-            }
-        };
+        let chunk: ChatCompletionChunk = serde_json::from_str(&data).with_context(|| {
+            format!("failed to decode OpenAI-compatible SSE event JSON: {data}")
+        })?;
         events.extend(state.apply_chunk(chunk, task_id, request_id, prefix_actions));
     }
-    events
+    Ok(events)
 }
 
 fn take_prefix_actions(prefix_actions: &mut Vec<api::ClientAction>) -> Vec<api::ClientAction> {
@@ -1104,12 +1220,10 @@ fn openai_messages_from_params_with_tool_policy(
     ))];
 
     for task in &params.tasks {
-        for message in &task.messages {
-            messages.extend(openai_messages_from_api_message_with_tool_policy(
-                message,
-                long_running_shell_controls_advertised,
-            ));
-        }
+        messages.extend(openai_messages_from_api_messages_with_tool_policy(
+            &task.messages,
+            long_running_shell_controls_advertised,
+        ));
     }
 
     messages.extend(openai_messages_from_inputs(
@@ -1117,6 +1231,53 @@ fn openai_messages_from_params_with_tool_policy(
         context_char_budget,
     ));
     messages
+}
+
+fn openai_messages_from_api_messages_with_tool_policy(
+    messages: &[api::Message],
+    long_running_shell_controls_advertised: bool,
+) -> Vec<ChatMessage> {
+    let mut output = Vec::new();
+    let mut index = 0;
+    while index < messages.len() {
+        let Some(api::message::Message::ToolCall(_)) = messages[index].message.as_ref() else {
+            output.extend(openai_messages_from_api_message_with_tool_policy(
+                &messages[index],
+                long_running_shell_controls_advertised,
+            ));
+            index += 1;
+            continue;
+        };
+
+        let request_id = &messages[index].request_id;
+        if request_id.is_empty() {
+            output.extend(openai_messages_from_api_message_with_tool_policy(
+                &messages[index],
+                long_running_shell_controls_advertised,
+            ));
+            index += 1;
+            continue;
+        }
+
+        let mut tool_calls = Vec::new();
+        while index < messages.len() {
+            let Some(api::message::Message::ToolCall(tool_call)) = messages[index].message.as_ref()
+            else {
+                break;
+            };
+            if messages[index].request_id != *request_id {
+                break;
+            }
+            if let Some(openai_tool_call) = openai_tool_call_from_api_tool_call(tool_call) {
+                tool_calls.push(openai_tool_call);
+            }
+            index += 1;
+        }
+        if !tool_calls.is_empty() {
+            output.push(ChatMessage::assistant_tool_calls(tool_calls));
+        }
+    }
+    output
 }
 
 fn openai_messages_from_api_message_with_tool_policy(
@@ -2135,13 +2296,17 @@ fn coordinates_to_json(coordinates: Option<&api::Coordinates>) -> Value {
 }
 
 fn screenshot_params_to_json(params: &api::message::tool_call::ScreenshotParams) -> Value {
+    let region = params.region.as_ref().and_then(|region| {
+        Some(json!({
+            "top_left": coordinates_to_json(region.top_left.as_ref()),
+            "bottom_right": coordinates_to_json(region.bottom_right.as_ref()),
+        }))
+        .filter(|_| region.top_left.is_some() && region.bottom_right.is_some())
+    });
     json!({
         "max_long_edge_px": params.max_long_edge_px,
         "max_total_px": params.max_total_px,
-        "region": params.region.as_ref().map(|region| json!({
-            "top_left": coordinates_to_json(region.top_left.as_ref()),
-            "bottom_right": coordinates_to_json(region.bottom_right.as_ref()),
-        })),
+        "region": region,
     })
 }
 
@@ -2308,17 +2473,7 @@ fn api_tool_from_openai_tool_call_inner(
     supported_tools: Option<&[api::ToolType]>,
     long_running_shell_controls_advertised: bool,
 ) -> Result<api::message::tool_call::Tool, AIApiError> {
-    let raw_arguments = tool_call.function.arguments.trim();
-    let args: Value = if raw_arguments.is_empty() {
-        json!({})
-    } else {
-        serde_json::from_str(raw_arguments).with_context(|| {
-            format!(
-                "failed to decode arguments for OpenAI-compatible tool `{}`",
-                tool_call.function.name
-            )
-        })?
-    };
+    let args = validate_openai_tool_call_envelope(tool_call)?;
 
     let tool_name = tool_call.function.name.as_str();
     if let Some(supported_tools) = supported_tools {
@@ -2381,35 +2536,38 @@ fn api_tool_from_openai_tool_call_inner(
         "search_codebase" => Ok(api::message::tool_call::Tool::SearchCodebase(
             api::message::tool_call::SearchCodebase {
                 query: required_string(&args, "query")?,
-                path_filters: optional_string_array(&args, "path_filters"),
-                codebase_path: optional_string(&args, "codebase_path").unwrap_or_default(),
+                path_filters: optional_string_array_strict(&args, "path_filters")?
+                    .unwrap_or_default(),
+                codebase_path: optional_string_strict(&args, "codebase_path")?.unwrap_or_default(),
             },
         )),
         "grep" => Ok(api::message::tool_call::Tool::Grep(
             api::message::tool_call::Grep {
                 queries: string_array_or_single(&args, "queries", "query")?,
-                path: optional_string(&args, "path").unwrap_or_default(),
+                path: optional_string_strict(&args, "path")?.unwrap_or_default(),
             },
         )),
         "file_glob" => Ok(api::message::tool_call::Tool::FileGlobV2(
             api::message::tool_call::FileGlobV2 {
                 patterns: string_array_or_single(&args, "patterns", "pattern")?,
-                search_dir: optional_string(&args, "search_dir")
-                    .or_else(|| optional_string(&args, "path"))
+                search_dir: optional_string_strict(&args, "search_dir")?
+                    .or(optional_string_strict(&args, "path")?)
                     .unwrap_or_default(),
-                max_matches: optional_i32(&args, "max_matches").unwrap_or_default(),
-                max_depth: optional_i32(&args, "max_depth").unwrap_or_default(),
-                min_depth: optional_i32(&args, "min_depth").unwrap_or_default(),
+                max_matches: nonnegative_optional_i32(&args, "max_matches")?.unwrap_or_default(),
+                max_depth: nonnegative_optional_i32(&args, "max_depth")?.unwrap_or_default(),
+                min_depth: nonnegative_optional_i32(&args, "min_depth")?.unwrap_or_default(),
             },
         )),
         "read_mcp_resource" => Ok(api::message::tool_call::Tool::ReadMcpResource(
             api::message::tool_call::ReadMcpResource {
                 uri: required_string(&args, "uri")?,
-                server_id: optional_string(&args, "server_id").unwrap_or_default(),
+                server_id: optional_string_strict(&args, "server_id")?.unwrap_or_default(),
             },
         )),
         "call_mcp_tool" => {
-            let input = args.get("args").cloned().unwrap_or_else(|| json!({}));
+            let input = optional_value_strict(&args, "args")?
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             let prost_types::Value {
                 kind: Some(prost_types::value::Kind::StructValue(tool_args)),
             } = serde_json_to_prost(input)
@@ -2421,27 +2579,40 @@ fn api_tool_from_openai_tool_call_inner(
             };
             Ok(api::message::tool_call::Tool::CallMcpTool(
                 api::message::tool_call::CallMcpTool {
-                    name: required_string(&args, "name")
-                        .or_else(|_| required_string(&args, "tool"))?,
+                    name: required_string_from_alias(&args, &["name", "tool"])?,
                     args: Some(tool_args),
-                    server_id: optional_string(&args, "server_id").unwrap_or_default(),
+                    server_id: optional_string_strict(&args, "server_id")?.unwrap_or_default(),
                 },
             ))
         }
         "read_skill" => {
-            let skill_path = optional_string(&args, "skill_path");
-            let bundled_skill_id = optional_string(&args, "bundled_skill_id");
-            let skill_reference = if let Some(skill_path) = skill_path.filter(|s| !s.is_empty()) {
-                Some(api::message::tool_call::read_skill::SkillReference::SkillPath(skill_path))
-            } else {
-                bundled_skill_id
-                    .filter(|id| !id.is_empty())
-                    .map(api::message::tool_call::read_skill::SkillReference::BundledSkillId)
+            let skill_path = optional_string_strict(&args, "skill_path")?.filter(|s| !s.is_empty());
+            let bundled_skill_id =
+                optional_string_strict(&args, "bundled_skill_id")?.filter(|s| !s.is_empty());
+            let skill_reference = match (skill_path, bundled_skill_id) {
+                (Some(skill_path), None) => {
+                    Some(api::message::tool_call::read_skill::SkillReference::SkillPath(skill_path))
+                }
+                (None, Some(bundled_skill_id)) => Some(
+                    api::message::tool_call::read_skill::SkillReference::BundledSkillId(
+                        bundled_skill_id,
+                    ),
+                ),
+                (Some(_), Some(_)) => {
+                    return Err(AIApiError::Other(anyhow::anyhow!(
+                        "read_skill requires exactly one of skill_path or bundled_skill_id"
+                    )));
+                }
+                (None, None) => {
+                    return Err(AIApiError::Other(anyhow::anyhow!(
+                        "read_skill requires a non-empty skill_path or bundled_skill_id"
+                    )));
+                }
             };
             Ok(api::message::tool_call::Tool::ReadSkill(
                 api::message::tool_call::ReadSkill {
                     skill_reference,
-                    name: optional_string(&args, "name").unwrap_or_default(),
+                    name: optional_string_strict(&args, "name")?.unwrap_or_default(),
                 },
             ))
         }
@@ -2512,6 +2683,43 @@ fn api_tool_from_openai_tool_call_inner(
     }
 }
 
+fn validate_openai_tool_call_envelope(tool_call: &OpenAIToolCall) -> Result<Value, AIApiError> {
+    if tool_call.id.trim().is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "OpenAI-compatible tool call was missing a non-empty id"
+        )));
+    }
+    if tool_call.kind != "function" {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "OpenAI-compatible tool call type must be exactly `function`, got `{}`",
+            tool_call.kind
+        )));
+    }
+    if tool_call.function.name.trim().is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "OpenAI-compatible tool call was missing a non-empty function name"
+        )));
+    }
+    if tool_call.function.arguments.trim().is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "OpenAI-compatible tool call arguments must be a non-empty JSON object"
+        )));
+    }
+    let args: Value = serde_json::from_str(&tool_call.function.arguments).with_context(|| {
+        format!(
+            "failed to decode arguments for OpenAI-compatible tool `{}`",
+            tool_call.function.name
+        )
+    })?;
+    if !args.is_object() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "arguments for OpenAI-compatible tool `{}` must be a JSON object",
+            tool_call.function.name
+        )));
+    }
+    Ok(args)
+}
+
 fn reject_unexpected_arguments(args: &Value, tool_name: &str) -> Result<(), AIApiError> {
     let object = args.as_object().ok_or_else(|| {
         AIApiError::Other(anyhow::anyhow!(
@@ -2571,10 +2779,8 @@ fn edit_documents_arg(args: &Value) -> Result<api::message::tool_call::EditDocum
 fn create_documents_arg(
     args: &Value,
 ) -> Result<api::message::tool_call::CreateDocuments, AIApiError> {
-    let documents = args
-        .get("documents")
-        .or_else(|| args.get("new_documents"))
-        .and_then(Value::as_array)
+    let documents = optional_array_strict(args, "documents")?
+        .or(optional_array_strict(args, "new_documents")?)
         .ok_or_else(|| {
             AIApiError::Other(anyhow::anyhow!(
                 "missing array argument `documents` for create_documents"
@@ -2889,20 +3095,13 @@ fn ask_user_question_arg(args: &Value) -> Result<api::AskUserQuestion, AIApiErro
                         ))
                     })?,
                 };
-                let options = multiple_choice
-                    .get("options")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| {
-                        AIApiError::Other(anyhow::anyhow!(
-                            "multiple_choice requires an `options` array"
-                        ))
-                    })?;
+                let multiple_choice_value = Value::Object(multiple_choice.clone());
+                let options = array(&multiple_choice_value, "options")?;
                 if options.is_empty() {
                     return Err(AIApiError::Other(anyhow::anyhow!(
                         "multiple_choice requires at least one option"
                     )));
                 }
-                let multiple_choice_value = Value::Object(multiple_choice.clone());
                 let recommended_option_index =
                     optional_i64_strict(&multiple_choice_value, "recommended_option_index")?
                         .unwrap_or(0);
@@ -2991,7 +3190,7 @@ fn use_computer_action_arg(
             distance: Some(parse_scroll_distance(value)?),
         }),
         "wait" => Type::Wait(action::Wait {
-            duration: parse_optional_duration(value, "seconds")?,
+            duration: Some(parse_required_duration(value, "seconds")?),
         }),
         "type_text" => Type::TypeText(action::TypeText {
             text: required_string(value, "text")?,
@@ -3180,19 +3379,26 @@ fn parse_screenshot_params(
         )));
     }
     let region = optional_value_strict(value, "region")?
-        .map(
-            |region| -> Result<api::message::tool_call::screenshot_params::Region, AIApiError> {
-                if !region.is_object() {
-                    return Err(AIApiError::Other(anyhow::anyhow!(
-                        "screenshot region must be an object"
-                    )));
+        .map(|region| -> Result<_, AIApiError> {
+            if !region.is_object() {
+                return Err(AIApiError::Other(anyhow::anyhow!(
+                    "screenshot region must be an object"
+                )));
+            }
+            let top_left = optional_coordinates(region, "top_left")?;
+            let bottom_right = optional_coordinates(region, "bottom_right")?;
+            match (top_left, bottom_right) {
+                (Some(top_left), Some(bottom_right)) => {
+                    Ok(api::message::tool_call::screenshot_params::Region {
+                        top_left: Some(top_left),
+                        bottom_right: Some(bottom_right),
+                    })
                 }
-                Ok(api::message::tool_call::screenshot_params::Region {
-                    top_left: optional_coordinates(region, "top_left")?,
-                    bottom_right: optional_coordinates(region, "bottom_right")?,
-                })
-            },
-        )
+                _ => Err(AIApiError::Other(anyhow::anyhow!(
+                    "screenshot region requires complete top_left and bottom_right coordinates"
+                ))),
+            }
+        })
         .transpose()?;
     Ok(api::message::tool_call::ScreenshotParams {
         max_long_edge_px,
@@ -3235,6 +3441,14 @@ fn parse_optional_duration(
         )));
     }
     Ok(Some(prost_types::Duration { seconds, nanos }))
+}
+
+fn parse_required_duration(value: &Value, key: &str) -> Result<prost_types::Duration, AIApiError> {
+    parse_optional_duration(value, key)?.ok_or_else(|| {
+        AIApiError::Other(anyhow::anyhow!(
+            "duration argument `{key}` is required and must not be null"
+        ))
+    })
 }
 
 fn optional_coordinates(value: &Value, key: &str) -> Result<Option<api::Coordinates>, AIApiError> {
@@ -3432,65 +3646,66 @@ fn infer_shell_command_flags(command: &str) -> InferredShellCommandFlags {
 }
 
 fn read_file_arg(value: &Value) -> Result<api::message::tool_call::read_files::File, AIApiError> {
+    let line_ranges = optional_array_strict(value, "line_ranges")?
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+        .iter()
+        .map(|range| {
+            let start = required_u32(range, "start")?;
+            let end = required_u32(range, "end")?;
+            if start > end {
+                return Err(AIApiError::Other(anyhow::anyhow!(
+                    "line range `start` must not exceed `end`"
+                )));
+            }
+            Ok(api::FileContentLineRange { start, end })
+        })
+        .collect::<Result<Vec<_>, AIApiError>>()?;
     Ok(api::message::tool_call::read_files::File {
-        name: required_string(value, "name").or_else(|_| required_string(value, "path"))?,
-        line_ranges: value
-            .get("line_ranges")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .map(|range| {
-                Ok(api::FileContentLineRange {
-                    start: optional_u32(range, "start").unwrap_or_default(),
-                    end: optional_u32(range, "end").unwrap_or_default(),
-                })
-            })
-            .collect::<Result<Vec<_>, AIApiError>>()?,
+        name: required_string_from_alias(value, &["name", "path"])?,
+        line_ranges,
     })
 }
 
 fn apply_file_diffs_arg(
     args: &Value,
 ) -> Result<api::message::tool_call::ApplyFileDiffs, AIApiError> {
+    let diffs = optional_array_strict(args, "diffs")?
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let new_files = optional_array_strict(args, "new_files")?
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let deleted_files = optional_array_strict(args, "deleted_files")?
+        .or(optional_array_strict(args, "delete_files")?)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
     Ok(api::message::tool_call::ApplyFileDiffs {
-        summary: optional_string(args, "summary").unwrap_or_default(),
-        diffs: args
-            .get("diffs")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
+        summary: optional_string_strict(args, "summary")?.unwrap_or_default(),
+        diffs: diffs
+            .iter()
             .map(|diff| {
                 Ok(api::message::tool_call::apply_file_diffs::FileDiff {
-                    file_path: required_string(diff, "file_path")
-                        .or_else(|_| required_string(diff, "path"))?,
+                    file_path: required_string_from_alias(diff, &["file_path", "path"])?,
                     search: required_string(diff, "search")?,
                     replace: required_string(diff, "replace")?,
                 })
             })
             .collect::<Result<Vec<_>, AIApiError>>()?,
-        new_files: args
-            .get("new_files")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
+        new_files: new_files
+            .iter()
             .map(|file| {
                 Ok(api::message::tool_call::apply_file_diffs::NewFile {
-                    file_path: required_string(file, "file_path")
-                        .or_else(|_| required_string(file, "path"))?,
+                    file_path: required_string_from_alias(file, &["file_path", "path"])?,
                     content: required_string(file, "content")?,
                 })
             })
             .collect::<Result<Vec<_>, AIApiError>>()?,
-        deleted_files: args
-            .get("deleted_files")
-            .or_else(|| args.get("delete_files"))
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
+        deleted_files: deleted_files
+            .iter()
             .map(|file| {
                 Ok(api::message::tool_call::apply_file_diffs::DeleteFile {
-                    file_path: required_string(file, "file_path")
-                        .or_else(|_| required_string(file, "path"))?,
+                    file_path: required_string_from_alias(file, &["file_path", "path"])?,
                 })
             })
             .collect::<Result<Vec<_>, AIApiError>>()?,
@@ -3502,6 +3717,18 @@ fn required_string(value: &Value, key: &str) -> Result<String, AIApiError> {
     optional_string_strict(value, key)?
         .filter(|value| !value.is_empty())
         .ok_or_else(|| AIApiError::Other(anyhow::anyhow!("missing string argument `{key}`")))
+}
+
+fn required_string_from_alias(value: &Value, keys: &[&str]) -> Result<String, AIApiError> {
+    for key in keys {
+        if optional_value_strict(value, key)?.is_some() {
+            return required_string(value, key);
+        }
+    }
+    Err(AIApiError::Other(anyhow::anyhow!(
+        "missing string argument `{}`",
+        keys.join("` or `")
+    )))
 }
 
 fn optional_value_strict<'a>(value: &'a Value, key: &str) -> Result<Option<&'a Value>, AIApiError> {
@@ -3559,25 +3786,16 @@ fn optional_i32_strict(value: &Value, key: &str) -> Result<Option<i32>, AIApiErr
     })
 }
 
-fn optional_string(value: &Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
-}
-
-fn optional_i32(value: &Value, key: &str) -> Option<i32> {
-    value
-        .get(key)
-        .and_then(Value::as_i64)
-        .and_then(|value| i32::try_from(value).ok())
-}
-
-fn optional_u32(value: &Value, key: &str) -> Option<u32> {
-    value
-        .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| u32::try_from(value).ok())
+fn nonnegative_optional_i32(value: &Value, key: &str) -> Result<Option<i32>, AIApiError> {
+    let Some(value) = optional_i32_strict(value, key)? else {
+        return Ok(None);
+    };
+    if value < 0 {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "optional argument `{key}` must not be negative"
+        )));
+    }
+    Ok(Some(value))
 }
 
 fn array<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>, AIApiError> {
@@ -3587,15 +3805,38 @@ fn array<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>, AIApiError> 
         .ok_or_else(|| AIApiError::Other(anyhow::anyhow!("missing array argument `{key}`")))
 }
 
-fn optional_string_array(value: &Value, key: &str) -> Vec<String> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(ToString::to_string)
-        .collect()
+fn optional_array_strict<'a>(
+    value: &'a Value,
+    key: &str,
+) -> Result<Option<&'a Vec<Value>>, AIApiError> {
+    let Some(value) = optional_value_strict(value, key)? else {
+        return Ok(None);
+    };
+    value.as_array().map(Some).ok_or_else(|| {
+        AIApiError::Other(anyhow::anyhow!(
+            "optional argument `{key}` must be an array or null"
+        ))
+    })
+}
+
+fn optional_string_array_strict(
+    value: &Value,
+    key: &str,
+) -> Result<Option<Vec<String>>, AIApiError> {
+    let Some(values) = optional_array_strict(value, key)? else {
+        return Ok(None);
+    };
+    values
+        .iter()
+        .map(|value| {
+            value.as_str().map(ToString::to_string).ok_or_else(|| {
+                AIApiError::Other(anyhow::anyhow!(
+                    "optional array argument `{key}` must contain only strings"
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
 }
 
 fn string_array_or_single(
@@ -3603,9 +3844,10 @@ fn string_array_or_single(
     array_key: &str,
     single_key: &str,
 ) -> Result<Vec<String>, AIApiError> {
-    let values = optional_string_array(value, array_key);
-    if !values.is_empty() {
-        return Ok(values);
+    if let Some(values) = optional_string_array_strict(value, array_key)? {
+        if !values.is_empty() {
+            return Ok(values);
+        }
     }
     required_string(value, single_key).map(|value| vec![value])
 }
@@ -3674,9 +3916,81 @@ fn tool_call_result_to_text_with_tool_policy(
             .as_ref()
             .is_some_and(long_running_shell_result_is_snapshot)
     {
-        return "Long-running shell output is unavailable in this request because its polling and control tools are not advertised.".to_string();
+        return serde_json::to_string(&json!({
+            "schema": "warp.direct_openai.tool_result",
+            "version": 1,
+            "tool_call_id": result.tool_call_id,
+            "result_type": result
+                .result
+                .as_ref()
+                .map(tool_call_result_type_name)
+                .unwrap_or("none"),
+            "status": "unavailable",
+            "message": "Long-running shell output is unavailable in this request because its polling and control tools are not advertised."
+        }))
+        .unwrap_or_else(|_| "{\"schema\":\"warp.direct_openai.tool_result\",\"version\":1,\"status\":\"unavailable\"}".to_string());
     }
-    serde_json::to_string(&format!("{:?}", result.result)).unwrap_or_default()
+    let encoded = base64::engine::general_purpose::STANDARD.encode(result.encode_to_vec());
+    serde_json::to_string(&json!({
+        "schema": "warp.direct_openai.tool_result",
+        "version": 1,
+        "tool_call_id": result.tool_call_id,
+        "result_type": result
+            .result
+            .as_ref()
+            .map(tool_call_result_type_name)
+            .unwrap_or("none"),
+        "protobuf_base64": encoded,
+    }))
+    .unwrap_or_else(|_| {
+        "{\"schema\":\"warp.direct_openai.tool_result\",\"version\":1,\"result_type\":\"none\"}"
+            .to_string()
+    })
+}
+
+fn tool_call_result_type_name(result: &api::message::tool_call_result::Result) -> &'static str {
+    use api::message::tool_call_result::Result as ToolCallResultType;
+    match result {
+        ToolCallResultType::RunShellCommand(_) => "run_shell_command",
+        ToolCallResultType::SearchCodebase(_) => "search_codebase",
+        ToolCallResultType::Server(_) => "server",
+        ToolCallResultType::ReadFiles(_) => "read_files",
+        ToolCallResultType::ApplyFileDiffs(_) => "apply_file_diffs",
+        ToolCallResultType::SuggestPlan(_) => "suggest_plan",
+        ToolCallResultType::SuggestCreatePlan(_) => "suggest_create_plan",
+        ToolCallResultType::Grep(_) => "grep",
+        ToolCallResultType::FileGlob(_) => "file_glob",
+        ToolCallResultType::Cancel(_) => "cancel",
+        ToolCallResultType::ReadMcpResource(_) => "read_mcp_resource",
+        ToolCallResultType::CallMcpTool(_) => "call_mcp_tool",
+        ToolCallResultType::WriteToLongRunningShellCommand(_) => {
+            "write_to_long_running_shell_command"
+        }
+        ToolCallResultType::SuggestNewConversation(_) => "suggest_new_conversation",
+        ToolCallResultType::FileGlobV2(_) => "file_glob",
+        ToolCallResultType::SuggestPrompt(_) => "suggest_prompt",
+        ToolCallResultType::OpenCodeReview(_) => "open_code_review",
+        ToolCallResultType::InitProject(_) => "init_project",
+        ToolCallResultType::Subagent(_) => "subagent",
+        ToolCallResultType::ReadDocuments(_) => "read_documents",
+        ToolCallResultType::EditDocuments(_) => "edit_documents",
+        ToolCallResultType::CreateDocuments(_) => "create_documents",
+        ToolCallResultType::ReadShellCommandOutput(_) => "read_shell_command_output",
+        ToolCallResultType::UseComputer(_) => "use_computer",
+        ToolCallResultType::InsertReviewComments(_) => "insert_review_comments",
+        ToolCallResultType::ReadSkill(_) => "read_skill",
+        ToolCallResultType::RequestComputerUseResult(_) => "request_computer_use",
+        ToolCallResultType::FetchConversation(_) => "fetch_conversation",
+        ToolCallResultType::StartAgent(_) => "start_agent",
+        ToolCallResultType::SendMessageToAgent(_) => "send_message_to_agent",
+        ToolCallResultType::TransferShellCommandControlToUser(_) => {
+            "transfer_shell_command_control_to_user"
+        }
+        ToolCallResultType::AskUserQuestion(_) => "ask_user_question",
+        ToolCallResultType::StartAgentV2(_) => "start_agent_v2",
+        ToolCallResultType::UploadFileArtifact(_) => "upload_file_artifact",
+        ToolCallResultType::RunAgentsResult(_) => "run_agents_result",
+    }
 }
 
 fn long_running_shell_result_is_snapshot(result: &api::message::tool_call_result::Result) -> bool {
@@ -3858,13 +4172,18 @@ fn screenshot_params_json_schema() -> Value {
             "max_long_edge_px": i32_json_schema(0, i32::MAX as i64),
             "max_total_px": i32_json_schema(0, i32::MAX as i64),
             "region": {
-                "type": "object",
-                "properties": {
-                    "top_left": coordinates,
-                    "bottom_right": coordinates_json_schema(),
-                },
-                "required": ["top_left", "bottom_right"],
-                "additionalProperties": false,
+                "oneOf": [
+                    {"type": "null"},
+                    {
+                        "type": "object",
+                        "properties": {
+                            "top_left": coordinates,
+                            "bottom_right": coordinates_json_schema(),
+                        },
+                        "required": ["top_left", "bottom_right"],
+                        "additionalProperties": false,
+                    }
+                ]
             },
         },
         "additionalProperties": false,
@@ -5004,6 +5323,290 @@ mod tests {
         assert!(local_error.contains("not advertised"));
     }
 
+    #[test]
+    fn openai_tool_call_envelope_rejects_non_function_or_empty_fields() {
+        let call = |id: &str, kind: &str, name: &str, arguments: &str| OpenAIToolCall {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            function: OpenAIFunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+        };
+
+        for (label, tool_call) in [
+            (
+                "empty id",
+                call("", "function", "run_shell_command", r#"{"command":"pwd"}"#),
+            ),
+            (
+                "wrong type",
+                call(
+                    "call-1",
+                    "message",
+                    "run_shell_command",
+                    r#"{"command":"pwd"}"#,
+                ),
+            ),
+            (
+                "empty function name",
+                call("call-1", "function", "", r#"{"command":"pwd"}"#),
+            ),
+            (
+                "non-object arguments",
+                call("call-1", "function", "open_code_review", "[]"),
+            ),
+        ] {
+            assert!(
+                api_tool_from_openai_tool_call(&tool_call).is_err(),
+                "{label} must fail closed"
+            );
+        }
+
+        let valid = call(
+            "call-1",
+            "function",
+            "run_shell_command",
+            r#"{"command":"pwd"}"#,
+        );
+        assert!(api_tool_from_openai_tool_call(&valid).is_ok());
+    }
+
+    #[tokio::test]
+    async fn public_generate_non_streaming_malformed_tool_envelopes_fail_locally() {
+        for (label, id, kind, arguments) in [
+            ("empty id", "", "function", r#"{"command":"pwd"}"#),
+            ("wrong type", "call-1", "message", r#"{"command":"pwd"}"#),
+            ("non-object arguments", "call-1", "function", "[]"),
+        ] {
+            let mut server = mockito::Server::new_async().await;
+            let body = json!({
+                "choices": [{
+                    "message": {
+                        "tool_calls": [{
+                            "id": id,
+                            "type": kind,
+                            "function": {
+                                "name": "run_shell_command",
+                                "arguments": arguments
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            });
+            let _mock = server
+                .mock("POST", "/v1/chat/completions")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(body.to_string())
+                .create_async()
+                .await;
+            let route = CustomProviderRoute {
+                provider_name: "local".to_string(),
+                base_url: format!("{}/v1", server.url()),
+                model: "model".to_string(),
+                api_key: None,
+                capabilities: Default::default(),
+            };
+            let mut response = generate(
+                route,
+                super::super::RequestParams::new_for_test(),
+                vec![api::ToolType::RunShellCommand],
+            )
+            .await
+            .expect("public generate should return a response stream");
+            let mut error = None;
+            while let Some(event) = response.next().await {
+                if let Err(error_value) = event {
+                    error = Some(error_value.to_string());
+                }
+            }
+            assert!(error.is_some(), "{label} must produce a local stream error");
+        }
+    }
+
+    #[tokio::test]
+    async fn public_generate_streamed_valid_tool_call_is_emitted() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "text/event-stream")
+            .with_body(
+                concat!(
+                    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"run_shell_command\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                )
+            )
+            .create_async()
+            .await;
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: Default::default(),
+        };
+        let mut response = generate(
+            route,
+            super::super::RequestParams::new_for_test(),
+            vec![api::ToolType::RunShellCommand],
+        )
+        .await
+        .expect("public generate should return a response stream");
+        let mut saw_tool_call = false;
+        while let Some(event) = response.next().await {
+            let event = event.expect("valid SSE tool call should decode");
+            let Some(api::response_event::Type::ClientActions(actions)) = event.r#type else {
+                continue;
+            };
+            for action in actions.actions {
+                let Some(api::client_action::Action::AddMessagesToTask(add)) = action.action else {
+                    continue;
+                };
+                saw_tool_call |= add.messages.iter().any(|message| {
+                    matches!(message.message, Some(api::message::Message::ToolCall(_)))
+                });
+            }
+        }
+        assert!(saw_tool_call);
+    }
+
+    #[tokio::test]
+    async fn public_generate_round_trips_parallel_tool_calls_as_one_assistant_message() {
+        let mut server = mockito::Server::new_async().await;
+        let _first_mock = server
+            .mock("POST", "/v1/chat/completions")
+            .with_status(200)
+            .with_header("content-type", "text/event-stream")
+            .with_body(concat!(
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[",
+                "{\"index\":0,\"id\":\"call-1\",\"type\":\"function\",\"function\":{\"name\":\"run_shell_command\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}},",
+                "{\"index\":1,\"id\":\"call-2\",\"type\":\"function\",\"function\":{\"name\":\"grep\",\"arguments\":\"{\\\"queries\\\":[\\\"needle\\\"]}\"}}",
+                "]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+                "data: [DONE]\n\n",
+            ))
+            .create_async()
+            .await;
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: Default::default(),
+        };
+        let mut first_response = generate(
+            route.clone(),
+            super::super::RequestParams::new_for_test(),
+            vec![api::ToolType::RunShellCommand, api::ToolType::Grep],
+        )
+        .await
+        .expect("first public request should return a stream");
+        let mut tool_messages = Vec::new();
+        while let Some(event) = first_response.next().await {
+            let event = event.expect("parallel tool call response should decode");
+            let Some(api::response_event::Type::ClientActions(actions)) = event.r#type else {
+                continue;
+            };
+            for action in actions.actions {
+                let Some(api::client_action::Action::AddMessagesToTask(add)) = action.action else {
+                    continue;
+                };
+                tool_messages.extend(add.messages.into_iter().filter(|message| {
+                    matches!(message.message, Some(api::message::Message::ToolCall(_)))
+                }));
+            }
+        }
+        assert_eq!(tool_messages.len(), 2);
+
+        let mut next_params = super::super::RequestParams::new_for_test();
+        next_params.tasks = vec![api::Task {
+            id: "local-root-task".to_string(),
+            messages: tool_messages,
+            ..Default::default()
+        }];
+        let expected_messages = openai_messages_from_params_with_tool_policy(
+            &next_params,
+            &openai_tools_for_supported_tools(&[
+                api::ToolType::RunShellCommand,
+                api::ToolType::Grep,
+            ]),
+            MAX_CONTEXT_CHARS,
+            false,
+        );
+        let _second_mock = server
+            .mock("POST", "/v1/chat/completions")
+            .match_body(Matcher::Json(
+                serde_json::to_value(ChatCompletionRequest {
+                    model: route.model.clone(),
+                    messages: expected_messages,
+                    stream: true,
+                    tools: openai_tools_for_supported_tools(&[
+                        api::ToolType::RunShellCommand,
+                        api::ToolType::Grep,
+                    ]),
+                    tool_choice: Some("auto"),
+                    parallel_tool_calls: Some(true),
+                })
+                .unwrap(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"choices":[{"message":{"content":"done"},"finish_reason":"stop"}]}"#)
+            .create_async()
+            .await;
+        let mut second_response = generate(
+            route,
+            next_params,
+            vec![api::ToolType::RunShellCommand, api::ToolType::Grep],
+        )
+        .await
+        .expect("second public request should return a stream");
+        while let Some(event) = second_response.next().await {
+            event.expect("second public request should decode");
+        }
+    }
+
+    #[tokio::test]
+    async fn public_generate_streamed_malformed_sse_fails_locally() {
+        for body in [
+            "data: {not-json}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"message\",\"function\":{\"name\":\"run_shell_command\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call-2\",\"type\":\"function\",\"function\":{\"name\":\"run_shell_command\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+        ] {
+            let mut server = mockito::Server::new_async().await;
+            let _mock = server
+                .mock("POST", "/v1/chat/completions")
+                .with_status(200)
+                .with_header("content-type", "text/event-stream")
+                .with_body(body)
+                .create_async()
+                .await;
+            let route = CustomProviderRoute {
+                provider_name: "local".to_string(),
+                base_url: format!("{}/v1", server.url()),
+                model: "model".to_string(),
+                api_key: None,
+                capabilities: Default::default(),
+            };
+            let mut response = generate(
+                route,
+                super::super::RequestParams::new_for_test(),
+                vec![api::ToolType::RunShellCommand],
+            )
+            .await
+            .expect("public generate should return a response stream");
+            let mut error = None;
+            while let Some(event) = response.next().await {
+                if let Err(error_value) = event {
+                    error = Some(error_value.to_string());
+                }
+            }
+            assert!(error.is_some(), "malformed SSE must fail locally");
+        }
+    }
+
     #[tokio::test]
     async fn configured_context_budget_bounds_http_message_context() {
         let mut server = mockito::Server::new_async().await;
@@ -5450,6 +6053,246 @@ mod tests {
     }
 
     #[test]
+    fn legacy_direct_tool_parsers_reject_present_wrong_types_and_ranges() {
+        let call = |name: &str, arguments: Value| OpenAIToolCall {
+            id: format!("call-{name}"),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+        };
+        let invalid_calls = [
+            ("read_files", json!({"files": {}})),
+            (
+                "read_files",
+                json!({"files":[{"name":"file","line_ranges":"all"}]}),
+            ),
+            (
+                "read_files",
+                json!({"files":[{"name":"file","line_ranges":[{"start":"1","end":2}]}]}),
+            ),
+            ("search_codebase", json!({"query":"x","path_filters":[1]})),
+            (
+                "search_codebase",
+                json!({"query":"x","codebase_path":false}),
+            ),
+            ("grep", json!({"queries": {"query":"x"}})),
+            ("grep", json!({"query":"x","path":false})),
+            ("file_glob", json!({"patterns":[1]})),
+            ("file_glob", json!({"pattern":"*.rs","max_matches":"10"})),
+            ("file_glob", json!({"pattern":"*.rs","max_depth":-1})),
+            (
+                "read_mcp_resource",
+                json!({"uri":"file://repo","server_id":1}),
+            ),
+            (
+                "call_mcp_tool",
+                json!({"name":"read","args":{},"server_id":1}),
+            ),
+            ("read_skill", json!({"skill_path":false})),
+            (
+                "read_skill",
+                json!({"skill_path":"skills/example","name":1}),
+            ),
+            ("apply_file_diffs", json!({"summary":1})),
+            ("apply_file_diffs", json!({"diffs":{}})),
+            (
+                "apply_file_diffs",
+                json!({"diffs":[{"file_path":"file","search":"old","replace":"new"}],"new_files":"none"}),
+            ),
+            (
+                "apply_file_diffs",
+                json!({"diffs":[{"file_path":"file","search":"old","replace":"new"}],"deleted_files":false}),
+            ),
+        ];
+
+        for (name, arguments) in invalid_calls {
+            assert!(
+                api_tool_from_openai_tool_call(&call(name, arguments)).is_err(),
+                "{name} must reject a present field with the wrong type or range"
+            );
+        }
+    }
+
+    #[test]
+    fn computer_wait_and_screenshot_regions_require_complete_semantics() {
+        let call = |name: &str, arguments: Value| OpenAIToolCall {
+            id: format!("call-{name}"),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+        };
+
+        for arguments in [
+            json!({"actions":[{"type":"wait"}]}),
+            json!({"actions":[{"type":"wait","seconds":null}]}),
+            json!({"actions":[{"type":"mouse_move","to":{"x":1,"y":2}}],"post_actions_screenshot_params":{"region":{"top_left":{"x":0,"y":0}}}}),
+            json!({"task_summary":"inspect","screenshot_params":{"region":{"bottom_right":{"x":10,"y":10}}}}),
+        ] {
+            let name = if arguments.get("actions").is_some() {
+                "use_computer"
+            } else {
+                "request_computer_use"
+            };
+            assert!(
+                api_tool_from_openai_tool_call(&call(name, arguments)).is_err(),
+                "{name} must reject incomplete computer-use semantics"
+            );
+        }
+    }
+
+    #[test]
+    fn history_groups_contiguous_parallel_tool_calls_and_preserves_results() {
+        let first = api::Message {
+            id: "call-message-1".to_string(),
+            task_id: "task-1".to_string(),
+            request_id: "request-1".to_string(),
+            timestamp: None,
+            server_message_data: String::new(),
+            citations: vec![],
+            message: Some(api::message::Message::ToolCall(api::message::ToolCall {
+                tool_call_id: "call-1".to_string(),
+                tool: Some(api::message::tool_call::Tool::RunShellCommand(
+                    api::message::tool_call::RunShellCommand {
+                        command: "pwd".to_string(),
+                        ..Default::default()
+                    },
+                )),
+            })),
+        };
+        let second = api::Message {
+            id: "call-message-2".to_string(),
+            task_id: "task-1".to_string(),
+            request_id: "request-1".to_string(),
+            timestamp: None,
+            server_message_data: String::new(),
+            citations: vec![],
+            message: Some(api::message::Message::ToolCall(api::message::ToolCall {
+                tool_call_id: "call-2".to_string(),
+                tool: Some(api::message::tool_call::Tool::Grep(
+                    api::message::tool_call::Grep {
+                        queries: vec!["needle".to_string()],
+                        path: "src".to_string(),
+                    },
+                )),
+            })),
+        };
+        let result = api::Message {
+            id: "result-message".to_string(),
+            task_id: "task-1".to_string(),
+            request_id: "request-2".to_string(),
+            timestamp: None,
+            server_message_data: String::new(),
+            citations: vec![],
+            message: Some(api::message::Message::ToolCallResult(
+                api::message::ToolCallResult {
+                    tool_call_id: "call-1".to_string(),
+                    context: None,
+                    result: Some(api::message::tool_call_result::Result::Grep(
+                        api::GrepResult {
+                            result: Some(api::grep_result::Result::Error(
+                                api::grep_result::Error {
+                                    message: "no match".to_string(),
+                                },
+                            )),
+                        },
+                    )),
+                },
+            )),
+        };
+        let params = super::super::RequestParams {
+            tasks: vec![api::Task {
+                id: "task-1".to_string(),
+                messages: vec![first, second, result],
+                ..Default::default()
+            }],
+            ..super::super::RequestParams::new_for_test()
+        };
+
+        let messages =
+            openai_messages_from_params_with_tool_policy(&params, &[], MAX_CONTEXT_CHARS, false);
+        let assistant = messages
+            .iter()
+            .find(|message| message.role == "assistant")
+            .expect("parallel calls should produce an assistant message");
+        assert_eq!(assistant.tool_calls.len(), 2);
+        assert_eq!(assistant.tool_calls[0].id, "call-1");
+        assert_eq!(assistant.tool_calls[1].id, "call-2");
+        let tool = messages
+            .iter()
+            .find(|message| message.role == "tool")
+            .expect("tool result should remain a separate tool message");
+        assert_eq!(tool.tool_call_id.as_deref(), Some("call-1"));
+        let content: Value = serde_json::from_str(tool.content.as_deref().unwrap()).unwrap();
+        assert_eq!(content["version"], 1);
+        assert_eq!(content["tool_call_id"], "call-1");
+    }
+
+    #[test]
+    fn tool_results_use_versioned_structured_json_and_round_trip_protobuf() {
+        let result = api::message::ToolCallResult {
+            tool_call_id: "call-1".to_string(),
+            context: None,
+            result: Some(
+                api::message::tool_call_result::Result::ReadShellCommandOutput(
+                    api::ReadShellCommandOutputResult {
+                        command: "tail -f log".to_string(),
+                        result: Some(api::read_shell_command_output_result::Result::Error(
+                            api::ShellCommandError {
+                                r#type: Some(api::shell_command_error::Type::CommandNotFound(())),
+                            },
+                        )),
+                    },
+                ),
+            ),
+        };
+        let content = tool_call_result_to_text_with_tool_policy(&result, true);
+        let envelope: Value = serde_json::from_str(&content).expect("tool content must be JSON");
+        assert_eq!(envelope["schema"], "warp.direct_openai.tool_result");
+        assert_eq!(envelope["version"], 1);
+        assert_eq!(envelope["tool_call_id"], "call-1");
+        assert_eq!(envelope["result_type"], "read_shell_command_output");
+        let encoded = envelope["protobuf_base64"].as_str().unwrap();
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        use prost::Message as _;
+        let round_trip = api::message::ToolCallResult::decode(bytes.as_slice()).unwrap();
+        assert_eq!(round_trip, result);
+    }
+
+    #[test]
+    fn shell_delay_seconds_and_nanos_survive_direct_action_conversion() {
+        let action = ai::agent::action::AIAgentActionType::from(
+            api::message::tool_call::ReadShellCommandOutput {
+                command_id: "block-1".to_string(),
+                delay: Some(
+                    api::message::tool_call::read_shell_command_output::Delay::Duration(
+                        prost_types::Duration {
+                            seconds: 2,
+                            nanos: 345_678_901,
+                        },
+                    ),
+                ),
+            },
+        );
+        let ai::agent::action::AIAgentActionType::ReadShellCommandOutput { delay, .. } = action
+        else {
+            panic!("expected read shell command output action");
+        };
+        assert_eq!(
+            delay,
+            Some(ai::agent::action::ShellCommandDelay::Duration(
+                std::time::Duration::new(2, 345_678_901),
+            ))
+        );
+    }
+
+    #[test]
     fn history_tool_arguments_round_trip_new_local_tool_semantics() {
         let document_id = "00000000-0000-0000-0000-000000000001".to_string();
         let tools = vec![
@@ -5661,7 +6504,7 @@ mod tests {
                             max_total_px: 2000,
                             region: Some(
                                 api::message::tool_call::screenshot_params::Region {
-                                    top_left: None,
+                                    top_left: Some(api::Coordinates { x: 0, y: 0 }),
                                     bottom_right: Some(api::Coordinates { x: 640, y: 480 }),
                                 },
                             ),
@@ -5676,7 +6519,10 @@ mod tests {
                         r#type: Some(
                             api::message::tool_call::use_computer::action::Type::Wait(
                                 api::message::tool_call::use_computer::action::Wait {
-                                    duration: None,
+                                    duration: Some(prost_types::Duration {
+                                        seconds: 1,
+                                        nanos: 234,
+                                    }),
                                 },
                             ),
                         ),
@@ -5814,10 +6660,21 @@ mod tests {
 
         let finished_text = tool_call_result_to_text_with_tool_policy(&finished, true);
         let error_text = tool_call_result_to_text_with_tool_policy(&error, true);
-        assert!(finished_text.contains("CommandFinished"));
-        assert!(finished_text.contains("block-1"));
-        assert!(error_text.contains("Error"));
-        assert!(error_text.contains("CommandNotFound"));
+        for (text, expected) in [(&finished_text, &finished), (&error_text, &error)] {
+            let envelope: Value = serde_json::from_str(text)
+                .expect("structured tool result should remain valid JSON");
+            assert_eq!(envelope["schema"], "warp.direct_openai.tool_result");
+            assert_eq!(envelope["version"], 1);
+            let encoded = envelope["protobuf_base64"]
+                .as_str()
+                .expect("complete result should include protobuf payload");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .expect("structured tool result payload should be base64");
+            let decoded = api::message::ToolCallResult::decode(bytes.as_slice())
+                .expect("structured tool result payload should decode");
+            assert_eq!(&decoded, expected);
+        }
     }
 
     #[test]
@@ -5878,12 +6735,20 @@ mod tests {
             json!({"type":"integer","minimum":0,"maximum":2147483647_i64})
         );
         let region = &screenshot["properties"]["region"];
-        assert_eq!(region["type"], "object");
-        assert_eq!(region["required"], json!(["top_left", "bottom_right"]));
-        assert_eq!(region["additionalProperties"], false);
+        let region_variants = region["oneOf"]
+            .as_array()
+            .expect("region should allow null or a complete object");
+        assert_eq!(region_variants[0], json!({"type": "null"}));
+        let region_object = &region_variants[1];
+        assert_eq!(region_object["type"], "object");
+        assert_eq!(
+            region_object["required"],
+            json!(["top_left", "bottom_right"])
+        );
+        assert_eq!(region_object["additionalProperties"], false);
         for coordinate in ["top_left", "bottom_right"] {
             assert_eq!(
-                region["properties"][coordinate],
+                region_object["properties"][coordinate],
                 json!({
                     "type":"object",
                     "properties": {
@@ -6073,7 +6938,12 @@ mod tests {
         assert!(safe_text.contains("polling and control tools are not advertised"));
 
         let complete_text = tool_call_result_to_text_with_tool_policy(&result, true);
-        assert!(complete_text.contains("LongRunningCommandSnapshot"));
+        let complete: Value = serde_json::from_str(&complete_text)
+            .expect("structured tool result should remain valid JSON");
+        assert_eq!(complete["schema"], "warp.direct_openai.tool_result");
+        assert_eq!(complete["version"], 1);
+        assert_eq!(complete["result_type"], "run_shell_command");
+        assert!(complete["protobuf_base64"].as_str().is_some());
     }
 
     #[test]
