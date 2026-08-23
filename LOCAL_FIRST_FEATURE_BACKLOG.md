@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `b43125ed`.
+- Current local implementation head: `832c342c`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -188,6 +188,12 @@ the prompt is executed.
 ## P1 — Provider And Context Foundation
 
 ### P1.1 Add a provider capability contract
+
+**Delivered in code:** `86795248`, `00d3e8f9`, `c901b93e`, `0f168bf4`,
+`b839b007`, `936d30c3`. Independent review found no remaining findings.
+Focused default and `local_only` tests, both all-target builds, bundle creation,
+and strict codesign passed. Isolated screen-level acceptance remains a final
+gate because macOS was locked when the new bundle became available.
 
 Introduce a local capability definition for `chat`, `tools`, `vision`,
 `embeddings`, `transcription`, and context-window size. User configuration is
