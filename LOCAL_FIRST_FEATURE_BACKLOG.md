@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `68f477ba`.
+- Current local implementation head: `bf50a37fd`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -290,7 +290,8 @@ closure distinct from conversation deletion.
 
 Focused default and `local_only` suites passed 35 queue tests and 8 panel tests
 in each mode; the final conversation-scoped shell regression also passed. The
-all-target and bundle gate is batched with P1.6 and P1.7.
+shared P1.5–P1.7 gate passed both all-target builds, bundle creation, executable
+checks, and strict codesign.
 
 The queue model, panel, reorder/edit behavior, and `/queue` path already exist,
 but the feature is not default and its state lives only in memory. Add a local
@@ -317,8 +318,8 @@ dirty-delete confirmation and actionable filesystem errors, and coalesced the
 watcher to one effective refresh.
 
 Focused repository/UI suites passed 11 tests in both default and `local_only`
-modes; the CLI suite passed 4 tests. The all-target and bundle gate remains
-batched with P1.7.
+modes; the CLI suite passed 4 tests. The shared P1.5–P1.7 all-target and bundle
+gate passed.
 
 Reuse the existing workflow editor but write `Workflow::AgentMode` YAML
 atomically to the local workflows directory. Add stable local IDs and CLI
@@ -327,6 +328,19 @@ atomically to the local workflows directory. Add stable local IDs and CLI
 **Estimate / risk:** 3–5 days / medium.
 
 ### P1.7 Local rule CRUD
+
+**Delivered in code:** `a29ee822b`, `bf50a37fd`. The Rules UI now edits
+file-backed global and project rules through a no-follow, directory-FD anchored
+repository with revision CAS, rollback-safe atomic publication, exact managed
+targets, explicit delete confirmation, read-only error rows, multi-project Add,
+and a local suggested-rule flow. Cloud fact, personal-drive, and UpdateManager
+CRUD are absent from the visible path; no unsafe Rust was introduced.
+
+Focused default and `local_only` UI suites passed 6 tests each; repository and
+precedence suites passed 6 and 2 tests. The shared P1.5–P1.7 gate passed both
+all-target builds, bundle creation, executable checks, and strict codesign. The
+verified bundle binary SHA-256 was
+`68eb252f38a380ec6ca9cfdd49b90b70712caad304ad03cbeb0ba95bac30f2da`.
 
 Make file-backed global and project rules editable through the existing UI.
 Write atomically, preserve rule precedence, and protect against accidental
