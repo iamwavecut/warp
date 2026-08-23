@@ -661,8 +661,20 @@ pub(super) async fn generate(
     } else {
         Vec::new()
     };
+    let advertised_supported_tools = if effective_capabilities.tools {
+        supported_tools.clone()
+    } else {
+        Vec::new()
+    };
+    let long_running_shell_controls_advertised =
+        supports_complete_long_running_shell_family(&advertised_supported_tools);
     let input_messages = api_messages_from_inputs(&task_id, &request_id, &params.input);
-    let chat_messages = openai_messages_from_params(&params, &tools, route.context_char_budget());
+    let chat_messages = openai_messages_from_params_with_tool_policy(
+        &params,
+        &tools,
+        route.context_char_budget(),
+        long_running_shell_controls_advertised,
+    );
     log::info!(
         "Using OpenAI-compatible custom provider route: provider={}, model={}, advertised_tools={}, task_count={}, input_count={}, chat_message_count={}",
         route.provider_name,
@@ -699,12 +711,14 @@ pub(super) async fn generate(
             tools,
         };
 
-        let mut completion_events = stream_chat_completion(
+        let mut completion_events = stream_chat_completion_with_tool_policy(
             route.clone(),
             body,
             task_id.clone(),
             request_id.clone(),
             prefix_actions,
+            advertised_supported_tools.clone(),
+            long_running_shell_controls_advertised,
         );
         while let Some(event) = completion_events.next().await {
             match event {
@@ -766,7 +780,27 @@ fn stream_chat_completion(
     body: ChatCompletionRequest,
     task_id: String,
     request_id: String,
+    prefix_actions: Vec<api::ClientAction>,
+) -> ResponseStream {
+    stream_chat_completion_with_tool_policy(
+        route,
+        body,
+        task_id,
+        request_id,
+        prefix_actions,
+        vec![api::ToolType::RunShellCommand],
+        false,
+    )
+}
+
+fn stream_chat_completion_with_tool_policy(
+    route: CustomProviderRoute,
+    body: ChatCompletionRequest,
+    task_id: String,
+    request_id: String,
     mut prefix_actions: Vec<api::ClientAction>,
+    supported_tools: Vec<api::ToolType>,
+    long_running_shell_controls_advertised: bool,
 ) -> ResponseStream {
     Box::pin(stream! {
     let response = match send_chat_completion_request(&route, &body).await {
@@ -883,7 +917,13 @@ fn stream_chat_completion(
     if !completed_tool_calls.is_empty() {
         let mut messages = Vec::new();
         for tool_call in completed_tool_calls {
-            match api_tool_call_message(&task_id, &request_id, tool_call) {
+            match api_tool_call_message_for_supported_tools(
+                &task_id,
+                &request_id,
+                tool_call,
+                &supported_tools,
+                long_running_shell_controls_advertised,
+            ) {
                 Ok(message) => messages.push(message),
                 Err(error) => {
                     yield Err(Arc::new(error));
@@ -1033,6 +1073,15 @@ fn openai_messages_from_params(
     tools: &[OpenAITool],
     context_char_budget: usize,
 ) -> Vec<ChatMessage> {
+    openai_messages_from_params_with_tool_policy(params, tools, context_char_budget, false)
+}
+
+fn openai_messages_from_params_with_tool_policy(
+    params: &super::RequestParams,
+    tools: &[OpenAITool],
+    context_char_budget: usize,
+    long_running_shell_controls_advertised: bool,
+) -> Vec<ChatMessage> {
     let mut messages = vec![ChatMessage::system(system_prompt(
         params,
         tools,
@@ -1041,7 +1090,10 @@ fn openai_messages_from_params(
 
     for task in &params.tasks {
         for message in &task.messages {
-            messages.extend(openai_messages_from_api_message(message));
+            messages.extend(openai_messages_from_api_message_with_tool_policy(
+                message,
+                long_running_shell_controls_advertised,
+            ));
         }
     }
 
@@ -1052,7 +1104,10 @@ fn openai_messages_from_params(
     messages
 }
 
-fn openai_messages_from_api_message(message: &api::Message) -> Vec<ChatMessage> {
+fn openai_messages_from_api_message_with_tool_policy(
+    message: &api::Message,
+    long_running_shell_controls_advertised: bool,
+) -> Vec<ChatMessage> {
     match message.message.as_ref() {
         Some(api::message::Message::UserQuery(query)) => {
             vec![ChatMessage::user(with_context(
@@ -1095,7 +1150,10 @@ fn openai_messages_from_api_message(message: &api::Message) -> Vec<ChatMessage> 
         Some(api::message::Message::ToolCallResult(result)) => {
             vec![ChatMessage::tool(
                 result.tool_call_id.clone(),
-                tool_call_result_to_text(result),
+                tool_call_result_to_text_with_tool_policy(
+                    result,
+                    long_running_shell_controls_advertised,
+                ),
             )]
         }
         Some(api::message::Message::AgentReasoning(reasoning)) => (!reasoning.reasoning.is_empty())
@@ -1778,6 +1836,29 @@ fn openai_tool_call_from_api_tool_call(
                 }).unwrap_or(true),
             }),
         ),
+        api::message::tool_call::Tool::WriteToLongRunningShellCommand(call) => (
+            "write_to_long_running_shell_command",
+            json!({
+                "command_id": call.command_id,
+                "input": if let Ok(input) = String::from_utf8(call.input.clone()) {
+                    json!(input)
+                } else {
+                    json!(call.input)
+                },
+                "mode": long_running_shell_mode_to_json(call.mode.as_ref()),
+            }),
+        ),
+        api::message::tool_call::Tool::ReadShellCommandOutput(call) => (
+            "read_shell_command_output",
+            json!({
+                "command_id": call.command_id,
+                "delay": shell_command_delay_to_json(call.delay.as_ref()),
+            }),
+        ),
+        api::message::tool_call::Tool::TransferShellCommandControlToUser(call) => (
+            "transfer_shell_command_control_to_user",
+            json!({"reason": call.reason}),
+        ),
         api::message::tool_call::Tool::ReadFiles(call) => (
             "read_files",
             json!({
@@ -1861,6 +1942,75 @@ fn openai_tool_call_from_api_tool_call(
                 })).collect::<Vec<_>>(),
             }),
         ),
+        api::message::tool_call::Tool::SuggestNewConversation(call) => (
+            "suggest_new_conversation",
+            json!({"message_id": call.message_id}),
+        ),
+        api::message::tool_call::Tool::OpenCodeReview(_) => ("open_code_review", json!({})),
+        api::message::tool_call::Tool::InitProject(_) => ("init_project", json!({})),
+        api::message::tool_call::Tool::ReadDocuments(call) => (
+            "read_documents",
+            json!({
+                "documents": call.documents.iter().map(|document| json!({
+                    "document_id": document.document_id,
+                    "line_ranges": document.line_ranges.iter().map(|range| {
+                        json!({"start": range.start, "end": range.end})
+                    }).collect::<Vec<_>>(),
+                })).collect::<Vec<_>>(),
+            }),
+        ),
+        api::message::tool_call::Tool::EditDocuments(call) => (
+            "edit_documents",
+            json!({
+                "diffs": call.diffs.iter().map(|diff| json!({
+                    "document_id": diff.document_id,
+                    "search": diff.search,
+                    "replace": diff.replace,
+                })).collect::<Vec<_>>(),
+            }),
+        ),
+        api::message::tool_call::Tool::CreateDocuments(call) => (
+            "create_documents",
+            json!({
+                "documents": call.new_documents.iter().map(|document| json!({
+                    "content": document.content,
+                    "title": document.title,
+                })).collect::<Vec<_>>(),
+            }),
+        ),
+        api::message::tool_call::Tool::InsertReviewComments(call) => (
+            "insert_review_comments",
+            json!({
+                "repo_path": call.repo_path,
+                "comments": call.comments.iter().map(review_comment_to_json).collect::<Vec<_>>(),
+                "base_branch": call.base_branch,
+            }),
+        ),
+        api::message::tool_call::Tool::FetchConversation(call) => (
+            "fetch_conversation",
+            json!({"conversation_id": call.conversation_id}),
+        ),
+        api::message::tool_call::Tool::AskUserQuestion(call) => (
+            "ask_user_question",
+            json!({
+                "questions": call.questions.iter().map(ask_user_question_to_json).collect::<Vec<_>>(),
+            }),
+        ),
+        api::message::tool_call::Tool::UseComputer(call) => (
+            "use_computer",
+            json!({
+                "actions": call.actions.iter().map(use_computer_action_to_json).collect::<Vec<_>>(),
+                "post_actions_screenshot_params": call.post_actions_screenshot_params.as_ref().map(screenshot_params_to_json),
+                "action_summary": call.action_summary,
+            }),
+        ),
+        api::message::tool_call::Tool::RequestComputerUse(call) => (
+            "request_computer_use",
+            json!({
+                "task_summary": call.task_summary,
+                "screenshot_params": call.screenshot_params.as_ref().map(screenshot_params_to_json),
+            }),
+        ),
         _ => return None,
     };
 
@@ -1874,16 +2024,231 @@ fn openai_tool_call_from_api_tool_call(
     })
 }
 
+fn long_running_shell_mode_to_json(
+    mode: Option<&api::message::tool_call::write_to_long_running_shell_command::Mode>,
+) -> Value {
+    use api::message::tool_call::write_to_long_running_shell_command::mode::Mode;
+    match mode.and_then(|mode| mode.mode.as_ref()) {
+        Some(Mode::Line(())) => json!("line"),
+        Some(Mode::Block(())) => json!("block"),
+        Some(Mode::Raw(())) | None => json!("raw"),
+    }
+}
+
+fn shell_command_delay_to_json(
+    delay: Option<&api::message::tool_call::read_shell_command_output::Delay>,
+) -> Value {
+    use api::message::tool_call::read_shell_command_output::Delay;
+    match delay {
+        Some(Delay::Duration(duration)) => json!({
+            "kind": "duration",
+            "seconds": duration.seconds,
+        }),
+        Some(Delay::OnCompletion(())) => json!("on_completion"),
+        None => Value::Null,
+    }
+}
+
+fn review_comment_to_json(
+    comment: &api::message::tool_call::insert_review_comments::Comment,
+) -> Value {
+    json!({
+        "comment_id": comment.comment_id,
+        "author": comment.author,
+        "last_modified_timestamp": comment.last_modified_timestamp,
+        "comment_body": comment.comment_body,
+        "parent_comment_id": comment.parent_comment_id,
+        "location": comment.location.as_ref().map(review_comment_location_to_json),
+        "html_url": comment.html_url,
+    })
+}
+
+fn review_comment_location_to_json(
+    location: &api::message::tool_call::insert_review_comments::CommentLocation,
+) -> Value {
+    json!({
+        "file_path": location.file_path,
+        "line": location.line.as_ref().map(review_comment_line_to_json),
+    })
+}
+
+fn review_comment_line_to_json(
+    line: &api::message::tool_call::insert_review_comments::CommentLineRange,
+) -> Value {
+    let side =
+        match api::message::tool_call::insert_review_comments::CommentSide::try_from(line.side) {
+            Ok(api::message::tool_call::insert_review_comments::CommentSide::Old) => "OLD",
+            _ => "NEW",
+        };
+    json!({
+        "diff_hunk": line.diff_hunk,
+        "range": line.range.as_ref().map(|range| json!({
+            "start": range.start,
+            "end": range.end,
+        })),
+        "side": side,
+    })
+}
+
+fn ask_user_question_to_json(question: &api::ask_user_question::Question) -> Value {
+    let multiple_choice = match question.question_type.as_ref() {
+        Some(api::ask_user_question::question::QuestionType::MultipleChoice(multiple_choice)) => {
+            json!({
+                "options": multiple_choice.options.iter().map(|option| {
+                    json!({"label": option.label})
+                }).collect::<Vec<_>>(),
+                "recommended_option_index": multiple_choice.recommended_option_index,
+                "is_multiselect": multiple_choice.is_multiselect,
+                "supports_other": multiple_choice.supports_other,
+            })
+        }
+        None => Value::Null,
+    };
+    json!({
+        "question_id": question.question_id,
+        "question": question.question,
+        "multiple_choice": multiple_choice,
+    })
+}
+
+fn coordinates_to_json(coordinates: Option<&api::Coordinates>) -> Value {
+    coordinates
+        .map(|coordinates| json!({"x": coordinates.x, "y": coordinates.y}))
+        .unwrap_or(Value::Null)
+}
+
+fn screenshot_params_to_json(params: &api::message::tool_call::ScreenshotParams) -> Value {
+    json!({
+        "max_long_edge_px": params.max_long_edge_px,
+        "max_total_px": params.max_total_px,
+        "region": params.region.as_ref().map(|region| json!({
+            "top_left": coordinates_to_json(region.top_left.as_ref()),
+            "bottom_right": coordinates_to_json(region.bottom_right.as_ref()),
+        })),
+    })
+}
+
+fn use_computer_action_to_json(action: &api::message::tool_call::use_computer::Action) -> Value {
+    use api::message::tool_call::use_computer::action::Type;
+    match action.r#type.as_ref() {
+        Some(Type::MouseMove(mouse_move)) => json!({
+            "type": "mouse_move",
+            "to": coordinates_to_json(mouse_move.to.as_ref()),
+        }),
+        Some(Type::MouseDown(mouse_down)) => json!({
+            "type": "mouse_down",
+            "button": mouse_button_name(mouse_down.button),
+            "at": coordinates_to_json(mouse_down.at.as_ref()),
+        }),
+        Some(Type::MouseUp(mouse_up)) => json!({
+            "type": "mouse_up",
+            "button": mouse_button_name(mouse_up.button),
+        }),
+        Some(Type::MouseWheel(mouse_wheel)) => json!({
+            "type": "mouse_wheel",
+            "at": coordinates_to_json(mouse_wheel.at.as_ref()),
+            "direction": scroll_direction_name(mouse_wheel.direction),
+            "distance": mouse_wheel_distance_to_json(mouse_wheel.distance.as_ref()),
+        }),
+        Some(Type::Wait(wait)) => json!({
+            "type": "wait",
+            "seconds": wait.duration.as_ref().map(|duration| duration.seconds).unwrap_or_default(),
+        }),
+        Some(Type::TypeText(type_text)) => json!({
+            "type": "type_text",
+            "text": type_text.text,
+        }),
+        Some(Type::KeyDown(key_down)) => json!({
+            "type": "key_down",
+            "key": computer_key_to_json(key_down.key.as_ref()),
+        }),
+        Some(Type::KeyUp(key_up)) => json!({
+            "type": "key_up",
+            "key": computer_key_to_json(key_up.key.as_ref()),
+        }),
+        None => json!({"type": "unknown"}),
+    }
+}
+
+fn mouse_button_name(value: i32) -> &'static str {
+    match api::message::tool_call::use_computer::action::MouseButton::try_from(value) {
+        Ok(api::message::tool_call::use_computer::action::MouseButton::Right) => "right",
+        Ok(api::message::tool_call::use_computer::action::MouseButton::Middle) => "middle",
+        Ok(api::message::tool_call::use_computer::action::MouseButton::Back) => "back",
+        Ok(api::message::tool_call::use_computer::action::MouseButton::Forward) => "forward",
+        _ => "left",
+    }
+}
+
+fn scroll_direction_name(value: i32) -> &'static str {
+    match api::message::tool_call::use_computer::action::mouse_wheel::Direction::try_from(value) {
+        Ok(api::message::tool_call::use_computer::action::mouse_wheel::Direction::Down) => "down",
+        Ok(api::message::tool_call::use_computer::action::mouse_wheel::Direction::Left) => "left",
+        Ok(api::message::tool_call::use_computer::action::mouse_wheel::Direction::Right) => "right",
+        _ => "up",
+    }
+}
+
+fn mouse_wheel_distance_to_json(
+    distance: Option<&api::message::tool_call::use_computer::action::mouse_wheel::Distance>,
+) -> Value {
+    use api::message::tool_call::use_computer::action::mouse_wheel::Distance;
+    match distance {
+        Some(Distance::Pixels(value)) => json!({"pixels": value}),
+        Some(Distance::Clicks(value)) => json!({"clicks": value}),
+        None => Value::Null,
+    }
+}
+
+fn computer_key_to_json(key: Option<&api::message::tool_call::use_computer::action::Key>) -> Value {
+    use api::message::tool_call::use_computer::action::key::Data;
+    match key.and_then(|key| key.data.as_ref()) {
+        Some(Data::Keycode(value)) => json!({"keycode": value}),
+        Some(Data::Char(value)) => json!({"char": value}),
+        None => Value::Null,
+    }
+}
+
 fn api_tool_call_message(
     task_id: &str,
     request_id: &str,
     tool_call: OpenAIToolCall,
 ) -> Result<api::Message, AIApiError> {
+    api_tool_call_message_inner(task_id, request_id, tool_call, None, false)
+}
+
+fn api_tool_call_message_for_supported_tools(
+    task_id: &str,
+    request_id: &str,
+    tool_call: OpenAIToolCall,
+    supported_tools: &[api::ToolType],
+    long_running_shell_controls_advertised: bool,
+) -> Result<api::Message, AIApiError> {
+    api_tool_call_message_inner(
+        task_id,
+        request_id,
+        tool_call,
+        Some(supported_tools),
+        long_running_shell_controls_advertised,
+    )
+}
+
+fn api_tool_call_message_inner(
+    task_id: &str,
+    request_id: &str,
+    tool_call: OpenAIToolCall,
+    supported_tools: Option<&[api::ToolType]>,
+    long_running_shell_controls_advertised: bool,
+) -> Result<api::Message, AIApiError> {
     log::info!(
         "OpenAI-compatible custom provider requested Warp tool call: {}",
         tool_call.function.name
     );
-    let tool = api_tool_from_openai_tool_call(&tool_call)?;
+    let tool = api_tool_from_openai_tool_call_inner(
+        &tool_call,
+        supported_tools,
+        long_running_shell_controls_advertised,
+    )?;
     Ok(api::Message {
         id: Uuid::new_v4().to_string(),
         task_id: task_id.to_string(),
@@ -1901,6 +2266,25 @@ fn api_tool_call_message(
 fn api_tool_from_openai_tool_call(
     tool_call: &OpenAIToolCall,
 ) -> Result<api::message::tool_call::Tool, AIApiError> {
+    api_tool_from_openai_tool_call_inner(tool_call, None, false)
+}
+
+fn api_tool_from_openai_tool_call_with_supported_tools(
+    tool_call: &OpenAIToolCall,
+    supported_tools: &[api::ToolType],
+) -> Result<api::message::tool_call::Tool, AIApiError> {
+    api_tool_from_openai_tool_call_inner(
+        tool_call,
+        Some(supported_tools),
+        supports_complete_long_running_shell_family(supported_tools),
+    )
+}
+
+fn api_tool_from_openai_tool_call_inner(
+    tool_call: &OpenAIToolCall,
+    supported_tools: Option<&[api::ToolType]>,
+    long_running_shell_controls_advertised: bool,
+) -> Result<api::message::tool_call::Tool, AIApiError> {
     let raw_arguments = tool_call.function.arguments.trim();
     let args: Value = if raw_arguments.is_empty() {
         json!({})
@@ -1913,15 +2297,36 @@ fn api_tool_from_openai_tool_call(
         })?
     };
 
-    match tool_call.function.name.as_str() {
+    let tool_name = tool_call.function.name.as_str();
+    if let Some(supported_tools) = supported_tools {
+        let is_supported = tool_type_for_openai_name(tool_name)
+            .is_some_and(|tool_type| tool_type_is_advertised(tool_type, supported_tools));
+        if !is_supported {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "OpenAI-compatible provider called local tool `{tool_name}` that is not advertised for this request"
+            )));
+        }
+    }
+
+    match tool_name {
         "run_shell_command" => {
             let command = required_string(&args, "command")?;
             let inferred_flags = infer_shell_command_flags(&command);
             let requested_wait_until_completion =
                 optional_bool(&args, "wait_until_completion").unwrap_or(true);
-            if !requested_wait_until_completion {
+            let wait_until_completion = if long_running_shell_controls_advertised {
+                requested_wait_until_completion
+            } else {
+                if !requested_wait_until_completion {
+                    log::warn!(
+                        "OpenAI-compatible provider requested wait_until_completion=false for run_shell_command; forcing completion wait because the direct provider path does not expose long-running command polling tools"
+                    );
+                }
+                true
+            };
+            if !wait_until_completion {
                 log::warn!(
-                    "OpenAI-compatible provider requested wait_until_completion=false for run_shell_command; forcing completion wait because the direct provider path does not expose long-running command polling tools"
+                    "OpenAI-compatible provider requested a long-running run_shell_command; preserving the asynchronous request because all local long-running shell controls are advertised"
                 );
             }
             Ok(api::message::tool_call::Tool::RunShellCommand(
@@ -1934,7 +2339,7 @@ fn api_tool_from_openai_tool_call(
                     is_risky: optional_bool(&args, "is_risky").unwrap_or(inferred_flags.is_risky),
                     wait_until_complete_value: Some(
                         api::message::tool_call::run_shell_command::WaitUntilCompleteValue::WaitUntilComplete(
-                            true,
+                            wait_until_completion,
                         ),
                     ),
                     risk_category: 0,
@@ -2019,10 +2424,864 @@ fn api_tool_from_openai_tool_call(
         "apply_file_diffs" => Ok(api::message::tool_call::Tool::ApplyFileDiffs(
             apply_file_diffs_arg(&args)?,
         )),
+        "suggest_new_conversation" => Ok(api::message::tool_call::Tool::SuggestNewConversation(
+            api::message::tool_call::SuggestNewConversation {
+                message_id: required_string(&args, "message_id")?,
+            },
+        )),
+        "open_code_review" => {
+            reject_unexpected_arguments(&args, "open_code_review")?;
+            Ok(api::message::tool_call::Tool::OpenCodeReview(
+                api::message::tool_call::OpenCodeReview {},
+            ))
+        }
+        "init_project" => {
+            reject_unexpected_arguments(&args, "init_project")?;
+            Ok(api::message::tool_call::Tool::InitProject(
+                api::message::tool_call::InitProject {},
+            ))
+        }
+        "read_documents" => Ok(api::message::tool_call::Tool::ReadDocuments(
+            read_documents_arg(&args)?,
+        )),
+        "edit_documents" => Ok(api::message::tool_call::Tool::EditDocuments(
+            edit_documents_arg(&args)?,
+        )),
+        "create_documents" => Ok(api::message::tool_call::Tool::CreateDocuments(
+            create_documents_arg(&args)?,
+        )),
+        "read_shell_command_output" => Ok(api::message::tool_call::Tool::ReadShellCommandOutput(
+            read_shell_command_output_arg(&args)?,
+        )),
+        "write_to_long_running_shell_command" => Ok(
+            api::message::tool_call::Tool::WriteToLongRunningShellCommand(
+                write_to_long_running_shell_command_arg(&args)?,
+            ),
+        ),
+        "transfer_shell_command_control_to_user" => Ok(
+            api::message::tool_call::Tool::TransferShellCommandControlToUser(
+                api::message::tool_call::TransferShellCommandControlToUser {
+                    reason: required_string(&args, "reason")?,
+                },
+            ),
+        ),
+        "insert_review_comments" => Ok(api::message::tool_call::Tool::InsertReviewComments(
+            insert_review_comments_arg(&args)?,
+        )),
+        "fetch_conversation" => Ok(api::message::tool_call::Tool::FetchConversation(
+            api::message::tool_call::FetchConversation {
+                conversation_id: required_string(&args, "conversation_id")?,
+            },
+        )),
+        "ask_user_question" => Ok(api::message::tool_call::Tool::AskUserQuestion(
+            ask_user_question_arg(&args)?,
+        )),
+        "use_computer" => Ok(api::message::tool_call::Tool::UseComputer(
+            use_computer_arg(&args)?,
+        )),
+        "request_computer_use" => Ok(api::message::tool_call::Tool::RequestComputerUse(
+            request_computer_use_arg(&args)?,
+        )),
         other => Err(AIApiError::Other(anyhow::anyhow!(
             "OpenAI-compatible provider called unsupported Warp tool `{other}`"
         ))),
     }
+}
+
+fn reject_unexpected_arguments(args: &Value, tool_name: &str) -> Result<(), AIApiError> {
+    let object = args.as_object().ok_or_else(|| {
+        AIApiError::Other(anyhow::anyhow!(
+            "arguments for OpenAI-compatible tool `{tool_name}` must be a JSON object"
+        ))
+    })?;
+    if let Some(key) = object.keys().next() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "OpenAI-compatible tool `{tool_name}` does not accept argument `{key}`"
+        )));
+    }
+    Ok(())
+}
+
+fn read_documents_arg(args: &Value) -> Result<api::message::tool_call::ReadDocuments, AIApiError> {
+    let documents = array(args, "documents")?;
+    if documents.is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "read_documents requires at least one document"
+        )));
+    }
+    Ok(api::message::tool_call::ReadDocuments {
+        documents: documents
+            .iter()
+            .map(|document| {
+                let document_id = valid_document_id(required_string(document, "document_id")?)?;
+                Ok(api::message::tool_call::read_documents::Document {
+                    document_id,
+                    line_ranges: line_ranges_arg(document)?,
+                })
+            })
+            .collect::<Result<Vec<_>, AIApiError>>()?,
+    })
+}
+
+fn edit_documents_arg(args: &Value) -> Result<api::message::tool_call::EditDocuments, AIApiError> {
+    let diffs = array(args, "diffs")?;
+    if diffs.is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "edit_documents requires at least one diff"
+        )));
+    }
+    Ok(api::message::tool_call::EditDocuments {
+        diffs: diffs
+            .iter()
+            .map(|diff| {
+                Ok(api::message::tool_call::edit_documents::DocumentDiff {
+                    document_id: valid_document_id(required_string(diff, "document_id")?)?,
+                    search: required_string(diff, "search")?,
+                    replace: required_string(diff, "replace")?,
+                })
+            })
+            .collect::<Result<Vec<_>, AIApiError>>()?,
+    })
+}
+
+fn create_documents_arg(
+    args: &Value,
+) -> Result<api::message::tool_call::CreateDocuments, AIApiError> {
+    let documents = args
+        .get("documents")
+        .or_else(|| args.get("new_documents"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            AIApiError::Other(anyhow::anyhow!(
+                "missing array argument `documents` for create_documents"
+            ))
+        })?;
+    if documents.is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "create_documents requires at least one document"
+        )));
+    }
+    Ok(api::message::tool_call::CreateDocuments {
+        new_documents: documents
+            .iter()
+            .map(|document| {
+                Ok(api::message::tool_call::create_documents::NewDocument {
+                    content: required_string(document, "content")?,
+                    title: optional_string(document, "title").unwrap_or_default(),
+                })
+            })
+            .collect::<Result<Vec<_>, AIApiError>>()?,
+    })
+}
+
+fn line_ranges_arg(value: &Value) -> Result<Vec<api::FileContentLineRange>, AIApiError> {
+    let Some(line_ranges) = value.get("line_ranges") else {
+        return Ok(Vec::new());
+    };
+    let line_ranges = line_ranges.as_array().ok_or_else(|| {
+        AIApiError::Other(anyhow::anyhow!("argument `line_ranges` must be an array"))
+    })?;
+    line_ranges
+        .iter()
+        .map(|range| {
+            let start = required_u32(range, "start")?;
+            let end = required_u32(range, "end")?;
+            if start > end {
+                return Err(AIApiError::Other(anyhow::anyhow!(
+                    "line range `start` must not exceed `end`"
+                )));
+            }
+            Ok(api::FileContentLineRange { start, end })
+        })
+        .collect()
+}
+
+fn valid_document_id(value: String) -> Result<String, AIApiError> {
+    uuid::Uuid::try_parse(&value).map_err(|error| {
+        AIApiError::Other(anyhow::anyhow!(
+            "invalid document_id `{value}`; expected a UUID: {error}"
+        ))
+    })?;
+    Ok(value)
+}
+
+fn read_shell_command_output_arg(
+    args: &Value,
+) -> Result<api::message::tool_call::ReadShellCommandOutput, AIApiError> {
+    let command_id = required_string(args, "command_id")?;
+    let delay = if let Some(delay) = args.get("delay").filter(|value| !value.is_null()) {
+        parse_shell_command_delay(delay)?
+    } else if let Some(seconds) = optional_i64(args, "delay_seconds") {
+        if seconds < 0 {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "delay_seconds must not be negative"
+            )));
+        }
+        Some(
+            api::message::tool_call::read_shell_command_output::Delay::Duration(
+                prost_types::Duration { seconds, nanos: 0 },
+            ),
+        )
+    } else {
+        None
+    };
+    Ok(api::message::tool_call::ReadShellCommandOutput { command_id, delay })
+}
+
+fn parse_shell_command_delay(
+    value: &Value,
+) -> Result<Option<api::message::tool_call::read_shell_command_output::Delay>, AIApiError> {
+    if let Some(kind) = value.as_str() {
+        return match kind {
+            "on_completion" | "on-completion" => Ok(Some(
+                api::message::tool_call::read_shell_command_output::Delay::OnCompletion(()),
+            )),
+            _ => Err(AIApiError::Other(anyhow::anyhow!(
+                "unsupported shell command delay `{kind}`"
+            ))),
+        };
+    }
+    let object = value.as_object().ok_or_else(|| {
+        AIApiError::Other(anyhow::anyhow!(
+            "argument `delay` must be `on_completion` or an object with kind and seconds"
+        ))
+    })?;
+    let kind = optional_string(value, "kind")
+        .or_else(|| optional_string(value, "type"))
+        .unwrap_or_else(|| "duration".to_string());
+    match kind.as_str() {
+        "duration" | "seconds" => {
+            let seconds = object
+                .get("seconds")
+                .or_else(|| object.get("duration_seconds"))
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    AIApiError::Other(anyhow::anyhow!("duration delay requires integer `seconds`"))
+                })?;
+            if seconds < 0 {
+                return Err(AIApiError::Other(anyhow::anyhow!(
+                    "duration delay seconds must not be negative"
+                )));
+            }
+            Ok(Some(
+                api::message::tool_call::read_shell_command_output::Delay::Duration(
+                    prost_types::Duration { seconds, nanos: 0 },
+                ),
+            ))
+        }
+        "on_completion" | "on-completion" => Ok(Some(
+            api::message::tool_call::read_shell_command_output::Delay::OnCompletion(()),
+        )),
+        _ => Err(AIApiError::Other(anyhow::anyhow!(
+            "unsupported shell command delay `{kind}`"
+        ))),
+    }
+}
+
+fn write_to_long_running_shell_command_arg(
+    args: &Value,
+) -> Result<api::message::tool_call::WriteToLongRunningShellCommand, AIApiError> {
+    let command_id = required_string(args, "command_id")?;
+    let input = if let Some(input) = args.get("input") {
+        match input {
+            Value::String(input) => input.as_bytes().to_vec(),
+            Value::Array(bytes) => bytes
+                .iter()
+                .map(|byte| {
+                    byte.as_u64()
+                        .and_then(|byte| u8::try_from(byte).ok())
+                        .ok_or_else(|| {
+                            AIApiError::Other(anyhow::anyhow!(
+                                "long-running shell `input` byte values must be integers from 0 to 255"
+                            ))
+                        })
+                })
+                .collect::<Result<Vec<_>, AIApiError>>()?,
+            _ => {
+                return Err(AIApiError::Other(anyhow::anyhow!(
+                    "long-running shell `input` must be a string or byte array"
+                )));
+            }
+        }
+    } else {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "missing string argument `input`"
+        )));
+    };
+    let mode = match optional_string(args, "mode")
+        .unwrap_or_else(|| "raw".to_string())
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "raw" => api::message::tool_call::write_to_long_running_shell_command::Mode {
+            mode: Some(
+                api::message::tool_call::write_to_long_running_shell_command::mode::Mode::Raw(()),
+            ),
+        },
+        "line" => api::message::tool_call::write_to_long_running_shell_command::Mode {
+            mode: Some(
+                api::message::tool_call::write_to_long_running_shell_command::mode::Mode::Line(()),
+            ),
+        },
+        "block" => api::message::tool_call::write_to_long_running_shell_command::Mode {
+            mode: Some(
+                api::message::tool_call::write_to_long_running_shell_command::mode::Mode::Block(()),
+            ),
+        },
+        other => {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "unsupported long-running shell input mode `{other}`"
+            )));
+        }
+    };
+    Ok(api::message::tool_call::WriteToLongRunningShellCommand {
+        input,
+        mode: Some(mode),
+        command_id,
+    })
+}
+
+fn insert_review_comments_arg(
+    args: &Value,
+) -> Result<api::message::tool_call::InsertReviewComments, AIApiError> {
+    let comments = array(args, "comments")?;
+    if comments.is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "insert_review_comments requires at least one comment"
+        )));
+    }
+    Ok(api::message::tool_call::InsertReviewComments {
+        repo_path: required_string(args, "repo_path")?,
+        comments: comments
+            .iter()
+            .map(insert_review_comment_arg)
+            .collect::<Result<Vec<_>, AIApiError>>()?,
+        base_branch: optional_string(args, "base_branch").unwrap_or_default(),
+    })
+}
+
+fn insert_review_comment_arg(
+    value: &Value,
+) -> Result<api::message::tool_call::insert_review_comments::Comment, AIApiError> {
+    let location = value
+        .get("location")
+        .map(insert_review_comment_location_arg)
+        .transpose()?;
+    Ok(api::message::tool_call::insert_review_comments::Comment {
+        comment_id: required_string(value, "comment_id")?,
+        author: optional_string(value, "author").unwrap_or_default(),
+        last_modified_timestamp: optional_string(value, "last_modified_timestamp")
+            .unwrap_or_default(),
+        comment_body: required_string(value, "comment_body")?,
+        parent_comment_id: optional_string(value, "parent_comment_id").unwrap_or_default(),
+        location,
+        html_url: optional_string(value, "html_url").unwrap_or_default(),
+    })
+}
+
+fn insert_review_comment_location_arg(
+    value: &Value,
+) -> Result<api::message::tool_call::insert_review_comments::CommentLocation, AIApiError> {
+    Ok(
+        api::message::tool_call::insert_review_comments::CommentLocation {
+            file_path: required_string(value, "file_path")?,
+            line: value
+                .get("line")
+                .map(insert_review_comment_line_arg)
+                .transpose()?,
+        },
+    )
+}
+
+fn insert_review_comment_line_arg(
+    value: &Value,
+) -> Result<api::message::tool_call::insert_review_comments::CommentLineRange, AIApiError> {
+    let side = optional_string(value, "side")
+        .unwrap_or_else(|| "NEW".to_string())
+        .to_ascii_uppercase();
+    let side = match side.as_str() {
+        "NEW" | "RIGHT" => api::message::tool_call::insert_review_comments::CommentSide::New as i32,
+        "OLD" | "LEFT" => api::message::tool_call::insert_review_comments::CommentSide::Old as i32,
+        _ => {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "unsupported review comment side; expected NEW or OLD"
+            )));
+        }
+    };
+    Ok(
+        api::message::tool_call::insert_review_comments::CommentLineRange {
+            diff_hunk: optional_string(value, "diff_hunk").unwrap_or_default(),
+            range: value
+                .get("range")
+                .map(|range| {
+                    let start = required_u32(range, "start")?;
+                    let end = required_u32(range, "end")?;
+                    if start > end {
+                        return Err(AIApiError::Other(anyhow::anyhow!(
+                            "review comment line range `start` must not exceed `end`"
+                        )));
+                    }
+                    Ok(api::FileContentLineRange { start, end })
+                })
+                .transpose()?,
+            side,
+        },
+    )
+}
+
+fn ask_user_question_arg(args: &Value) -> Result<api::AskUserQuestion, AIApiError> {
+    let questions = array(args, "questions")?;
+    if questions.is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "ask_user_question requires at least one question"
+        )));
+    }
+    Ok(api::AskUserQuestion {
+        questions: questions
+            .iter()
+            .map(|question| {
+                let multiple_choice = question
+                    .get("multiple_choice")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| {
+                        AIApiError::Other(anyhow::anyhow!(
+                            "ask_user_question requires `multiple_choice`"
+                        ))
+                    })?;
+                let options = multiple_choice
+                    .get("options")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| {
+                        AIApiError::Other(anyhow::anyhow!(
+                            "multiple_choice requires an `options` array"
+                        ))
+                    })?;
+                if options.is_empty() {
+                    return Err(AIApiError::Other(anyhow::anyhow!(
+                        "multiple_choice requires at least one option"
+                    )));
+                }
+                let recommended_option_index = multiple_choice
+                    .get("recommended_option_index")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                if recommended_option_index < 0 || recommended_option_index >= options.len() as i64
+                {
+                    return Err(AIApiError::Other(anyhow::anyhow!(
+                        "recommended_option_index must point to an available option"
+                    )));
+                }
+                Ok(api::ask_user_question::Question {
+                    question_id: required_string(question, "question_id")?,
+                    question: required_string(question, "question")?,
+                    question_type: Some(
+                        api::ask_user_question::question::QuestionType::MultipleChoice(
+                            api::ask_user_question::MultipleChoice {
+                                options: options
+                                    .iter()
+                                    .map(|option| {
+                                        Ok(api::ask_user_question::Option {
+                                            label: required_string(option, "label")?,
+                                        })
+                                    })
+                                    .collect::<Result<Vec<_>, AIApiError>>()?,
+                                recommended_option_index: recommended_option_index as i32,
+                                is_multiselect: multiple_choice
+                                    .get("is_multiselect")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(false),
+                                supports_other: multiple_choice
+                                    .get("supports_other")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(false),
+                            },
+                        ),
+                    ),
+                })
+            })
+            .collect::<Result<Vec<_>, AIApiError>>()?,
+    })
+}
+
+fn use_computer_arg(args: &Value) -> Result<api::message::tool_call::UseComputer, AIApiError> {
+    let actions = array(args, "actions")?;
+    if actions.is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "use_computer requires at least one action"
+        )));
+    }
+    Ok(api::message::tool_call::UseComputer {
+        actions: actions
+            .iter()
+            .map(use_computer_action_arg)
+            .collect::<Result<Vec<_>, AIApiError>>()?,
+        post_actions_screenshot_params: args
+            .get("post_actions_screenshot_params")
+            .filter(|value| !value.is_null())
+            .map(parse_screenshot_params)
+            .transpose()?,
+        action_summary: optional_string(args, "action_summary").unwrap_or_default(),
+    })
+}
+
+fn use_computer_action_arg(
+    value: &Value,
+) -> Result<api::message::tool_call::use_computer::Action, AIApiError> {
+    use api::message::tool_call::use_computer::action::{self, Type};
+
+    let action_type = required_string(value, "type")?.to_ascii_lowercase();
+    let action = match action_type.as_str() {
+        "mouse_move" => Type::MouseMove(action::MouseMove {
+            to: Some(parse_coordinates(value, "to")?),
+        }),
+        "mouse_down" => Type::MouseDown(action::MouseDown {
+            button: parse_mouse_button(value, "button")?,
+            at: Some(parse_coordinates(value, "at")?),
+        }),
+        "mouse_up" => Type::MouseUp(action::MouseUp {
+            button: parse_mouse_button(value, "button")?,
+        }),
+        "mouse_wheel" => Type::MouseWheel(action::MouseWheel {
+            at: Some(parse_coordinates(value, "at")?),
+            direction: parse_scroll_direction(value, "direction")?,
+            distance: Some(parse_scroll_distance(value)?),
+        }),
+        "wait" => Type::Wait(action::Wait {
+            duration: Some(parse_duration(value, "seconds")?),
+        }),
+        "type_text" => Type::TypeText(action::TypeText {
+            text: required_string(value, "text")?,
+        }),
+        "key_down" => Type::KeyDown(action::KeyDown {
+            key: Some(parse_computer_key(value)?),
+        }),
+        "key_up" => Type::KeyUp(action::KeyUp {
+            key: Some(parse_computer_key(value)?),
+        }),
+        _ => {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "unsupported computer action `{action_type}`"
+            )));
+        }
+    };
+    Ok(api::message::tool_call::use_computer::Action {
+        r#type: Some(action),
+    })
+}
+
+fn parse_coordinates(value: &Value, key: &str) -> Result<api::Coordinates, AIApiError> {
+    let value = value
+        .get(key)
+        .ok_or_else(|| AIApiError::Other(anyhow::anyhow!("missing object argument `{key}`")))?;
+    Ok(api::Coordinates {
+        x: required_i32(value, "x")?,
+        y: required_i32(value, "y")?,
+    })
+}
+
+fn parse_mouse_button(value: &Value, key: &str) -> Result<i32, AIApiError> {
+    let value = required_string(value, key)?.to_ascii_uppercase();
+    let button = match value.as_str() {
+        "LEFT" => api::message::tool_call::use_computer::action::MouseButton::Left,
+        "RIGHT" => api::message::tool_call::use_computer::action::MouseButton::Right,
+        "MIDDLE" => api::message::tool_call::use_computer::action::MouseButton::Middle,
+        "BACK" => api::message::tool_call::use_computer::action::MouseButton::Back,
+        "FORWARD" => api::message::tool_call::use_computer::action::MouseButton::Forward,
+        _ => {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "unsupported mouse button `{value}`"
+            )));
+        }
+    };
+    Ok(button as i32)
+}
+
+fn parse_scroll_direction(value: &Value, key: &str) -> Result<i32, AIApiError> {
+    let value = required_string(value, key)?.to_ascii_uppercase();
+    let direction = match value.as_str() {
+        "UP" => api::message::tool_call::use_computer::action::mouse_wheel::Direction::Up,
+        "DOWN" => api::message::tool_call::use_computer::action::mouse_wheel::Direction::Down,
+        "LEFT" => api::message::tool_call::use_computer::action::mouse_wheel::Direction::Left,
+        "RIGHT" => api::message::tool_call::use_computer::action::mouse_wheel::Direction::Right,
+        _ => {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "unsupported scroll direction `{value}`"
+            )));
+        }
+    };
+    Ok(direction as i32)
+}
+
+fn parse_scroll_distance(
+    value: &Value,
+) -> Result<api::message::tool_call::use_computer::action::mouse_wheel::Distance, AIApiError> {
+    let distance = value.get("distance").ok_or_else(|| {
+        AIApiError::Other(anyhow::anyhow!("mouse_wheel requires a distance object"))
+    })?;
+    let distance = distance.as_object().ok_or_else(|| {
+        AIApiError::Other(anyhow::anyhow!("mouse_wheel distance must be an object"))
+    })?;
+    if let Some(pixels) = distance.get("pixels").and_then(Value::as_i64) {
+        return Ok(
+            api::message::tool_call::use_computer::action::mouse_wheel::Distance::Pixels(
+                i32::try_from(pixels).map_err(|_| {
+                    AIApiError::Other(anyhow::anyhow!("mouse_wheel pixels is out of range"))
+                })?,
+            ),
+        );
+    }
+    if let Some(clicks) = distance.get("clicks").and_then(Value::as_i64) {
+        return Ok(
+            api::message::tool_call::use_computer::action::mouse_wheel::Distance::Clicks(
+                i32::try_from(clicks).map_err(|_| {
+                    AIApiError::Other(anyhow::anyhow!("mouse_wheel clicks is out of range"))
+                })?,
+            ),
+        );
+    }
+    let kind = distance
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let amount = distance
+        .get("value")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| {
+            AIApiError::Other(anyhow::anyhow!(
+                "mouse_wheel distance requires pixels or clicks"
+            ))
+        })?;
+    let amount = i32::try_from(amount)
+        .map_err(|_| AIApiError::Other(anyhow::anyhow!("mouse_wheel distance is out of range")))?;
+    match kind.as_str() {
+        "pixels" => Ok(
+            api::message::tool_call::use_computer::action::mouse_wheel::Distance::Pixels(amount),
+        ),
+        "clicks" => Ok(
+            api::message::tool_call::use_computer::action::mouse_wheel::Distance::Clicks(amount),
+        ),
+        _ => Err(AIApiError::Other(anyhow::anyhow!(
+            "mouse_wheel distance kind must be pixels or clicks"
+        ))),
+    }
+}
+
+fn parse_computer_key(
+    value: &Value,
+) -> Result<api::message::tool_call::use_computer::action::Key, AIApiError> {
+    let key = value
+        .get("key")
+        .ok_or_else(|| AIApiError::Other(anyhow::anyhow!("key action requires a `key` object")))?;
+    let data = match (key.get("char"), key.get("keycode")) {
+        (Some(char_value), None) => {
+            let char_value = char_value.as_str().ok_or_else(|| {
+                AIApiError::Other(anyhow::anyhow!("computer key char must be a string"))
+            })?;
+            let mut chars = char_value.chars();
+            let ch = chars.next().ok_or_else(|| {
+                AIApiError::Other(anyhow::anyhow!("computer key char must not be empty"))
+            })?;
+            if chars.next().is_some() {
+                return Err(AIApiError::Other(anyhow::anyhow!(
+                    "computer key char must contain exactly one character"
+                )));
+            }
+            api::message::tool_call::use_computer::action::key::Data::Char(ch.to_string())
+        }
+        (None, Some(_)) => api::message::tool_call::use_computer::action::key::Data::Keycode(
+            required_i32(key, "keycode")?,
+        ),
+        (Some(_), Some(_)) => {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "computer key must contain exactly one of char or keycode"
+            )));
+        }
+        (None, None) => {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "computer key requires char or keycode"
+            )));
+        }
+    };
+    Ok(api::message::tool_call::use_computer::action::Key { data: Some(data) })
+}
+
+fn request_computer_use_arg(
+    args: &Value,
+) -> Result<api::message::tool_call::RequestComputerUse, AIApiError> {
+    Ok(api::message::tool_call::RequestComputerUse {
+        task_summary: required_string(args, "task_summary")?,
+        screenshot_params: args
+            .get("screenshot_params")
+            .filter(|value| !value.is_null())
+            .map(parse_screenshot_params)
+            .transpose()?,
+    })
+}
+
+fn parse_screenshot_params(
+    value: &Value,
+) -> Result<api::message::tool_call::ScreenshotParams, AIApiError> {
+    let max_long_edge_px = optional_i32(value, "max_long_edge_px").unwrap_or_default();
+    let max_total_px = optional_i32(value, "max_total_px").unwrap_or_default();
+    if max_long_edge_px < 0 || max_total_px < 0 {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "screenshot size limits must not be negative"
+        )));
+    }
+    let region = value
+        .get("region")
+        .map(
+            |region| -> Result<api::message::tool_call::screenshot_params::Region, AIApiError> {
+                Ok(api::message::tool_call::screenshot_params::Region {
+                    top_left: Some(parse_coordinates(region, "top_left")?),
+                    bottom_right: Some(parse_coordinates(region, "bottom_right")?),
+                })
+            },
+        )
+        .transpose()?;
+    Ok(api::message::tool_call::ScreenshotParams {
+        max_long_edge_px,
+        max_total_px,
+        region,
+    })
+}
+
+fn parse_duration(value: &Value, key: &str) -> Result<prost_types::Duration, AIApiError> {
+    let seconds = value
+        .get(key)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| AIApiError::Other(anyhow::anyhow!("missing integer argument `{key}`")))?;
+    if seconds < 0 {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "duration seconds must not be negative"
+        )));
+    }
+    Ok(prost_types::Duration { seconds, nanos: 0 })
+}
+
+fn required_i32(value: &Value, key: &str) -> Result<i32, AIApiError> {
+    value
+        .get(key)
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .ok_or_else(|| AIApiError::Other(anyhow::anyhow!("missing integer argument `{key}`")))
+}
+
+fn required_u32(value: &Value, key: &str) -> Result<u32, AIApiError> {
+    value
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| {
+            AIApiError::Other(anyhow::anyhow!("missing unsigned integer argument `{key}`"))
+        })
+}
+
+fn optional_i64(value: &Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(Value::as_i64)
+}
+
+fn tool_type_for_openai_name(name: &str) -> Option<api::ToolType> {
+    Some(match name {
+        "run_shell_command" => api::ToolType::RunShellCommand,
+        "read_files" => api::ToolType::ReadFiles,
+        "search_codebase" => api::ToolType::SearchCodebase,
+        "grep" => api::ToolType::Grep,
+        "file_glob" => api::ToolType::FileGlobV2,
+        "apply_file_diffs" => api::ToolType::ApplyFileDiffs,
+        "read_mcp_resource" => api::ToolType::ReadMcpResource,
+        "call_mcp_tool" => api::ToolType::CallMcpTool,
+        "read_skill" => api::ToolType::ReadSkill,
+        "write_to_long_running_shell_command" => api::ToolType::WriteToLongRunningShellCommand,
+        "read_shell_command_output" => api::ToolType::ReadShellCommandOutput,
+        "transfer_shell_command_control_to_user" => {
+            api::ToolType::TransferShellCommandControlToUser
+        }
+        "suggest_new_conversation" => api::ToolType::SuggestNewConversation,
+        "open_code_review" => api::ToolType::OpenCodeReview,
+        "init_project" => api::ToolType::InitProject,
+        "read_documents" => api::ToolType::ReadDocuments,
+        "edit_documents" => api::ToolType::EditDocuments,
+        "create_documents" => api::ToolType::CreateDocuments,
+        "insert_review_comments" => api::ToolType::InsertReviewComments,
+        "fetch_conversation" => api::ToolType::FetchConversation,
+        "ask_user_question" => api::ToolType::AskUserQuestion,
+        "use_computer" => api::ToolType::UseComputer,
+        "request_computer_use" => api::ToolType::RequestComputerUse,
+        _ => return None,
+    })
+}
+
+fn tool_type_is_advertised(tool_type: api::ToolType, supported_tools: &[api::ToolType]) -> bool {
+    if matches!(tool_type, api::ToolType::FileGlobV2) {
+        supported_tools.contains(&api::ToolType::FileGlobV2)
+            || supported_tools.contains(&api::ToolType::FileGlob)
+    } else {
+        supported_tools.contains(&tool_type)
+    }
+}
+
+fn supports_complete_long_running_shell_family(supported_tools: &[api::ToolType]) -> bool {
+    [
+        api::ToolType::RunShellCommand,
+        api::ToolType::WriteToLongRunningShellCommand,
+        api::ToolType::ReadShellCommandOutput,
+        api::ToolType::TransferShellCommandControlToUser,
+    ]
+    .into_iter()
+    .all(|tool| supported_tools.contains(&tool))
+}
+
+#[cfg(test)]
+#[allow(deprecated)]
+fn openai_tool_name(tool: &api::message::tool_call::Tool) -> &'static str {
+    match tool {
+        api::message::tool_call::Tool::RunShellCommand(_) => "run_shell_command",
+        api::message::tool_call::Tool::ReadFiles(_) => "read_files",
+        api::message::tool_call::Tool::SearchCodebase(_) => "search_codebase",
+        api::message::tool_call::Tool::Grep(_) => "grep",
+        api::message::tool_call::Tool::FileGlob(_)
+        | api::message::tool_call::Tool::FileGlobV2(_) => "file_glob",
+        api::message::tool_call::Tool::ApplyFileDiffs(_) => "apply_file_diffs",
+        api::message::tool_call::Tool::ReadMcpResource(_) => "read_mcp_resource",
+        api::message::tool_call::Tool::CallMcpTool(_) => "call_mcp_tool",
+        api::message::tool_call::Tool::ReadSkill(_) => "read_skill",
+        api::message::tool_call::Tool::WriteToLongRunningShellCommand(_) => {
+            "write_to_long_running_shell_command"
+        }
+        api::message::tool_call::Tool::ReadShellCommandOutput(_) => "read_shell_command_output",
+        api::message::tool_call::Tool::TransferShellCommandControlToUser(_) => {
+            "transfer_shell_command_control_to_user"
+        }
+        api::message::tool_call::Tool::SuggestNewConversation(_) => "suggest_new_conversation",
+        api::message::tool_call::Tool::OpenCodeReview(_) => "open_code_review",
+        api::message::tool_call::Tool::InitProject(_) => "init_project",
+        api::message::tool_call::Tool::ReadDocuments(_) => "read_documents",
+        api::message::tool_call::Tool::EditDocuments(_) => "edit_documents",
+        api::message::tool_call::Tool::CreateDocuments(_) => "create_documents",
+        api::message::tool_call::Tool::InsertReviewComments(_) => "insert_review_comments",
+        api::message::tool_call::Tool::FetchConversation(_) => "fetch_conversation",
+        api::message::tool_call::Tool::AskUserQuestion(_) => "ask_user_question",
+        api::message::tool_call::Tool::UseComputer(_) => "use_computer",
+        api::message::tool_call::Tool::RequestComputerUse(_) => "request_computer_use",
+        _ => "unsupported",
+    }
+}
+
+#[cfg(test)]
+fn run_shell_wait_value(tool: &api::message::tool_call::Tool) -> bool {
+    let api::message::tool_call::Tool::RunShellCommand(command) = tool else {
+        panic!("expected run_shell_command");
+    };
+    matches!(
+        command.wait_until_complete_value,
+        Some(
+            api::message::tool_call::run_shell_command::WaitUntilCompleteValue::WaitUntilComplete(
+                true
+            )
+        )
+    )
 }
 
 struct InferredShellCommandFlags {
@@ -2266,8 +3525,49 @@ fn serde_json_to_prost(value: Value) -> Result<prost_types::Value, String> {
     })
 }
 
-fn tool_call_result_to_text(result: &api::message::ToolCallResult) -> String {
+fn tool_call_result_to_text_with_tool_policy(
+    result: &api::message::ToolCallResult,
+    long_running_shell_controls_advertised: bool,
+) -> String {
+    if !long_running_shell_controls_advertised
+        && result
+            .result
+            .as_ref()
+            .is_some_and(long_running_shell_result_is_snapshot)
+    {
+        return "Long-running shell output is unavailable in this request because its polling and control tools are not advertised.".to_string();
+    }
     serde_json::to_string(&format!("{:?}", result.result)).unwrap_or_default()
+}
+
+fn long_running_shell_result_is_snapshot(result: &api::message::tool_call_result::Result) -> bool {
+    match result {
+        api::message::tool_call_result::Result::RunShellCommand(result) => matches!(
+            result.result.as_ref(),
+            Some(api::run_shell_command_result::Result::LongRunningCommandSnapshot(_))
+        ),
+        api::message::tool_call_result::Result::WriteToLongRunningShellCommand(result) => {
+            matches!(
+                result.result.as_ref(),
+                Some(
+                    api::write_to_long_running_shell_command_result::Result::LongRunningCommandSnapshot(_)
+                )
+            )
+        }
+        api::message::tool_call_result::Result::ReadShellCommandOutput(result) => matches!(
+            result.result.as_ref(),
+            Some(api::read_shell_command_output_result::Result::LongRunningCommandSnapshot(_))
+        ),
+        api::message::tool_call_result::Result::TransferShellCommandControlToUser(result) => {
+            matches!(
+                result.result.as_ref(),
+                Some(
+                    api::transfer_shell_command_control_to_user_result::Result::LongRunningCommandSnapshot(_)
+                )
+            )
+        }
+        _ => false,
+    }
 }
 
 fn add_messages_action(task_id: &str, messages: Vec<api::Message>) -> api::ClientAction {
@@ -2396,6 +3696,11 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
     let mut tools = Vec::new();
 
     if supported.contains(&api::ToolType::RunShellCommand) {
+        let wait_description = if supports_complete_long_running_shell_family(supported_tools) {
+            "Set false only for a command that needs the long-running shell controls; the direct adapter advertises write, output, and control-transfer tools for this request."
+        } else {
+            "Use true. The OpenAI-compatible direct provider path waits for command completion before returning the tool result."
+        };
         tools.push(openai_tool(
             "run_shell_command",
             "Run a shell command in the user's Warp terminal. Use this instead of giving shell commands as instructions when execution is needed.",
@@ -2433,7 +3738,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                         "wait_until_completion",
                         json!({
                             "type": "boolean",
-                            "description": "Use true. The OpenAI-compatible direct provider path waits for command completion before returning the tool result."
+                            "description": wait_description
                         }),
                     ),
                 ],
@@ -2629,6 +3934,216 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                     ("name", json!({"type": "string"})),
                 ],
                 [],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::WriteToLongRunningShellCommand) {
+        tools.push(openai_tool(
+            "write_to_long_running_shell_command",
+            "Write input to a running local shell command. Use the command_id from its long-running snapshot.",
+            json_schema_object(
+                [
+                    ("command_id", json!({"type": "string"})),
+                    (
+                        "input",
+                        json!({
+                            "description": "UTF-8 input text or an array of byte values.",
+                            "oneOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}}
+                            ]
+                        }),
+                    ),
+                    (
+                        "mode",
+                        json!({"type": "string", "enum": ["raw", "line", "block"]}),
+                    ),
+                ],
+                ["command_id", "input"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::ReadShellCommandOutput) {
+        tools.push(openai_tool(
+            "read_shell_command_output",
+            "Read output from a running local shell command by command_id.",
+            json_schema_object(
+                [
+                    ("command_id", json!({"type": "string"})),
+                    (
+                        "delay",
+                        json!({
+                            "oneOf": [
+                                {"type": "string", "enum": ["on_completion"]},
+                                {"type": "object", "properties": {"kind": {"type": "string", "enum": ["duration"]}, "seconds": {"type": "integer", "minimum": 0}}, "required": ["seconds"], "additionalProperties": false}
+                            ]
+                        }),
+                    ),
+                    ("delay_seconds", json!({"type": "integer", "minimum": 0})),
+                ],
+                ["command_id"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::TransferShellCommandControlToUser) {
+        tools.push(openai_tool(
+            "transfer_shell_command_control_to_user",
+            "Transfer control of a running local shell command back to the user with a reason.",
+            json_schema_object([("reason", json!({"type": "string"}))], ["reason"]),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::SuggestNewConversation) {
+        tools.push(openai_tool(
+            "suggest_new_conversation",
+            "Suggest branching a new local conversation from a message.",
+            json_schema_object([("message_id", json!({"type": "string"}))], ["message_id"]),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::OpenCodeReview) {
+        tools.push(openai_tool(
+            "open_code_review",
+            "Open the local code review pane.",
+            json_schema_object([], []),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::InitProject) {
+        tools.push(openai_tool(
+            "init_project",
+            "Open the local project initialization flow.",
+            json_schema_object([], []),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::ReadDocuments) {
+        tools.push(openai_tool(
+            "read_documents",
+            "Read one or more local AI documents by UUID.",
+            json_schema_object(
+                [(
+                    "documents",
+                    json!({
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "document_id": {"type": "string", "description": "Document UUID."},
+                                "line_ranges": {"type": "array", "items": {"type": "object", "properties": {"start": {"type": "integer", "minimum": 0}, "end": {"type": "integer", "minimum": 0}}, "required": ["start", "end"], "additionalProperties": false}}
+                            },
+                            "required": ["document_id"],
+                            "additionalProperties": false
+                        }
+                    }),
+                )],
+                ["documents"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::EditDocuments) {
+        tools.push(openai_tool(
+            "edit_documents",
+            "Apply exact search-and-replace edits to local AI documents.",
+            json_schema_object(
+                [(
+                    "diffs",
+                    json!({"type": "array", "items": {"type": "object", "properties": {"document_id": {"type": "string"}, "search": {"type": "string"}, "replace": {"type": "string"}}, "required": ["document_id", "search", "replace"], "additionalProperties": false}}),
+                )],
+                ["diffs"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::CreateDocuments) {
+        tools.push(openai_tool(
+            "create_documents",
+            "Create one or more local AI documents.",
+            json_schema_object(
+                [(
+                    "documents",
+                    json!({"type": "array", "items": {"type": "object", "properties": {"content": {"type": "string"}, "title": {"type": "string"}}, "required": ["content"], "additionalProperties": false}}),
+                )],
+                ["documents"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::InsertReviewComments) {
+        tools.push(openai_tool(
+            "insert_review_comments",
+            "Insert review comments into the local code review workflow.",
+            json_schema_object(
+                [
+                    ("repo_path", json!({"type": "string"})),
+                    ("base_branch", json!({"type": "string"})),
+                    (
+                        "comments",
+                        json!({"type": "array", "items": {"type": "object", "properties": {"comment_id": {"type": "string"}, "author": {"type": "string"}, "last_modified_timestamp": {"type": "string"}, "comment_body": {"type": "string"}, "parent_comment_id": {"type": "string"}, "html_url": {"type": "string"}, "location": {"type": "object", "properties": {"file_path": {"type": "string"}, "line": {"type": "object", "properties": {"diff_hunk": {"type": "string"}, "range": {"type": "object", "properties": {"start": {"type": "integer", "minimum": 0}, "end": {"type": "integer", "minimum": 0}}, "required": ["start", "end"], "additionalProperties": false}, "side": {"type": "string", "enum": ["NEW", "OLD"]}}, "required": ["range"], "additionalProperties": false}}, "required": ["file_path"], "additionalProperties": false}}, "required": ["comment_id", "comment_body"], "additionalProperties": false}}),
+                    ),
+                ],
+                ["repo_path", "comments"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::FetchConversation) {
+        tools.push(openai_tool(
+            "fetch_conversation",
+            "Materialize another local conversation for context.",
+            json_schema_object(
+                [("conversation_id", json!({"type": "string"}))],
+                ["conversation_id"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::AskUserQuestion) {
+        tools.push(openai_tool(
+            "ask_user_question",
+            "Ask the user one or more local multiple-choice questions.",
+            json_schema_object(
+                [(
+                    "questions",
+                    json!({"type": "array", "items": {"type": "object", "properties": {"question_id": {"type": "string"}, "question": {"type": "string"}, "multiple_choice": {"type": "object", "properties": {"options": {"type": "array", "items": {"type": "object", "properties": {"label": {"type": "string"}}, "required": ["label"], "additionalProperties": false}}, "recommended_option_index": {"type": "integer", "minimum": 0}, "is_multiselect": {"type": "boolean"}, "supports_other": {"type": "boolean"}}, "required": ["options"], "additionalProperties": false}}, "required": ["question_id", "question", "multiple_choice"], "additionalProperties": false}}),
+                )],
+                ["questions"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::UseComputer) {
+        tools.push(openai_tool(
+            "use_computer",
+            "Execute approved local computer-use actions.",
+            json_schema_object(
+                [
+                    (
+                        "actions",
+                        json!({"type": "array", "items": {"type": "object", "properties": {"type": {"type": "string", "enum": ["mouse_move", "mouse_down", "mouse_up", "mouse_wheel", "wait", "type_text", "key_down", "key_up"]}, "to": {"type": "object"}, "at": {"type": "object"}, "button": {"type": "string", "enum": ["left", "right", "middle", "back", "forward"]}, "direction": {"type": "string", "enum": ["up", "down", "left", "right"]}, "distance": {"type": "object"}, "seconds": {"type": "integer", "minimum": 0}, "text": {"type": "string"}, "key": {"type": "object"}}, "required": ["type"], "additionalProperties": false}}),
+                    ),
+                    ("action_summary", json!({"type": "string"})),
+                    ("post_actions_screenshot_params", json!({"type": "object"})),
+                ],
+                ["actions"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::RequestComputerUse) {
+        tools.push(openai_tool(
+            "request_computer_use",
+            "Ask for local user approval before computer use.",
+            json_schema_object(
+                [
+                    ("task_summary", json!({"type": "string"})),
+                    ("screenshot_params", json!({"type": "object"})),
+                ],
+                ["task_summary"],
             ),
         ));
     }
@@ -3256,6 +4771,357 @@ mod tests {
                 "read_skill"
             ]
         );
+    }
+
+    #[test]
+    fn advertises_all_local_non_orchestration_tools_without_orchestration_names() {
+        let tools = openai_tools_for_supported_tools(&[
+            api::ToolType::RunShellCommand,
+            api::ToolType::SearchCodebase,
+            api::ToolType::ReadFiles,
+            api::ToolType::ApplyFileDiffs,
+            api::ToolType::Grep,
+            api::ToolType::FileGlob,
+            api::ToolType::FileGlobV2,
+            api::ToolType::ReadMcpResource,
+            api::ToolType::CallMcpTool,
+            api::ToolType::WriteToLongRunningShellCommand,
+            api::ToolType::SuggestNewConversation,
+            api::ToolType::OpenCodeReview,
+            api::ToolType::InitProject,
+            api::ToolType::ReadDocuments,
+            api::ToolType::EditDocuments,
+            api::ToolType::CreateDocuments,
+            api::ToolType::ReadShellCommandOutput,
+            api::ToolType::UseComputer,
+            api::ToolType::InsertReviewComments,
+            api::ToolType::ReadSkill,
+            api::ToolType::RequestComputerUse,
+            api::ToolType::FetchConversation,
+            api::ToolType::TransferShellCommandControlToUser,
+            api::ToolType::AskUserQuestion,
+            api::ToolType::Subagent,
+            api::ToolType::StartAgent,
+            api::ToolType::StartAgentV2,
+            api::ToolType::RunAgents,
+            api::ToolType::SendMessageToAgent,
+        ]);
+        let names = tools
+            .iter()
+            .map(|tool| tool.function.name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                "run_shell_command",
+                "read_files",
+                "search_codebase",
+                "grep",
+                "file_glob",
+                "apply_file_diffs",
+                "read_mcp_resource",
+                "call_mcp_tool",
+                "read_skill",
+                "write_to_long_running_shell_command",
+                "read_shell_command_output",
+                "transfer_shell_command_control_to_user",
+                "suggest_new_conversation",
+                "open_code_review",
+                "init_project",
+                "read_documents",
+                "edit_documents",
+                "create_documents",
+                "insert_review_comments",
+                "fetch_conversation",
+                "ask_user_question",
+                "use_computer",
+                "request_computer_use",
+            ]
+        );
+        assert!(names.iter().all(|name| {
+            !matches!(
+                *name,
+                "subagent"
+                    | "start_agent"
+                    | "start_agent_v2"
+                    | "run_agents"
+                    | "send_message_to_agent"
+            )
+        }));
+    }
+
+    #[test]
+    fn parses_local_tool_call_variants_and_validates_required_arguments() {
+        let cases = [
+            (
+                "suggest_new_conversation",
+                json!({"message_id":"message-1"}),
+                "suggest_new_conversation",
+            ),
+            (
+                "read_documents",
+                json!({"documents":[{"document_id":"00000000-0000-0000-0000-000000000001","line_ranges":[{"start":2,"end":4}]}]}),
+                "read_documents",
+            ),
+            (
+                "edit_documents",
+                json!({"diffs":[{"document_id":"00000000-0000-0000-0000-000000000001","search":"old","replace":"new"}]}),
+                "edit_documents",
+            ),
+            (
+                "create_documents",
+                json!({"documents":[{"title":"Plan","content":"body"}]}),
+                "create_documents",
+            ),
+            (
+                "insert_review_comments",
+                json!({"repo_path":"/repo","base_branch":"master","comments":[{"comment_id":"c-1","author":"reviewer","last_modified_timestamp":"2026-01-01T00:00:00Z","comment_body":"fix","parent_comment_id":"","html_url":"","location":{"file_path":"src/lib.rs","line":{"diff_hunk":"@@","range":{"start":3,"end":4},"side":"NEW"}}}]}),
+                "insert_review_comments",
+            ),
+            (
+                "fetch_conversation",
+                json!({"conversation_id":"conversation-1"}),
+                "fetch_conversation",
+            ),
+            (
+                "ask_user_question",
+                json!({"questions":[{"question_id":"q-1","question":"Choose","multiple_choice":{"options":[{"label":"yes"}],"recommended_option_index":0,"is_multiselect":false,"supports_other":true}}]}),
+                "ask_user_question",
+            ),
+            (
+                "request_computer_use",
+                json!({"task_summary":"Inspect the screen","screenshot_params":{"max_long_edge_px":1000}}),
+                "request_computer_use",
+            ),
+            (
+                "use_computer",
+                json!({"action_summary":"Click","actions":[{"type":"mouse_move","to":{"x":10,"y":20}},{"type":"type_text","text":"hello"}],"post_actions_screenshot_params":{}}),
+                "use_computer",
+            ),
+            (
+                "write_to_long_running_shell_command",
+                json!({"command_id":"block-1","input":"echo\n","mode":"line"}),
+                "write_to_long_running_shell_command",
+            ),
+            (
+                "read_shell_command_output",
+                json!({"command_id":"block-1","delay":{"kind":"duration","seconds":2}}),
+                "read_shell_command_output",
+            ),
+            (
+                "transfer_shell_command_control_to_user",
+                json!({"reason":"The command needs interactive input."}),
+                "transfer_shell_command_control_to_user",
+            ),
+        ];
+
+        for (name, arguments, expected_name) in cases {
+            let call = OpenAIToolCall {
+                id: format!("call-{name}"),
+                kind: "function".to_string(),
+                function: OpenAIFunctionCall {
+                    name: name.to_string(),
+                    arguments: arguments.to_string(),
+                },
+            };
+            let parsed = api_tool_from_openai_tool_call(&call)
+                .unwrap_or_else(|error| panic!("{name} should parse: {error}"));
+            assert_eq!(
+                openai_tool_name(&parsed),
+                expected_name,
+                "parsed protobuf variant for {name}"
+            );
+        }
+
+        let missing_document_id = OpenAIToolCall {
+            id: "call-invalid".to_string(),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: "read_documents".to_string(),
+                arguments: r#"{"documents":[{}]}"#.to_string(),
+            },
+        };
+        assert!(api_tool_from_openai_tool_call(&missing_document_id).is_err());
+    }
+
+    #[test]
+    fn history_serializes_every_new_local_tool_with_same_function_name() {
+        let calls = vec![
+            api::message::ToolCall {
+                tool_call_id: "suggest".to_string(),
+                tool: Some(api::message::tool_call::Tool::SuggestNewConversation(
+                    api::message::tool_call::SuggestNewConversation {
+                        message_id: "message-1".to_string(),
+                    },
+                )),
+            },
+            api::message::ToolCall {
+                tool_call_id: "read-docs".to_string(),
+                tool: Some(api::message::tool_call::Tool::ReadDocuments(
+                    api::message::tool_call::ReadDocuments {
+                        documents: vec![api::message::tool_call::read_documents::Document {
+                            document_id: "00000000-0000-0000-0000-000000000001".to_string(),
+                            line_ranges: vec![],
+                        }],
+                    },
+                )),
+            },
+            api::message::ToolCall {
+                tool_call_id: "edit-docs".to_string(),
+                tool: Some(api::message::tool_call::Tool::EditDocuments(
+                    api::message::tool_call::EditDocuments {
+                        diffs: vec![api::message::tool_call::edit_documents::DocumentDiff {
+                            document_id: "00000000-0000-0000-0000-000000000001".to_string(),
+                            search: "old".to_string(),
+                            replace: "new".to_string(),
+                        }],
+                    },
+                )),
+            },
+            api::message::ToolCall {
+                tool_call_id: "create-docs".to_string(),
+                tool: Some(api::message::tool_call::Tool::CreateDocuments(
+                    api::message::tool_call::CreateDocuments {
+                        new_documents: vec![
+                            api::message::tool_call::create_documents::NewDocument {
+                                content: "body".to_string(),
+                                title: "Plan".to_string(),
+                            },
+                        ],
+                    },
+                )),
+            },
+            api::message::ToolCall {
+                tool_call_id: "review".to_string(),
+                tool: Some(api::message::tool_call::Tool::OpenCodeReview(
+                    api::message::tool_call::OpenCodeReview {},
+                )),
+            },
+            api::message::ToolCall {
+                tool_call_id: "init".to_string(),
+                tool: Some(api::message::tool_call::Tool::InitProject(
+                    api::message::tool_call::InitProject {},
+                )),
+            },
+            api::message::ToolCall {
+                tool_call_id: "fetch".to_string(),
+                tool: Some(api::message::tool_call::Tool::FetchConversation(
+                    api::message::tool_call::FetchConversation {
+                        conversation_id: "conversation-1".to_string(),
+                    },
+                )),
+            },
+        ];
+
+        let names = calls
+            .iter()
+            .map(|call| {
+                openai_tool_call_from_api_tool_call(call)
+                    .unwrap()
+                    .function
+                    .name
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                "suggest_new_conversation",
+                "read_documents",
+                "edit_documents",
+                "create_documents",
+                "open_code_review",
+                "init_project",
+                "fetch_conversation",
+            ]
+        );
+    }
+
+    #[test]
+    fn run_shell_command_wait_is_preserved_only_with_complete_long_running_family() {
+        let call = OpenAIToolCall {
+            id: "call-1".to_string(),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: "run_shell_command".to_string(),
+                arguments: r#"{"command":"tail -f log","wait_until_completion":false}"#.to_string(),
+            },
+        };
+
+        let without_controls = api_tool_from_openai_tool_call_with_supported_tools(
+            &call,
+            &[api::ToolType::RunShellCommand],
+        )
+        .unwrap();
+        assert!(run_shell_wait_value(&without_controls));
+
+        let with_controls = api_tool_from_openai_tool_call_with_supported_tools(
+            &call,
+            &[
+                api::ToolType::RunShellCommand,
+                api::ToolType::WriteToLongRunningShellCommand,
+                api::ToolType::ReadShellCommandOutput,
+                api::ToolType::TransferShellCommandControlToUser,
+            ],
+        )
+        .unwrap();
+        assert!(!run_shell_wait_value(&with_controls));
+    }
+
+    #[test]
+    fn unsupported_and_unknown_openai_calls_fail_locally() {
+        let known_but_disabled = OpenAIToolCall {
+            id: "call-disabled".to_string(),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: "ask_user_question".to_string(),
+                arguments: json!({"questions": []}).to_string(),
+            },
+        };
+        let error = api_tool_from_openai_tool_call_with_supported_tools(
+            &known_but_disabled,
+            &[api::ToolType::RunShellCommand],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("not advertised"));
+
+        let unknown = OpenAIToolCall {
+            id: "call-unknown".to_string(),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: "warp_cloud_magic".to_string(),
+                arguments: "{}".to_string(),
+            },
+        };
+        assert!(api_tool_from_openai_tool_call(&unknown).is_err());
+    }
+
+    #[test]
+    fn long_running_snapshots_are_not_sent_without_polling_tools() {
+        let result = api::message::ToolCallResult {
+            tool_call_id: "call-1".to_string(),
+            context: None,
+            result: Some(api::message::tool_call_result::Result::RunShellCommand(
+                api::RunShellCommandResult {
+                    command: "tail -f log".to_string(),
+                    result: Some(
+                        api::run_shell_command_result::Result::LongRunningCommandSnapshot(
+                            api::LongRunningShellCommandSnapshot {
+                                command_id: "block-1".to_string(),
+                                ..Default::default()
+                            },
+                        ),
+                    ),
+                    ..Default::default()
+                },
+            )),
+        };
+
+        let safe_text = tool_call_result_to_text_with_tool_policy(&result, false);
+        assert!(safe_text.contains("polling and control tools are not advertised"));
+
+        let complete_text = tool_call_result_to_text_with_tool_policy(&result, true);
+        assert!(complete_text.contains("LongRunningCommandSnapshot"));
     }
 
     #[test]

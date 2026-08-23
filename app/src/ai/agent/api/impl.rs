@@ -62,6 +62,7 @@ fn get_supported_tools(params: &RequestParams) -> Vec<api::ToolType> {
         api::ToolType::Subagent,
         api::ToolType::WriteToLongRunningShellCommand,
         api::ToolType::ReadShellCommandOutput,
+        api::ToolType::TransferShellCommandControlToUser,
         api::ToolType::ReadDocuments,
         api::ToolType::CreateDocuments,
         api::ToolType::EditDocuments,
