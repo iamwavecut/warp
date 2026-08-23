@@ -260,7 +260,11 @@ impl QueuedPromptsPanelView {
                 conversation_id, ..
             }
             | QueuedQueryEvent::Cleared { conversation_id }
-            | QueuedQueryEvent::QueueNextPromptToggled { conversation_id } => *conversation_id,
+            | QueuedQueryEvent::QueueNextPromptToggled { conversation_id }
+            | QueuedQueryEvent::LocalError {
+                conversation_id, ..
+            }
+            | QueuedQueryEvent::PersistenceError { conversation_id } => *conversation_id,
         };
         if event_conv_id != active_conv_id {
             return;
@@ -305,7 +309,9 @@ impl QueuedPromptsPanelView {
                     .or_insert_with(|| build_row_state(*query_id, ctx));
             }
             QueuedQueryEvent::Reordered { .. }
-            | QueuedQueryEvent::QueueNextPromptToggled { .. } => {}
+            | QueuedQueryEvent::QueueNextPromptToggled { .. }
+            | QueuedQueryEvent::LocalError { .. }
+            | QueuedQueryEvent::PersistenceError { .. } => {}
         }
         ctx.notify();
     }
@@ -526,6 +532,7 @@ impl View for QueuedPromptsPanelView {
                     panel_view_id,
                     index,
                     text: query.text().to_owned(),
+                    local_error: query.local_error().map(str::to_owned),
                     is_in_edit_mode,
                     is_being_dragged,
                     edit_editor: &self.edit_editor,
@@ -666,6 +673,7 @@ struct RenderRowProps<'a> {
     panel_view_id: EntityId,
     index: usize,
     text: String,
+    local_error: Option<String>,
     is_in_edit_mode: bool,
     is_being_dragged: bool,
     edit_editor: &'a ViewHandle<EditorView>,
@@ -681,6 +689,7 @@ fn render_row(props: RenderRowProps<'_>) -> Box<dyn Element> {
         panel_view_id,
         index,
         text,
+        local_error,
         is_in_edit_mode,
         is_being_dragged,
         edit_editor,
@@ -740,14 +749,26 @@ fn render_row(props: RenderRowProps<'_>) -> Box<dyn Element> {
             .with_max_height(max_prompt_height)
             .finish()
         } else {
-            ConstrainedBox::new(
-                Text::new(preview_text.clone(), ui_font_family, ui_font_size)
-                    .with_color(foreground_color)
+            let prompt = Text::new(preview_text.clone(), ui_font_family, ui_font_size)
+                .with_color(foreground_color)
+                .with_selectable(false)
+                .finish();
+            let mut content = Flex::column().with_child(prompt);
+            if let Some(local_error) = local_error.as_deref() {
+                content.add_child(
+                    Text::new(
+                        format!("Local error: {}", truncate_from_end(local_error, 120)),
+                        ui_font_family,
+                        ui_font_size * 0.9,
+                    )
+                    .with_color(theme.ui_error_color().into())
                     .with_selectable(false)
                     .finish(),
-            )
-            .with_max_height(max_prompt_height)
-            .finish()
+                );
+            }
+            ConstrainedBox::new(content.finish())
+                .with_max_height(max_prompt_height)
+                .finish()
         };
 
         let drag_handle: Box<dyn Element> = ConstrainedBox::new(

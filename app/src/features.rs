@@ -381,8 +381,6 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::RunAgentsTool,
         #[cfg(feature = "pending_user_query_indicator")]
         FeatureFlag::PendingUserQueryIndicator,
-        #[cfg(feature = "queue_slash_command")]
-        FeatureFlag::QueueSlashCommand,
         #[cfg(feature = "kitty_keyboard_protocol")]
         FeatureFlag::KittyKeyboardProtocol,
         #[cfg(feature = "inline_menu_headers")]
@@ -446,6 +444,10 @@ fn enabled_features() -> HashSet<FeatureFlag> {
         #[cfg(feature = "osc_hyperlinks")]
         FeatureFlag::OscHyperlinks,
     ]);
+
+    // The local-first queue is part of the product surface in every build.  Keep this
+    // unconditional so default and `local_only` builds expose the same durable queue/panel.
+    flags.insert(FeatureFlag::QueueSlashCommand);
 
     flags
 }

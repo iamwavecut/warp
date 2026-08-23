@@ -5,6 +5,7 @@ cfg_if::cfg_if! {
         pub mod agent;
         mod block_list;
         mod cloud_objects;
+        pub mod local_prompt_queue;
         mod sqlite;
         pub mod commands;
     }

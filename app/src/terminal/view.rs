@@ -4786,6 +4786,13 @@ impl TerminalView {
     ) {
         match finish_reason {
             FinishReason::Complete => {
+                let completed_prompt = QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.complete_prompt_in_flight(conversation_id, ctx)
+                });
+                if let Err(error) = completed_prompt {
+                    log::error!("failed to complete queued prompt dispatch: {error:#}");
+                    return;
+                }
                 let input_is_empty = self.input.as_ref(ctx).buffer_text(ctx).is_empty();
                 let first_row_is_in_edit_mode =
                     QueuedQueryModel::as_ref(ctx).first_row_is_in_edit_mode(conversation_id);
@@ -4793,22 +4800,66 @@ impl TerminalView {
                     return;
                 }
 
-                let action = QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.pop_for_autofire(conversation_id, ctx)
-                });
+                let (action, query_id, attachments) = {
+                    let model = QueuedQueryModel::as_ref(ctx);
+                    let Some(query) = model.queue(conversation_id).first() else {
+                        return;
+                    };
+                    (
+                        model.peek_autofire(conversation_id),
+                        query.id(),
+                        query.attachments().to_vec(),
+                    )
+                };
                 match action {
                     Some(AutofireAction::Submit { text }) => {
+                        let dispatched = QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+                            model.begin_dispatch(conversation_id, query_id, ctx).is_ok()
+                        });
+                        if !dispatched {
+                            return;
+                        }
                         self.input.update(ctx, |input, ctx| {
-                            input.submit_queued_prompt(text, ctx);
+                            input.submit_queued_prompt_with_attachments(text, attachments, ctx);
                         });
                     }
                     Some(AutofireAction::PopFromEditMode { text }) => {
+                        let should_restore = self.input.as_ref(ctx).buffer_text(ctx).is_empty();
                         self.input.update(ctx, |input, ctx| {
-                            if input.buffer_text(ctx).is_empty() {
+                            if should_restore {
                                 input.replace_buffer_content(&text, ctx);
                                 input.focus_input_box(ctx);
                             }
                         });
+                        if should_restore && !attachments.is_empty() {
+                            self.ai_context_model.update(ctx, |model, ctx| {
+                                model.append_pending_attachments(attachments, ctx);
+                            });
+                        }
+                        QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+                            model.remove_fired_row(conversation_id, query_id, ctx);
+                        });
+                    }
+                    Some(AutofireAction::ExecuteCommand { command }) => {
+                        let dispatched = QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+                            model.begin_dispatch(conversation_id, query_id, ctx).is_ok()
+                        });
+                        if !dispatched {
+                            return;
+                        }
+                        let started = self.input.update(ctx, |input, ctx| {
+                            input.execute_queued_command(&command, ctx)
+                        });
+                        if !started {
+                            QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+                                let _ = model.mark_local_error(
+                                    conversation_id,
+                                    query_id,
+                                    "local shell capability is not ready",
+                                    ctx,
+                                );
+                            });
+                        }
                     }
                     None => {}
                 }
@@ -4816,6 +4867,21 @@ impl TerminalView {
             FinishReason::Error
             | FinishReason::Cancelled
             | FinishReason::CancelledDuringRequestedCommandExecution => {
+                let retained_prompt = QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.fail_prompt_in_flight(
+                        conversation_id,
+                        "queued prompt ended before local completion; retry explicitly",
+                        ctx,
+                    )
+                });
+                match retained_prompt {
+                    Ok(true) => return,
+                    Ok(false) => {}
+                    Err(error) => {
+                        log::error!("failed to retain queued prompt error: {error:#}");
+                        return;
+                    }
+                }
                 // Only restore the head into the input when the user is
                 // currently viewing this conversation in agent view. Cancels
                 // triggered by exiting the agent view leave `agent_view_state`
@@ -4845,6 +4911,26 @@ impl TerminalView {
                     });
                 }
             }
+        }
+    }
+
+    /// A queued shell command is removed only after the terminal reports its block completed.
+    /// This keeps command-in-flight gating and the durable row aligned with the real side effect.
+    fn complete_queued_command_if_needed(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(conversation_id) = self
+            .ai_context_model
+            .as_ref(ctx)
+            .selected_conversation_id(ctx)
+        else {
+            return;
+        };
+        let completed = QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+            model.complete_command_in_flight(conversation_id, ctx)
+        });
+        match completed {
+            Ok(Some(_)) => self.drain_queued_prompts(conversation_id, FinishReason::Complete, ctx),
+            Ok(None) => {}
+            Err(error) => log::error!("failed to complete queued command: {error:#}"),
         }
     }
 
@@ -10502,6 +10588,9 @@ impl TerminalView {
                 self.input.update(ctx, |input, ctx| {
                     input.handle_block_completed_event(block_completed_event_clone, ctx);
                 });
+                if matches!(block_completed_event.block_type, BlockType::User(_)) {
+                    self.complete_queued_command_if_needed(ctx);
+                }
 
                 // Notify find model that this block completed so it gets scanned with final output.
                 let completed_block_index = block_completed_event.block_index;

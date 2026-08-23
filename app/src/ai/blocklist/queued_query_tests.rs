@@ -2,8 +2,8 @@
 //!
 //! Covers FIFO ordering, append from each origin, edit semantics, reorder semantics, the
 //! per-conversation auto-queue toggle, and history-driven cleanup.
-use std::cell::RefCell;
 use std::rc::Rc;
+use std::{cell::RefCell, fs};
 
 use warpui::{App, SingletonEntity};
 
@@ -12,7 +12,11 @@ use super::{
     QueuedQueryOrigin,
 };
 use crate::ai::agent::conversation::AIConversationId;
-use crate::ai::blocklist::BlocklistAIHistoryModel;
+use crate::ai::blocklist::{BlocklistAIHistoryModel, PendingAttachment, PendingFile};
+use crate::persistence::local_prompt_queue::{
+    LocalPromptQueueAttachment, LocalPromptQueueKind, LocalPromptQueueRepository,
+    LocalPromptQueueRow,
+};
 use crate::test_util::settings::initialize_history_persistence_for_tests;
 
 /// Helper to drive the singleton `QueuedQueryModel` (plus its required `BlocklistAIHistoryModel`
@@ -507,4 +511,274 @@ fn has_autofireable_prompt_is_false_when_a_locked_head_precedes_a_prompt() {
         append_user(&model, &mut app, conv, "follow up");
         model.read(&app, |m, _| assert!(!m.has_autofireable_prompt(conv)));
     });
+}
+
+#[test]
+fn durable_repository_round_trips_ordered_prompt_command_and_attachments() {
+    let repository = LocalPromptQueueRepository::in_memory().expect("queue database");
+    let conversation_id = AIConversationId::new();
+    let prompt_id = uuid::Uuid::new_v4();
+    let command_id = uuid::Uuid::new_v4();
+
+    repository
+        .replace_conversation(
+            conversation_id,
+            &[
+                LocalPromptQueueRow::prompt(
+                    prompt_id,
+                    conversation_id,
+                    0,
+                    "with attachment",
+                    "queue_slash_command",
+                    vec![LocalPromptQueueAttachment::Image {
+                        data: "bounded-base64".into(),
+                        file_name: "image.png".into(),
+                        mime_type: "image/png".into(),
+                    }],
+                ),
+                LocalPromptQueueRow::command(
+                    command_id,
+                    conversation_id,
+                    1,
+                    "cargo test",
+                    "auto_queue_toggle",
+                ),
+            ],
+            true,
+        )
+        .expect("queue rows should persist");
+
+    let loaded = repository
+        .load_conversation(conversation_id)
+        .expect("queue rows should load");
+    assert_eq!(loaded.settings.queue_next_prompt_enabled, true);
+    assert_eq!(loaded.rows.len(), 2);
+    assert_eq!(loaded.rows[0].id, prompt_id);
+    assert!(matches!(loaded.rows[0].kind, LocalPromptQueueKind::Prompt));
+    assert_eq!(loaded.rows[0].attachments.len(), 1);
+    assert!(matches!(
+        loaded.rows[0].attachments[0],
+        LocalPromptQueueAttachment::Image { .. }
+    ));
+    assert_eq!(loaded.rows[1].id, command_id);
+    assert!(matches!(loaded.rows[1].kind, LocalPromptQueueKind::Command));
+}
+
+#[test]
+fn durable_repository_repairs_positions_and_quarantines_only_corrupt_rows() {
+    let repository = LocalPromptQueueRepository::in_memory().expect("queue database");
+    let conversation_id = AIConversationId::new();
+    let valid_id = uuid::Uuid::new_v4();
+    repository
+        .insert_raw_for_test(
+            valid_id,
+            conversation_id,
+            99,
+            "prompt",
+            "valid",
+            "queue_slash_command",
+            "[]",
+        )
+        .expect("valid raw row should insert");
+    repository
+        .insert_corrupt_raw_for_test(conversation_id, -1, "unknown-kind", "bad")
+        .expect("corrupt row should insert");
+
+    let loaded = repository
+        .load_conversation(conversation_id)
+        .expect("valid rows should still load");
+    assert_eq!(loaded.rows.len(), 1);
+    assert_eq!(loaded.rows[0].id, valid_id);
+    assert_eq!(loaded.rows[0].position, 0);
+    assert_eq!(repository.quarantined_count().expect("quarantine count"), 1);
+}
+
+#[test]
+fn durable_repository_retains_dispatched_row_and_attempt_after_restart() {
+    let repository = LocalPromptQueueRepository::in_memory().expect("queue database");
+    let conversation_id = AIConversationId::new();
+    let row_id = uuid::Uuid::new_v4();
+    repository
+        .replace_conversation(
+            conversation_id,
+            &[LocalPromptQueueRow::prompt(
+                row_id,
+                conversation_id,
+                0,
+                "uncertain",
+                "queue_slash_command",
+                vec![],
+            )],
+            false,
+        )
+        .expect("row should persist");
+    repository
+        .mark_dispatched(conversation_id, row_id)
+        .expect("dispatch should persist before side effect");
+
+    let loaded = repository
+        .load_conversation(conversation_id)
+        .expect("row should survive restart");
+    assert_eq!(loaded.rows[0].id, row_id);
+    assert_eq!(loaded.rows[0].attempt_count, 1);
+    assert!(loaded.rows[0].dispatched_at.is_some());
+    assert!(!loaded.rows[0].auto_fireable);
+}
+
+#[test]
+fn durable_model_keeps_state_and_events_unchanged_when_persistence_fails() {
+    let repository = LocalPromptQueueRepository::failing_for_test();
+    App::test((), |mut app| async move {
+        initialize_history_persistence_for_tests(&mut app);
+        app.add_singleton_model(|_| BlocklistAIHistoryModel::new_for_test());
+        let model = app.add_singleton_model(|ctx| {
+            QueuedQueryModel::new_with_repository(repository.clone(), ctx)
+        });
+        let events = Rc::new(RefCell::new(Vec::<QueuedQueryEvent>::new()));
+        let events_clone = events.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_model(&model, move |_, event: &QueuedQueryEvent, _| {
+                events_clone.borrow_mut().push(event.clone());
+            });
+        });
+
+        let conversation_id = AIConversationId::new();
+        let result = model.update(&mut app, |model, ctx| {
+            model.try_append(
+                conversation_id,
+                QueuedQuery::new(
+                    "must not appear".into(),
+                    QueuedQueryOrigin::QueueSlashCommand,
+                ),
+                ctx,
+            )
+        });
+        assert!(result.is_err());
+        model.read(&app, |model, _| {
+            assert!(model.queue(conversation_id).is_empty())
+        });
+        assert!(events.borrow().is_empty());
+    });
+}
+
+#[test]
+fn queued_file_attachment_change_retains_row_and_records_local_error() {
+    with_model(|mut app, model, events| {
+        let conversation_id = AIConversationId::new();
+        let path = std::env::temp_dir().join(format!("warp-queue-{}.txt", uuid::Uuid::new_v4()));
+        fs::write(&path, "before").expect("test attachment should be writable");
+        let query = QueuedQuery::new_with_attachments(
+            "read the file".into(),
+            QueuedQueryOrigin::QueueSlashCommand,
+            vec![PendingAttachment::File(PendingFile {
+                file_name: "attachment.txt".into(),
+                file_path: path.clone(),
+                mime_type: "text/plain".into(),
+            })],
+        );
+        let query_id = query.id();
+        model.update(&mut app, |model, ctx| {
+            model.append(conversation_id, query, ctx);
+        });
+        fs::write(&path, "after with a different size").expect("test attachment should change");
+
+        let result = model.update(&mut app, |model, ctx| {
+            model.begin_dispatch(conversation_id, query_id, ctx)
+        });
+        assert!(result.is_err());
+        model.read(&app, |model, _| {
+            assert_eq!(model.queue(conversation_id).len(), 1);
+            assert!(model.queue(conversation_id)[0].has_local_error());
+            assert!(!model.has_autofireable_prompt(conversation_id));
+        });
+        assert!(
+            events
+                .borrow()
+                .iter()
+                .any(|event| matches!(event, QueuedQueryEvent::LocalError { .. }))
+        );
+        let _ = fs::remove_file(path);
+    });
+}
+
+#[test]
+fn queued_command_blocks_next_row_until_completion_and_retry_is_explicit() {
+    with_model(|mut app, model, _events| {
+        let conversation_id = AIConversationId::new();
+        let command_id = model.update(&mut app, |model, ctx| {
+            model.append(
+                conversation_id,
+                QueuedQuery::new_command(
+                    "printf queued".into(),
+                    QueuedQueryOrigin::QueueSlashCommand,
+                ),
+                ctx,
+            )
+        });
+        model.update(&mut app, |model, ctx| {
+            model.append(
+                conversation_id,
+                QueuedQuery::new("after command".into(), QueuedQueryOrigin::QueueSlashCommand),
+                ctx,
+            );
+        });
+
+        model
+            .update(&mut app, |model, ctx| {
+                model.begin_dispatch(conversation_id, command_id, ctx)
+            })
+            .expect("command dispatch marker should persist");
+        model.read(&app, |model, _| {
+            assert!(model.has_command_in_flight(conversation_id));
+            assert!(model.peek_autofire(conversation_id).is_none());
+            assert_eq!(model.queue(conversation_id)[0].attempt_count(), 1);
+        });
+
+        model
+            .update(&mut app, |model, ctx| {
+                model.complete_command_in_flight(conversation_id, ctx)
+            })
+            .expect("command completion should persist");
+        model.read(&app, |model, _| {
+            assert!(!model.has_command_in_flight(conversation_id));
+            assert_eq!(model.queue(conversation_id).len(), 1);
+            assert!(matches!(
+                model.peek_autofire(conversation_id),
+                Some(AutofireAction::Submit { .. })
+            ));
+        });
+    });
+}
+
+#[test]
+fn dispatched_command_restart_resets_gate_without_auto_retry() {
+    let repository = LocalPromptQueueRepository::in_memory().expect("queue database");
+    let conversation_id = AIConversationId::new();
+    let row_id = uuid::Uuid::new_v4();
+    repository
+        .replace_conversation_with_settings(
+            conversation_id,
+            &[LocalPromptQueueRow::command(
+                row_id,
+                conversation_id,
+                0,
+                "uncertain command",
+                "queue_slash_command",
+            )],
+            crate::persistence::local_prompt_queue::LocalPromptQueueSettings {
+                queue_next_prompt_enabled: false,
+                command_in_flight: true,
+            },
+        )
+        .expect("command should persist");
+    repository
+        .dispatch_row(conversation_id, row_id, true)
+        .expect("dispatch marker should persist");
+
+    let loaded = repository
+        .load_conversation(conversation_id)
+        .expect("restart load should succeed");
+    assert!(!loaded.settings.command_in_flight);
+    assert_eq!(loaded.rows[0].attempt_count, 1);
+    assert!(!loaded.rows[0].auto_fireable);
 }

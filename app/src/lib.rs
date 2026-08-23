@@ -1674,7 +1674,7 @@ pub(crate) fn initialize_app(
     }
     // Per-conversation queued prompts. Registered after the history model
     // since it subscribes to history events for cleanup.
-    ctx.add_singleton_model(ai::blocklist::QueuedQueryModel::new);
+    ctx.add_singleton_model(ai::blocklist::QueuedQueryModel::new_persistent);
     // Cross-pane UI state for the orchestration pill bar. Registered
     // after the history model since it subscribes to history events.
     ctx.add_singleton_model(move |ctx| {
@@ -2836,8 +2836,6 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         FeatureFlag::RunAgentsTool,
         #[cfg(feature = "pending_user_query_indicator")]
         FeatureFlag::PendingUserQueryIndicator,
-        #[cfg(feature = "queue_slash_command")]
-        FeatureFlag::QueueSlashCommand,
         #[cfg(feature = "kitty_keyboard_protocol")]
         FeatureFlag::KittyKeyboardProtocol,
         #[cfg(feature = "inline_menu_headers")]
@@ -2891,6 +2889,10 @@ pub fn enabled_features() -> HashSet<FeatureFlag> {
         #[cfg(feature = "remote_code_review")]
         FeatureFlag::RemoteCodeReview,
     ]);
+
+    // Local-first queue/panel behavior is unconditional in this fork, including compatibility
+    // builds that still pass `--features local_only`.
+    flags.insert(FeatureFlag::QueueSlashCommand);
 
     flags
 }

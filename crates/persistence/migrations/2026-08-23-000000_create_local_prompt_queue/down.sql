@@ -1,0 +1,4 @@
+DROP TABLE local_prompt_queue_quarantine;
+DROP TABLE local_prompt_queue_settings;
+DROP INDEX local_prompt_queue_rows_conversation_position;
+DROP TABLE local_prompt_queue_rows;

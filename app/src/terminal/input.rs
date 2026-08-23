@@ -114,7 +114,7 @@ use crate::{
             BlocklistAIController, BlocklistAIControllerEvent, BlocklistAIHistoryEvent,
             BlocklistAIHistoryModel, BlocklistAIInputEvent, BlocklistAIInputModel,
             DIFF_HUNK_ATTACHMENT_REGEX, DRIVE_OBJECT_ATTACHMENT_REGEX, InputConfig, InputType,
-            QueuedQuery, QueuedQueryModel, QueuedQueryOrigin,
+            PendingAttachment, QueuedQuery, QueuedQueryModel, QueuedQueryOrigin,
             prompt::prompt_alert::{PromptAlertEvent, PromptAlertView},
             render_ai_agent_mode_icon, render_ai_follow_up_icon,
         },
@@ -12239,6 +12239,38 @@ impl Input {
         ctx.emit(Event::ExecuteAIQuery);
     }
 
+    /// Re-submits a durable queued prompt together with the attachments captured when it was
+    /// queued. Attachments are staged only for this local request; no hosted upload or fallback
+    /// path is involved.
+    pub(crate) fn submit_queued_prompt_with_attachments(
+        &mut self,
+        prompt: String,
+        attachments: Vec<PendingAttachment>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if !attachments.is_empty() {
+            self.ai_context_model.update(ctx, |model, ctx| {
+                model.append_pending_attachments(attachments, ctx);
+            });
+        }
+        self.submit_queued_prompt(prompt, ctx);
+    }
+
+    /// Executes a durable queued shell command without replacing an existing user draft. The
+    /// terminal completion path restores that draft after the command block finishes.
+    pub(crate) fn execute_queued_command(
+        &mut self,
+        command: &str,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        let draft = self.buffer_text(ctx);
+        let started = self.try_execute_command(command, ctx);
+        if started && !draft.is_empty() {
+            self.input_contents_before_prompt_chip_command = Some(draft);
+        }
+        started
+    }
+
     /// Checks whether the current input should be queued instead of executed.
     /// Returns true (and queues the prompt) when the queue-next-prompt toggle is
     /// on and the active conversation is still in progress.
@@ -12319,10 +12351,17 @@ impl Input {
             editor.clear_buffer(ctx);
         });
 
+        let attachments = self
+            .ai_context_model
+            .update(ctx, |model, ctx| model.take_pending_attachments(ctx));
         QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
             model.append(
                 conversation_id,
-                QueuedQuery::new(prompt, QueuedQueryOrigin::AutoQueueToggle),
+                QueuedQuery::new_with_attachments(
+                    prompt,
+                    QueuedQueryOrigin::AutoQueueToggle,
+                    attachments,
+                ),
                 ctx,
             );
         });
