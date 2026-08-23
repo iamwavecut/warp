@@ -71,6 +71,10 @@ pub struct CustomProviderCapabilities {
     /// Whether the provider is declared to expose audio transcription.
     #[schemars(description = "Whether transcription is declared by the provider.")]
     pub transcription: bool,
+    /// Explicit model ID to send to the provider's transcription endpoint.
+    #[serde(default)]
+    #[schemars(description = "Model ID used for audio transcription.")]
+    pub transcription_model: Option<String>,
     /// Optional context window in model tokens.
     #[schemars(description = "Optional context window size in model tokens.")]
     pub context_window_tokens: Option<u32>,
@@ -90,6 +94,7 @@ impl Default for CustomProviderCapabilities {
             vision: false,
             embeddings: false,
             transcription: false,
+            transcription_model: None,
             context_window_tokens: None,
         }
     }
@@ -106,6 +111,15 @@ impl CustomProviderCapabilities {
             });
         }
 
+        if self.transcription
+            && self
+                .transcription_model
+                .as_deref()
+                .is_none_or(|model| model.trim().is_empty())
+        {
+            return Err(CustomProviderConfigError::MissingTranscriptionModel);
+        }
+
         Ok(())
     }
 }
@@ -115,6 +129,7 @@ impl CustomProviderCapabilities {
 pub enum CustomProviderConfigError {
     ContextWindowTooSmall { tokens: u32, minimum: u32 },
     InvalidContextWindow(String),
+    MissingTranscriptionModel,
 }
 
 impl std::fmt::Display for CustomProviderConfigError {
@@ -127,6 +142,10 @@ impl std::fmt::Display for CustomProviderConfigError {
             Self::InvalidContextWindow(value) => write!(
                 f,
                 "custom provider context window must be a positive token count, got `{value}`"
+            ),
+            Self::MissingTranscriptionModel => write!(
+                f,
+                "custom provider transcription requires a non-empty transcription model ID"
             ),
         }
     }
@@ -361,12 +380,34 @@ pub fn custom_provider_capabilities_from_ui(
     transcription: bool,
     context_window_tokens: &str,
 ) -> Result<CustomProviderCapabilities, CustomProviderConfigError> {
+    custom_provider_capabilities_from_ui_with_transcription_model(
+        chat,
+        tools,
+        vision,
+        embeddings,
+        transcription,
+        None,
+        context_window_tokens,
+    )
+}
+
+pub fn custom_provider_capabilities_from_ui_with_transcription_model(
+    chat: bool,
+    tools: bool,
+    vision: bool,
+    embeddings: bool,
+    transcription: bool,
+    transcription_model: Option<&str>,
+    context_window_tokens: &str,
+) -> Result<CustomProviderCapabilities, CustomProviderConfigError> {
     let capabilities = CustomProviderCapabilities {
         chat,
         tools,
         vision,
         embeddings,
         transcription,
+        transcription_model: transcription_model
+            .and_then(|model| (!model.trim().is_empty()).then(|| model.trim().to_string())),
         context_window_tokens: parse_custom_provider_context_window_tokens(context_window_tokens)?,
     };
     capabilities.validate()?;

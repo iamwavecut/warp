@@ -100,6 +100,7 @@ fn custom_provider_capabilities_round_trip_explicit_values() {
         vision: true,
         embeddings: true,
         transcription: true,
+        transcription_model: Some("local-whisper".to_string()),
         context_window_tokens: Some(32_000),
     };
     let provider = CustomProviderConfig {
@@ -145,6 +146,65 @@ fn custom_provider_context_window_validation_rejects_zero_and_tiny_values() {
         ..CustomProviderConfig::default()
     };
     assert!(provider.validate().is_ok());
+}
+
+#[test]
+fn custom_provider_transcription_requires_an_explicit_model() {
+    let provider = CustomProviderConfig {
+        capabilities: CustomProviderCapabilities {
+            transcription: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let error = provider
+        .validate()
+        .expect_err("transcription without a model must be rejected locally");
+    assert_eq!(error, CustomProviderConfigError::MissingTranscriptionModel);
+    assert!(error.to_string().contains("transcription model"));
+
+    let capabilities = custom_provider_capabilities_from_ui_with_transcription_model(
+        true,
+        true,
+        false,
+        false,
+        true,
+        Some(" local-whisper "),
+        "",
+    )
+    .expect("a non-empty transcription model should be accepted");
+    assert_eq!(
+        capabilities.transcription_model.as_deref(),
+        Some("local-whisper")
+    );
+}
+
+#[test]
+fn custom_provider_transcription_model_round_trips_and_legacy_config_defaults_to_none() {
+    let provider = CustomProviderConfig {
+        capabilities: CustomProviderCapabilities {
+            transcription: true,
+            transcription_model: Some("local-whisper".to_string()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let encoded = serde_json::to_value(&provider).expect("provider should serialize");
+    let decoded: CustomProviderConfig =
+        serde_json::from_value(encoded).expect("provider should deserialize");
+    assert_eq!(
+        decoded.capabilities.transcription_model.as_deref(),
+        Some("local-whisper")
+    );
+
+    let legacy: CustomProviderConfig = serde_json::from_value(serde_json::json!({
+        "name": "legacy",
+        "base_url": "http://localhost:1234/v1",
+        "models": ["local-model"]
+    }))
+    .expect("legacy provider config should remain valid");
+    assert_eq!(legacy.capabilities.transcription_model, None);
 }
 
 #[test]

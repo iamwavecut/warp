@@ -198,6 +198,7 @@ fn custom_model_metadata_reports_effective_capabilities_and_context_window() {
                             vision: true,
                             embeddings: true,
                             transcription: true,
+                            transcription_model: Some("local-whisper".to_string()),
                             context_window_tokens: Some(32_000),
                         },
                     }],

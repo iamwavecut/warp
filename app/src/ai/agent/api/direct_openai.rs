@@ -186,6 +186,69 @@ pub(crate) fn resolve_custom_provider_route_with_readiness(
     )))
 }
 
+/// Resolves the transcription endpoint for the provider backing the selected
+/// custom chat model. A provider that is not selected cannot silently become a
+/// transcription fallback.
+pub(crate) fn resolve_custom_provider_transcription_route(
+    model_id: &str,
+    providers: &[CustomProviderConfig],
+    api_keys: &ApiKeys,
+) -> Result<Option<CustomProviderRoute>, CustomProviderRouteError> {
+    resolve_custom_provider_transcription_route_with_readiness(model_id, providers, api_keys, true)
+}
+
+pub(crate) fn resolve_custom_provider_transcription_route_with_readiness(
+    model_id: &str,
+    providers: &[CustomProviderConfig],
+    api_keys: &ApiKeys,
+    keys_ready: bool,
+) -> Result<Option<CustomProviderRoute>, CustomProviderRouteError> {
+    let Some(custom_model) = parse_custom_model_id(model_id) else {
+        return Ok(None);
+    };
+    if !keys_ready {
+        return Err(CustomProviderRouteError::KeysNotReady);
+    }
+    if !custom_provider_name_is_unique(&custom_model.provider_name, providers) {
+        let provider_name = custom_model.provider_name.clone();
+        let has_matching_provider = providers
+            .iter()
+            .any(|provider| provider.name == provider_name);
+        return if has_matching_provider {
+            Err(CustomProviderRouteError::AmbiguousProviderName(
+                provider_name,
+            ))
+        } else {
+            Ok(None)
+        };
+    }
+
+    let Some(provider) = providers
+        .iter()
+        .find(|provider| provider.name == custom_model.provider_name)
+    else {
+        return Ok(None);
+    };
+    if provider.validate().is_err() || !provider.capabilities.transcription {
+        return Ok(None);
+    }
+    let Some(transcription_model) = provider
+        .capabilities
+        .transcription_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(route_for_provider_model(
+        provider,
+        transcription_model.to_string(),
+        api_keys,
+    )))
+}
+
 pub(crate) fn default_custom_provider_route(
     providers: &[CustomProviderConfig],
     api_keys: &ApiKeys,
@@ -6112,6 +6175,64 @@ mod tests {
     }
 
     #[test]
+    fn transcription_route_uses_the_selected_provider_and_explicit_model() {
+        let providers = vec![CustomProviderConfig {
+            name: "selected-local".to_string(),
+            base_url: "http://localhost:1234/v1".to_string(),
+            models: vec!["chat-model".to_string()],
+            capabilities: CustomProviderCapabilities {
+                transcription: true,
+                transcription_model: Some("local-whisper".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }];
+
+        let route = resolve_custom_provider_transcription_route(
+            "custom/selected-local/chat-model",
+            &providers,
+            &ApiKeys::default(),
+        )
+        .expect("selected provider should produce a route")
+        .expect("transcription capability should enable the route");
+
+        assert_eq!(route.provider_name, "selected-local");
+        assert_eq!(route.base_url, "http://localhost:1234/v1");
+        assert_eq!(route.model, "local-whisper");
+    }
+
+    #[test]
+    fn transcription_route_does_not_fallback_to_another_provider() {
+        let providers = vec![
+            CustomProviderConfig {
+                name: "selected-local".to_string(),
+                models: vec!["chat-model".to_string()],
+                ..Default::default()
+            },
+            CustomProviderConfig {
+                name: "other-local".to_string(),
+                models: vec!["other-model".to_string()],
+                capabilities: CustomProviderCapabilities {
+                    transcription: true,
+                    transcription_model: Some("local-whisper".to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        ];
+
+        assert!(
+            resolve_custom_provider_transcription_route(
+                "custom/selected-local/chat-model",
+                &providers,
+                &ApiKeys::default(),
+            )
+            .expect("missing selected capability should be a local disable")
+            .is_none()
+        );
+    }
+
+    #[test]
     fn configured_capabilities_are_retained_and_vision_is_enabled_by_the_local_adapter() {
         let route = CustomProviderRoute {
             provider_name: "local".to_string(),
@@ -6124,6 +6245,7 @@ mod tests {
                 vision: true,
                 embeddings: true,
                 transcription: true,
+                transcription_model: Some("local-whisper".to_string()),
                 context_window_tokens: Some(32_000),
             },
         };

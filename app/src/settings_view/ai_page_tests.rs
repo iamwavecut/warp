@@ -122,6 +122,7 @@ fn provider_editor_save_preserves_capabilities_when_provider_is_renamed() {
         vision: true,
         embeddings: true,
         transcription: false,
+        transcription_model: None,
         context_window_tokens: Some(32_000),
     };
 
