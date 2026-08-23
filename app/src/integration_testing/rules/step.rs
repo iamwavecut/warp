@@ -67,15 +67,14 @@ pub fn open_rule_pane(window_key: impl Into<String>, key: impl Into<String>) -> 
 
     TestStep::new("Open rule pane").with_action(move |app, _, data| {
         let window_id: &WindowId = data.get(&window_key).expect("No saved window ID");
-        let fact_id: &SyncId = data.get(&key).expect("No saved rule ID");
+        let _fact_id: &SyncId = data.get(&key).expect("No saved rule ID");
         workspace_view(app, *window_id).update(app, |workspace, ctx| {
             // Focus the window first
             WindowManager::as_ref(ctx).show_window_and_focus_app(*window_id);
 
-            // Open the AI facts pane
-            let page = AIFactPage::RuleEditor {
-                sync_id: Some(*fact_id),
-            };
+            // The local-first Rules pane has no cloud fact editor. Open the
+            // file-backed Rules list; callers can select a surfaced file there.
+            let page = AIFactPage::Rules;
             workspace.open_ai_fact_collection_pane(None, Some(page), ctx);
         })
     })

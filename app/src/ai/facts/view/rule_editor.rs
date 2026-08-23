@@ -1,10 +1,11 @@
+use ai::project_context::local_rule_repository::LocalRule;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::color::internal_colors;
 use warp_editor::editor::NavigationKey;
 use warpui::elements::{
-    Border, ChildView, Clipped, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox,
-    Container, CornerRadius, CrossAxisAlignment, Flex, MainAxisAlignment, MainAxisSize,
-    MouseStateHandle, ParentElement, Radius, ScrollbarWidth,
+    Border, ChildView, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container,
+    CornerRadius, CrossAxisAlignment, Flex, MainAxisAlignment, MainAxisSize, ParentElement, Radius,
+    ScrollbarWidth,
 };
 use warpui::platform::Cursor;
 use warpui::ui_components::components::UiComponent;
@@ -13,45 +14,30 @@ use warpui::{
     ViewHandle,
 };
 
-use super::{AIFact, CloudAIFact, CloudAIFactModel, is_delete_allowed, style};
-use crate::ai::facts::AIMemory;
-use crate::cloud_object::model::generic_string_model::GenericStringObjectId;
-use crate::cloud_object::model::persistence::CloudModel;
-use crate::cloud_object::{CloudObject, Revision};
+use super::{RuleTarget, style};
 use crate::editor::{
     EditorOptions, EditorView, EnterAction, EnterSettings, Event as EditorEvent,
-    PropagateAndNoOpNavigationKeys, SingleLineEditorOptions, TextOptions,
+    PropagateAndNoOpNavigationKeys, TextOptions,
 };
-use crate::network::NetworkStatus;
-use crate::server::ids::SyncId;
 use crate::ui_components::buttons::icon_button;
 use crate::ui_components::icons::Icon;
 use crate::view_components::action_button::{ActionButton, DangerSecondaryTheme, PrimaryTheme};
 
-const RULE_NAME_PLACEHOLDER_TEXT: &str = "e.g. Rust rules";
-const RULE_DESCRIPTION_PLACEHOLDER_TEXT: &str = "e.g. Never use unwrap in Rust";
-
-#[derive(Debug, Clone, Copy)]
-enum EditorType {
-    Name,
-    Content,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuleEditorTarget {
+    New(RuleTarget),
+    Existing(LocalRule),
 }
 
 #[derive(Debug, Clone)]
 pub enum RuleEditorViewEvent {
     Back,
-    Add {
-        name: Option<String>,
+    Save {
+        target: RuleEditorTarget,
         content: String,
-    },
-    Edit {
-        name: Option<String>,
-        content: String,
-        sync_id: SyncId,
-        revision_ts: Option<Revision>,
     },
     Delete {
-        sync_id: SyncId,
+        rule: LocalRule,
     },
 }
 
@@ -60,52 +46,32 @@ pub enum RuleEditorViewAction {
     Back,
     Save,
     Delete,
+    ConfirmDelete,
+    ConfirmDiscard,
 }
+
 pub struct RuleEditorView {
-    // Is None if we are adding a new rule, otherwise it is the existing rule we are editing.
-    ai_fact: Option<CloudAIFact>,
-
-    current_editor: EditorType,
-    name_editor: ViewHandle<EditorView>,
+    target: Option<RuleEditorTarget>,
+    initial_content: String,
     content_editor: ViewHandle<EditorView>,
-
     save_button: ViewHandle<ActionButton>,
     delete_button: ViewHandle<ActionButton>,
-    back_button: MouseStateHandle,
+    confirm_delete_button: ViewHandle<ActionButton>,
+    discard_button: ViewHandle<ActionButton>,
+    back_button: warpui::elements::MouseStateHandle,
     clipped_scroll_state: ClippedScrollStateHandle,
+    confirm_delete: bool,
+    confirm_discard: bool,
 }
 
 impl RuleEditorView {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
-        let network_status = NetworkStatus::handle(ctx);
-        ctx.subscribe_to_model(&network_status, |_me, _, _event, ctx| {
-            ctx.notify();
-        });
-
         let appearance = Appearance::as_ref(ctx);
-        let font_family = appearance.ui_font_family();
         let text = TextOptions {
             font_size_override: Some(style::TEXT_FONT_SIZE),
-            font_family_override: Some(font_family),
+            font_family_override: Some(appearance.ui_font_family()),
             ..Default::default()
         };
-        let name_editor = ctx.add_typed_action_view(|ctx| {
-            let mut editor = EditorView::single_line(
-                SingleLineEditorOptions {
-                    text: text.clone(),
-                    propagate_and_no_op_vertical_navigation_keys:
-                        PropagateAndNoOpNavigationKeys::Always,
-                    ..Default::default()
-                },
-                ctx,
-            );
-            editor.set_placeholder_text(RULE_NAME_PLACEHOLDER_TEXT, ctx);
-            editor
-        });
-        ctx.subscribe_to_view(&name_editor, |me, _editor, event, ctx| {
-            me.handle_editor_event(event, ctx);
-        });
-
         let content_editor = ctx.add_typed_action_view(|ctx| {
             let mut editor = EditorView::new(
                 EditorOptions {
@@ -126,111 +92,89 @@ impl RuleEditorView {
                 },
                 ctx,
             );
-            editor.set_placeholder_text(RULE_DESCRIPTION_PLACEHOLDER_TEXT, ctx);
+            editor.set_placeholder_text("Write the local Markdown rule", ctx);
             editor
         });
-        ctx.subscribe_to_view(&content_editor, |me, _editor, event, ctx| {
-            me.handle_editor_event(event, ctx);
+        ctx.subscribe_to_view(&content_editor, |me, _, event, ctx| {
+            me.handle_editor_event(event, ctx)
         });
 
         let save_button = ctx.add_typed_action_view(|ctx| {
             let mut button = ActionButton::new("Save", PrimaryTheme)
                 .with_icon(Icon::Check)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(RuleEditorViewAction::Save);
-                });
-            // Disable the button until the user has entered a description
+                .on_click(|ctx| ctx.dispatch_typed_action(RuleEditorViewAction::Save));
             button.set_disabled(true, ctx);
             button
         });
-
         let delete_button = ctx.add_typed_action_view(|_| {
             ActionButton::new("Delete rule", DangerSecondaryTheme)
                 .with_icon(Icon::Trash)
-                .on_click(|ctx| {
-                    ctx.dispatch_typed_action(RuleEditorViewAction::Delete);
-                })
+                .on_click(|ctx| ctx.dispatch_typed_action(RuleEditorViewAction::Delete))
+        });
+        let confirm_delete_button = ctx.add_typed_action_view(|_| {
+            ActionButton::new("Confirm delete", DangerSecondaryTheme)
+                .with_icon(Icon::Trash)
+                .on_click(|ctx| ctx.dispatch_typed_action(RuleEditorViewAction::ConfirmDelete))
+        });
+        let discard_button = ctx.add_typed_action_view(|_| {
+            ActionButton::new("Discard changes", DangerSecondaryTheme)
+                .on_click(|ctx| ctx.dispatch_typed_action(RuleEditorViewAction::ConfirmDiscard))
         });
 
         Self {
-            ai_fact: None,
-            current_editor: EditorType::Name,
-            name_editor,
+            target: None,
+            initial_content: String::new(),
             content_editor,
             save_button,
             delete_button,
+            confirm_delete_button,
+            discard_button,
             back_button: Default::default(),
             clipped_scroll_state: Default::default(),
+            confirm_delete: false,
+            confirm_discard: false,
         }
     }
 
-    pub fn set_ai_rule(&mut self, sync_id: Option<SyncId>, ctx: &mut ViewContext<Self>) {
-        if let Some(sync_id) = sync_id {
-            // Get the AIFact from the cloud model
-            let Some(ai_fact) = CloudModel::as_ref(ctx)
-                .get_object_of_type::<GenericStringObjectId, CloudAIFactModel>(&sync_id)
-            else {
-                return;
-            };
-            let AIFact::Memory(AIMemory { name, content, .. }) =
-                ai_fact.model().string_model.clone();
-            self.ai_fact = Some(ai_fact.clone());
-
-            // Update the UI with the AIFact
-            self.name_editor.update(ctx, |editor, ctx| {
-                editor.set_buffer_text(name.unwrap_or_default().as_str(), ctx);
-            });
-            self.content_editor.update(ctx, |editor, ctx| {
-                editor.set_buffer_text(content.as_str(), ctx);
-            });
-        } else {
-            self.ai_fact = None;
-            self.name_editor.update(ctx, |editor, ctx| {
-                editor.clear_buffer_and_reset_undo_stack(ctx);
-            });
-            self.content_editor.update(ctx, |editor, ctx| {
-                editor.clear_buffer_and_reset_undo_stack(ctx);
-            });
-        }
+    pub fn set_target(&mut self, target: RuleEditorTarget, ctx: &mut ViewContext<Self>) {
+        let content = match &target {
+            RuleEditorTarget::New(_) => String::new(),
+            RuleEditorTarget::Existing(rule) => rule.content.clone(),
+        };
+        self.initial_content = content.clone();
+        self.target = Some(target);
+        self.confirm_delete = false;
+        self.confirm_discard = false;
+        self.content_editor.update(ctx, |editor, ctx| {
+            editor.set_buffer_text(&content, ctx);
+        });
+        self.update_save_button(ctx);
         ctx.notify();
     }
 
-    fn handle_editor_event(&mut self, event: &EditorEvent, ctx: &mut ViewContext<Self>) {
-        let (current_editor, next_editor, next_editor_type) = match self.current_editor {
-            EditorType::Name => (&self.name_editor, &self.content_editor, EditorType::Content),
-            EditorType::Content => (&self.content_editor, &self.name_editor, EditorType::Name),
-        };
+    fn update_save_button(&self, ctx: &mut ViewContext<Self>) {
+        let content = self.content_editor.as_ref(ctx).buffer_text(ctx);
+        let disabled = content.trim().is_empty() || content == self.initial_content;
+        self.save_button
+            .update(ctx, |button, ctx| button.set_disabled(disabled, ctx));
+    }
 
+    fn is_dirty(&self, ctx: &mut ViewContext<Self>) -> bool {
+        self.content_editor.as_ref(ctx).buffer_text(ctx) != self.initial_content
+    }
+
+    fn handle_editor_event(&mut self, event: &EditorEvent, ctx: &mut ViewContext<Self>) {
         match event {
-            EditorEvent::Focused => {
-                self.current_editor = if self.name_editor.is_focused(ctx) {
-                    EditorType::Name
-                } else {
-                    EditorType::Content
-                };
-            }
-            EditorEvent::Navigate(NavigationKey::Tab)
-            | EditorEvent::Navigate(NavigationKey::ShiftTab) => {
-                self.current_editor = next_editor_type;
-                ctx.focus(next_editor);
-            }
+            EditorEvent::Focused => {}
             EditorEvent::Navigate(NavigationKey::Up) => {
-                current_editor.update(ctx, |editor, ctx| {
-                    editor.move_up(ctx);
-                });
+                self.content_editor
+                    .update(ctx, |editor, ctx| editor.move_up(ctx));
             }
             EditorEvent::Navigate(NavigationKey::Down) => {
-                current_editor.update(ctx, |editor, ctx| {
-                    editor.move_down(ctx);
-                });
+                self.content_editor
+                    .update(ctx, |editor, ctx| editor.move_down(ctx));
             }
-            EditorEvent::Edited(_) => {
-                // Disable the save button if the description is empty
-                let is_disabled = self.content_editor.as_ref(ctx).buffer_text(ctx).is_empty();
-                self.save_button.update(ctx, |button, ctx| {
-                    button.set_disabled(is_disabled, ctx);
-                });
-            }
+            EditorEvent::Edited(_) => self.update_save_button(ctx),
             _ => {}
         }
     }
@@ -240,9 +184,7 @@ impl RuleEditorView {
         Container::new(
             button
                 .build()
-                .on_click(move |ctx, _, _| {
-                    ctx.dispatch_typed_action(RuleEditorViewAction::Back);
-                })
+                .on_click(|ctx, _, _| ctx.dispatch_typed_action(RuleEditorViewAction::Back))
                 .with_cursor(Cursor::PointingHand)
                 .finish(),
         )
@@ -250,17 +192,11 @@ impl RuleEditorView {
         .finish()
     }
 
-    fn render_save_button(&self, _appearance: &Appearance) -> Box<dyn Element> {
-        Container::new(ChildView::new(&self.save_button).finish())
-            .with_margin_left(style::SECTION_MARGIN)
-            .finish()
-    }
-
     fn render_header(&self, appearance: &Appearance) -> Box<dyn Element> {
-        let title = if self.ai_fact.is_none() {
-            "Add Rule"
-        } else {
-            "Edit Rule"
+        let title = match &self.target {
+            Some(RuleEditorTarget::New(_)) => "Add local rule",
+            Some(RuleEditorTarget::Existing(_)) => "Edit local rule",
+            None => "Local rule",
         };
         Container::new(
             Flex::row()
@@ -281,27 +217,39 @@ impl RuleEditorView {
                         )
                         .finish(),
                 )
-                .with_child(self.render_save_button(appearance))
+                .with_child(
+                    Container::new(ChildView::new(&self.save_button).finish())
+                        .with_margin_left(style::SECTION_MARGIN)
+                        .finish(),
+                )
                 .finish(),
         )
         .with_margin_bottom(style::ITEM_BOTTOM_MARGIN)
         .finish()
     }
 
-    fn render_name_editor(&self, appearance: &Appearance) -> Box<dyn Element> {
-        Container::new(Clipped::new(ChildView::new(&self.name_editor).finish()).finish())
-            .with_background(appearance.theme().surface_2())
-            .with_border(
-                Border::all(1.).with_border_color(internal_colors::neutral_4(appearance.theme())),
-            )
-            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)))
-            .with_margin_bottom(style::ITEM_BOTTOM_MARGIN)
-            .with_horizontal_padding(style::EDITOR_HORIZONTAL_PADDING)
-            .with_vertical_padding(style::EDITOR_VERTICAL_PADDING)
-            .finish()
+    fn render_path(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let path = self.target.as_ref().map(|target| match target {
+            RuleEditorTarget::New(target) => target.display_path(),
+            RuleEditorTarget::Existing(rule) => rule.path.clone(),
+        });
+        Container::new(
+            appearance
+                .ui_builder()
+                .wrappable_text(
+                    path.map(|path| path.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "No rule selected".to_string()),
+                    true,
+                )
+                .with_style(style::fact_project_based_row_text(appearance))
+                .build()
+                .finish(),
+        )
+        .with_margin_bottom(style::SECTION_MARGIN)
+        .finish()
     }
 
-    fn render_content_editor(&self, appearance: &Appearance) -> Box<dyn Element> {
+    fn render_editor(&self, appearance: &Appearance) -> Box<dyn Element> {
         ConstrainedBox::new(
             Container::new(
                 ClippedScrollable::vertical(
@@ -329,23 +277,6 @@ impl RuleEditorView {
         .with_max_height(style::EDITOR_MAX_HEIGHT)
         .finish()
     }
-
-    fn render_form(&self, appearance: &Appearance) -> Box<dyn Element> {
-        Flex::column()
-            .with_child(
-                Container::new(appearance.ui_builder().span("Name").build().finish())
-                    .with_margin_bottom(style::ITEM_BOTTOM_MARGIN)
-                    .finish(),
-            )
-            .with_child(self.render_name_editor(appearance))
-            .with_child(
-                Container::new(appearance.ui_builder().span("Rule").build().finish())
-                    .with_margin_bottom(style::ITEM_BOTTOM_MARGIN)
-                    .finish(),
-            )
-            .with_child(self.render_content_editor(appearance))
-            .finish()
-    }
 }
 
 impl Entity for RuleEditorView {
@@ -359,10 +290,7 @@ impl View for RuleEditorView {
 
     fn on_focus(&mut self, focus_ctx: &FocusContext, ctx: &mut ViewContext<Self>) {
         if focus_ctx.is_self_focused() {
-            match self.current_editor {
-                EditorType::Name => ctx.focus(&self.name_editor),
-                EditorType::Content => ctx.focus(&self.content_editor),
-            }
+            ctx.focus(&self.content_editor);
         }
     }
 
@@ -370,12 +298,53 @@ impl View for RuleEditorView {
         let appearance = Appearance::as_ref(app);
         let mut col = Flex::column()
             .with_child(self.render_header(appearance))
-            .with_child(self.render_form(appearance));
+            .with_child(self.render_path(appearance))
+            .with_child(self.render_editor(appearance));
 
-        if let Some(ai_fact) = &self.ai_fact
-            && is_delete_allowed(ai_fact.clone(), app)
-        {
-            col.add_child(ChildView::new(&self.delete_button).finish());
+        if let Some(RuleEditorTarget::Existing(rule)) = &self.target {
+            if rule.writable {
+                if self.confirm_delete {
+                    col.add_child(
+                        Flex::row()
+                            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                            .with_child(
+                                appearance
+                                    .ui_builder()
+                                    .wrappable_text("Delete this exact local file?", true)
+                                    .build()
+                                    .finish(),
+                            )
+                            .with_child(ChildView::new(&self.confirm_delete_button).finish())
+                            .finish(),
+                    );
+                } else {
+                    col.add_child(ChildView::new(&self.delete_button).finish());
+                }
+            } else {
+                col.add_child(
+                    appearance
+                        .ui_builder()
+                        .wrappable_text("This file is read-only.", true)
+                        .with_style(style::fact_project_based_row_text(appearance))
+                        .build()
+                        .finish(),
+                );
+            }
+        }
+        if self.confirm_discard {
+            col.add_child(
+                Flex::row()
+                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
+                    .with_child(
+                        appearance
+                            .ui_builder()
+                            .wrappable_text("Discard unsaved changes?", true)
+                            .build()
+                            .finish(),
+                    )
+                    .with_child(ChildView::new(&self.discard_button).finish())
+                    .finish(),
+            );
         }
         col.finish()
     }
@@ -387,29 +356,33 @@ impl TypedActionView for RuleEditorView {
     fn handle_action(&mut self, action: &RuleEditorViewAction, ctx: &mut ViewContext<Self>) {
         match action {
             RuleEditorViewAction::Back => {
-                ctx.emit(RuleEditorViewEvent::Back);
-            }
-            RuleEditorViewAction::Save => {
-                let name = self.name_editor.as_ref(ctx).buffer_text(ctx);
-                let name = if name.is_empty() { None } else { Some(name) };
-                let content = self.content_editor.as_ref(ctx).buffer_text(ctx);
-                if let Some(ai_fact) = &self.ai_fact {
-                    ctx.emit(RuleEditorViewEvent::Edit {
-                        name,
-                        content,
-                        sync_id: ai_fact.sync_id(),
-                        revision_ts: ai_fact.metadata().revision.clone(),
-                    });
+                if self.is_dirty(ctx) {
+                    self.confirm_discard = true;
+                    ctx.notify();
                 } else {
-                    // Using AIMemory with is_autogenerated set to false to represent a manually created rule
-                    ctx.emit(RuleEditorViewEvent::Add { name, content });
+                    ctx.emit(RuleEditorViewEvent::Back);
+                }
+            }
+            RuleEditorViewAction::ConfirmDiscard => ctx.emit(RuleEditorViewEvent::Back),
+            RuleEditorViewAction::Save => {
+                let Some(target) = &self.target else {
+                    return;
+                };
+                let content = self.content_editor.as_ref(ctx).buffer_text(ctx);
+                if !content.trim().is_empty() && content != self.initial_content {
+                    ctx.emit(RuleEditorViewEvent::Save {
+                        target: target.clone(),
+                        content,
+                    });
                 }
             }
             RuleEditorViewAction::Delete => {
-                if let Some(ai_fact) = &self.ai_fact {
-                    ctx.emit(RuleEditorViewEvent::Delete {
-                        sync_id: ai_fact.sync_id(),
-                    });
+                self.confirm_delete = true;
+                ctx.notify();
+            }
+            RuleEditorViewAction::ConfirmDelete => {
+                if let Some(RuleEditorTarget::Existing(rule)) = &self.target {
+                    ctx.emit(RuleEditorViewEvent::Delete { rule: rule.clone() });
                 }
             }
         }

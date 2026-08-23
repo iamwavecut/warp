@@ -7,4 +7,5 @@ cfg_if::cfg_if! {
         pub(crate) use dummy_global_rules::GlobalRules;
     }
 }
+pub mod local_rule_repository;
 pub mod model;

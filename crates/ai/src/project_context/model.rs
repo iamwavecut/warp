@@ -569,6 +569,24 @@ impl ProjectContextModel {
         })
     }
 
+    /// All file-backed project-rule paths currently surfaced by the index,
+    /// including an `AGENTS.md` that is shadowed by a sibling `WARP.md`.
+    /// Shadowing remains a context/prompt concern; the Rules UI needs both
+    /// exact files so an editor can explicitly select the managed filename.
+    pub fn all_indexed_rule_paths(&self) -> impl Iterator<Item = ProjectRulePath> + '_ {
+        self.path_to_rules.iter().flat_map(|(project_root, rules)| {
+            rules.rules.iter().flat_map(move |rule| {
+                rule.warp_md
+                    .iter()
+                    .chain(rule.agents_md.iter())
+                    .map(move |project_rule| ProjectRulePath {
+                        path: project_rule.path.clone(),
+                        project_root: project_root.clone(),
+                    })
+            })
+        })
+    }
+
     /// Absolute paths of every indexed global rule file (e.g. `~/.agents/AGENTS.md`).
     /// Iteration order is sorted by path because global rules are backed by a `BTreeMap`.
     pub fn global_rule_paths(&self) -> impl Iterator<Item = PathBuf> + '_ {

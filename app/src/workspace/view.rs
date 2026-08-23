@@ -46,6 +46,7 @@ use crate::ai::blocklist::suggested_rule_modal::{
 use crate::ai::conversation_rename::rename_conversation;
 use crate::ai::conversation_utils;
 use crate::ai::document::ai_document_model::{AIDocumentId, AIDocumentModel};
+use crate::ai::facts::view::{rule::RuleTarget, rule_editor::RuleEditorTarget};
 use crate::ai::llms::LLMPreferences;
 use crate::ai::persisted_workspace::PersistedWorkspace;
 use crate::ai::{
@@ -12645,13 +12646,10 @@ impl Workspace {
             pane_group::Event::OpenWorkflowModalWithTemporary(workflow) => {
                 self.open_workflow_with_temporary(*workflow.clone(), ctx)
             }
-            pane_group::Event::OpenAIFactCollection { sync_id } => {
-                // Entrypoint from AI blocklist
-                let page = if sync_id.is_some() {
-                    AIFactPage::RuleEditor { sync_id: *sync_id }
-                } else {
-                    AIFactPage::Rules
-                };
+            pane_group::Event::OpenAIFactCollection { sync_id: _ } => {
+                // The local-first Rules pane has no cloud fact editor. A
+                // blocklist entry opens the file-backed list instead.
+                let page = AIFactPage::Rules;
                 self.open_ai_fact_collection_pane(None, Some(page), ctx);
             }
             pane_group::Event::OpenPromptEditor => {
@@ -12671,7 +12669,9 @@ impl Workspace {
                 // Open the AI Fact Collection pane directly with the Rule Editor page for adding a new rule
                 self.open_ai_fact_collection_pane(
                     None,
-                    Some(AIFactPage::RuleEditor { sync_id: None }),
+                    Some(AIFactPage::RuleEditor {
+                        target: RuleEditorTarget::New(RuleTarget::Global),
+                    }),
                     ctx,
                 );
             }
