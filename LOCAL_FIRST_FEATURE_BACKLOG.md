@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `bf50a37fd`.
+- Current local implementation head: `8ac3b8da4`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -350,6 +350,17 @@ injection remain the read path.
 **Estimate / risk:** 3–7 days / medium.
 
 ### P1.8 Local custom model routers
+
+**Delivered in code:** `16d987e15`, `91da4f64d`, `8ac3b8da4`. Local YAML
+routers now have strict bounded parsing, stable file identity, secure no-follow
+expected-revision CRUD, watcher reconciliation, deterministic complexity and
+prompt resolution, conservative capability/context limits, concrete custom
+model routing, and a full Add/Edit/Delete settings UI. Invalid routers fail
+closed without substituting another provider or contacting Warp.
+
+Focused router suites passed 13 tests in both default and `local_only` modes;
+the editor suite passed 4 tests and the direct-provider suite passed 81 tests.
+The broad build/bundle gate is batched with P1.9–P1.11.
 
 Restore the upstream local YAML definitions, but resolve a router to a concrete
 `custom/<provider>/<model>` before the direct request. Do not serialize router
