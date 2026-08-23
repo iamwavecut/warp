@@ -1,8 +1,8 @@
 use super::{
     AgentAttributionToggleState, ProviderConnectionSignature, ProviderModelsValidationState,
-    derive_agent_attribution_toggle_state, find_live_provider_index,
-    merge_provider_editor_config_with_live, provider_connection_is_valid,
-    resolve_provider_connection,
+    api_key_fingerprint, custom_provider_api_key_update, derive_agent_attribution_toggle_state,
+    find_live_provider_index, merge_provider_editor_config_with_live,
+    normalize_custom_provider_ids, provider_connection_is_valid, resolve_provider_connection,
 };
 use crate::settings::{
     CustomProviderCapabilities, CustomProviderConfig,
@@ -200,11 +200,90 @@ fn edited_provider_field_is_not_replaced_by_live_snapshot() {
 fn renamed_provider_editor_can_save_later_fields_without_reviving_stale_editors() {
     let live = vec![CustomProviderConfig {
         name: "renamed".to_string(),
+        local_id: Some("provider-1".to_string()),
         ..Default::default()
     }];
 
-    assert_eq!(find_live_provider_index(&live, "local", "renamed"), Some(0));
-    assert_eq!(find_live_provider_index(&live, "local", "local"), None);
+    assert_eq!(find_live_provider_index(&live, "provider-1"), Some(0));
+    assert_eq!(find_live_provider_index(&live, "stale-provider"), None);
+}
+
+#[test]
+fn stale_editor_does_not_restore_secure_key_for_direct_route() {
+    let editor_key = "editor-snapshot-key";
+    assert_eq!(
+        custom_provider_api_key_update(editor_key, Some(api_key_fingerprint(editor_key))),
+        None
+    );
+    assert_eq!(
+        custom_provider_api_key_update("", Some(api_key_fingerprint(editor_key))),
+        Some(None)
+    );
+
+    let provider = CustomProviderConfig {
+        name: "local".to_string(),
+        base_url: "http://localhost:1234/v1".to_string(),
+        models: vec!["model".to_string()],
+        local_id: Some("provider-1".to_string()),
+        ..Default::default()
+    };
+    let mut api_keys = ::ai::api_keys::ApiKeys::default();
+    api_keys
+        .custom
+        .insert("local".to_string(), "live-secure-key".to_string());
+
+    let route = super::direct_openai::resolve_custom_provider_route(
+        "custom/local/model",
+        &[provider],
+        &api_keys,
+    )
+    .expect("the direct route should use the live secure key");
+    assert_eq!(route.api_key.as_deref(), Some("live-secure-key"));
+}
+
+#[test]
+fn provider_identity_rejects_old_name_reuse_after_delete() {
+    let live = vec![CustomProviderConfig {
+        name: "local".to_string(),
+        local_id: Some("replacement-provider".to_string()),
+        ..Default::default()
+    }];
+
+    assert_eq!(find_live_provider_index(&live, "stale-provider"), None);
+}
+
+#[test]
+fn missing_or_duplicate_provider_ids_are_repaired() {
+    let mut providers = vec![
+        CustomProviderConfig {
+            name: "first".to_string(),
+            local_id: None,
+            ..Default::default()
+        },
+        CustomProviderConfig {
+            name: "second".to_string(),
+            local_id: Some("duplicate".to_string()),
+            ..Default::default()
+        },
+        CustomProviderConfig {
+            name: "third".to_string(),
+            local_id: Some("duplicate".to_string()),
+            ..Default::default()
+        },
+    ];
+
+    assert!(normalize_custom_provider_ids(&mut providers));
+    let ids = providers
+        .iter()
+        .map(|provider| {
+            provider
+                .local_id
+                .as_deref()
+                .expect("provider ID")
+                .to_string()
+        })
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(ids.len(), providers.len());
 }
 
 #[test]

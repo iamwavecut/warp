@@ -33,6 +33,7 @@ fn builds_openai_compatible_custom_provider_from_ui_fields() {
     assert_eq!(
         provider,
         CustomProviderConfig {
+            local_id: None,
             name: "local-openai-compatible".to_string(),
             base_url: "http://localhost:1234/v1/".to_string(),
             models: vec!["qwen3-coder".to_string(), "llama-local".to_string()],
@@ -80,6 +81,7 @@ fn custom_provider_capabilities_round_trip_explicit_values() {
         context_window_tokens: Some(32_000),
     };
     let provider = CustomProviderConfig {
+        local_id: None,
         name: "local".to_string(),
         base_url: "http://localhost:1234/v1".to_string(),
         models: vec!["model".to_string()],

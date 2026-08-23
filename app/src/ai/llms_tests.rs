@@ -23,6 +23,7 @@ fn startup_loads_existing_custom_provider_models() {
                 .set_value(
                     vec![
                         CustomProviderConfig {
+                            local_id: None,
                             name: "local-keyless".to_string(),
                             base_url: "http://localhost:1234/v1".to_string(),
                             models: vec!["p0-keyless".to_string()],
@@ -31,6 +32,7 @@ fn startup_loads_existing_custom_provider_models() {
                             capabilities: Default::default(),
                         },
                         CustomProviderConfig {
+                            local_id: None,
                             name: "local-keyed".to_string(),
                             base_url: "http://localhost:5678/v1".to_string(),
                             models: vec!["p0-keyed".to_string()],
@@ -131,6 +133,7 @@ fn custom_model_metadata_reports_effective_capabilities_and_context_window() {
                 .custom_providers
                 .set_value(
                     vec![CustomProviderConfig {
+                        local_id: None,
                         name: "local-capabilities".to_string(),
                         base_url: "http://localhost:1234/v1".to_string(),
                         models: vec!["model".to_string()],

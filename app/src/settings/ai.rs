@@ -149,6 +149,11 @@ impl std::error::Error for CustomProviderConfigError {}
 )]
 #[schemars(description = "Configuration for a custom LLM provider (BYOK).")]
 pub struct CustomProviderConfig {
+    /// Opaque local identity used to keep provider editors/actions tied to the
+    /// same persisted provider across renames and page rebuilds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Opaque local identity for this provider.")]
+    pub local_id: Option<String>,
     /// Display name for this provider (e.g. "My Local LLM")
     #[schemars(description = "Display name for this provider.")]
     pub name: String,
@@ -369,6 +374,7 @@ pub fn custom_provider_config_from_ui(
     }
 
     Some(CustomProviderConfig {
+        local_id: None,
         name: name.to_string(),
         base_url: base_url.to_string(),
         models: parse_custom_provider_models(models),

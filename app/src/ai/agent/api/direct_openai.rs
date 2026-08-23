@@ -2605,6 +2605,7 @@ mod tests {
     #[test]
     fn resolves_default_custom_provider_route_from_local_settings() {
         let providers = vec![CustomProviderConfig {
+            local_id: None,
             name: "local-openai".to_string(),
             base_url: "http://localhost:1234/v1".to_string(),
             models: vec!["qwen3-coder".to_string()],
