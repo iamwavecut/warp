@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use anyhow::{Result, anyhow};
@@ -9,12 +9,16 @@ use warp_errors::report_error;
 use warpui::{ModelContext, ModelHandle, SingletonEntity};
 
 use super::util::{
-    for_each_dir_entry, has_name, is_config_file, parse_multi_launch_config_dir_entry,
-    parse_multi_workflow_dir_entry, parse_single_theme_dir_entry, parse_tab_config_dir_entry,
+    for_each_dir_entry, has_name, is_config_file, parse_model_config_dir_entry,
+    parse_multi_launch_config_dir_entry, parse_multi_workflow_dir_entry,
+    parse_single_theme_dir_entry, parse_tab_config_dir_entry,
 };
 use super::{
-    LAUNCH_CONFIG_COMMENT, WarpConfigUpdateEvent, launch_configs_dir, tab_configs_dir, themes_dir,
-    workflows_dir,
+    LAUNCH_CONFIG_COMMENT, WarpConfigUpdateEvent, custom_model_routers_dir, launch_configs_dir,
+    tab_configs_dir, themes_dir, workflows_dir,
+};
+use crate::ai::custom_model_routers::{
+    CustomModelRouter, LocalCustomModelRouterRepository, ModelConfigError, parse_model_config_yaml,
 };
 use crate::features::FeatureFlag;
 use crate::launch_configs::launch_config::LaunchConfig;
@@ -70,6 +74,15 @@ impl super::WarpConfig {
                     ),
                 }
                 ctx.emit(WarpConfigUpdateEvent::LocalUserWorkflows);
+            },
+        );
+        let model_config_dir = custom_model_routers_dir();
+        let _ = ctx.spawn(
+            async move { load_model_configs(&model_config_dir) },
+            |me, (routers, errors), ctx| {
+                me.custom_model_routers = routers;
+                me.custom_model_router_errors = errors;
+                ctx.emit(WarpConfigUpdateEvent::ModelConfigs);
             },
         );
         ctx.subscribe_to_model(
@@ -155,6 +168,62 @@ impl super::WarpConfig {
         {
             ctx.emit(WarpConfigUpdateEvent::Settings);
         }
+
+        if update_touches_dir(update, &custom_model_routers_dir()) {
+            let model_config_dir = custom_model_routers_dir();
+            let _ = ctx.spawn(
+                async move { load_model_configs(&model_config_dir) },
+                |me, (routers, errors), ctx| {
+                    me.custom_model_routers = routers;
+                    me.custom_model_router_errors = errors.clone();
+                    ctx.emit(WarpConfigUpdateEvent::ModelConfigs);
+                    if !errors.is_empty() {
+                        ctx.emit(WarpConfigUpdateEvent::ModelConfigErrors(errors));
+                    }
+                },
+            );
+        }
+    }
+
+    /// Parse and atomically save one local custom model router.
+    ///
+    /// Existing files are updated using the repository revision check so an
+    /// editor cannot silently overwrite a watcher or another process update.
+    #[cfg(feature = "local_fs")]
+    pub fn save_custom_model_router(
+        name: &str,
+        yaml: &str,
+        existing_path: Option<&Path>,
+    ) -> Result<PathBuf> {
+        let directory = custom_model_routers_dir();
+        let repository = LocalCustomModelRouterRepository::new(&directory);
+        let path = if let Some(path) = existing_path {
+            path.to_path_buf()
+        } else {
+            repository
+                .directory()
+                .join(find_unused_router_file_name(name, &directory))
+        };
+        let router = parse_model_config_yaml(yaml, Some(&path))
+            .map_err(|error| anyhow!("could not parse custom model router: {error}"))?;
+        let stored = if existing_path.is_some() {
+            let current = repository.read(&path)?;
+            repository.update(&path, &current.revision, &router)?
+        } else {
+            let file_name = path
+                .file_name()
+                .ok_or_else(|| anyhow!("custom model router path has no file name"))?;
+            repository.create(file_name, &router)?
+        };
+        Ok(stored.path)
+    }
+
+    /// Delete one managed local custom model router file.
+    #[cfg(feature = "local_fs")]
+    pub fn delete_custom_model_router(path: &Path) -> Result<()> {
+        LocalCustomModelRouterRepository::new(custom_model_routers_dir())
+            .delete(path)
+            .map_err(Into::into)
     }
 
     /// This method takes a file name candidate (appends .yaml if missing) and a LaunchConfig as
@@ -211,6 +280,67 @@ pub fn load_launch_configs(launch_config_path: &Path) -> Vec<LaunchConfig> {
         .into_iter()
         .flatten()
         .collect_vec()
+}
+
+/// Loads one strict local custom model router per YAML file.
+pub fn load_model_configs(
+    model_config_path: &Path,
+) -> (Vec<CustomModelRouter>, Vec<ModelConfigError>) {
+    let mut routers = Vec::new();
+    let mut errors = Vec::new();
+    let mut stable_ids = std::collections::HashSet::new();
+    for result in for_each_dir_entry(model_config_path, parse_model_config_dir_entry) {
+        match result {
+            Ok(router) if stable_ids.insert(router.llm_id()) => routers.push(router),
+            Ok(router) => errors.push(ModelConfigError {
+                file_name: router
+                    .source_path
+                    .as_deref()
+                    .and_then(Path::file_name)
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("router.yaml")
+                    .to_owned(),
+                file_path: router.source_path.clone().unwrap_or_default(),
+                error_message:
+                    "duplicate router filename identity; use one YAML file per stable local id"
+                        .to_owned(),
+            }),
+            Err(error) => errors.push(error),
+        }
+    }
+    routers.sort_by(|left, right| {
+        left.info
+            .display_name
+            .to_lowercase()
+            .cmp(&right.info.display_name.to_lowercase())
+            .then_with(|| left.info.display_name.cmp(&right.info.display_name))
+    });
+    (routers, errors)
+}
+
+#[cfg(feature = "local_fs")]
+fn find_unused_router_file_name(name: &str, directory: &Path) -> String {
+    let mut stem = String::new();
+    for character in name.trim().chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+            stem.push(character);
+        } else if !stem.ends_with('_') {
+            stem.push('_');
+        }
+    }
+    let stem = stem.trim_matches('_');
+    let stem = if stem.is_empty() { "router" } else { stem };
+    let base = format!("{stem}.yaml");
+    if !directory.join(&base).exists() {
+        return base;
+    }
+    for suffix in 2..=u32::MAX {
+        let candidate = format!("{stem}_{suffix}.yaml");
+        if !directory.join(&candidate).exists() {
+            return candidate;
+        }
+    }
+    unreachable!("router file name suffix space exhausted")
 }
 
 /// Loads all tab configs from `tab_config_path`. Each tab config is an individual TOML file.

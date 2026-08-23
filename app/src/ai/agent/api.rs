@@ -21,11 +21,18 @@ use warp_core::features::FeatureFlag;
 
 use crate::ai::agent::conversation::AIConversationId;
 use crate::{
-    ai::{blocklist::SessionContext, llms::LLMId},
+    ai::{
+        blocklist::SessionContext,
+        custom_model_routers::{
+            RouterRequestFacts, first_concrete_custom_model, is_local_custom_router_id,
+            resolve_router_selection,
+        },
+        llms::{LLMId, LLMPreferences},
+    },
     server::server_api::AIApiError,
 };
 
-use super::{AIAgentInput, MCPContext, MCPServer, RequestMetadata};
+use super::{AIAgentContext, AIAgentInput, MCPContext, MCPServer, RequestMetadata};
 use crate::ai::blocklist::{BlocklistAIPermissions, RequestInput};
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::ai::mcp::templatable_manager::TemplatableMCPServerInfo;
@@ -217,16 +224,55 @@ impl RequestParams {
 
         let should_redact_secrets = get_secret_obfuscation_mode(app).should_redact_secret();
 
-        let (custom_provider_route, custom_provider_route_error) =
+        let router_facts = router_request_facts(request_input);
+        let (resolved_model_id, router_error) =
+            if is_local_custom_router_id(request_input.model_id.as_str()) {
+                match LLMPreferences::as_ref(app)
+                    .custom_model_router_for_id(&request_input.model_id)
+                {
+                    Some(router) => match resolve_router_selection(
+                        router,
+                        &router_facts,
+                        &ai_settings.custom_providers,
+                    ) {
+                        Ok((_selection, target)) => (
+                            format!("custom/{}/{}", target.provider_name, target.model_id).into(),
+                            None,
+                        ),
+                        Err(error) => (
+                            first_concrete_custom_model(&ai_settings.custom_providers)
+                                .map(Into::into)
+                                .unwrap_or_else(|| request_input.model_id.clone()),
+                            Some(error.to_string()),
+                        ),
+                    },
+                    None => (
+                        first_concrete_custom_model(&ai_settings.custom_providers)
+                            .map(Into::into)
+                            .unwrap_or_else(|| request_input.model_id.clone()),
+                        Some(format!(
+                            "Local custom model router {} is not loaded",
+                            request_input.model_id
+                        )),
+                    ),
+                }
+            } else {
+                (request_input.model_id.clone(), None)
+            };
+        let (custom_provider_route, custom_provider_route_error) = if let Some(error) = router_error
+        {
+            (None, Some(error))
+        } else {
             match direct_openai::resolve_custom_provider_route_with_readiness(
-                request_input.model_id.as_str(),
+                resolved_model_id.as_str(),
                 &ai_settings.custom_providers,
                 ApiKeyManager::as_ref(app).keys(),
                 ApiKeyManager::as_ref(app).keys_ready(),
             ) {
                 Ok(route) => (route, None),
                 Err(error) => (None, Some(error.to_string())),
-            };
+            }
+        };
         let request_task_id = request_input
             .input_messages
             .keys()
@@ -250,7 +296,7 @@ impl RequestParams {
             conversation_token: conversation.server_conversation_token,
             tasks: conversation.tasks,
             session_context,
-            model: request_input.model_id.clone(),
+            model: resolved_model_id,
             mcp_context,
             should_redact_secrets,
             custom_provider_route,
@@ -262,5 +308,39 @@ impl RequestParams {
             parent_agent_id: None,
             agent_name: None,
         }
+    }
+}
+
+fn router_request_facts(request_input: &RequestInput) -> RouterRequestFacts {
+    let inputs = request_input.all_inputs().collect::<Vec<_>>();
+    let prompt = inputs
+        .iter()
+        .filter_map(|input| input.user_query())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let attachment_count = inputs
+        .iter()
+        .filter_map(|input| input.attachments())
+        .map(|attachments| attachments.len())
+        .sum();
+    RouterRequestFacts {
+        context_chars: prompt.chars().count(),
+        prompt,
+        attachment_count,
+        requires_code_review: inputs
+            .iter()
+            .any(|input| matches!(input, AIAgentInput::CodeReview { .. })),
+        requires_edit: inputs.iter().any(|input| input.is_auto_code_diff_query()),
+        requires_tools: request_input
+            .supported_tools_override
+            .as_ref()
+            .is_none_or(|tools| !tools.is_empty()),
+        requires_vision: inputs.iter().any(|input| {
+            input.context().is_some_and(|contexts| {
+                contexts
+                    .iter()
+                    .any(|context| matches!(context, AIAgentContext::Image(_)))
+            })
+        }),
     }
 }

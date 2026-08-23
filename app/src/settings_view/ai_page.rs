@@ -35,6 +35,7 @@ use crate::settings::{
 };
 use crate::terminal::CLIAgent;
 use crate::terminal::session_settings::{SessionSettings, SessionSettingsChangedEvent};
+use crate::user_config::WarpConfig;
 use crate::view_components::{
     FilterableDropdown, SubmittableTextInput, SubmittableTextInputEvent, WarningBoxConfig,
     action_button::{ActionButton, ButtonSize, DangerNakedTheme, SecondaryTheme},
@@ -74,6 +75,10 @@ use warpui::{
 };
 
 use super::execution_profile_view::{ExecutionProfileView, ExecutionProfileViewEvent};
+#[cfg(feature = "local_fs")]
+use super::render_router_card;
+#[cfg(feature = "local_fs")]
+use super::render_router_error_card;
 use super::settings_page::{render_custom_size_header, render_settings_info_banner};
 use super::{
     SettingActionPairContexts, SettingActionPairDescriptions, SettingsAction, SettingsSection,
@@ -7302,6 +7307,33 @@ impl SettingsWidget for LLMProvidersWidget {
         } else {
             for (index, provider) in self.providers.iter().enumerate() {
                 content.add_child(self.render_provider_card(provider, index, appearance, app));
+            }
+        }
+
+        #[cfg(feature = "local_fs")]
+        {
+            let config = WarpConfig::as_ref(app);
+            if !config.custom_model_routers().is_empty()
+                || !config.custom_model_router_errors().is_empty()
+            {
+                content.add_child(render_separator(appearance));
+                content
+                    .add_child(build_sub_header(appearance, "Custom model routers", None).finish());
+                content.add_child(render_ai_setting_description(
+                    "Local YAML routers choose only among the concrete models configured above. Edit the YAML file to change routing rules.",
+                    true,
+                    app,
+                ));
+                for error in config.custom_model_router_errors() {
+                    content.add_child(render_router_error_card(
+                        error.file_name.clone(),
+                        error.error_message.clone(),
+                        appearance,
+                    ));
+                }
+                for router in config.custom_model_routers() {
+                    content.add_child(render_router_card(router, appearance, app));
+                }
             }
         }
 

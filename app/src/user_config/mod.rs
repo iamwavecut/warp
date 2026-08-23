@@ -11,11 +11,12 @@ use std::path::PathBuf;
 pub(crate) use imp::load_tab_configs;
 #[cfg(feature = "local_fs")]
 pub use imp::load_workflows;
-pub use imp::{load_launch_configs, load_theme_configs};
+pub use imp::{load_launch_configs, load_model_configs, load_theme_configs};
 use lazy_static::lazy_static;
 use warp_core::ui::theme::WarpTheme;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
+use crate::ai::custom_model_routers::{CustomModelRouter, ModelConfigError};
 use crate::launch_configs::launch_config::LaunchConfig;
 use crate::tab_configs::{TabConfig, TabConfigError};
 use crate::themes::theme::{ThemeKind, WarpThemeConfig};
@@ -59,6 +60,12 @@ pub enum WarpConfigUpdateEvent {
     /// Emitted when one or more tab config files failed to parse.
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
     TabConfigErrors(Vec<TabConfigError>),
+    /// The local `custom_model_routers/` files were created, modified, or deleted.
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
+    ModelConfigs,
+    /// One or more local custom model router files failed to parse.
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
+    ModelConfigErrors(Vec<ModelConfigError>),
     /// The settings file (`settings.toml`) was created, modified, or deleted.
     #[cfg_attr(not(feature = "local_fs"), expect(dead_code))]
     Settings,
@@ -86,6 +93,10 @@ pub struct WarpConfig {
     theme_config: WarpThemeConfig,
     local_user_workflows: Vec<Workflow>,
     local_saved_prompts: Vec<LocalSavedPrompt>,
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
+    custom_model_routers: Vec<CustomModelRouter>,
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
+    custom_model_router_errors: Vec<ModelConfigError>,
 }
 
 /// Platform-independent parts of WarpConfig.
@@ -119,6 +130,18 @@ impl WarpConfig {
 
     pub fn local_saved_prompts(&self) -> &[LocalSavedPrompt] {
         &self.local_saved_prompts
+    }
+
+    /// Local custom model routers loaded from `custom_model_routers/`.
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
+    pub fn custom_model_routers(&self) -> &[CustomModelRouter] {
+        &self.custom_model_routers
+    }
+
+    /// Parse errors retained for the settings surface to render locally.
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
+    pub fn custom_model_router_errors(&self) -> &[ModelConfigError] {
+        &self.custom_model_router_errors
     }
 
     /// Saving the newly created launch configuration to the WarpConfig that we currently
@@ -192,6 +215,11 @@ pub fn launch_configs_dir() -> PathBuf {
 /// Returns the path to the directory containing the user's tab configs.
 pub fn tab_configs_dir() -> PathBuf {
     base_dir().join("tab_configs")
+}
+
+/// Returns the directory containing local custom model router YAML files.
+pub fn custom_model_routers_dir() -> PathBuf {
+    base_dir().join("custom_model_routers")
 }
 
 /// Returns the path to the directory containing the built-in default tab configs.

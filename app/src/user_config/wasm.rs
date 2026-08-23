@@ -2,6 +2,7 @@ use std::path::Path;
 
 use warpui::ModelContext;
 
+use crate::ai::custom_model_routers::{CustomModelRouter, ModelConfigError};
 use crate::launch_configs::launch_config::LaunchConfig;
 use crate::tab_configs::{TabConfig, TabConfigError};
 use crate::themes::theme::WarpThemeConfig;
@@ -15,6 +16,8 @@ impl super::WarpConfig {
             tab_config_errors: Default::default(),
             theme_config: WarpThemeConfig::new(),
             local_user_workflows: Default::default(),
+            custom_model_routers: Default::default(),
+            custom_model_router_errors: Default::default(),
         }
     }
 }
@@ -38,6 +41,13 @@ pub fn load_workflows(_workflow_path: &Path) -> Vec<Workflow> {
 pub fn load_launch_configs(_launch_config_path: &Path) -> Vec<LaunchConfig> {
     // There's no local filesystem for wasm, so we'll never be able to retrieve
     // launch configs from any path.
+    Default::default()
+}
+
+/// There is no local filesystem on wasm, so no routers can be loaded.
+pub fn load_model_configs(
+    _model_config_path: &Path,
+) -> (Vec<CustomModelRouter>, Vec<ModelConfigError>) {
     Default::default()
 }
 

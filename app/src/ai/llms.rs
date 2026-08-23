@@ -11,6 +11,9 @@ use warpui::{AppContext, Entity, EntityId, ModelContext, SingletonEntity};
 use crate::workspaces::user_workspaces::{UserWorkspaces, UserWorkspacesEvent};
 use crate::{
     ai::agent::api::direct_openai::effective_capabilities_for_config,
+    ai::custom_model_routers::{
+        CustomModelRouter, RouterCatalogEntry, build_router_catalog, reconcile_active_selection,
+    },
     settings::{
         AISettings, CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS, custom_provider_name_is_unique,
     },
@@ -19,6 +22,7 @@ use crate::{
 use ai::api_keys::{ApiKeyManager, ApiKeyManagerEvent};
 
 use super::execution_profiles::profiles::AIExecutionProfilesModel;
+use crate::user_config::{WarpConfig, WarpConfigUpdateEvent};
 
 pub use ai::LLMId;
 
@@ -296,6 +300,9 @@ pub fn dedupe_model_display_names<'a>(
 impl LLMInfo {
     /// Returns the display name for the LLM, to be used in the LLM selector menu.
     pub fn menu_display_name(&self) -> String {
+        if crate::ai::custom_model_routers::is_custom_router_id(self.id.as_str()) {
+            return self.display_name.clone();
+        }
         // Base label includes optional description in parentheses
         match &self.description {
             // This is a temporary implementation that won't scale well for longer
@@ -596,6 +603,8 @@ pub struct LLMPreferences {
     // from the base LLM for the active profile. This means that if the user selects the
     // profile's default model and changes their profile, the model will update to that profile's default.
     base_llm_for_terminal_view: HashMap<EntityId, LLMId>,
+    /// Local YAML-authored routers exposed as picker entries.
+    custom_model_routers: Vec<CustomModelRouter>,
 }
 
 impl LLMPreferences {
@@ -619,14 +628,26 @@ impl LLMPreferences {
             },
         );
 
+        #[cfg(not(test))]
+        ctx.subscribe_to_model(&WarpConfig::handle(ctx), |me, _, event, ctx| {
+            if matches!(event, WarpConfigUpdateEvent::ModelConfigs) {
+                me.rebuild_custom_model_routers(ctx);
+                me.reconcile_disabled_model_preferences(ctx);
+                ctx.emit(LLMPreferencesEvent::UpdatedAvailableLLMs);
+            }
+        });
+
         let base_llm_for_terminal_view = HashMap::new();
 
-        let me = Self {
+        let mut me = Self {
             models_by_feature,
             last_update: None,
             base_llm_for_terminal_view,
+            custom_model_routers: Vec::new(),
         };
 
+        #[cfg(not(test))]
+        me.rebuild_custom_model_routers(ctx);
         me
     }
 
@@ -648,10 +669,8 @@ impl LLMPreferences {
         if let Some(terminal_view_id) = terminal_view_id {
             let raw_override = self.base_llm_for_terminal_view.get(&terminal_view_id);
             if let Some(llm_id) = raw_override
-                && let Some(llm_info) = self
-                    .models_by_feature
-                    .agent_mode
-                    .usable_info_for_id(llm_id, app)
+                && let Some(llm_info) =
+                    self.model_info_for_id(&self.models_by_feature.agent_mode, llm_id, app)
             {
                 return llm_info;
             }
@@ -663,11 +682,7 @@ impl LLMPreferences {
             .data()
             .base_model
             .clone()
-            .and_then(|id| {
-                self.models_by_feature
-                    .agent_mode
-                    .usable_info_for_id(&id, app)
-            })
+            .and_then(|id| self.model_info_for_id(&self.models_by_feature.agent_mode, &id, app))
             .unwrap_or_else(|| self.fallback_llm_info(&self.models_by_feature.agent_mode, app))
     }
 
@@ -691,7 +706,7 @@ impl LLMPreferences {
             .data()
             .coding_model
             .clone()
-            .and_then(|id| self.models_by_feature.coding.usable_info_for_id(&id, app))
+            .and_then(|id| self.model_info_for_id(&self.models_by_feature.coding, &id, app))
             .unwrap_or_else(|| self.fallback_llm_info(&self.models_by_feature.coding, app))
     }
 
@@ -703,6 +718,7 @@ impl LLMPreferences {
             .choices
             .iter()
             .filter(|llm| !matches!(llm.disable_reason, Some(DisableReason::AdminDisabled)))
+            .chain(self.custom_router_choices())
     }
 
     /// Returns the set of LLMs available for coding.
@@ -713,6 +729,7 @@ impl LLMPreferences {
             .choices
             .iter()
             .filter(|llm| !matches!(llm.disable_reason, Some(DisableReason::AdminDisabled)))
+            .chain(self.custom_router_choices())
     }
 
     /// Returns the set of LLMs available for CLI agent.
@@ -796,7 +813,43 @@ impl LLMPreferences {
 
     /// Returns metadata about an LLM, if the client knows about it.
     pub fn get_llm_info(&self, id: &LLMId) -> Option<&LLMInfo> {
-        self.models_by_feature.info_for_id(id)
+        self.models_by_feature
+            .info_for_id(id)
+            .or_else(|| self.custom_router_llm_info_for_id(id))
+    }
+
+    /// Resolve a local router by its stable filename-derived picker id.
+    pub fn custom_model_router_for_id(&self, id: &LLMId) -> Option<&CustomModelRouter> {
+        self.custom_model_routers
+            .iter()
+            .find(|router| router.llm_id() == *id)
+    }
+
+    /// Return local router entries which have a fully configured concrete
+    /// target catalog. Invalid routers remain available to the settings error
+    /// surface, but are never selectable in model pickers.
+    pub fn custom_router_choices(&self) -> impl Iterator<Item = &LLMInfo> {
+        self.custom_model_routers
+            .iter()
+            .filter(|router| router.info.disable_reason.is_none())
+            .map(|router| &router.info)
+    }
+
+    fn custom_router_llm_info_for_id(&self, id: &LLMId) -> Option<&LLMInfo> {
+        self.custom_model_router_for_id(id)
+            .map(|router| &router.info)
+            .filter(|info| info.disable_reason.is_none())
+    }
+
+    fn model_info_for_id<'a>(
+        &'a self,
+        available: &'a AvailableLLMs,
+        id: &LLMId,
+        app: &AppContext,
+    ) -> Option<&'a LLMInfo> {
+        available
+            .usable_info_for_id(id, app)
+            .or_else(|| self.custom_router_llm_info_for_id(id))
     }
 
     fn custom_llm_info_for_id_if_enabled(&self, id: &LLMId, app: &AppContext) -> Option<&LLMInfo> {
@@ -996,8 +1049,43 @@ impl LLMPreferences {
         *last_update.popup_visibility_state.lock() = UpdatePopupVisibilityState::Hidden;
     }
 
-    pub fn refresh_available_models(&self, ctx: &mut ModelContext<Self>) {
+    pub fn refresh_available_models(&mut self, ctx: &mut ModelContext<Self>) {
         self.refresh_custom_provider_models(ctx);
+        #[cfg(not(test))]
+        self.rebuild_custom_model_routers(ctx);
+    }
+
+    fn rebuild_custom_model_routers(&mut self, ctx: &mut ModelContext<Self>) {
+        let routers = WarpConfig::as_ref(ctx).custom_model_routers().to_vec();
+        let providers = AISettings::as_ref(ctx).custom_providers.clone();
+        let catalog = build_router_catalog(&routers, &providers);
+
+        self.custom_model_routers = catalog
+            .into_iter()
+            .map(|RouterCatalogEntry { router, info, .. }| {
+                let mut router = router;
+                router.info = info;
+                router
+            })
+            .collect();
+
+        let reconciled = self
+            .base_llm_for_terminal_view
+            .iter()
+            .map(|(view_id, selected)| {
+                (
+                    *view_id,
+                    reconcile_active_selection(selected, &self.custom_model_routers, &providers),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (view_id, selected) in reconciled {
+            if let Some(selected) = selected {
+                self.base_llm_for_terminal_view.insert(view_id, selected);
+            } else {
+                self.base_llm_for_terminal_view.remove(&view_id);
+            }
+        }
     }
 
     /// Build the model list from custom provider configs stored in AISettings
@@ -1082,6 +1170,8 @@ impl LLMPreferences {
                         .or_else(|| {
                             self.custom_llm_info_for_id_if_enabled(effective_base_model_id, ctx)
                         });
+                    let effective_base_model_usable = effective_base_model_usable
+                        .or_else(|| self.custom_router_llm_info_for_id(effective_base_model_id));
                     let effective_base_model_unusable = effective_base_model_usable.is_none();
                     let effective_base_model_is_configurable = effective_base_model_usable
                         .is_some_and(|info| info.context_window.is_configurable);
@@ -1103,6 +1193,7 @@ impl LLMPreferences {
                             .or_else(|| {
                                 self.custom_llm_info_for_id_if_enabled(preferred_llm_id, ctx)
                             })
+                            .or_else(|| self.custom_router_llm_info_for_id(preferred_llm_id))
                             .is_none()
                     {
                         profiles.set_coding_model(profile_id, None, ctx);
@@ -1114,6 +1205,7 @@ impl LLMPreferences {
                             .or_else(|| {
                                 self.custom_llm_info_for_id_if_enabled(preferred_llm_id, ctx)
                             })
+                            .or_else(|| self.custom_router_llm_info_for_id(preferred_llm_id))
                             .is_none()
                     {
                         profiles.set_cli_agent_model(profile_id, None, ctx);
