@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `8ac3b8da4`.
+- Current local implementation head: `40aa33f85`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -370,6 +370,17 @@ optional model-based classifier for P2.
 **Estimate / risk:** 5–7 days / medium-high.
 
 ### P1.9 Local named-agent bundles
+
+**Delivered in code:** `fbe87792b`, `40aa33f85`. Named agents now use strict
+UUID YAML bundles, secure no-follow expected-revision CRUD, watcher refresh,
+secret-safe validation, deterministic config precedence, one-shot preflight,
+local profile/skill/MCP/harness resolution, direct OpenAI-compatible Oz
+execution, and UUID/revision/non-secret effective resume metadata. The local
+management UI and CLI CRUD/run/list paths contain no hosted agent rows, owner,
+environment, managed-secret, auth, or upload flow.
+
+Focused default and `local_only` suites passed 11 tests each; the CLI suite
+passed 2 tests. The broad build/bundle gate remains batched with P1.10–P1.11.
 
 Persist named configurations containing prompt, model ID, execution profile,
 MCP specs, and local harness. Store only env-var or keychain references for
