@@ -44,6 +44,7 @@ use crate::ui_components::icons;
 use crate::util::color::coloru_with_opacity;
 use crate::view_components::FilterableDropdownOrientation;
 use crate::workflows::WorkflowType;
+use crate::workflows::local_saved_prompts::LocalSavedPromptRepository;
 use crate::workspace::WorkspaceAction;
 
 const INFO_BOX_PADDING: f32 = 20.;
@@ -264,6 +265,25 @@ impl WorkflowsMoreInfoView {
             move |ctx: &mut warpui::EventContext<'_>, _, _| {
                 ctx.dispatch_typed_action(TerminalAction::OpenWorkflowModalWithCloudWorkflow(
                     workflow.id,
+                ))
+            },
+            appearance,
+        )
+    }
+
+    fn render_local_edit_button(
+        &self,
+        workflow: &super::workflow::Workflow,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let workflow = workflow.clone();
+        render_hoverable_card_button(
+            icons::Icon::Rename,
+            Some("Edit prompt".to_owned()),
+            self.button_mouse_states.edit_cloud_workflow.clone(),
+            move |ctx: &mut warpui::EventContext<'_>, _, _| {
+                ctx.dispatch_typed_action(TerminalAction::OpenWorkflowModalWithLocalWorkflow(
+                    workflow.clone(),
                 ))
             },
             appearance,
@@ -716,6 +736,17 @@ impl WorkflowsMoreInfoView {
             WorkflowType::AIGenerated { .. } => {
                 let save_as_workflow_button = self.render_save_workflow_button(appearance);
                 row_content.add_children([save_as_workflow_button, collapse_button, close_button]);
+            }
+            WorkflowType::Local(workflow)
+                if workflow.is_agent_mode_workflow()
+                    && LocalSavedPromptRepository::for_user()
+                        .find_workflow(workflow)
+                        .ok()
+                        .flatten()
+                        .is_some() =>
+            {
+                let edit_button = self.render_local_edit_button(workflow, appearance);
+                row_content.add_children([edit_button, collapse_button, close_button]);
             }
             _ => row_content.add_children([collapse_button, close_button]),
         };

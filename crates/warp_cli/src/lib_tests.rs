@@ -226,9 +226,18 @@ fn agent_run_accepts_prompt_only() {
 }
 
 #[test]
-fn agent_run_rejects_saved_prompt_flag() {
-    let result = Args::try_parse_from(["warp", "agent", "run", "--saved-prompt", "sp-123"]);
-    assert!(result.is_err());
+fn agent_run_accepts_saved_prompt_flag() {
+    let args = Args::try_parse_from(["warp", "agent", "run", "--saved-prompt", "sp-123"]).unwrap();
+
+    let Some(Command::CommandLine(boxed_cmd)) = args.command else {
+        panic!("Expected `warp agent run` command");
+    };
+    let CliCommand::Agent(AgentCommand::Run(run_args)) = boxed_cmd.as_ref() else {
+        panic!("Expected `warp agent run` command");
+    };
+
+    assert_eq!(run_args.saved_prompt.as_deref(), Some("sp-123"));
+    assert!(run_args.prompt_arg.prompt.is_none());
 }
 
 #[test]
@@ -300,6 +309,20 @@ fn agent_run_rejects_prompt_and_saved_prompt() {
         "run",
         "--prompt",
         "hello",
+        "--saved-prompt",
+        "sp-1",
+    ]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn agent_run_rejects_skill_and_saved_prompt() {
+    let result = Args::try_parse_from([
+        "warp",
+        "agent",
+        "run",
+        "--skill",
+        "my-skill",
         "--saved-prompt",
         "sp-1",
     ]);

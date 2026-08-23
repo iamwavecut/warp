@@ -8,6 +8,9 @@ use crate::ai::agent_sdk::driver::harness::{HarnessKind, harness_kind};
 use crate::ai::agent_sdk::driver::{AgentDriverOptions, AgentRunPrompt, Task};
 use crate::ai::agent_sdk::mcp_config::build_mcp_servers_from_specs;
 use crate::ai::llms::LLMId;
+use crate::workflows::{
+    command_parser::WorkflowCommandDisplayData, local_saved_prompts::LocalSavedPromptRepository,
+};
 use anyhow::Context;
 use warp_cli::{
     CliCommand, GlobalOptions,
@@ -239,6 +242,18 @@ fn resolve_prompt(prompt: &Prompt, _ctx: &AppContext) -> Result<String, AgentDri
     }
 }
 
+/// Resolve a local saved prompt without consulting CloudModel or any Warp
+/// service. Argument placeholders use the same workflow display machinery as
+/// the terminal workflow picker, including stored default values.
+fn resolve_saved_prompt(selector: &str) -> Result<Prompt, AgentDriverError> {
+    let saved_prompt = LocalSavedPromptRepository::for_user()
+        .resolve(selector)
+        .map_err(|error| AgentDriverError::ConfigBuildFailed(anyhow::anyhow!(error)))?;
+    let query =
+        WorkflowCommandDisplayData::new_from_workflow(saved_prompt.workflow()).to_command_string();
+    Ok(Prompt::PlainText(query))
+}
+
 /// Singleton model that provides a ModelContext for spawning async operations
 /// when starting the agent driver. This is needed because conversation fetching
 /// requires spawning an async task, which requires a ModelContext.
@@ -357,7 +372,10 @@ impl AgentDriverRunner {
         let resolved_skill = Self::resolve_skill(foreground, &args, &working_dir).await?;
 
         // Extract variables we want to use later before moving args into the closure
-        let prompt = args.prompt_arg.to_prompt();
+        let prompt = match args.saved_prompt.as_deref() {
+            Some(selector) => Some(resolve_saved_prompt(selector)?),
+            None => args.prompt_arg.to_prompt(),
+        };
 
         // Build the AgentConfigSnapshot, Task, and AgentDriverOptions
         let prompt_clone = prompt.clone();

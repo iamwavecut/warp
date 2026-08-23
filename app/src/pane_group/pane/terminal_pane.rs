@@ -1013,6 +1013,11 @@ fn handle_terminal_view_event(
             Event::OpenWorkflowModalWithCloudWorkflow(workflow_id) => {
                 ctx.emit(pane_group::Event::OpenCloudWorkflowForEdit(*workflow_id));
             }
+            Event::OpenWorkflowModalWithLocalWorkflow(workflow) => {
+                ctx.emit(pane_group::Event::OpenLocalWorkflowForEdit(
+                    workflow.clone(),
+                ));
+            }
             Event::OpenWorkflowModalWithTemporary(workflow) => {
                 ctx.emit(pane_group::Event::OpenWorkflowModalWithTemporary(
                     workflow.clone(),

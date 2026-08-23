@@ -1656,6 +1656,8 @@ pub enum Event {
     OpenWorkflowModalWithCommand(String),
     // Tell the pane group to open the workflow modal with an existing cloud workflow.
     OpenWorkflowModalWithCloudWorkflow(SyncId),
+    // Tell the pane group to open an editor-owned local saved prompt.
+    OpenWorkflowModalWithLocalWorkflow(Box<Workflow>),
     // Tell the pane group to open the workflow modal with an unsaved workflow.
     OpenWorkflowModalWithTemporary(Box<Workflow>),
     OpenWarpDriveObjectInPane(ObjectUid),
@@ -16030,6 +16032,17 @@ impl TerminalView {
         ctx.notify();
     }
 
+    pub fn open_workflow_modal_with_local(
+        &mut self,
+        workflow: Workflow,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        ctx.emit(Event::OpenWorkflowModalWithLocalWorkflow(Box::new(
+            workflow,
+        )));
+        ctx.notify();
+    }
+
     /// Helper method to build alt screen context menu items.
     /// Used both when opening the menu and when rebuilding it (e.g., on pane state changes).
     fn rebuild_alt_screen_context_menu_items(
@@ -24710,6 +24723,7 @@ impl TypedActionView for TerminalView {
             | OpenWorkflowModalForAIWorkflow(_)
             | OpenWorkflowModalForBlock(_)
             | OpenWorkflowModalWithCloudWorkflow(_)
+            | OpenWorkflowModalWithLocalWorkflow(_)
             | OpenShareSessionModal { .. }
             | OpenSharedSessionViewerRoleMenu
             | CopySharedSessionLink { .. }
@@ -25093,6 +25107,9 @@ impl TypedActionView for TerminalView {
             }
             OpenWorkflowModalWithCloudWorkflow(workflow_id) => {
                 self.open_workflow_modal_with_existing(*workflow_id, ctx)
+            }
+            OpenWorkflowModalWithLocalWorkflow(workflow) => {
+                self.open_workflow_modal_with_local(workflow.clone(), ctx)
             }
             OpenBlockListContextMenu => self.open_block_list_context_menu_via_keybinding(ctx),
             AskAIAssistant { block_index } => {

@@ -279,12 +279,20 @@ impl AgentCommand {
         clap::ArgGroup::new("prompt_group")
             .required(true)
             .multiple(true)
-            .args(["prompt", "skill"])
+            .args(["prompt", "skill", "saved_prompt"])
     )
 )]
 pub struct RunAgentArgs {
     #[command(flatten)]
     pub prompt_arg: PromptArg,
+
+    /// Resolve a local saved Agent Mode prompt by UUID or unique exact name.
+    #[arg(
+        long = "saved-prompt",
+        value_name = "ID_OR_NAME",
+        conflicts_with_all = ["prompt", "skill"]
+    )]
+    pub saved_prompt: Option<String>,
 
     #[command(flatten)]
     pub model: ModelArgs,

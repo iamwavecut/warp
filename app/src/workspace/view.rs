@@ -12639,6 +12639,9 @@ impl Workspace {
                     &OpenWarpDriveObjectSettings::default(),
                     ctx,
                 ),
+            pane_group::Event::OpenLocalWorkflowForEdit(workflow) => {
+                self.open_local_saved_prompt_for_edit(*workflow.clone(), ctx)
+            }
             pane_group::Event::OpenWorkflowModalWithTemporary(workflow) => {
                 self.open_workflow_with_temporary(*workflow.clone(), ctx)
             }
@@ -13496,26 +13499,16 @@ impl Workspace {
                 );
             }
             pane_group::Event::OpenAddPromptPane { initial_content } => {
-                if UserWorkspaces::as_ref(ctx).personal_drive(ctx).is_some() {
-                    self.update_warp_drive_view(ctx, |drive_view, ctx| {
-                        if let Some(initial_content) = initial_content {
-                            drive_view.create_workflow_with_content(
-                                Space::Personal,
-                                None,
-                                initial_content.clone(),
-                                true, // is_for_agent_mode
-                                ctx,
-                            );
-                        } else {
-                            drive_view.open_cloud_object_dialog(
-                                DriveObjectType::AgentModeWorkflow,
-                                Space::Personal,
-                                None,
-                                ctx,
-                            );
-                        }
-                    });
-                }
+                let source = WorkflowOpenSource::NewLocalAgentMode {
+                    title: None,
+                    content: initial_content.clone(),
+                };
+                self.open_workflow_in_pane(
+                    &source,
+                    &OpenWarpDriveObjectSettings::default(),
+                    WorkflowViewMode::Create,
+                    ctx,
+                );
             }
             pane_group::Event::OpenFilesPalette { source } => {
                 self.open_palette_action(PaletteMode::Files, *source, None, ctx);
@@ -15651,6 +15644,19 @@ impl Workspace {
 
     /// Opens the workflow using a mocked [`Workflow`] object as the base
     fn open_workflow_with_temporary(&mut self, workflow: Workflow, ctx: &mut ViewContext<Self>) {
+        if workflow.is_agent_mode_workflow() {
+            let source = WorkflowOpenSource::NewLocalAgentMode {
+                title: Some(workflow.name().to_owned()),
+                content: Some(workflow.content().to_owned()),
+            };
+            self.open_workflow_in_pane(
+                &source,
+                &OpenWarpDriveObjectSettings::default(),
+                WorkflowViewMode::Create,
+                ctx,
+            );
+            return;
+        }
         let Some(owner) = UserWorkspaces::as_ref(ctx).personal_drive(ctx) else {
             log::warn!("Unable to open temporary workflow - unset personal drive");
             return;
@@ -17361,6 +17367,20 @@ impl Workspace {
                 ParentAnchor::TopRight,
                 ChildAnchor::TopRight,
             ),
+        );
+    }
+
+    fn open_local_saved_prompt_for_edit(
+        &mut self,
+        workflow: Workflow,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let source = WorkflowOpenSource::Local(Box::new(workflow));
+        self.open_workflow_in_pane(
+            &source,
+            &OpenWarpDriveObjectSettings::default(),
+            WorkflowViewMode::Edit,
+            ctx,
         );
     }
 
@@ -20604,21 +20624,16 @@ impl TypedActionView for Workspace {
                 });
             }
             CreatePersonalAIPrompt => {
-                if let Some(personal_drive) = UserWorkspaces::as_ref(ctx).personal_drive(ctx) {
-                    let source = WorkflowOpenSource::New {
-                        title: None,
-                        content: None,
-                        owner: personal_drive,
-                        initial_folder_id: None,
-                        is_for_agent_mode: true,
-                    };
-                    self.open_workflow_in_pane(
-                        &source,
-                        &OpenWarpDriveObjectSettings::default(),
-                        WorkflowViewMode::Create,
-                        ctx,
-                    );
-                }
+                let source = WorkflowOpenSource::NewLocalAgentMode {
+                    title: None,
+                    content: None,
+                };
+                self.open_workflow_in_pane(
+                    &source,
+                    &OpenWarpDriveObjectSettings::default(),
+                    WorkflowViewMode::Create,
+                    ctx,
+                );
             }
             #[cfg(feature = "local_fs")]
             FileRenamed { old_path, new_path } => {
