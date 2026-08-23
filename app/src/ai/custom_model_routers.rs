@@ -1583,4 +1583,41 @@ mod tests {
         repository.delete(&created.path).unwrap();
         assert!(repository.list().unwrap().is_empty());
     }
+
+    #[test]
+    fn removed_target_reconciliation_uses_concrete_custom_model_without_hosted_fallback() {
+        let router = parse_model_config_yaml(
+            "name: Local\ntype: complexity\ndefault: custom/local/removed\n",
+            Some(Path::new("/tmp/routers/local.yaml")),
+        )
+        .unwrap();
+        let current = router.llm_id();
+        let providers = vec![provider("local", &["replacement"])];
+
+        assert_eq!(
+            reconcile_active_selection(&current, &[router], &providers),
+            Some(LLMId::from("custom/local/replacement"))
+        );
+        assert_eq!(
+            reconcile_active_selection(&current, &[], &[]),
+            None,
+            "removed local routers must not fall back to a hosted model"
+        );
+    }
+
+    #[test]
+    fn concrete_model_ids_exclude_ambiguous_and_invalid_provider_configs() {
+        let mut invalid = provider("broken", &["model"]);
+        invalid.base_url.clear();
+        let providers = vec![
+            provider("local", &["model"]),
+            provider("duplicate", &["one"]),
+            provider("duplicate", &["two"]),
+            invalid,
+        ];
+        assert_eq!(
+            concrete_custom_model_ids(&providers),
+            vec!["custom/local/model"]
+        );
+    }
 }

@@ -35,7 +35,6 @@ use crate::settings::{
 };
 use crate::terminal::CLIAgent;
 use crate::terminal::session_settings::{SessionSettings, SessionSettingsChangedEvent};
-use crate::user_config::WarpConfig;
 use crate::view_components::{
     FilterableDropdown, SubmittableTextInput, SubmittableTextInputEvent, WarningBoxConfig,
     action_button::{ActionButton, ButtonSize, DangerNakedTheme, SecondaryTheme},
@@ -74,11 +73,9 @@ use warpui::{
     },
 };
 
+#[cfg(feature = "local_fs")]
+use super::custom_router_view::CustomRouterManagerView;
 use super::execution_profile_view::{ExecutionProfileView, ExecutionProfileViewEvent};
-#[cfg(feature = "local_fs")]
-use super::render_router_card;
-#[cfg(feature = "local_fs")]
-use super::render_router_error_card;
 use super::settings_page::{render_custom_size_header, render_settings_info_banner};
 use super::{
     SettingActionPairContexts, SettingActionPairDescriptions, SettingsAction, SettingsSection,
@@ -6418,6 +6415,8 @@ struct LLMProvidersWidget {
     provider_keys_ready: bool,
     provider_ids_persisted: bool,
     provider_editing_enabled: bool,
+    #[cfg(feature = "local_fs")]
+    custom_router_manager: ViewHandle<CustomRouterManagerView>,
 }
 
 fn new_custom_provider_id() -> String {
@@ -6938,6 +6937,8 @@ impl LLMProvidersWidget {
             provider_keys_ready,
             provider_ids_persisted,
             provider_editing_enabled,
+            #[cfg(feature = "local_fs")]
+            custom_router_manager: ctx.add_typed_action_view(CustomRouterManagerView::new),
         }
     }
 
@@ -7311,31 +7312,7 @@ impl SettingsWidget for LLMProvidersWidget {
         }
 
         #[cfg(feature = "local_fs")]
-        {
-            let config = WarpConfig::as_ref(app);
-            if !config.custom_model_routers().is_empty()
-                || !config.custom_model_router_errors().is_empty()
-            {
-                content.add_child(render_separator(appearance));
-                content
-                    .add_child(build_sub_header(appearance, "Custom model routers", None).finish());
-                content.add_child(render_ai_setting_description(
-                    "Local YAML routers choose only among the concrete models configured above. Edit the YAML file to change routing rules.",
-                    true,
-                    app,
-                ));
-                for error in config.custom_model_router_errors() {
-                    content.add_child(render_router_error_card(
-                        error.file_name.clone(),
-                        error.error_message.clone(),
-                        appearance,
-                    ));
-                }
-                for router in config.custom_model_routers() {
-                    content.add_child(render_router_card(router, appearance, app));
-                }
-            }
-        }
+        content.add_child(ChildView::new(&self.custom_router_manager).finish());
 
         Container::new(content.finish())
             .with_margin_bottom(HEADER_PADDING)

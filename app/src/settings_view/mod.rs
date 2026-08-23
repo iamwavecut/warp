@@ -90,10 +90,6 @@ mod warpify_page;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) use ai_page::cli_agent_settings_widget_id;
 pub use code_page::CodeSettingsPageView;
-#[cfg(feature = "local_fs")]
-pub(crate) use custom_router_view::render_router_card;
-#[cfg(feature = "local_fs")]
-pub(crate) use custom_router_view::render_router_error_card;
 pub use features_page::FeaturesPageAction;
 pub use main_page::handle_experiment_change;
 pub use privacy_page::PrivacyPageAction;

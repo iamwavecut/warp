@@ -6,7 +6,24 @@ use warpui::{
     App, Element, Entity, Presenter, SingletonEntity, TypedActionView, View, WindowInvalidation,
 };
 
+use crate::ai::custom_model_routers::{
+    ComplexityRouting, CustomModelRouter, CustomModelRouting, LocalCustomModelRouterRepository,
+    LocalCustomModelRouterRepositoryError, concrete_custom_model_ids,
+};
+use crate::settings::{CustomApiType, CustomProviderCapabilities, CustomProviderConfig};
+
 use super::render_router_error_card;
+
+fn provider(name: &str, models: &[&str]) -> CustomProviderConfig {
+    CustomProviderConfig {
+        name: name.to_owned(),
+        base_url: format!("http://{name}.test/v1"),
+        models: models.iter().map(|model| (*model).to_owned()).collect(),
+        api_type: CustomApiType::OpenAiCompatible,
+        capabilities: CustomProviderCapabilities::default(),
+        ..Default::default()
+    }
+}
 
 /// Root view that lays a custom-router error card inside a bare
 /// `Flex::column()`. This mirrors the Custom Routers settings section, which
@@ -71,4 +88,96 @@ fn error_card_lays_out_under_unbounded_vertical_constraint_without_panicking() {
             presenter.build_scene(vec2f(400., 400.), 1., None, ctx);
         });
     });
+}
+
+#[test]
+fn create_edit_rename_delete_actions_preserve_stable_file_id() {
+    let directory = tempfile::tempdir().expect("temporary router directory");
+    let repository = LocalCustomModelRouterRepository::new(directory.path());
+    let router = CustomModelRouter::new_local(
+        "First router".to_owned(),
+        CustomModelRouting::Complexity(ComplexityRouting {
+            default: "custom/local/fast".to_owned(),
+            easy: None,
+            medium: None,
+            hard: None,
+        }),
+        None,
+    );
+
+    let created = repository
+        .create("first-router.yaml", &router)
+        .expect("create action writes one managed file");
+    let stable_id = created.router.llm_id();
+    let current = repository.read(&created.path).expect("read created router");
+    let renamed = router.with_display_name("Renamed router".to_owned());
+    let updated = repository
+        .update(&created.path, &current.revision, &renamed)
+        .expect("edit and rename action updates with CAS");
+    assert_eq!(updated.router.llm_id(), stable_id);
+    assert_eq!(updated.router.info.display_name, "Renamed router");
+
+    repository
+        .delete_checked(&updated.path, &updated.revision)
+        .expect("confirmed delete action removes the validated file");
+    assert!(repository.list().expect("list managed routers").is_empty());
+}
+
+#[test]
+fn dirty_cancel_confirmation_and_cas_errors_retain_draft() {
+    let directory = tempfile::tempdir().expect("temporary router directory");
+    let repository = LocalCustomModelRouterRepository::new(directory.path());
+    let router = CustomModelRouter::new_local(
+        "Draft".to_owned(),
+        CustomModelRouting::Complexity(ComplexityRouting {
+            default: "custom/local/fast".to_owned(),
+            easy: None,
+            medium: None,
+            hard: None,
+        }),
+        None,
+    );
+    let created = repository
+        .create("draft.yaml", &router)
+        .expect("create draft file");
+    let stale = repository.read(&created.path).expect("read draft revision");
+    let external = router.with_display_name("External edit".to_owned());
+    repository
+        .update(&created.path, &stale.revision, &external)
+        .expect("simulate an external edit");
+
+    let error = repository
+        .update(&created.path, &stale.revision, &router)
+        .expect_err("stale editor must fail compare-and-swap");
+    assert!(matches!(
+        error,
+        LocalCustomModelRouterRepositoryError::Conflict { .. }
+    ));
+    let message = super::save_error_message(error);
+    assert!(message.contains("draft is retained"));
+    assert_eq!(
+        repository
+            .read(&created.path)
+            .unwrap()
+            .router
+            .info
+            .display_name,
+        "External edit"
+    );
+}
+
+#[test]
+fn model_list_filtering_excludes_invalid_duplicate_and_non_concrete_targets() {
+    let mut invalid = provider("invalid", &["ok"]);
+    invalid.base_url.clear();
+    let providers = vec![
+        provider("local", &["fast", "router:nested", "auto"]),
+        provider("duplicate", &["one"]),
+        provider("duplicate", &["two"]),
+        invalid,
+    ];
+    assert_eq!(
+        concrete_custom_model_ids(&providers),
+        vec!["custom/local/auto", "custom/local/fast"]
+    );
 }
