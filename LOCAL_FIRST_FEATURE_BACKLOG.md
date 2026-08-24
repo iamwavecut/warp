@@ -442,7 +442,7 @@ separate P2 lifecycle.
 
 ## P2 — Local Redesigns
 
-Status: **P2.1–P2.3 complete**; P2.4 is next.
+Status: **P2.1–P2.4 complete**; P2.5 is next.
 
 ### P2.1 Real local `/compact`
 
@@ -530,6 +530,29 @@ retrieval. Semantic recall and automatic extraction are optional layers using
 `embeddings` and `chat`; both must degrade to explicit/manual memory.
 
 ### P2.4 Local scheduler and durable background lifecycle
+
+**Delivered:** `42e76b55`.
+
+A local SQLite schedule repository now owns CRUD, optimistic revisions,
+timezone-aware interval and daily cadences, missed-run policies, bounded event
+journals, durable cursors, manual runs, cancellation, and interrupted-run
+recovery. The app-only supervisor claims due work and launches the existing
+local named-agent CLI path as a child process, records terminal output and
+status locally, and optionally posts an OS notification. Storage failure
+disables scheduling without blocking terminal startup or consulting Warp.
+
+The agent action stack now supports a local `wait_for_events` lifecycle. It
+waits on the in-process agent registry with a bounded watchdog, wakes for local
+child status and message events, cancels cleanly before event injection, and is
+available to direct OpenAI-compatible providers only when local orchestration
+is ready. No hosted ambient-agent spawn, polling, authentication, or event
+transport is used.
+
+The `oz schedule` CLI exposes create/list/show/update/pause/resume/delete,
+run/cancel, and cursor-based event inspection. Focused `local_only` tests passed
+seven cases covering durable CRUD/journal/cursors, missed-run handling,
+restart recovery, cancellation, timezone validation, watchdog bounds, provider
+readiness, and direct-provider schema parsing.
 
 Add a schedule repository, local supervisor, durable event journal/cursors,
 timezone and missed-run policy, cancellation, `WaitForEvents`, and OS
