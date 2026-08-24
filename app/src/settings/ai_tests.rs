@@ -99,6 +99,7 @@ fn custom_provider_capabilities_round_trip_explicit_values() {
         tools: false,
         vision: true,
         embeddings: true,
+        embedding_model: Some("local-embedding".to_string()),
         transcription: true,
         transcription_model: Some("local-whisper".to_string()),
         context_window_tokens: Some(32_000),
@@ -181,6 +182,49 @@ fn custom_provider_transcription_requires_an_explicit_model() {
 }
 
 #[test]
+fn custom_provider_embeddings_require_an_explicit_model() {
+    let provider = CustomProviderConfig {
+        capabilities: CustomProviderCapabilities {
+            embeddings: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    assert!(
+        provider.validate().is_ok(),
+        "legacy intent must not disable chat"
+    );
+    assert!(
+        !crate::ai::agent::api::direct_openai::effective_capabilities_for_config(
+            &provider.capabilities
+        )
+        .embeddings
+    );
+    assert_eq!(
+        custom_provider_capabilities_from_ui_with_models(
+            true, true, false, true, false, None, None, "",
+        ),
+        Err(CustomProviderConfigError::MissingEmbeddingModel)
+    );
+    let capabilities = custom_provider_capabilities_from_ui_with_models(
+        true,
+        true,
+        false,
+        true,
+        false,
+        Some(" local-embedding "),
+        None,
+        "",
+    )
+    .expect("a non-empty embedding model should be accepted");
+    assert_eq!(
+        capabilities.embedding_model.as_deref(),
+        Some("local-embedding")
+    );
+}
+
+#[test]
 fn custom_provider_transcription_model_round_trips_and_legacy_config_defaults_to_none() {
     let provider = CustomProviderConfig {
         capabilities: CustomProviderCapabilities {
@@ -204,6 +248,7 @@ fn custom_provider_transcription_model_round_trips_and_legacy_config_defaults_to
         "models": ["local-model"]
     }))
     .expect("legacy provider config should remain valid");
+    assert_eq!(legacy.capabilities.embedding_model, None);
     assert_eq!(legacy.capabilities.transcription_model, None);
 }
 
@@ -235,12 +280,13 @@ fn custom_provider_capabilities_from_ui_rejects_invalid_context_window() {
         .expect_err("tiny context window should be rejected before saving settings");
     assert!(error.to_string().contains("context window"));
 
-    let capabilities = custom_provider_capabilities_from_ui_with_transcription_model(
+    let capabilities = custom_provider_capabilities_from_ui_with_models(
         true,
         false,
         true,
         true,
         true,
+        Some("local-embedding"),
         Some("local-whisper"),
         "",
     )

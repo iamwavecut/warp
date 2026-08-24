@@ -1,0 +1,4 @@
+DROP INDEX local_codebase_index_roots_repo;
+DROP TABLE local_codebase_index_roots;
+DROP TABLE local_codebase_index_chunks;
+DROP TABLE local_codebase_index_nodes;

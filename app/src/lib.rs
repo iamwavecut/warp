@@ -1894,6 +1894,10 @@ pub(crate) fn initialize_app(
 
     ctx.add_singleton_model(DefaultTerminal::new);
 
+    let local_codebase_store =
+        Arc::new(ai::local_codebase_index::LocalStoreClient::for_current_scope());
+    local_codebase_store.refresh_route(ctx);
+    let codebase_store_for_manager = local_codebase_store.clone();
     ctx.add_singleton_model(|ctx| {
         let should_restore_indices = launch_mode.supports_indexing()
             && (matches!(launch_mode, LaunchMode::RemoteServerDaemon { .. })
@@ -1905,15 +1909,23 @@ pub(crate) fn initialize_app(
         };
 
         let codebase_limits = AIRequestUsageModel::as_ref(ctx).codebase_context_limits();
+        let uses_remote_store = matches!(launch_mode, LaunchMode::RemoteServerDaemon { .. });
+        let store_client: Arc<
+            dyn ::ai::index::full_source_code_embedding::store_client::StoreClient,
+        > = if uses_remote_store {
+            server_api_provider.as_ref(ctx).get()
+        } else {
+            codebase_store_for_manager.clone()
+        };
         let mut codebase_index_config = CodebaseIndexManagerConfig::new(
             indices_to_restore,
             codebase_limits.max_indices_allowed,
             codebase_limits.max_files_per_repo,
             codebase_limits.embedding_generation_batch_size,
-            server_api_provider.as_ref(ctx).get(),
+            store_client,
             launch_mode.supports_indexing(),
         );
-        if matches!(launch_mode, LaunchMode::RemoteServerDaemon { .. }) {
+        if uses_remote_store || !codebase_store_for_manager.is_ready() {
             codebase_index_config = codebase_index_config.defer_persisted_index_restore();
         }
         #[cfg(feature = "local_fs")]
@@ -1927,6 +1939,36 @@ pub(crate) fn initialize_app(
 
         CodebaseIndexManager::new_with_config(codebase_index_config, ctx)
     });
+
+    if !matches!(launch_mode, LaunchMode::RemoteServerDaemon { .. }) {
+        {
+            let local_codebase_store = local_codebase_store.clone();
+            ctx.subscribe_to_model(&AISettings::handle(ctx), move |_, _, ctx| {
+                if local_codebase_store.refresh_route(ctx) && local_codebase_store.is_ready() {
+                    CodebaseIndexManager::handle(ctx).update(ctx, |manager, ctx| {
+                        #[cfg(feature = "local_fs")]
+                        manager.resync_all_indices(ctx);
+                        manager.start_persisted_index_restore(ctx);
+                    });
+                }
+            });
+        }
+        {
+            let local_codebase_store = local_codebase_store.clone();
+            ctx.subscribe_to_model(
+                &::ai::api_keys::ApiKeyManager::handle(ctx),
+                move |_, _, ctx| {
+                    if local_codebase_store.refresh_route(ctx) && local_codebase_store.is_ready() {
+                        CodebaseIndexManager::handle(ctx).update(ctx, |manager, ctx| {
+                            #[cfg(feature = "local_fs")]
+                            manager.resync_all_indices(ctx);
+                            manager.start_persisted_index_restore(ctx);
+                        });
+                    }
+                },
+            );
+        }
+    }
 
     ctx.add_singleton_model(|ctx| {
         ProjectContextModel::new_from_persisted(persisted_project_rules, ctx)

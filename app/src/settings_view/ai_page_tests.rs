@@ -137,6 +137,7 @@ fn provider_editor_save_preserves_capabilities_when_provider_is_renamed() {
         tools: false,
         vision: true,
         embeddings: true,
+        embedding_model: Some("local-embedding".to_string()),
         transcription: false,
         transcription_model: None,
         context_window_tokens: Some(32_000),

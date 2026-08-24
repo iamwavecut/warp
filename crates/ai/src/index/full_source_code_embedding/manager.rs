@@ -823,6 +823,22 @@ impl CodebaseIndexManager {
         }
     }
 
+    /// Rebuild every live index against the current store configuration. Local
+    /// embedding routes use this when their endpoint, model, or credentials
+    /// change so a stale vector space is never treated as current.
+    #[cfg(feature = "local_fs")]
+    pub fn resync_all_indices(&mut self, ctx: &mut ModelContext<Self>) {
+        let indices = self.codebase_indices.values().cloned().collect_vec();
+        let max_files_repo_limit = self.max_files_repo_limit;
+        for index in indices {
+            index.update(ctx, |index, ctx| {
+                if let Err(error) = index.full_sync_index(max_files_repo_limit, ctx) {
+                    log::warn!("Failed to restart local codebase index sync: {error:#}");
+                }
+            });
+        }
+    }
+
     pub fn index_directory(&mut self, directory: PathBuf, ctx: &mut ModelContext<Self>) -> bool {
         if !self.is_indexing_enabled() {
             return false;

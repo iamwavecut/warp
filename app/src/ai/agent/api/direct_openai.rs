@@ -87,7 +87,7 @@ impl std::fmt::Display for CustomProviderRouteError {
 impl std::error::Error for CustomProviderRouteError {}
 
 /// Capabilities that the current direct OpenAI-compatible adapters can actually
-/// deliver. Embeddings remain disabled until a local adapter is implemented.
+/// deliver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EffectiveCustomProviderCapabilities {
     pub chat: bool,
@@ -121,7 +121,11 @@ pub(crate) fn effective_capabilities_for_config(
         chat: capabilities.chat,
         tools: capabilities.tools,
         vision: capabilities.vision,
-        embeddings: false,
+        embeddings: capabilities.embeddings
+            && capabilities
+                .embedding_model
+                .as_deref()
+                .is_some_and(|model| !model.trim().is_empty()),
         transcription: capabilities.transcription
             && capabilities
                 .transcription_model
@@ -281,6 +285,50 @@ pub(crate) fn resolve_custom_provider_transcription_route_with_readiness(
     )?))
 }
 
+/// Resolves the first explicitly configured embeddings route. Provider order
+/// is the user's deterministic routing preference; there is no hosted or
+/// implicit provider fallback.
+pub(crate) fn resolve_custom_provider_embedding_route_with_readiness(
+    providers: &[CustomProviderConfig],
+    api_keys: &ApiKeys,
+    keys_ready: bool,
+) -> Result<Option<CustomProviderRoute>, CustomProviderRouteError> {
+    if !keys_ready {
+        return Err(CustomProviderRouteError::KeysNotReady);
+    }
+
+    let Some(provider) = providers.iter().find(|provider| {
+        provider.capabilities.embeddings
+            && provider
+                .capabilities
+                .embedding_model
+                .as_deref()
+                .is_some_and(|model| !model.trim().is_empty())
+    }) else {
+        return Ok(None);
+    };
+    if !custom_provider_name_is_unique(&provider.name, providers) {
+        return Err(CustomProviderRouteError::AmbiguousProviderName(
+            provider.name.clone(),
+        ));
+    }
+    let Some(embedding_model) = provider
+        .capabilities
+        .embedding_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some(route_for_provider_model(
+        provider,
+        embedding_model.to_string(),
+        api_keys,
+    )?))
+}
+
 pub(crate) fn default_custom_provider_route(
     providers: &[CustomProviderConfig],
     api_keys: &ApiKeys,
@@ -384,6 +432,10 @@ pub(super) fn chat_completions_url(base_url: &str) -> String {
 
 pub(crate) fn models_url(base_url: &str) -> String {
     format!("{}/models", base_url.trim_end_matches('/'))
+}
+
+pub(crate) fn embeddings_url(base_url: &str) -> String {
+    format!("{}/embeddings", base_url.trim_end_matches('/'))
 }
 
 #[derive(Debug, Serialize)]
@@ -7048,6 +7100,7 @@ mod tests {
                 tools: true,
                 vision: true,
                 embeddings: true,
+                embedding_model: Some("local-embedding".to_string()),
                 transcription: true,
                 transcription_model: Some("local-whisper".to_string()),
                 context_window_tokens: Some(32_000),
@@ -7063,7 +7116,7 @@ mod tests {
                 chat: true,
                 tools: true,
                 vision: true,
-                embeddings: false,
+                embeddings: true,
                 transcription: true,
             }
         );

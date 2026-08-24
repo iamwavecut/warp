@@ -462,7 +462,15 @@ enum RequestHandle {
         repo_path: PathBuf,
         retrieval_id: RetrievalID,
         start_time: Instant,
+        fallback: LocalSearchFallback,
     },
+}
+
+#[derive(Clone)]
+struct LocalSearchFallback {
+    directory: PathBuf,
+    query: String,
+    partial_path_segments: Option<Vec<String>>,
 }
 
 impl RequestHandle {
@@ -472,7 +480,7 @@ impl RequestHandle {
             RequestHandle::RetrievalID {
                 repo_path,
                 retrieval_id,
-                start_time: _,
+                ..
             } => {
                 CodebaseIndexManager::handle(ctx).update(ctx, |index_manager, ctx| {
                     if let Err(err) = index_manager
@@ -506,7 +514,7 @@ impl GetRelevantFilesController {
     fn pending_request_details_for_retrieval_id(
         &self,
         pending_retrieval_id: &RetrievalID,
-    ) -> Option<(&AIAgentActionId, &Instant)> {
+    ) -> Option<(AIAgentActionId, Instant, LocalSearchFallback)> {
         // Full-source embedding completion events only carry the retrieval ID, so map them back to
         // the agent action that initiated the request before emitting results/diagnostics.
         self.pending_requests
@@ -516,8 +524,11 @@ impl GetRelevantFilesController {
                 RequestHandle::RetrievalID {
                     retrieval_id,
                     start_time,
+                    fallback,
                     ..
-                } if retrieval_id == pending_retrieval_id => Some((action_id, start_time)),
+                } if retrieval_id == pending_retrieval_id => {
+                    Some((action_id.clone(), *start_time, fallback.clone()))
+                }
                 RequestHandle::RetrievalID { .. } => None,
             })
     }
@@ -533,15 +544,15 @@ impl GetRelevantFilesController {
                 retrieval_id,
                 error_message: error,
             } => {
-                let Some((action_id, _search_start)) =
+                let Some((action_id, _search_start, fallback)) =
                     self.pending_request_details_for_retrieval_id(retrieval_id)
                 else {
                     return;
                 };
-
-                self.handle_relevant_file_paths_result(
+                self.finish_semantic_or_local_fallback(
                     Err(anyhow!(error.to_owned())),
-                    action_id.clone(),
+                    action_id,
+                    fallback,
                     ctx,
                 );
             }
@@ -550,15 +561,16 @@ impl GetRelevantFilesController {
                 fragments,
                 out_of_sync_delay: _,
             } => {
-                let Some((action_id, _search_start)) =
+                let Some((action_id, _search_start, fallback)) =
                     self.pending_request_details_for_retrieval_id(retrieval_id)
                 else {
                     return;
                 };
 
-                self.handle_relevant_file_paths_result(
+                self.finish_semantic_or_local_fallback(
                     Ok(fragments.clone()),
-                    action_id.clone(),
+                    action_id,
+                    fallback,
                     ctx,
                 );
             }
@@ -619,6 +631,11 @@ impl GetRelevantFilesController {
                                 repo_path: base_path.clone(),
                                 retrieval_id: retrieval_request_id,
                                 start_time: search_start,
+                                fallback: LocalSearchFallback {
+                                    directory: directory.to_path_buf(),
+                                    query,
+                                    partial_path_segments: partial_path_segments.cloned(),
+                                },
                             },
                         );
 
@@ -677,25 +694,43 @@ impl GetRelevantFilesController {
         Ok(())
     }
 
-    fn handle_relevant_file_paths_result(
+    fn finish_semantic_or_local_fallback(
         &mut self,
         relevant_file_locations: anyhow::Result<Arc<HashSet<CodeContextLocation>>>,
         action_id: AIAgentActionId,
+        fallback: LocalSearchFallback,
         ctx: &mut ModelContext<Self>,
     ) {
         if self.pending_requests.remove(&action_id).is_none() {
             return;
         }
         match relevant_file_locations {
-            Ok(relevant_file_locations) => {
+            Ok(relevant_file_locations) if !relevant_file_locations.is_empty() => {
                 ctx.emit(GetRelevantFilesControllerEvent::Success {
                     action_id,
                     result: GetRelevantFilesControllerResult::Locations(relevant_file_locations),
                 });
             }
-            Err(e) => {
-                report_error!(anyhow!(e).context("get_relevant_files failed"));
-                ctx.emit(GetRelevantFilesControllerEvent::Error { action_id });
+            semantic_result => {
+                if let Err(error) = semantic_result {
+                    log::warn!(
+                        "Local semantic code search failed; using lexical fallback: {error:#}"
+                    );
+                }
+                match local_outline_locations(
+                    RepoOutlines::as_ref(ctx).get_outline(&fallback.directory),
+                    &fallback.query,
+                    fallback.partial_path_segments.as_ref(),
+                ) {
+                    Ok(locations) => ctx.emit(GetRelevantFilesControllerEvent::Success {
+                        action_id,
+                        result: GetRelevantFilesControllerResult::Locations(locations),
+                    }),
+                    Err(error) => {
+                        report_error!(anyhow!(error).context("local lexical code search failed"));
+                        ctx.emit(GetRelevantFilesControllerEvent::Error { action_id });
+                    }
+                }
             }
         };
     }

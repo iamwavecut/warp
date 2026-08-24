@@ -68,6 +68,10 @@ pub struct CustomProviderCapabilities {
     /// Whether the provider is declared to expose embeddings.
     #[schemars(description = "Whether embeddings are declared by the provider.")]
     pub embeddings: bool,
+    /// Explicit model ID sent to the provider's embeddings endpoint.
+    #[serde(default)]
+    #[schemars(description = "Model ID used for code and query embeddings.")]
+    pub embedding_model: Option<String>,
     /// Whether the provider is declared to expose audio transcription.
     #[schemars(description = "Whether transcription is declared by the provider.")]
     pub transcription: bool,
@@ -93,6 +97,7 @@ impl Default for CustomProviderCapabilities {
             tools: true,
             vision: false,
             embeddings: false,
+            embedding_model: None,
             transcription: false,
             transcription_model: None,
             context_window_tokens: None,
@@ -129,6 +134,7 @@ impl CustomProviderCapabilities {
 pub enum CustomProviderConfigError {
     ContextWindowTooSmall { tokens: u32, minimum: u32 },
     InvalidContextWindow(String),
+    MissingEmbeddingModel,
     MissingTranscriptionModel,
 }
 
@@ -142,6 +148,10 @@ impl std::fmt::Display for CustomProviderConfigError {
             Self::InvalidContextWindow(value) => write!(
                 f,
                 "custom provider context window must be a positive token count, got `{value}`"
+            ),
+            Self::MissingEmbeddingModel => write!(
+                f,
+                "custom provider embeddings require a non-empty embedding model ID"
             ),
             Self::MissingTranscriptionModel => write!(
                 f,
@@ -400,16 +410,43 @@ pub fn custom_provider_capabilities_from_ui_with_transcription_model(
     transcription_model: Option<&str>,
     context_window_tokens: &str,
 ) -> Result<CustomProviderCapabilities, CustomProviderConfigError> {
-    let capabilities = CustomProviderCapabilities {
+    custom_provider_capabilities_from_ui_with_models(
         chat,
         tools,
         vision,
         embeddings,
         transcription,
+        None,
+        transcription_model,
+        context_window_tokens,
+    )
+}
+
+pub fn custom_provider_capabilities_from_ui_with_models(
+    chat: bool,
+    tools: bool,
+    vision: bool,
+    embeddings: bool,
+    transcription: bool,
+    embedding_model: Option<&str>,
+    transcription_model: Option<&str>,
+    context_window_tokens: &str,
+) -> Result<CustomProviderCapabilities, CustomProviderConfigError> {
+    let capabilities = CustomProviderCapabilities {
+        chat,
+        tools,
+        vision,
+        embeddings,
+        embedding_model: embedding_model
+            .and_then(|model| (!model.trim().is_empty()).then(|| model.trim().to_string())),
+        transcription,
         transcription_model: transcription_model
             .and_then(|model| (!model.trim().is_empty()).then(|| model.trim().to_string())),
         context_window_tokens: parse_custom_provider_context_window_tokens(context_window_tokens)?,
     };
+    if capabilities.embeddings && capabilities.embedding_model.is_none() {
+        return Err(CustomProviderConfigError::MissingEmbeddingModel);
+    }
     capabilities.validate()?;
     Ok(capabilities)
 }

@@ -15,7 +15,7 @@ use crate::ui_components::blended_colors;
 use crate::ui_components::icons::Icon;
 
 const SPEEDBUMP_HEADER: &str = "Index Codebase?";
-const SPEEDBUMP_TEXT: &str = "Indexing helps agents quickly understand context and provide targeted solutions. Code is never stored on the server.";
+const SPEEDBUMP_TEXT: &str = "Indexing helps agents understand context. Source chunks and vectors are stored locally and sent only to your configured embeddings endpoint.";
 /// Uniform padding around the banner
 const PADDING: f32 = 12.;
 /// Text for the button that allows execution

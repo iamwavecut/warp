@@ -32,6 +32,7 @@ pub(crate) mod harness_display;
 pub(crate) mod llms;
 pub(crate) mod local_agent_registry;
 pub(crate) mod local_child_harnesses;
+pub(crate) mod local_codebase_index;
 pub(crate) mod local_compaction;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod local_named_agents;

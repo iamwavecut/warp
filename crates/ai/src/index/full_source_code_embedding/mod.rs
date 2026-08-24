@@ -185,6 +185,10 @@ impl Fragment {
         &self.content_hash
     }
 
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
     pub fn absolute_path(&self) -> &Path {
         &self.location.absolute_path
     }

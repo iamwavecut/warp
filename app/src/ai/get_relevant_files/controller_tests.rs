@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use ai::index::build_outline;
 use ai::index::locations::CodeContextLocation;
+use futures_util::stream::AbortHandle;
 use repo_metadata::DirectoryWatcher;
 use tempfile::TempDir;
 use warp_core::features::FeatureFlag;
@@ -20,7 +21,8 @@ use super::{
     GetRelevantFilesController, GetRelevantFilesControllerEvent, GetRelevantFilesControllerResult,
     GetRelevantFilesError, GetRelevantFilesRequestTarget, LOCAL_CONTENT_SEARCH_MAX_BYTES_PER_FILE,
     LOCAL_CONTENT_SEARCH_MAX_FILES, LOCAL_OUTLINE_RESULT_LIMIT, LocalCandidateScore,
-    local_outline_locations, local_outline_locations_from_candidates,
+    LocalSearchFallback, RequestHandle, local_outline_locations,
+    local_outline_locations_from_candidates,
     rank_local_outline_candidates as rank_local_outline_candidates_with_content,
     revalidate_local_candidate,
 };
@@ -350,6 +352,77 @@ fn local_outline_controller_dispatch_is_synchronous_and_keeps_no_pending_request
                 action_id,
                 BTreeSet::from([dunce::canonicalize(matching).unwrap()]),
             )]
+        );
+    });
+}
+
+#[test]
+fn failed_semantic_search_returns_local_lexical_results() {
+    App::test((), |mut app| async move {
+        let repo = TempDir::new().unwrap();
+        let matching = write_file(
+            repo.path(),
+            "src/local_fallback.rs",
+            b"fn semantic_fallback() {}\n",
+        );
+        let repo_root = dunce::canonicalize(repo.path()).unwrap();
+        let outline = build_outline(&repo_root, Some(100)).await.unwrap();
+
+        app.add_singleton_model(DirectoryWatcher::new_for_testing);
+        let repository = DirectoryWatcher::handle(&app).update(&mut app, |watcher, ctx| {
+            watcher
+                .add_directory(
+                    StandardizedPath::from_local_canonicalized(&repo_root).unwrap(),
+                    ctx,
+                )
+                .unwrap()
+        });
+        let outlines = app.add_singleton_model(RepoOutlines::new_for_test);
+        outlines.update(&mut app, |outlines, _| {
+            insert_outline_for_test(
+                outlines,
+                repo_root.clone(),
+                repository,
+                OutlineStatus::Complete(outline),
+            );
+        });
+
+        let controller = app.add_model(|_| GetRelevantFilesController::default());
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        app.update(|ctx| {
+            let observed = observed.clone();
+            ctx.subscribe_to_model(&controller, move |_, event, _| {
+                if let GetRelevantFilesControllerEvent::Success {
+                    result: GetRelevantFilesControllerResult::Locations(locations),
+                    ..
+                } = event
+                {
+                    observed.borrow_mut().push(whole_file_paths(locations));
+                }
+            });
+        });
+
+        let action_id = AIAgentActionId::from("semantic-fallback".to_string());
+        controller.update(&mut app, |controller, ctx| {
+            let (abort, _) = AbortHandle::new_pair();
+            controller
+                .pending_requests
+                .insert(action_id.clone(), RequestHandle::AbortHandle(abort));
+            controller.finish_semantic_or_local_fallback(
+                Err(anyhow::anyhow!("synthetic endpoint failure")),
+                action_id,
+                LocalSearchFallback {
+                    directory: repo_root,
+                    query: "semantic fallback".to_string(),
+                    partial_path_segments: None,
+                },
+                ctx,
+            );
+        });
+
+        assert_eq!(
+            observed.borrow().as_slice(),
+            [BTreeSet::from([dunce::canonicalize(matching).unwrap()])]
         );
     });
 }

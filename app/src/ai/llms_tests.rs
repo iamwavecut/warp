@@ -197,6 +197,7 @@ fn custom_model_metadata_reports_effective_capabilities_and_context_window() {
                             tools: false,
                             vision: true,
                             embeddings: true,
+                            embedding_model: Some("local-embedding".to_string()),
                             transcription: true,
                             transcription_model: Some("local-whisper".to_string()),
                             context_window_tokens: Some(32_000),
@@ -221,12 +222,12 @@ fn custom_model_metadata_reports_effective_capabilities_and_context_window() {
             Some(LLMCapabilities {
                 chat: true,
                 tools: false,
-                vision: false,
-                embeddings: false,
-                transcription: false,
+                vision: true,
+                embeddings: true,
+                transcription: true,
             })
         );
-        assert!(!model.vision_supported);
+        assert!(model.vision_supported);
         assert_eq!(model.context_window.max, 32_000);
         assert_eq!(model.context_window.default_max, 32_000);
         assert!(!model.context_window.is_configurable);

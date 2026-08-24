@@ -465,6 +465,7 @@ default = [
     "validate_autosuggestions",
     "clear_autosuggestion_on_escape",
     "file_retrieval_tools",
+    "codebase_index_persistence",
     "mcp_server",
     "fast_forward_autoexecute_button",
     "image_as_context",
