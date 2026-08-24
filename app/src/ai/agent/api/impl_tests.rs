@@ -23,7 +23,7 @@ fn request_params_with_ask_user_question_enabled(ask_user_question_enabled: bool
         custom_provider_route_error: None,
         computer_use_enabled: false,
         ask_user_question_enabled,
-        orchestration_enabled: false,
+        local_orchestration_ready: false,
         supported_tools_override: None,
         parent_agent_id: None,
         agent_name: None,
@@ -83,4 +83,21 @@ fn remote_supported_tools_omit_search_codebase_when_remote_is_not_connected() {
     let supported_tools = get_supported_tools(&params);
 
     assert!(!supported_tools.contains(&api::ToolType::SearchCodebase));
+}
+
+#[test]
+fn local_orchestration_tools_require_explicit_controller_readiness() {
+    let mut params = request_params_with_ask_user_question_enabled(false);
+    let unavailable = get_supported_tools(&params);
+    assert!(!unavailable.contains(&api::ToolType::StartAgent));
+    assert!(!unavailable.contains(&api::ToolType::StartAgentV2));
+    assert!(!unavailable.contains(&api::ToolType::RunAgents));
+    assert!(!unavailable.contains(&api::ToolType::SendMessageToAgent));
+
+    params.local_orchestration_ready = true;
+    let ready = get_supported_tools(&params);
+    assert!(ready.contains(&api::ToolType::StartAgent));
+    assert!(ready.contains(&api::ToolType::RunAgents));
+    assert!(ready.contains(&api::ToolType::SendMessageToAgent));
+    assert!(!ready.contains(&api::ToolType::StartAgentV2));
 }

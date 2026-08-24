@@ -96,7 +96,11 @@ pub struct RequestParams {
     pub(crate) custom_provider_route_error: Option<String>,
     pub computer_use_enabled: bool,
     pub ask_user_question_enabled: bool,
-    pub orchestration_enabled: bool,
+    /// Whether this request belongs to an active local conversation whose
+    /// controller is ready to own child-agent work.  The direct provider
+    /// adapter combines this process-local readiness with the provider's
+    /// effective chat/tool capabilities before advertising local agent tools.
+    pub local_orchestration_ready: bool,
     pub supported_tools_override: Option<Vec<warp_multi_agent_api::ToolType>>,
     /// The conversation ID of the parent agent that spawned this child agent, if any.
     pub parent_agent_id: Option<String>,
@@ -138,7 +142,7 @@ impl RequestParams {
             custom_provider_route_error: None,
             computer_use_enabled: false,
             ask_user_question_enabled: false,
-            orchestration_enabled: false,
+            local_orchestration_ready: false,
             supported_tools_override: None,
             parent_agent_id: None,
             agent_name: None,
@@ -280,8 +284,6 @@ impl RequestParams {
             .get_ask_user_question_setting(app, terminal_view_id)
             != crate::ai::execution_profiles::AskUserQuestionPermission::Never;
 
-        let orchestration_enabled = false;
-
         Self {
             input: request_input.all_inputs().cloned().collect(),
             request_task_id,
@@ -295,7 +297,11 @@ impl RequestParams {
             custom_provider_route_error,
             computer_use_enabled,
             ask_user_question_enabled,
-            orchestration_enabled,
+            // A controller fills this in after it has attached the current
+            // conversation to the process-local registry.  Keeping the
+            // default closed here prevents a direct provider from exposing
+            // child-agent tools for an unowned/restored conversation.
+            local_orchestration_ready: false,
             supported_tools_override: request_input.supported_tools_override.clone(),
             parent_agent_id: None,
             agent_name: None,

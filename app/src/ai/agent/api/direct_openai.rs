@@ -854,6 +854,19 @@ pub(super) async fn generate(
     if !effective_capabilities.chat {
         return Ok(error_stream(chat_disabled_message(&route.provider_name)));
     }
+    if local_orchestration_tool_requested(&supported_tools) {
+        if !params.local_orchestration_ready {
+            return Ok(error_stream(
+                "Local child-agent tools require an active conversation controller; local agent setup is not ready.",
+            ));
+        }
+        if !effective_capabilities.tools {
+            return Ok(error_stream(format!(
+                "Custom provider `{}` has tool calling disabled; local child-agent tools require effective chat and tool capabilities.",
+                route.provider_name
+            )));
+        }
+    }
     if !effective_capabilities.vision
         && (input_contains_image(&params.input) || tasks_contain_image(&params.tasks))
     {
@@ -946,6 +959,17 @@ pub(super) async fn generate(
     };
 
     Ok(Box::pin(output_stream))
+}
+
+fn local_orchestration_tool_requested(supported_tools: &[api::ToolType]) -> bool {
+    supported_tools.iter().any(|tool| {
+        matches!(
+            tool,
+            api::ToolType::StartAgent
+                | api::ToolType::RunAgents
+                | api::ToolType::SendMessageToAgent
+        )
+    })
 }
 
 fn chat_disabled_message(provider_name: &str) -> String {
@@ -3377,6 +3401,37 @@ fn openai_tool_call_from_api_tool_call(
                 "screenshot_params": call.screenshot_params.as_ref().map(screenshot_params_to_json),
             }),
         ),
+        api::message::tool_call::Tool::StartAgent(call) => (
+            "start_agent",
+            json!({
+                "name": call.name,
+                "prompt": call.prompt,
+            }),
+        ),
+        api::message::tool_call::Tool::RunAgents(call) => (
+            "run_agents",
+            json!({
+                "summary": call.summary,
+                "base_prompt": call.base_prompt,
+                "skills": call.skills.iter().map(skill_ref_to_json).collect::<Vec<_>>(),
+                "model_id": call.model_id,
+                "harness": call.harness.as_ref().map(harness_to_json),
+                "agent_run_configs": call.agent_run_configs.iter().map(|config| json!({
+                    "name": config.name,
+                    "prompt": config.prompt,
+                    "title": config.title,
+                })).collect::<Vec<_>>(),
+                "plan_id": call.plan_id,
+            }),
+        ),
+        api::message::tool_call::Tool::SendMessageToAgent(call) => (
+            "send_message_to_agent",
+            json!({
+                "addresses": call.addresses,
+                "subject": call.subject,
+                "message": call.message,
+            }),
+        ),
         _ => return None,
     };
 
@@ -3477,6 +3532,29 @@ fn ask_user_question_to_json(question: &api::ask_user_question::Question) -> Val
         "question": question.question,
         "multiple_choice": multiple_choice,
     })
+}
+
+fn skill_ref_to_json(skill: &api::SkillRef) -> Value {
+    match skill.skill_reference.as_ref() {
+        Some(api::skill_ref::SkillReference::Path(path)) => json!({
+            "skill_path": path,
+        }),
+        Some(api::skill_ref::SkillReference::BundledSkillId(id)) => json!({
+            "bundled_skill_id": id,
+        }),
+        None => Value::Null,
+    }
+}
+
+fn harness_to_json(harness: &api::Harness) -> Value {
+    match harness.variant.as_ref() {
+        Some(api::harness::Variant::Oz(_)) => json!("oz"),
+        Some(api::harness::Variant::ClaudeCode(_)) => json!("claude"),
+        Some(api::harness::Variant::OpenCode(_)) => json!("opencode"),
+        Some(api::harness::Variant::Gemini(_)) => json!("gemini"),
+        Some(api::harness::Variant::Codex(_)) => json!("codex"),
+        None => Value::Null,
+    }
 }
 
 fn coordinates_to_json(coordinates: Option<&api::Coordinates>) -> Value {
@@ -3855,6 +3933,15 @@ fn api_tool_from_openai_tool_call_inner(
                 conversation_id: required_string(&args, "conversation_id")?,
             },
         )),
+        "start_agent" => Ok(api::message::tool_call::Tool::StartAgent(
+            local_start_agent_arg(&args)?,
+        )),
+        "run_agents" => Ok(api::message::tool_call::Tool::RunAgents(
+            local_run_agents_arg(&args)?,
+        )),
+        "send_message_to_agent" => Ok(api::message::tool_call::Tool::SendMessageToAgent(
+            local_send_message_to_agent_arg(&args)?,
+        )),
         "ask_user_question" => Ok(api::message::tool_call::Tool::AskUserQuestion(
             ask_user_question_arg(&args)?,
         )),
@@ -3868,6 +3955,177 @@ fn api_tool_from_openai_tool_call_inner(
             "OpenAI-compatible provider called unsupported Warp tool `{other}`"
         ))),
     }
+}
+
+fn local_start_agent_arg(args: &Value) -> Result<api::StartAgent, AIApiError> {
+    reject_unexpected_arguments_except(args, "start_agent", &["name", "prompt"])?;
+    Ok(api::StartAgent {
+        name: required_string(args, "name")?,
+        prompt: required_string(args, "prompt")?,
+        lifecycle_subscription: None,
+        execution_mode: Some(api::start_agent::ExecutionMode {
+            mode: Some(api::start_agent::execution_mode::Mode::Local(())),
+        }),
+    })
+}
+
+fn local_run_agents_arg(args: &Value) -> Result<api::RunAgents, AIApiError> {
+    reject_unexpected_arguments_except(
+        args,
+        "run_agents",
+        &[
+            "summary",
+            "base_prompt",
+            "skills",
+            "model_id",
+            "harness",
+            "agent_run_configs",
+            "plan_id",
+        ],
+    )?;
+    let agent_run_configs = array(args, "agent_run_configs")?;
+    if agent_run_configs.is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "run_agents requires at least one agent_run_configs entry"
+        )));
+    }
+    if agent_run_configs.len() > 8 {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "run_agents accepts at most 8 agent_run_configs entries"
+        )));
+    }
+
+    let agent_run_configs = agent_run_configs
+        .iter()
+        .map(|config| {
+            if !config.is_object() {
+                return Err(AIApiError::Other(anyhow::anyhow!(
+                    "run_agents agent_run_configs entries must be objects"
+                )));
+            }
+            reject_unexpected_arguments_except(
+                config,
+                "run_agents.agent_run_configs",
+                &["name", "prompt", "title"],
+            )?;
+            Ok(api::run_agents::AgentRunConfig {
+                name: required_string(config, "name")?,
+                prompt: optional_string_strict(config, "prompt")?.unwrap_or_default(),
+                title: optional_string_strict(config, "title")?.unwrap_or_default(),
+            })
+        })
+        .collect::<Result<Vec<_>, AIApiError>>()?;
+
+    Ok(api::RunAgents {
+        summary: optional_string_strict(args, "summary")?.unwrap_or_default(),
+        base_prompt: optional_string_strict(args, "base_prompt")?.unwrap_or_default(),
+        skills: local_skill_references_arg(args)?,
+        model_id: required_string(args, "model_id")?,
+        harness: optional_string_strict(args, "harness")?
+            .map(|harness| local_harness_arg(&harness))
+            .transpose()?,
+        execution_mode: Some(api::run_agents::ExecutionMode::Local(
+            api::run_agents::Local {},
+        )),
+        agent_run_configs,
+        plan_id: optional_string_strict(args, "plan_id")?.unwrap_or_default(),
+    })
+}
+
+fn local_skill_references_arg(args: &Value) -> Result<Vec<api::SkillRef>, AIApiError> {
+    let Some(skills) = optional_array_strict(args, "skills")? else {
+        return Ok(Vec::new());
+    };
+    skills
+        .iter()
+        .map(|skill| {
+            if !skill.is_object() {
+                return Err(AIApiError::Other(anyhow::anyhow!(
+                    "run_agents skills entries must be objects"
+                )));
+            }
+            reject_unexpected_arguments_except(
+                skill,
+                "run_agents.skills",
+                &["skill_path", "bundled_skill_id"],
+            )?;
+            let skill_path = optional_string_strict(skill, "skill_path")?
+                .filter(|value| !value.trim().is_empty());
+            let bundled_skill_id = optional_string_strict(skill, "bundled_skill_id")?
+                .filter(|value| !value.trim().is_empty());
+            let skill_reference = match (skill_path, bundled_skill_id) {
+                (Some(path), None) => Some(api::skill_ref::SkillReference::Path(path)),
+                (None, Some(id)) => {
+                    Some(api::skill_ref::SkillReference::BundledSkillId(id))
+                }
+                (Some(_), Some(_)) => {
+                    return Err(AIApiError::Other(anyhow::anyhow!(
+                        "run_agents skills entries require exactly one of skill_path or bundled_skill_id"
+                    )));
+                }
+                (None, None) => {
+                    return Err(AIApiError::Other(anyhow::anyhow!(
+                        "run_agents skills entries require a non-empty skill_path or bundled_skill_id"
+                    )));
+                }
+            };
+            Ok(api::SkillRef { skill_reference })
+        })
+        .collect()
+}
+
+fn local_harness_arg(value: &str) -> Result<api::Harness, AIApiError> {
+    let normalized = value.trim().to_ascii_lowercase();
+    let variant = match normalized.as_str() {
+        "oz" => api::harness::Variant::Oz(api::harness::Oz {}),
+        "claude" => api::harness::Variant::ClaudeCode(api::harness::ClaudeCode {}),
+        "opencode" => api::harness::Variant::OpenCode(api::harness::OpenCode {}),
+        "gemini" => api::harness::Variant::Gemini(api::harness::Gemini {}),
+        "codex" => api::harness::Variant::Codex(api::harness::Codex {}),
+        _ => {
+            return Err(AIApiError::Other(anyhow::anyhow!(
+                "run_agents harness must be one of oz, claude, opencode, gemini, or codex"
+            )));
+        }
+    };
+    Ok(api::Harness {
+        variant: Some(variant),
+    })
+}
+
+fn local_send_message_to_agent_arg(args: &Value) -> Result<api::SendMessageToAgent, AIApiError> {
+    reject_unexpected_arguments_except(
+        args,
+        "send_message_to_agent",
+        &["addresses", "subject", "message"],
+    )?;
+    let addresses = array(args, "addresses")?;
+    if addresses.is_empty() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "send_message_to_agent requires at least one address"
+        )));
+    }
+    let addresses = addresses
+        .iter()
+        .map(|address| {
+            let address = address.as_str().ok_or_else(|| {
+                AIApiError::Other(anyhow::anyhow!(
+                    "send_message_to_agent addresses must contain only strings"
+                ))
+            })?;
+            if address.trim().is_empty() {
+                return Err(AIApiError::Other(anyhow::anyhow!(
+                    "send_message_to_agent addresses must not be empty"
+                )));
+            }
+            Ok(address.to_string())
+        })
+        .collect::<Result<Vec<_>, AIApiError>>()?;
+    Ok(api::SendMessageToAgent {
+        addresses,
+        subject: required_string(args, "subject")?,
+        message: required_string(args, "message")?,
+    })
 }
 
 fn validate_openai_tool_call_envelope(tool_call: &OpenAIToolCall) -> Result<Value, AIApiError> {
@@ -3908,6 +4166,24 @@ fn reject_unexpected_arguments(args: &Value, tool_name: &str) -> Result<(), AIAp
         ))
     })?;
     if let Some(key) = object.keys().next() {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "OpenAI-compatible tool `{tool_name}` does not accept argument `{key}`"
+        )));
+    }
+    Ok(())
+}
+
+fn reject_unexpected_arguments_except(
+    args: &Value,
+    tool_name: &str,
+    allowed: &[&str],
+) -> Result<(), AIApiError> {
+    let object = args.as_object().ok_or_else(|| {
+        AIApiError::Other(anyhow::anyhow!(
+            "arguments for OpenAI-compatible tool `{tool_name}` must be a JSON object"
+        ))
+    })?;
+    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
         return Err(AIApiError::Other(anyhow::anyhow!(
             "OpenAI-compatible tool `{tool_name}` does not accept argument `{key}`"
         )));
@@ -4750,6 +5026,9 @@ fn tool_type_for_openai_name(name: &str) -> Option<api::ToolType> {
         "ask_user_question" => api::ToolType::AskUserQuestion,
         "use_computer" => api::ToolType::UseComputer,
         "request_computer_use" => api::ToolType::RequestComputerUse,
+        "start_agent" => api::ToolType::StartAgent,
+        "run_agents" => api::ToolType::RunAgents,
+        "send_message_to_agent" => api::ToolType::SendMessageToAgent,
         _ => return None,
     })
 }
@@ -4806,6 +5085,9 @@ fn openai_tool_name(tool: &api::message::tool_call::Tool) -> &'static str {
         api::message::tool_call::Tool::AskUserQuestion(_) => "ask_user_question",
         api::message::tool_call::Tool::UseComputer(_) => "use_computer",
         api::message::tool_call::Tool::RequestComputerUse(_) => "request_computer_use",
+        api::message::tool_call::Tool::StartAgent(_) => "start_agent",
+        api::message::tool_call::Tool::RunAgents(_) => "run_agents",
+        api::message::tool_call::Tool::SendMessageToAgent(_) => "send_message_to_agent",
         _ => "unsupported",
     }
 }
@@ -5958,6 +6240,108 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
         ));
     }
 
+    if supported.contains(&api::ToolType::StartAgent) {
+        tools.push(openai_tool(
+            "start_agent",
+            "Start a child agent in the current local controller. The child inherits the concrete local model/profile and runs in the same process.",
+            json_schema_object(
+                [
+                    (
+                        "name",
+                        json!({"type": "string", "minLength": 1}),
+                    ),
+                    (
+                        "prompt",
+                        json!({"type": "string", "minLength": 1}),
+                    ),
+                ],
+                ["name", "prompt"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::RunAgents) {
+        let local_skill_reference = json!({
+            "type": "object",
+            "properties": {
+                "skill_path": {"type": "string", "minLength": 1},
+                "bundled_skill_id": {"type": "string", "minLength": 1},
+            },
+            "oneOf": [
+                {"required": ["skill_path"]},
+                {"required": ["bundled_skill_id"]},
+            ],
+            "additionalProperties": false,
+        });
+        let local_agent_config = json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "prompt": {"type": "string"},
+                "title": {"type": "string"},
+            },
+            "required": ["name"],
+            "additionalProperties": false,
+        });
+        tools.push(openai_tool(
+            "run_agents",
+            "Start a bounded, ordered batch of local child agents. All children inherit the current concrete local model/profile; execution mode is always same-process local.",
+            json_schema_object(
+                [
+                    ("summary", json!({"type": "string"})),
+                    ("base_prompt", json!({"type": "string"})),
+                    (
+                        "skills",
+                        json!({"type": "array", "items": local_skill_reference}),
+                    ),
+                    (
+                        "model_id",
+                        json!({"type": "string", "minLength": 1}),
+                    ),
+                    (
+                        "harness",
+                        json!({"type": "string", "enum": ["oz", "claude", "opencode", "gemini", "codex"]}),
+                    ),
+                    (
+                        "agent_run_configs",
+                        json!({
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 8,
+                            "items": local_agent_config,
+                        }),
+                    ),
+                    ("plan_id", json!({"type": "string"})),
+                ],
+                ["model_id", "agent_run_configs"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::SendMessageToAgent) {
+        tools.push(openai_tool(
+            "send_message_to_agent",
+            "Send an immutable message to one or more local child-agent run IDs through their bounded controller queues.",
+            json_schema_object(
+                [
+                    (
+                        "addresses",
+                        json!({"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}),
+                    ),
+                    (
+                        "subject",
+                        json!({"type": "string", "minLength": 1}),
+                    ),
+                    (
+                        "message",
+                        json!({"type": "string", "minLength": 1}),
+                    ),
+                ],
+                ["addresses", "subject", "message"],
+            ),
+        ));
+    }
+
     if supported.contains(&api::ToolType::AskUserQuestion) {
         tools.push(openai_tool(
             "ask_user_question",
@@ -6537,6 +6921,70 @@ mod tests {
             .expect_err("unsupported chat must be reported as a local error");
 
         assert!(error.to_string().contains("chat disabled"));
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn local_orchestration_requires_a_ready_controller_before_http() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .expect(0)
+            .create_async()
+            .await;
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: CustomProviderCapabilities::default(),
+        };
+        let mut response = generate(
+            route,
+            super::super::RequestParams::new_for_test(),
+            vec![api::ToolType::StartAgent],
+        )
+        .await
+        .expect("not-ready local setup should produce a local error stream");
+        let error = response
+            .next()
+            .await
+            .expect("local setup error should be emitted")
+            .expect_err("local orchestration must fail closed without a controller");
+        assert!(error.to_string().contains("controller"));
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn local_orchestration_requires_effective_tool_capability_before_http() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/v1/chat/completions")
+            .expect(0)
+            .create_async()
+            .await;
+        let route = CustomProviderRoute {
+            provider_name: "local".to_string(),
+            base_url: format!("{}/v1", server.url()),
+            model: "model".to_string(),
+            api_key: None,
+            capabilities: CustomProviderCapabilities {
+                chat: true,
+                tools: false,
+                ..Default::default()
+            },
+        };
+        let mut params = super::super::RequestParams::new_for_test();
+        params.local_orchestration_ready = true;
+        let mut response = generate(route, params, vec![api::ToolType::RunAgents])
+            .await
+            .expect("unsupported local tool capability should produce a local error stream");
+        let error = response
+            .next()
+            .await
+            .expect("local capability error should be emitted")
+            .expect_err("local orchestration must fail closed without tool calling");
+        assert!(error.to_string().contains("tool calling"));
         mock.assert_async().await;
     }
 
@@ -8529,21 +8977,56 @@ mod tests {
                 "create_documents",
                 "insert_review_comments",
                 "fetch_conversation",
+                "start_agent",
+                "run_agents",
+                "send_message_to_agent",
                 "ask_user_question",
                 "use_computer",
                 "request_computer_use",
             ]
         );
-        assert!(names.iter().all(|name| {
-            !matches!(
-                *name,
-                "subagent"
-                    | "start_agent"
-                    | "start_agent_v2"
-                    | "run_agents"
-                    | "send_message_to_agent"
-            )
-        }));
+        assert!(
+            names
+                .iter()
+                .all(|name| { !matches!(*name, "subagent" | "start_agent_v2") })
+        );
+    }
+
+    #[test]
+    fn local_orchestration_schemas_are_strict_and_never_advertise_v2() {
+        let tools = openai_tools_for_supported_tools(&[
+            api::ToolType::StartAgent,
+            api::ToolType::StartAgentV2,
+            api::ToolType::RunAgents,
+            api::ToolType::SendMessageToAgent,
+        ]);
+        let names = tools
+            .iter()
+            .map(|tool| tool.function.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec!["start_agent", "run_agents", "send_message_to_agent"]
+        );
+
+        let start_agent = &tools[0].function.parameters;
+        assert_eq!(start_agent["additionalProperties"], json!(false));
+        assert_eq!(start_agent["required"], json!(["name", "prompt"]));
+
+        let run_agents = &tools[1].function.parameters;
+        assert_eq!(run_agents["additionalProperties"], json!(false));
+        assert_eq!(
+            run_agents["required"],
+            json!(["model_id", "agent_run_configs"])
+        );
+        assert_eq!(
+            run_agents["properties"]["agent_run_configs"]["maxItems"],
+            json!(8)
+        );
+
+        let send = &tools[2].function.parameters;
+        assert_eq!(send["additionalProperties"], json!(false));
+        assert_eq!(send["required"], json!(["addresses", "subject", "message"]));
     }
 
     #[test]
@@ -8609,6 +9092,21 @@ mod tests {
                 json!({"reason":"The command needs interactive input."}),
                 "transfer_shell_command_control_to_user",
             ),
+            (
+                "start_agent",
+                json!({"name":"child","prompt":"Inspect locally"}),
+                "start_agent",
+            ),
+            (
+                "run_agents",
+                json!({"model_id":"custom/local/model","harness":"oz","base_prompt":"Inspect","agent_run_configs":[{"name":"one","prompt":"Check"}]}),
+                "run_agents",
+            ),
+            (
+                "send_message_to_agent",
+                json!({"addresses":["local-run-1"],"subject":"Status","message":"Please report."}),
+                "send_message_to_agent",
+            ),
         ];
 
         for (name, arguments, expected_name) in cases {
@@ -8638,6 +9136,38 @@ mod tests {
             },
         };
         assert!(api_tool_from_openai_tool_call(&missing_document_id).is_err());
+    }
+
+    #[test]
+    fn local_orchestration_calls_reject_remote_or_unknown_arguments() {
+        let call = |name: &str, arguments: Value| OpenAIToolCall {
+            id: format!("call-{name}"),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+        };
+
+        for (name, arguments) in [
+            (
+                "start_agent",
+                json!({"name":"child","prompt":"run","execution_mode":"remote"}),
+            ),
+            (
+                "run_agents",
+                json!({"model_id":"model","agent_run_configs":[{"name":"one"}],"execution_mode":"remote"}),
+            ),
+            (
+                "send_message_to_agent",
+                json!({"addresses":["run"],"subject":"s","message":"m","server_token":"nope"}),
+            ),
+        ] {
+            assert!(
+                api_tool_from_openai_tool_call(&call(name, arguments)).is_err(),
+                "{name} must reject hosted/unknown arguments"
+            );
+        }
     }
 
     #[test]
