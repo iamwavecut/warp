@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn claude_command_uses_session_id_when_not_resuming() {
     let uuid = Uuid::new_v4();
-    let cmd = claude_command("claude", &uuid, "/tmp/prompt.txt", None, None);
+    let cmd = claude_command("claude", &uuid, false, "/tmp/prompt.txt", None, None);
     assert!(
         cmd.contains(&format!("--session-id {uuid}")),
         "expected --session-id flag in non-resume command, got: {cmd}"
@@ -23,7 +23,14 @@ fn claude_command_uses_session_id_when_not_resuming() {
 #[test]
 fn claude_command_pipes_prompt_path() {
     let uuid = Uuid::new_v4();
-    let cmd = claude_command("claude", &uuid, "/tmp/prompt with spaces.txt", None, None);
+    let cmd = claude_command(
+        "claude",
+        &uuid,
+        false,
+        "/tmp/prompt with spaces.txt",
+        None,
+        None,
+    );
     assert!(
         cmd.contains("< '/tmp/prompt with spaces.txt'"),
         "expected single-quoted stdin redirect of the prompt path, got: {cmd}"
@@ -32,6 +39,15 @@ fn claude_command_pipes_prompt_path() {
         cmd.contains("--dangerously-skip-permissions"),
         "expected --dangerously-skip-permissions, got: {cmd}"
     );
+}
+
+#[test]
+fn claude_command_uses_resume_id_when_resuming() {
+    let uuid = Uuid::new_v4();
+    let cmd = claude_command("claude", &uuid, true, "/tmp/prompt.txt", None, None);
+    assert!(cmd.contains(&format!("--resume {uuid}")), "got: {cmd}");
+    assert!(!cmd.contains("--session-id"), "got: {cmd}");
+    assert!(cmd.contains("< '/tmp/prompt.txt'"), "got: {cmd}");
 }
 
 #[test]

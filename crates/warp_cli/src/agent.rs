@@ -298,6 +298,18 @@ pub struct RunAgentArgs {
     #[command(flatten)]
     pub prompt_arg: PromptArg,
 
+    /// Resume a local Codex or Claude Code harness run by its Warp-local UUID.
+    ///
+    /// The harness transcript remains owned by the local CLI; Warp stores only
+    /// the small index record needed to find and validate that transcript.
+    #[arg(
+        long = "resume",
+        value_name = "LOCAL_RUN_ID",
+        requires = "prompt",
+        conflicts_with_all = ["saved_prompt", "skill", "agent"]
+    )]
+    pub resume: Option<String>,
+
     /// Resolve a local saved Agent Mode prompt by UUID or unique exact name.
     #[arg(
         long = "saved-prompt",

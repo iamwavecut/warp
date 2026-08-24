@@ -27,9 +27,14 @@ pub(crate) mod claude_code;
 mod codex;
 mod gemini;
 mod json_utils;
+mod local_resume;
 pub(crate) use claude_code::ClaudeHarness;
 use codex::CodexHarness;
 use gemini::GeminiHarness;
+pub(crate) use local_resume::{
+    LocalHarnessRecord, LocalHarnessRepository, LocalHarnessResumeError, LocalHarnessResumePayload,
+    LocalHarnessSavePoint, TranscriptLocator, TranscriptRoot,
+};
 
 /// Trait for third-party agent harnesses that execute prompts via their own CLIs.
 ///
@@ -87,6 +92,7 @@ pub(crate) trait ThirdPartyHarness: Send + Sync {
         resumption_prompt: Option<&str>,
         context: Option<&str>,
         working_dir: &Path,
+        local_resume: Option<LocalHarnessResumePayload>,
         task_id: Option<AmbientAgentTaskId>,
         server_api: Arc<ServerApi>,
         terminal_driver: ModelHandle<TerminalDriver>,
@@ -248,6 +254,7 @@ pub(crate) fn harness_model_env_vars(
 /// Indicates when the harness conversation is being saved.
 /// Implementations may use this to customize the saved data, such as
 /// recording additional metadata on completion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SavePoint {
     /// A periodic auto-save to minimize data loss.
     Periodic,

@@ -48,8 +48,8 @@ use crate::ai::skills::{
 use crate::ai::{
     agent::conversation::AIConversationId,
     agent_sdk::driver::harness::{
-        HarnessCleanupDisposition, HarnessKind, HarnessRunner, SavePoint, ThirdPartyHarness,
-        harness_model_env_vars, task_env_vars,
+        HarnessCleanupDisposition, HarnessKind, HarnessRunner, LocalHarnessResumePayload,
+        SavePoint, ThirdPartyHarness, harness_model_env_vars, task_env_vars,
     },
 };
 use crate::terminal::cli_agent_sessions::plugin_manager::{
@@ -204,6 +204,8 @@ pub struct AgentDriverOptions {
     pub local_only: bool,
     /// The direct local provider route validated before terminal creation.
     pub direct_provider_route: Option<CustomProviderRoute>,
+    /// Local transcript-only continuation payload for Codex/Claude runs.
+    pub local_resume: Option<LocalHarnessResumePayload>,
 }
 
 /// `AgentDriver` is a model for driving an ambient Warp agent to completion.
@@ -250,6 +252,7 @@ pub struct AgentDriver {
     third_party_harness_model_config: Option<HarnessModelConfig>,
     local_only: bool,
     direct_provider_route: Option<CustomProviderRoute>,
+    local_resume: Option<LocalHarnessResumePayload>,
 }
 
 pub(crate) enum SDKConversationOutputStatus {
@@ -409,6 +412,7 @@ impl AgentDriver {
             third_party_harness_model_config,
             local_only,
             direct_provider_route,
+            local_resume,
         } = options;
 
         safe_info!(
@@ -477,6 +481,7 @@ impl AgentDriver {
             third_party_harness_model_config,
             local_only,
             direct_provider_route,
+            local_resume,
         })
     }
 
@@ -511,6 +516,7 @@ impl AgentDriver {
             third_party_harness_model_config: None,
             local_only: false,
             direct_provider_route: None,
+            local_resume: None,
         }
     }
 
@@ -1760,7 +1766,7 @@ impl AgentDriver {
         harness: &dyn ThirdPartyHarness,
         foreground: &ModelSpawner<Self>,
     ) -> Result<Arc<dyn harness::HarnessRunner>, AgentDriverError> {
-        let (working_dir, task_id, server_api, terminal_driver) = foreground
+        let (working_dir, task_id, server_api, terminal_driver, local_resume) = foreground
             .spawn(|me, ctx| {
                 if me.harness.is_some() {
                     log::error!(
@@ -1774,6 +1780,7 @@ impl AgentDriver {
                     me.task_id,
                     ServerApiProvider::as_ref(ctx).get(),
                     me.terminal_driver.clone(),
+                    me.local_resume.clone(),
                 ))
             })
             .await
@@ -1825,6 +1832,7 @@ impl AgentDriver {
                 resumption_prompt.as_deref(),
                 server_context.as_deref(),
                 &working_dir,
+                local_resume,
                 task_id,
                 server_api,
                 terminal_driver,
@@ -1861,6 +1869,38 @@ impl AgentDriver {
         harness_exit_rx: oneshot::Receiver<()>,
     ) -> Result<(), AgentDriverError> {
         let harness_name = runner.harness_name().to_owned();
+
+        // Third-party harnesses have no Warp conversation token. Emit the
+        // stable local index ID once so text, JSON, and NDJSON callers can
+        // resume this exact CLI session after a restart.
+        let local_run = foreground
+            .spawn(|me, _| {
+                me.local_resume
+                    .as_ref()
+                    .map(|resume| (resume.run_id, resume.is_resume))
+            })
+            .await?;
+        if let Some((run_id, is_resume)) = local_run {
+            let output_format = foreground.spawn(|me, _| me.output_format).await?;
+            report_if_error!(
+                output::with_stdout_buffered(|buf| match output_format {
+                    OutputFormat::Json | OutputFormat::Ndjson => serde_json::to_writer(
+                        &mut *buf,
+                        &serde_json::json!({
+                            "type": "local_harness_run",
+                            "local_run_id": run_id.to_string(),
+                            "resumed": is_resume,
+                        }),
+                    )
+                    .map_err(io::Error::other)
+                    .and_then(|_| writeln!(buf)),
+                    OutputFormat::Text | OutputFormat::Pretty => {
+                        writeln!(buf, "local harness run: {run_id}")
+                    }
+                })
+                .context("Failed to write local harness run ID")
+            );
+        }
 
         // Start the third-party harness.
         let command_handle = runner.start(foreground).await?;

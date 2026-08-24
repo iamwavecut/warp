@@ -24,7 +24,11 @@ use warp_managed_secrets::ManagedSecretValue;
 use super::super::terminal::{CommandHandle, TerminalDriver};
 use super::super::{AgentDriver, AgentDriverError};
 use super::json_utils::read_json_file_or_default;
-use super::{HarnessRunner, JSONMCPServer, SavePoint, ThirdPartyHarness, write_temp_file};
+use super::{
+    HarnessRunner, JSONMCPServer, LocalHarnessRecord, LocalHarnessRepository,
+    LocalHarnessResumeError, LocalHarnessResumePayload, LocalHarnessSavePoint, SavePoint,
+    ThirdPartyHarness, write_temp_file,
+};
 
 pub(crate) struct CodexHarness;
 
@@ -53,6 +57,7 @@ impl ThirdPartyHarness for CodexHarness {
         resumption_prompt: Option<&str>,
         _context: Option<&str>,
         working_dir: &Path,
+        local_resume: Option<LocalHarnessResumePayload>,
         _task_id: Option<AmbientAgentTaskId>,
         _server_api: Arc<ServerApi>,
         terminal_driver: ModelHandle<TerminalDriver>,
@@ -84,6 +89,7 @@ impl ThirdPartyHarness for CodexHarness {
             system_prompt,
             working_dir,
             terminal_driver,
+            local_resume,
         )?))
     }
 }
@@ -123,6 +129,8 @@ struct CodexHarnessRunner {
     /// Codex session UUID. Populated lazily by [`HarnessRunner::handle_session_update`]
     /// once the codex hooks emit `SessionStart`. Set once (using `OnceLock`).
     session_id: OnceLock<Uuid>,
+    local_resume: Option<LocalHarnessResumePayload>,
+    repository: LocalHarnessRepository,
 }
 
 impl CodexHarnessRunner {
@@ -133,11 +141,12 @@ impl CodexHarnessRunner {
         _system_prompt: Option<&str>,
         _working_dir: &Path,
         terminal_driver: ModelHandle<TerminalDriver>,
+        local_resume: Option<LocalHarnessResumePayload>,
     ) -> Result<Self, AgentDriverError> {
         let temp_file = write_temp_file("oz_prompt_", prompt, ".txt")?;
         let prompt_path = temp_file.path().display().to_string();
 
-        let session_id = None;
+        let session_id = local_resume.as_ref().and_then(|resume| resume.session_id);
 
         let command = codex_command(cli_command, session_id.as_ref(), &prompt_path);
 
@@ -153,7 +162,59 @@ impl CodexHarnessRunner {
             terminal_driver,
             state: Mutex::new(CodexRunnerState::Preexec),
             session_id: session_id_cell,
+            local_resume,
+            repository: LocalHarnessRepository::for_user(),
         })
+    }
+
+    fn persist_local_state(&self, save_point: LocalHarnessSavePoint, terminal: bool) -> Result<()> {
+        let Some(payload) = &self.local_resume else {
+            return Ok(());
+        };
+        let Some(session_id) = self.session_id.get().copied().or(payload.session_id) else {
+            if terminal {
+                anyhow::bail!("Codex did not report a session UUID before final local save");
+            }
+            return Ok(());
+        };
+
+        let mut record = match self.repository.read(payload.run_id) {
+            Ok(record) => record,
+            Err(LocalHarnessResumeError::MissingRecord { .. }) if !payload.is_resume => {
+                self.repository.create(LocalHarnessRecord::new(
+                    payload.run_id,
+                    payload.harness,
+                    session_id,
+                    &payload.working_dir,
+                    payload.transcript.clone(),
+                    payload.task_id,
+                ))?
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if record.harness_session_id != session_id || record.harness != payload.harness {
+            anyhow::bail!("local Codex resume record does not match the running harness");
+        }
+
+        let discovered = self.repository.discover_transcript(&record)?;
+        let Some((locator, _path)) = discovered else {
+            record.last_save_point = Some(save_point);
+            record.terminal = terminal;
+            record.complete = terminal;
+            let _ = self.repository.update(record.clone(), record.revision)?;
+            if terminal {
+                anyhow::bail!("Codex transcript was not created before final local save");
+            }
+            return Ok(());
+        };
+        record.transcript = Some(locator);
+        record.last_save_point = Some(save_point);
+        record.terminal = terminal;
+        record.complete = terminal;
+        self.repository
+            .update(record.clone(), record.revision)
+            .map(|_| ())
+            .map_err(Into::into)
     }
 }
 
@@ -221,6 +282,7 @@ impl HarnessRunner for CodexHarnessRunner {
             Ok(uuid) => {
                 log::info!("Captured codex session id {uuid}");
                 let _ = self.session_id.set(uuid);
+                self.persist_local_state(LocalHarnessSavePoint::SessionStart, false)?;
             }
             Err(e) => log::warn!("Failed to parse codex session id '{session_id_str}': {e}"),
         }
@@ -247,7 +309,14 @@ impl HarnessRunner for CodexHarnessRunner {
             CodexRunnerState::Running => {}
         }
 
-        Ok(())
+        self.persist_local_state(
+            match save_point {
+                SavePoint::Periodic => LocalHarnessSavePoint::Periodic,
+                SavePoint::PostTurn => LocalHarnessSavePoint::PostTurn,
+                SavePoint::Final => LocalHarnessSavePoint::Final,
+            },
+            matches!(save_point, SavePoint::Final),
+        )
     }
 }
 

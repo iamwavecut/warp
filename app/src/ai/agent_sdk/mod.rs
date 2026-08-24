@@ -5,7 +5,9 @@ use std::fmt::Write;
 use std::path::Path;
 
 use crate::ai::agent::api::direct_openai::CustomProviderRoute;
-use crate::ai::agent_sdk::driver::harness::{HarnessKind, harness_kind};
+use crate::ai::agent_sdk::driver::harness::{
+    HarnessKind, LocalHarnessRepository, LocalHarnessResumePayload, harness_kind,
+};
 use crate::ai::agent_sdk::driver::{AgentDriverOptions, AgentRunPrompt, Task};
 use crate::ai::agent_sdk::mcp_config::build_mcp_servers_from_specs;
 use crate::ai::custom_model_routers::{
@@ -543,15 +545,62 @@ impl AgentDriverRunner {
     /// Build the AgentDriverOptions and Task for a local CLI agent run.
     async fn build_driver_options_and_task(
         foreground: &ModelSpawner<Self>,
-        args: RunAgentArgs,
+        mut args: RunAgentArgs,
     ) -> Result<(AgentDriverOptions, Task), AgentDriverError> {
+        let resume_record = args
+            .resume
+            .as_deref()
+            .map(|selector| {
+                let run_id = Uuid::parse_str(selector).map_err(|error| {
+                    AgentDriverError::ConfigBuildFailed(anyhow::anyhow!(
+                        "invalid local harness run ID '{selector}': {error}"
+                    ))
+                })?;
+                LocalHarnessRepository::for_user()
+                    .read(run_id)
+                    .map_err(|error| AgentDriverError::ConfigBuildFailed(anyhow::Error::new(error)))
+            })
+            .transpose()?;
+
+        if let Some(record) = resume_record.as_ref() {
+            if args.harness != Harness::Oz && args.harness != record.harness {
+                return Err(AgentDriverError::ConfigBuildFailed(anyhow::anyhow!(
+                    "resume harness conflict: local run {} uses {}, but {} was requested",
+                    record.run_id,
+                    record.harness,
+                    args.harness
+                )));
+            }
+            args.harness = record.harness;
+        }
+
         // Get the working directory
-        let working_dir = match args.cwd.as_ref() {
-            Some(dir) => dunce::canonicalize(dir)
+        let working_dir = match (args.cwd.as_ref(), resume_record.as_ref()) {
+            (Some(dir), _) => dunce::canonicalize(dir)
                 .with_context(|| format!("Unable to resolve {}", dir.display())),
-            None => std::env::current_dir().context("Unable to determine working directory"),
+            (None, Some(record)) => Ok(record.working_dir.clone()),
+            (None, None) => {
+                std::env::current_dir().context("Unable to determine working directory")
+            }
         }
         .map_err(AgentDriverError::ConfigBuildFailed)?;
+
+        if let Some(record) = resume_record.as_ref() {
+            let mut validation_record = record.clone();
+            validation_record.working_dir = working_dir.clone();
+            LocalHarnessRepository::for_user()
+                .validate_transcript(&validation_record)
+                .map_err(|error| AgentDriverError::ConfigBuildFailed(anyhow::Error::new(error)))?;
+        }
+
+        let resume_record_for_driver = resume_record.clone().map(|mut record| {
+            // A resume may deliberately override the original cwd. Keep the
+            // validated locator and session binding, but hand the effective
+            // cwd to the harness so its local config/MCP resolution follows
+            // the current invocation.
+            record.working_dir = working_dir.clone();
+            record
+        });
 
         let named_record = args
             .agent
@@ -633,10 +682,43 @@ impl AgentDriverRunner {
                     .map(|config| config.harness_type)
                     .unwrap_or(args.harness);
 
+                if let Some(record) = resume_record_for_driver.as_ref()
+                    && selected_harness != record.harness
+                {
+                    return Err(anyhow::anyhow!(
+                        "resume harness conflict: local run {} uses {}, but {} was resolved",
+                        record.run_id,
+                        record.harness,
+                        selected_harness
+                    ));
+                }
+
+                let local_resume = if let Some(record) = resume_record_for_driver.as_ref() {
+                    Some(LocalHarnessResumePayload::from_record(record))
+                } else if matches!(selected_harness, Harness::Codex | Harness::Claude) {
+                    Some(LocalHarnessResumePayload::fresh(
+                        Uuid::new_v4(),
+                        selected_harness,
+                        &working_dir,
+                        None,
+                        merged_config
+                            .harness
+                            .as_ref()
+                            .and_then(|config| config.model_config()),
+                    ))
+                } else {
+                    None
+                };
+
                 let direct_provider_route = named_bundle
                     .is_some()
                     .then(|| preflight_named_execution(&merged_config, &task, ctx))
                     .transpose()?;
+
+                let third_party_harness_model_config = merged_config
+                    .harness
+                    .as_ref()
+                    .and_then(|config| config.model_config());
 
                 let driver_options = driver::AgentDriverOptions {
                     working_dir: working_dir.clone(),
@@ -646,9 +728,10 @@ impl AgentDriverRunner {
                     secrets: Default::default(),
                     environment: None,
                     selected_harness,
-                    third_party_harness_model_config: None,
+                    third_party_harness_model_config,
                     local_only: named_bundle.is_some(),
                     direct_provider_route,
+                    local_resume,
                 };
 
                 if let Some(record) = named_record_for_metadata.as_ref() {

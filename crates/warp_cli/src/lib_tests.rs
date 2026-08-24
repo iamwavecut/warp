@@ -226,6 +226,49 @@ fn agent_run_accepts_prompt_only() {
 }
 
 #[test]
+fn agent_run_accepts_local_harness_resume_with_prompt() {
+    let args = Args::try_parse_from([
+        "warp",
+        "agent",
+        "run",
+        "--resume",
+        "3d6f0a9e-0d67-4d50-a4b2-b8d6b9f6c8dd",
+        "--prompt",
+        "continue the local task",
+    ])
+    .unwrap();
+
+    let Some(Command::CommandLine(boxed_cmd)) = args.command else {
+        panic!("Expected `warp agent run` command");
+    };
+    let CliCommand::Agent(AgentCommand::Run(run_args)) = boxed_cmd.as_ref() else {
+        panic!("Expected `warp agent run` command");
+    };
+
+    assert_eq!(
+        run_args.resume.as_deref(),
+        Some("3d6f0a9e-0d67-4d50-a4b2-b8d6b9f6c8dd")
+    );
+    assert_eq!(
+        run_args.prompt_arg.prompt.as_deref(),
+        Some("continue the local task")
+    );
+}
+
+#[test]
+fn agent_run_resume_requires_prompt() {
+    let result = Args::try_parse_from([
+        "warp",
+        "agent",
+        "run",
+        "--resume",
+        "3d6f0a9e-0d67-4d50-a4b2-b8d6b9f6c8dd",
+    ]);
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn agent_run_accepts_saved_prompt_flag() {
     let args = Args::try_parse_from(["warp", "agent", "run", "--saved-prompt", "sp-123"]).unwrap();
 

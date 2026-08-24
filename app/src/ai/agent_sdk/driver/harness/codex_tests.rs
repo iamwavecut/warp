@@ -8,6 +8,19 @@ use tempfile::TempDir;
 use super::*;
 
 #[test]
+fn codex_command_uses_resume_id_only_when_requested() {
+    let uuid = Uuid::new_v4();
+    let resumed = codex_command("codex", Some(&uuid), "/tmp/prompt.txt");
+    assert!(resumed.contains(&format!(
+        "codex resume --dangerously-bypass-approvals-and-sandbox {uuid}"
+    )));
+
+    let fresh = codex_command("codex", None, "/tmp/prompt.txt");
+    assert!(!fresh.contains(" resume "));
+    assert!(!fresh.contains(&uuid.to_string()));
+}
+
+#[test]
 fn prepare_codex_auth_writes_fresh_file_with_api_key_mode() {
     let tmp = TempDir::new().unwrap();
     let auth_path = tmp.path().join(".codex/auth.json");

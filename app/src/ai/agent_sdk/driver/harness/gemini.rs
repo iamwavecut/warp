@@ -52,6 +52,7 @@ impl ThirdPartyHarness for GeminiHarness {
         _resumption_prompt: Option<&str>,
         context: Option<&str>,
         working_dir: &Path,
+        _local_resume: Option<super::LocalHarnessResumePayload>,
         _task_id: Option<AmbientAgentTaskId>,
         _server_api: Arc<ServerApi>,
         terminal_driver: ModelHandle<TerminalDriver>,

@@ -24,8 +24,9 @@ use super::super::terminal::{CommandHandle, TerminalDriver};
 use super::super::{AgentDriver, AgentDriverError};
 use super::json_utils::{read_json_file_or_default, write_json_file};
 use super::{
-    HarnessCleanupDisposition, HarnessRunner, JSONMCPServer, SavePoint, ThirdPartyHarness,
-    write_temp_file,
+    HarnessCleanupDisposition, HarnessRunner, JSONMCPServer, LocalHarnessRecord,
+    LocalHarnessRepository, LocalHarnessResumePayload, LocalHarnessSavePoint, SavePoint,
+    ThirdPartyHarness, write_temp_file,
 };
 
 pub(crate) struct ClaudeHarness;
@@ -51,6 +52,7 @@ impl ThirdPartyHarness for ClaudeHarness {
         resumption_prompt: Option<&str>,
         context: Option<&str>,
         working_dir: &Path,
+        local_resume: Option<LocalHarnessResumePayload>,
         _task_id: Option<AmbientAgentTaskId>,
         _server_api: Arc<ServerApi>,
         terminal_driver: ModelHandle<TerminalDriver>,
@@ -89,6 +91,7 @@ impl ThirdPartyHarness for ClaudeHarness {
             system_prompt,
             terminal_driver,
             resolved_mcp_servers,
+            local_resume,
         )?))
     }
 }
@@ -105,11 +108,17 @@ const CLAUDE_EXIT_COMMAND: &str = "/exit";
 fn claude_command(
     cli_name: &str,
     session_id: &Uuid,
+    is_resume: bool,
     prompt_path: &str,
     system_prompt_path: Option<&str>,
     mcp_config_path: Option<&str>,
 ) -> String {
-    let mut cmd = format!("{cli_name} --session-id {session_id} --dangerously-skip-permissions");
+    let session_flag = if is_resume {
+        format!("--resume {session_id}")
+    } else {
+        format!("--session-id {session_id}")
+    };
+    let mut cmd = format!("{cli_name} {session_flag} --dangerously-skip-permissions");
     if let Some(sp_path) = system_prompt_path {
         let _ = write!(cmd, " --append-system-prompt-file '{sp_path}'");
     }
@@ -136,6 +145,8 @@ struct ClaudeHarnessRunner {
     _temp_system_prompt_file: Option<NamedTempFile>,
     terminal_driver: ModelHandle<TerminalDriver>,
     state: Mutex<ClaudeRunnerState>,
+    local_resume: Option<LocalHarnessResumePayload>,
+    repository: LocalHarnessRepository,
 }
 
 impl ClaudeHarnessRunner {
@@ -146,13 +157,18 @@ impl ClaudeHarnessRunner {
         system_prompt: Option<&str>,
         terminal_driver: ModelHandle<TerminalDriver>,
         resolved_mcp_servers: &HashMap<String, JSONMCPServer>,
+        local_resume: Option<LocalHarnessResumePayload>,
     ) -> Result<Self, AgentDriverError> {
         // Write the prompt to a temp file so we can feed it via stdin redirect,
         // avoiding shell-quoting issues with complex content (e.g. skill instructions).
         let temp_file = write_temp_file("oz_prompt_", prompt, ".txt")?;
         let prompt_path = temp_file.path().display().to_string();
 
-        let session_id = Uuid::new_v4();
+        let session_id = local_resume
+            .as_ref()
+            .and_then(|resume| resume.session_id)
+            .unwrap_or_else(Uuid::new_v4);
+        let is_resume = local_resume.as_ref().is_some_and(|resume| resume.is_resume);
 
         let temp_system_prompt_file = system_prompt
             .map(|sp| write_temp_file("oz_system_prompt_", sp, ".txt"))
@@ -172,10 +188,27 @@ impl ClaudeHarnessRunner {
             .as_ref()
             .map(|f| f.path().display().to_string());
 
+        let repository = LocalHarnessRepository::for_user();
+        if let Some(payload) = &local_resume
+            && !payload.is_resume
+        {
+            repository
+                .create(LocalHarnessRecord::new(
+                    payload.run_id,
+                    payload.harness,
+                    session_id,
+                    &payload.working_dir,
+                    payload.transcript.clone(),
+                    payload.task_id,
+                ))
+                .map_err(|error| AgentDriverError::ConfigBuildFailed(anyhow::Error::new(error)))?;
+        }
+
         Ok(Self {
             command: claude_command(
                 cli_command,
                 &session_id,
+                is_resume,
                 &prompt_path,
                 system_prompt_path.as_deref(),
                 mcp_config_path.as_deref(),
@@ -185,7 +218,40 @@ impl ClaudeHarnessRunner {
             _temp_system_prompt_file: temp_system_prompt_file,
             terminal_driver,
             state: Mutex::new(ClaudeRunnerState::Preexec),
+            local_resume,
+            repository,
         })
+    }
+
+    fn persist_local_state(&self, save_point: LocalHarnessSavePoint, terminal: bool) -> Result<()> {
+        let Some(payload) = &self.local_resume else {
+            return Ok(());
+        };
+        let mut record = self.repository.read(payload.run_id)?;
+        let session_id = payload.session_id.unwrap_or(record.harness_session_id);
+        if record.harness_session_id != session_id || record.harness != payload.harness {
+            anyhow::bail!("local Claude resume record does not match the running harness");
+        }
+
+        let discovered = self.repository.discover_transcript(&record)?;
+        let Some((locator, _path)) = discovered else {
+            record.last_save_point = Some(save_point);
+            record.terminal = terminal;
+            record.complete = terminal;
+            let _ = self.repository.update(record.clone(), record.revision)?;
+            if terminal {
+                anyhow::bail!("Claude transcript was not created before final local save");
+            }
+            return Ok(());
+        };
+        record.transcript = Some(locator);
+        record.last_save_point = Some(save_point);
+        record.terminal = terminal;
+        record.complete = terminal;
+        self.repository
+            .update(record.clone(), record.revision)
+            .map(|_| ())
+            .map_err(Into::into)
     }
 }
 
@@ -233,7 +299,7 @@ impl HarnessRunner for ClaudeHarnessRunner {
     }
 
     async fn handle_session_update(&self, _foreground: &ModelSpawner<AgentDriver>) -> Result<()> {
-        Ok(())
+        self.persist_local_state(LocalHarnessSavePoint::SessionStart, false)
     }
 
     async fn save_conversation(
@@ -256,7 +322,14 @@ impl HarnessRunner for ClaudeHarnessRunner {
             ClaudeRunnerState::Running => {}
         }
 
-        Ok(())
+        self.persist_local_state(
+            match save_point {
+                SavePoint::Periodic => LocalHarnessSavePoint::Periodic,
+                SavePoint::PostTurn => LocalHarnessSavePoint::PostTurn,
+                SavePoint::Final => LocalHarnessSavePoint::Final,
+            },
+            matches!(save_point, SavePoint::Final),
+        )
     }
     async fn cleanup(
         &self,
