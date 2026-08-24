@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use warp_cli::agent::Harness;
-use warp_core::features::FeatureFlag;
 use warpui::{Entity, ModelContext, SingletonEntity};
 
 use super::{ActionExecution, AnyActionExecution, ExecuteActionInput, PreprocessActionInput};
@@ -12,8 +11,6 @@ use crate::ai::agent::{
     AIAgentAction, AIAgentActionResultType, AIAgentActionType, LifecycleEventType,
     StartAgentExecutionMode, StartAgentResult,
 };
-use crate::ai::blocklist::orchestration_event_streamer::OrchestrationEventStreamer;
-use crate::ai::blocklist::orchestration_events::OrchestrationEventService;
 use crate::ai::blocklist::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel};
 use crate::ai::local_child_harnesses::local_child_harness_disabled_message;
 
@@ -60,7 +57,6 @@ pub struct StartAgentRequest {
 }
 
 struct PendingStartAgent {
-    parent_conversation_id: AIConversationId,
     /// Set once the child conversation is synchronously created.
     child_conversation_id: Option<AIConversationId>,
     sender: async_channel::Sender<StartAgentOutcome>,
@@ -123,23 +119,17 @@ impl StartAgentExecutor {
         let Some(pending) = self.pending.remove(&request_id) else {
             return;
         };
+        // Local children are identified by the run ID assigned while their
+        // conversation/pane is created.  A server conversation token is not a
+        // readiness signal and direct providers do not emit one.
         let agent_id = BlocklistAIHistoryModel::as_ref(ctx)
             .conversation(&child_conversation_id)
-            .and_then(|conversation| conversation.orchestration_agent_id());
+            .and_then(|conversation| conversation.run_id());
         match agent_id {
             Some(id) => {
                 let _ = pending.sender.try_send(StartAgentOutcome::Started {
                     agent_id: id.clone(),
                 });
-                if FeatureFlag::OrchestrationV2.is_enabled() {
-                    OrchestrationEventStreamer::handle(ctx).update(ctx, |streamer, ctx| {
-                        streamer.register_watched_run_id(pending.parent_conversation_id, id, ctx);
-                    });
-                } else {
-                    OrchestrationEventService::handle(ctx).update(ctx, |svc, ctx| {
-                        svc.emit_child_startup_started(child_conversation_id, ctx);
-                    });
-                }
             }
             None => {
                 report_error!(
@@ -147,18 +137,8 @@ impl StartAgentExecutor {
                     extra: { "child_conversation_id" => ?child_conversation_id }
                 );
                 let _ = pending.sender.try_send(StartAgentOutcome::Error(
-                    "Server did not assign an agent identifier".to_string(),
+                    "Local child did not receive a local run ID".to_string(),
                 ));
-                if !FeatureFlag::OrchestrationV2.is_enabled() {
-                    OrchestrationEventService::handle(ctx).update(ctx, |svc, ctx| {
-                        svc.emit_child_startup_errored(
-                            child_conversation_id,
-                            "missing_agent_id".to_string(),
-                            "Server did not assign an agent identifier".to_string(),
-                            ctx,
-                        );
-                    });
-                }
             }
         }
     }
@@ -166,9 +146,9 @@ impl StartAgentExecutor {
     fn complete_pending_as_error(
         &mut self,
         request_id: StartAgentRequestId,
-        child_conversation_id: AIConversationId,
+        _child_conversation_id: AIConversationId,
         error_msg: String,
-        ctx: &mut ModelContext<Self>,
+        _ctx: &mut ModelContext<Self>,
     ) {
         let Some(pending) = self.pending.remove(&request_id) else {
             return;
@@ -176,16 +156,6 @@ impl StartAgentExecutor {
         let _ = pending
             .sender
             .try_send(StartAgentOutcome::Error(error_msg.clone()));
-        if !FeatureFlag::OrchestrationV2.is_enabled() {
-            OrchestrationEventService::handle(ctx).update(ctx, |svc, ctx| {
-                svc.emit_child_startup_errored(
-                    child_conversation_id,
-                    "conversation_status".to_string(),
-                    error_msg,
-                    ctx,
-                );
-            });
-        }
     }
 
     fn maybe_complete_pending_for_child_state(
@@ -206,7 +176,7 @@ impl StartAgentExecutor {
             self.complete_pending_as_error(request_id, child_conversation_id, error_msg, ctx);
             return;
         }
-        if conversation.orchestration_agent_id().is_some() {
+        if conversation.run_id().is_some() {
             self.complete_pending_as_started(request_id, child_conversation_id, ctx);
         }
     }
@@ -347,16 +317,6 @@ impl StartAgentExecutor {
                     ));
                 }
 
-                if !FeatureFlag::OrchestrationV2.is_enabled() {
-                    return ActionExecution::Sync(AIAgentActionResultType::StartAgent(
-                        StartAgentResult::Error {
-                            error: "Local harness child agents require orchestration v2."
-                                .to_string(),
-                            version,
-                        },
-                    ));
-                }
-
                 let parent_run_id = BlocklistAIHistoryModel::as_ref(ctx)
                     .conversation(&parent_conversation_id)
                     .and_then(|conversation| conversation.run_id());
@@ -389,7 +349,6 @@ impl StartAgentExecutor {
         self.pending.insert(
             request_id,
             PendingStartAgent {
-                parent_conversation_id,
                 child_conversation_id: None,
                 sender,
             },
@@ -441,7 +400,6 @@ impl StartAgentExecutor {
         self.pending.insert(
             request_id,
             PendingStartAgent {
-                parent_conversation_id,
                 child_conversation_id: None,
                 sender,
             },

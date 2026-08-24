@@ -26,6 +26,7 @@ use crate::ai::agent::{
     StartAgentExecutionMode,
 };
 use crate::ai::blocklist::{BlocklistAIHistoryModel, BlocklistAIPermissions};
+use crate::ai::local_agent_registry::MAX_LOCAL_CHILD_FANOUT;
 use warpui::SingletonEntity;
 
 /// Per-child spawn timeout. If a child agent doesn't report back within
@@ -382,6 +383,41 @@ fn resolve_request_from_config(request: &mut RunAgentsRequest, config: &Orchestr
 fn validate_request(request: &RunAgentsRequest) -> Result<(), String> {
     if request.agent_run_configs.is_empty() {
         return Err("orchestrate: empty agent_run_configs".to_string());
+    }
+    if request.agent_run_configs.len() > MAX_LOCAL_CHILD_FANOUT {
+        return Err(format!(
+            "orchestrate: fan-out exceeds local limit of {MAX_LOCAL_CHILD_FANOUT} agents"
+        ));
+    }
+    if request.model_id.trim().is_empty() {
+        return Err("orchestrate: a local model is required".to_string());
+    }
+    if request.base_prompt.trim().is_empty()
+        && request
+            .agent_run_configs
+            .iter()
+            .all(|config| config.prompt.trim().is_empty())
+    {
+        return Err("orchestrate: at least one non-empty prompt is required".to_string());
+    }
+    let mut names = std::collections::HashSet::with_capacity(request.agent_run_configs.len());
+    for config in &request.agent_run_configs {
+        if config.name.trim().is_empty() {
+            return Err("orchestrate: child agent names are required".to_string());
+        }
+        if !names.insert(config.name.trim().to_ascii_lowercase()) {
+            return Err(format!(
+                "orchestrate: child agent name `{}` is duplicated",
+                config.name.trim()
+            ));
+        }
+    }
+    if request
+        .harness_type
+        .trim()
+        .eq_ignore_ascii_case("gemini")
+    {
+        return Err("orchestrate: Gemini is not an available local child harness".to_string());
     }
     Ok(())
 }

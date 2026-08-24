@@ -28,6 +28,7 @@ use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::agent::conversation::ConversationStatus;
 use crate::ai::agent::conversation::{ServerAIConversationMetadata, UpdateConversationError};
 use crate::ai::agent::task::TaskId;
+use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::ai::agent::task::helper::{MessageExt, ToolCallExt};
 use crate::ai::artifacts::Artifact;
 use crate::ai::conversation_rename::{
@@ -445,13 +446,24 @@ impl BlocklistAIHistoryModel {
         orchestration_harness: Option<Harness>,
         ctx: &mut ModelContext<Self>,
     ) -> AIConversationId {
+        // Local children need a stable identity before their first request is
+        // sent.  A direct OpenAI-compatible provider has no server stream
+        // init to mint one, so reserve local run IDs while the conversation
+        // and hidden pane are being created.  Existing server-owned IDs are
+        // preserved and may still be rebound by StreamInit later.
         let parent_agent_id = self
             .conversation(&parent_conversation_id)
-            .and_then(|c| c.orchestration_agent_id());
+            .and_then(|c| c.run_id())
+            .or_else(|| {
+                let parent = self.conversation_mut(&parent_conversation_id)?;
+                let parent_run_id = AmbientAgentTaskId::generate();
+                parent.set_task_id(parent_run_id);
+                Some(parent_run_id.to_string())
+            });
         if parent_agent_id.is_none() {
             log::warn!(
                 "No agent identifier for parent conversation {parent_conversation_id:?}; \
-                 child agent will not be linked to parent on the server."
+                 child agent will not be linked to parent."
             );
         }
 
@@ -465,11 +477,16 @@ impl BlocklistAIHistoryModel {
             if let Some(id) = parent_agent_id {
                 conversation.set_parent_agent_id(id);
             }
+            // The run ID is assigned synchronously and persisted with the
+            // parent/name/harness topology.  It is intentionally independent
+            // of server conversation tokens.
+            conversation.set_task_id(AmbientAgentTaskId::generate());
             conversation.set_agent_name(name);
             if let Some(harness) = orchestration_harness {
                 conversation.set_orchestration_harness(harness);
             }
         }
+        self.persist_conversation_state(parent_conversation_id, ctx);
         self.set_parent_for_conversation(conversation_id, parent_conversation_id);
         self.persist_conversation_state(conversation_id, ctx);
         conversation_id
