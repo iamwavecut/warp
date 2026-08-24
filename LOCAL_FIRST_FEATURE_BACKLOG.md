@@ -1,6 +1,6 @@
 # WarpOss Local-First Feature Backlog
 
-Last verified: 2026-08-23
+Last verified: 2026-08-24
 
 ## Purpose
 
@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `bcac94830`.
+- Current local implementation head: `be8b3513a`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -408,6 +408,23 @@ never upload transcripts or block snapshots.
 **Estimate / risk:** 4–7 days / medium-high.
 
 ### P1.11 Same-process local child agents
+
+**Delivered in code:** `44641eff2`, `43db79a65`, `be8b3513a`. The direct
+OpenAI-compatible adapter now exposes bounded local-only `StartAgent`,
+`RunAgents`, and `SendMessageToAgent` schemas only when chat/tools and a live
+local controller are available. Stable local run IDs, topology, ownership,
+status, cancellation, ordered message queues, idempotent action replay,
+concurrent fan-out, timeout cleanup, child pills, CLI-harness launch/resume,
+and restart-safe stopped-history restoration are all process-local. Warp
+orchestration tokens, hosted runners, SSE, remote handoff, and server message
+delivery are not used.
+
+Focused suites passed 10 registry tests, 8 StartAgent tests, 2 RunAgents tests,
+1 SendMessageToAgent test, 9 orchestration-control tests, 85 direct-provider
+tests, a terminal bootstrap regression, and 10 `local_only` registry tests.
+The reproducible Cargo test cache was removed immediately afterward while the
+existing `.app` bundle was preserved. The shared P1.8–P1.11 all-target
+build/bundle gate remains the next verification step.
 
 Expose `StartAgent`, `RunAgents`, and `SendMessageToAgent` through the direct
 tool adapter and existing local executors. Add local ownership, cancellation,
