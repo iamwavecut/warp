@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `be8b3513a`.
+- Current local implementation head: `37a68613`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -442,7 +442,31 @@ separate P2 lifecycle.
 
 ## P2 — Local Redesigns
 
+Status: **P2.1 complete**; P2.2 is next.
+
 ### P2.1 Real local `/compact`
+
+**Delivered:** `37a68613`.
+
+The direct OpenAI-compatible path now captures a bounded immutable snapshot,
+preserves the four newest messages and complete tool-call chronology, rejects
+active long-running command state, and requests a strict typed JSON summary.
+It retries once with a smaller snapshot only for an explicit provider context
+overflow. The validated result becomes one structural
+`MoveMessagesToNewTask` transaction; its compare-and-swap metadata binds the
+conversation, source range and checksum, complete task graph, and current
+provider configuration. SQLite acknowledgement is required before success and
+in-memory state is restored if persistence fails. Later direct-provider
+requests receive only the structural summary, while archived raw messages stay
+outside active context. Provider errors, malformed responses, cancellation,
+configuration changes, or stale state produce no history mutation and never
+fall back to Warp.
+
+The focused `local_only` compaction suite passed 11 tests, including message
+boundaries, tool chronology, strict schema validation, stale-state rejection,
+provider-route changes, successful SQLite reload, paused-writer failure, direct
+endpoint success/failure, summary projection, and context-overflow retry
+classification.
 
 Generate a typed summary with `chat`, validate it, then use the existing
 message-splice/task machinery and SQLite persistence to replace old context.
