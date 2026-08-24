@@ -360,7 +360,10 @@ closed without substituting another provider or contacting Warp.
 
 Focused router suites passed 13 tests in both default and `local_only` modes;
 the editor suite passed 4 tests and the direct-provider suite passed 81 tests.
-The broad build/bundle gate is batched with P1.9–P1.11.
+The shared P1.8–P1.11 gate passed default and `local_only` all-target builds,
+bundle creation, executable checks, and strict codesign. The verified bundle
+binary SHA-256 is
+`da3f67c0169f5be75938b7bdf2a9aa3db130d9eead984b14189fce159c9fa3ea`.
 
 Restore the upstream local YAML definitions, but resolve a router to a concrete
 `custom/<provider>/<model>` before the direct request. Do not serialize router
@@ -380,7 +383,8 @@ management UI and CLI CRUD/run/list paths contain no hosted agent rows, owner,
 environment, managed-secret, auth, or upload flow.
 
 Focused default and `local_only` suites passed 11 tests each; the CLI suite
-passed 2 tests. The broad build/bundle gate remains batched with P1.10–P1.11.
+passed 2 tests. The shared P1.8–P1.11 all-target build and signed-bundle gate
+passed with the bundle SHA-256 recorded under P1.8.
 
 Persist named configurations containing prompt, model ID, execution profile,
 MCP specs, and local harness. Store only env-var or keychain references for
@@ -399,7 +403,8 @@ third-party CLI files and never calls Warp harness-support, auth, snapshot, or
 upload APIs.
 
 Focused default and `local_only` lifecycle suites passed 14 tests each; the CLI
-suite passed 1 test. The broad build/bundle gate remains batched with P1.11.
+suite passed 1 test. The shared P1.8–P1.11 all-target build and signed-bundle
+gate passed with the bundle SHA-256 recorded under P1.8.
 
 Reuse only the local JSONL discovery and rehydration portions of upstream Codex
 and Claude transcript code. Maintain a local conversation-to-session index and
@@ -423,8 +428,10 @@ Focused suites passed 10 registry tests, 8 StartAgent tests, 2 RunAgents tests,
 1 SendMessageToAgent test, 9 orchestration-control tests, 85 direct-provider
 tests, a terminal bootstrap regression, and 10 `local_only` registry tests.
 The reproducible Cargo test cache was removed immediately afterward while the
-existing `.app` bundle was preserved. The shared P1.8–P1.11 all-target
-build/bundle gate remains the next verification step.
+existing `.app` bundle was preserved. The shared P1.8–P1.11 gate then passed
+default and `local_only` all-target builds, bundle creation, executable checks,
+and strict codesign. The bundle SHA-256 is recorded under P1.8; cleanup reduced
+`target` to 990 MiB without removing the app bundle.
 
 Expose `StartAgent`, `RunAgents`, and `SendMessageToAgent` through the direct
 tool adapter and existing local executors. Add local ownership, cancellation,
