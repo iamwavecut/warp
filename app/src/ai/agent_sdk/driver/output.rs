@@ -17,8 +17,8 @@ pub mod text {
             ArtifactCreatedData, CallMCPToolResult, FileGlobResult, FileGlobV2Result, GrepResult,
             ReadFilesResult, ReadMCPResourceResult, RequestCommandOutputResult,
             RequestFileEditsResult, SearchCodebaseResult, SuggestNewConversationResult,
-            SuggestPromptResult, TodoOperation, WebFetchStatus, WebSearchStatus,
-            WriteToLongRunningShellCommandResult,
+            SuggestPromptResult, TodoOperation, UploadArtifactResult, WebFetchStatus,
+            WebSearchStatus, WriteToLongRunningShellCommandResult,
         },
     };
 
@@ -111,6 +111,24 @@ pub mod text {
                     ReadFilesResult::Success { .. } => Ok(()),
                     ReadFilesResult::Error(error) => writeln!(w, "Reading files failed: {error}"),
                     ReadFilesResult::Cancelled => writeln!(w, "{CANCELLED_MESSAGE}"),
+                },
+                AIAgentActionResultType::UploadArtifact(result) => match result {
+                    UploadArtifactResult::Success {
+                        artifact_uid,
+                        filepath,
+                        ..
+                    } => writeln!(
+                        w,
+                        "Preserved local artifact {artifact_uid}{}",
+                        filepath
+                            .as_deref()
+                            .map(|path| format!(" at {path}"))
+                            .unwrap_or_default()
+                    ),
+                    UploadArtifactResult::Error(error) => {
+                        writeln!(w, "Preserving local artifact failed: {error}")
+                    }
+                    UploadArtifactResult::Cancelled => writeln!(w, "{CANCELLED_MESSAGE}"),
                 },
                 AIAgentActionResultType::SearchCodebase(result) => match result {
                     SearchCodebaseResult::Success { files } => {
@@ -319,6 +337,9 @@ pub mod text {
                                 .format_with(", ", |loc, f| f(&format_args!("{}", loc.name)))
                         )?;
                         // TODO: Better formatting, need shell info.
+                    }
+                    AIAgentActionType::UploadArtifact(request) => {
+                        writeln!(w, "Preserving local artifact {}", request.file_path)?;
                     }
                     AIAgentActionType::SearchCodebase(request) => {
                         writeln!(
@@ -542,7 +563,7 @@ pub mod json {
             FileContext, FileGlobResult, FileGlobV2Result, GrepResult, ReadFilesFailedFile,
             ReadFilesResult, ReadMCPResourceResult, RequestCommandOutputResult,
             RequestFileEditsResult, SearchCodebaseResult, SubagentCall, TodoOperation,
-            WriteToLongRunningShellCommandResult,
+            UploadArtifactResult, WriteToLongRunningShellCommandResult,
         },
     };
 
@@ -618,6 +639,10 @@ pub mod json {
         ReadFiles {
             files: Vec<JsonFile<'a>>,
         },
+        UploadArtifact {
+            file_path: &'a str,
+            description: Option<&'a str>,
+        },
         SearchCodebase {
             query: &'a str,
             codebase: Option<&'a str>,
@@ -650,6 +675,7 @@ pub mod json {
         RunCommand(JsonRunCommandResult<'a>),
         EditFiles(JsonEditFilesResult<'a>),
         ReadFiles(JsonReadFilesResult<'a>),
+        UploadArtifact(JsonUploadArtifactResult<'a>),
         SearchCodebase(JsonFileCollectionResult<'a>),
         Grep(JsonFileCollectionResult<'a>),
         FileGlob(JsonFileCollectionResult<'a>),
@@ -674,6 +700,15 @@ pub mod json {
         files: Vec<JsonFile<'a>>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         failed_files: Vec<JsonFailedFile<'a>>,
+    }
+
+    #[derive(Serialize)]
+    struct JsonUploadArtifactResult<'a> {
+        artifact_uid: &'a str,
+        filepath: Option<&'a str>,
+        mime_type: &'a str,
+        description: Option<&'a str>,
+        size_bytes: i64,
     }
 
     #[derive(Serialize)]
@@ -856,6 +891,27 @@ pub mod json {
                     }),
                     ReadFilesResult::Cancelled => Some(JsonMessage::ToolCanceled),
                 },
+                AIAgentActionResultType::UploadArtifact(result) => match result {
+                    UploadArtifactResult::Success {
+                        artifact_uid,
+                        filepath,
+                        mime_type,
+                        description,
+                        size_bytes,
+                    } => Some(JsonMessage::ToolResult(JsonToolResult::UploadArtifact(
+                        JsonUploadArtifactResult {
+                            artifact_uid,
+                            filepath: filepath.as_deref(),
+                            mime_type,
+                            description: description.as_deref(),
+                            size_bytes: *size_bytes,
+                        },
+                    ))),
+                    UploadArtifactResult::Error(error) => Some(JsonMessage::ToolError {
+                        error: Cow::Borrowed(error.as_str()),
+                    }),
+                    UploadArtifactResult::Cancelled => Some(JsonMessage::ToolCanceled),
+                },
                 AIAgentActionResultType::SearchCodebase(result) => match result {
                     SearchCodebaseResult::Success { files } => Some(JsonMessage::ToolResult(
                         JsonToolResult::SearchCodebase(JsonFileCollectionResult {
@@ -994,6 +1050,12 @@ pub mod json {
                             })
                             .collect();
                         Some(JsonMessage::ToolCall(JsonToolCall::ReadFiles { files }))
+                    }
+                    AIAgentActionType::UploadArtifact(request) => {
+                        Some(JsonMessage::ToolCall(JsonToolCall::UploadArtifact {
+                            file_path: request.file_path.as_str(),
+                            description: request.description.as_deref(),
+                        }))
                     }
                     AIAgentActionType::SearchCodebase(request) => {
                         Some(JsonMessage::ToolCall(JsonToolCall::SearchCodebase {

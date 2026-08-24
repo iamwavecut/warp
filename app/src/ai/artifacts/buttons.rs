@@ -56,7 +56,7 @@ pub enum ArtifactButtonsRowEvent {
     CopyBranch { branch: String },
     OpenPullRequest { url: String },
     ViewScreenshots { artifact_uids: Vec<String> },
-    DownloadFile { artifact_uid: String },
+    RevealFile { artifact_uid: String },
 }
 
 #[derive(Debug, Clone)]
@@ -65,7 +65,7 @@ pub enum ArtifactButtonAction {
     CopyBranch { branch: String },
     OpenPullRequest { url: String },
     ViewScreenshots { artifact_uids: Vec<String> },
-    DownloadFile { artifact_uid: String },
+    RevealFile { artifact_uid: String },
 }
 
 impl Entity for ArtifactButtonsRow {
@@ -113,8 +113,8 @@ impl TypedActionView for ArtifactButtonsRow {
                     artifact_uids: artifact_uids.clone(),
                 }
             }
-            ArtifactButtonAction::DownloadFile { artifact_uid } => {
-                ArtifactButtonsRowEvent::DownloadFile {
+            ArtifactButtonAction::RevealFile { artifact_uid } => {
+                ArtifactButtonsRowEvent::RevealFile {
                     artifact_uid: artifact_uid.clone(),
                 }
             }
@@ -273,9 +273,9 @@ fn make_file_button(
     make_artifact_button(
         label,
         Icon::File,
-        "Download file",
+        "Reveal local file",
         None,
-        ArtifactButtonAction::DownloadFile { artifact_uid },
+        ArtifactButtonAction::RevealFile { artifact_uid },
         theme,
     )
 }

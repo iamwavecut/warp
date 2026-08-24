@@ -78,6 +78,7 @@ fn get_supported_tools(params: &RequestParams) -> Vec<api::ToolType> {
                 api::ToolType::ReadFiles,
                 api::ToolType::ApplyFileDiffs,
                 api::ToolType::SearchCodebase,
+                api::ToolType::UploadFileArtifact,
             ]);
         }
         Some(SessionType::WarpifiedRemote { host_id: Some(_) }) => {

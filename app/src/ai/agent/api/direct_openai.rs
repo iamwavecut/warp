@@ -3432,6 +3432,7 @@ fn request_tool_call_result_from_action_result(
             Some(result.try_into().ok()?)
         }
         AIAgentActionResultType::ReadFiles(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::UploadArtifact(result) => Some(result.try_into().ok()?),
         AIAgentActionResultType::SearchCodebase(result) => Some(result.try_into().ok()?),
         AIAgentActionResultType::RequestFileEdits(result) => Some(result.try_into().ok()?),
         AIAgentActionResultType::Grep(result) => Some(result.try_into().ok()?),
@@ -3587,6 +3588,13 @@ fn openai_tool_call_from_api_tool_call(
                         }).collect::<Vec<_>>()
                     })
                 }).collect::<Vec<_>>()
+            }),
+        ),
+        api::message::tool_call::Tool::UploadFileArtifact(call) => (
+            "upload_file_artifact",
+            json!({
+                "file_path": call.file.as_ref().map(|file| file.file_path.clone()),
+                "description": call.description,
             }),
         ),
         api::message::tool_call::Tool::SearchCodebase(call) => (
@@ -4127,6 +4135,14 @@ fn api_tool_from_openai_tool_call_inner(
                     .iter()
                     .map(read_file_arg)
                     .collect::<Result<Vec<_>, _>>()?,
+            },
+        )),
+        "upload_file_artifact" => Ok(api::message::tool_call::Tool::UploadFileArtifact(
+            api::UploadFileArtifact {
+                file: Some(api::FilePathReference {
+                    file_path: required_string(&args, "file_path")?,
+                }),
+                description: optional_string_strict(&args, "description")?.unwrap_or_default(),
             },
         )),
         "search_codebase" => Ok(api::message::tool_call::Tool::SearchCodebase(
@@ -5348,6 +5364,7 @@ fn tool_type_for_openai_name(name: &str) -> Option<api::ToolType> {
     Some(match name {
         "run_shell_command" => api::ToolType::RunShellCommand,
         "read_files" => api::ToolType::ReadFiles,
+        "upload_file_artifact" => api::ToolType::UploadFileArtifact,
         "search_codebase" => api::ToolType::SearchCodebase,
         "grep" => api::ToolType::Grep,
         "file_glob" => api::ToolType::FileGlobV2,
@@ -5405,6 +5422,7 @@ fn openai_tool_name(tool: &api::message::tool_call::Tool) -> &'static str {
     match tool {
         api::message::tool_call::Tool::RunShellCommand(_) => "run_shell_command",
         api::message::tool_call::Tool::ReadFiles(_) => "read_files",
+        api::message::tool_call::Tool::UploadFileArtifact(_) => "upload_file_artifact",
         api::message::tool_call::Tool::SearchCodebase(_) => "search_codebase",
         api::message::tool_call::Tool::Grep(_) => "grep",
         api::message::tool_call::Tool::FileGlob(_)
@@ -6262,6 +6280,32 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                     }),
                 )],
                 ["files"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::UploadFileArtifact) {
+        tools.push(openai_tool(
+            "upload_file_artifact",
+            "Preserve a local file or screenshot as a durable conversation artifact. The file remains on this machine and is never uploaded.",
+            json_schema_object(
+                [
+                    (
+                        "file_path",
+                        json!({
+                            "type": "string",
+                            "description": "Absolute path or a path relative to the current terminal directory."
+                        }),
+                    ),
+                    (
+                        "description",
+                        json!({
+                            "type": "string",
+                            "description": "Optional short description shown with the artifact."
+                        }),
+                    ),
+                ],
+                ["file_path"],
             ),
         ));
     }
@@ -11239,6 +11283,40 @@ mod tests {
             panic!("expected wait_for_events");
         };
         assert_eq!(wait.idle_timeout_seconds, 600);
+    }
+
+    #[test]
+    fn p2_5_upload_artifact_is_advertised_and_parsed_locally() {
+        let tools = openai_tools_for_supported_tools(&[api::ToolType::UploadFileArtifact]);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].function.name, "upload_file_artifact");
+        assert!(tools[0].function.description.contains("never uploaded"));
+
+        let call = OpenAIToolCall {
+            id: "artifact-1".to_string(),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: "upload_file_artifact".to_string(),
+                arguments: json!({
+                    "file_path": "screenshots/result.png",
+                    "description": "Local result"
+                })
+                .to_string(),
+            },
+        };
+        let tool = api_tool_from_openai_tool_call_with_supported_tools(
+            &call,
+            &[api::ToolType::UploadFileArtifact],
+        )
+        .unwrap();
+        let api::message::tool_call::Tool::UploadFileArtifact(upload) = tool else {
+            panic!("expected upload_file_artifact");
+        };
+        assert_eq!(
+            upload.file.as_ref().map(|file| file.file_path.as_str()),
+            Some("screenshots/result.png")
+        );
+        assert_eq!(upload.description, "Local result");
     }
 
     #[test]

@@ -1809,6 +1809,21 @@ impl BlocklistAIHistoryModel {
             .get(&conversation_id)
             .and_then(|c| c.run_id());
 
+        let artifact_owner =
+            crate::ai::local_artifacts::LocalArtifactOwner::conversation(conversation_id);
+        ctx.spawn(
+            blocking::unblock(move || {
+                crate::ai::local_artifacts::LocalArtifactRepository::open_current_scope()?
+                    .release_owner(&artifact_owner)
+                    .map_err(anyhow::Error::new)
+            }),
+            |_model, result, _ctx| {
+                if let Err(error) = result {
+                    log::warn!("Failed to clean up deleted conversation artifacts: {error:#}");
+                }
+            },
+        );
+
         self.remove_conversation_from_memory(conversation_id, terminal_surface_id, ctx);
 
         // Delete persisted conversation from sqlite.

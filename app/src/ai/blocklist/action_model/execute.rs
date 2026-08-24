@@ -18,6 +18,7 @@ pub(super) mod shell_command;
 pub(super) mod start_agent;
 pub(super) mod suggest_new_conversation;
 pub(super) mod suggest_prompt;
+pub(super) mod upload_artifact;
 pub(super) mod use_computer;
 pub(super) mod wait_for_events;
 
@@ -58,6 +59,7 @@ pub use start_agent::{
 pub use suggest_new_conversation::NewConversationDecision;
 use suggest_new_conversation::SuggestNewConversationExecutor;
 pub use suggest_prompt::PromptSuggestionExecutor;
+use upload_artifact::UploadArtifactExecutor;
 use use_computer::UseComputerExecutor;
 use wait_for_events::WaitForEventsExecutor;
 use warp_core::execution_mode::AppExecutionMode;
@@ -248,6 +250,7 @@ pub struct BlocklistAIActionExecutor {
     read_documents_executor: ModelHandle<ReadDocumentsExecutor>,
     edit_documents_executor: ModelHandle<EditDocumentsExecutor>,
     create_documents_executor: ModelHandle<CreateDocumentsExecutor>,
+    upload_artifact_executor: ModelHandle<UploadArtifactExecutor>,
     use_computer_executor: ModelHandle<UseComputerExecutor>,
     request_computer_use_executor: ModelHandle<RequestComputerUseExecutor>,
     read_skill_executor: ModelHandle<ReadSkillExecutor>,
@@ -312,6 +315,8 @@ impl BlocklistAIActionExecutor {
         let edit_documents_executor = ctx.add_model(|_| EditDocumentsExecutor::new());
         let create_documents_executor = ctx
             .add_model(|_| CreateDocumentsExecutor::new(active_session.clone(), terminal_view_id));
+        let upload_artifact_executor = ctx
+            .add_model(|_| UploadArtifactExecutor::new(active_session.clone(), terminal_view_id));
         let use_computer_executor = ctx.add_model(|_| UseComputerExecutor::new());
         let request_computer_use_executor =
             ctx.add_model(|_| RequestComputerUseExecutor::new(terminal_view_id));
@@ -339,6 +344,7 @@ impl BlocklistAIActionExecutor {
             read_documents_executor,
             edit_documents_executor,
             create_documents_executor,
+            upload_artifact_executor,
             use_computer_executor,
             request_computer_use_executor,
             async_executing_actions: Default::default(),
@@ -512,6 +518,9 @@ impl BlocklistAIActionExecutor {
                 .update(ctx, |executor, ctx| executor.preprocess_action(input, ctx)),
             AIAgentActionType::CreateDocuments(_) => self
                 .create_documents_executor
+                .update(ctx, |executor, ctx| executor.preprocess_action(input, ctx)),
+            AIAgentActionType::UploadArtifact(_) => self
+                .upload_artifact_executor
                 .update(ctx, |executor, ctx| executor.preprocess_action(input, ctx)),
             AIAgentActionType::UseComputer(_) => self
                 .use_computer_executor
@@ -700,6 +709,9 @@ impl BlocklistAIActionExecutor {
                     executor.execute(input, conversation_id, ctx)
                 })
                 .into(),
+            AIAgentActionType::UploadArtifact(_) => self
+                .upload_artifact_executor
+                .update(ctx, |executor, ctx| executor.execute(input, ctx)),
             AIAgentActionType::UseComputer(_) => self
                 .use_computer_executor
                 .update(ctx, |executor, ctx| executor.execute(input, ctx))
@@ -929,6 +941,9 @@ impl BlocklistAIActionExecutor {
                 .update(ctx, |executor, ctx| executor.should_autoexecute(input, ctx)),
             AIAgentActionType::CreateDocuments(_) => self
                 .create_documents_executor
+                .update(ctx, |executor, ctx| executor.should_autoexecute(input, ctx)),
+            AIAgentActionType::UploadArtifact(_) => self
+                .upload_artifact_executor
                 .update(ctx, |executor, ctx| executor.should_autoexecute(input, ctx)),
             AIAgentActionType::UseComputer(_) => self
                 .use_computer_executor

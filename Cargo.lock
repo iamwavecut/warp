@@ -13908,6 +13908,7 @@ dependencies = [
  "bincode",
  "bitflags 2.13.0",
  "block",
+ "blocking",
  "bounded-vec-deque",
  "byte-unit",
  "bytecount",

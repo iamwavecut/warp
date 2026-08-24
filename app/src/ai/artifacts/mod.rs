@@ -5,8 +5,10 @@ use ui_components::lightbox::{LightboxImage, LightboxImageSource};
 use warp_errors::report_error;
 use warp_multi_agent_api as api;
 use warpui::SingletonEntity;
+use warpui::assets::asset_cache::AssetSource;
 
 use crate::ai::artifact_download::sanitized_basename;
+use crate::ai::local_artifacts::LocalArtifactRepository;
 use crate::notebooks::NotebookId;
 use crate::view_components::DismissibleToast;
 use crate::workspace::{ToastStack, WorkspaceAction};
@@ -48,6 +50,17 @@ pub enum Artifact {
         description: Option<String>,
         size_bytes: Option<i32>,
     },
+}
+
+impl Artifact {
+    pub fn local_artifact_uid(&self) -> Option<uuid::Uuid> {
+        match self {
+            Self::Screenshot { artifact_uid, .. } | Self::File { artifact_uid, .. } => {
+                uuid::Uuid::parse_str(artifact_uid).ok()
+            }
+            Self::Plan { .. } | Self::PullRequest { .. } => None,
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -302,37 +315,77 @@ pub fn open_screenshot_lightbox<V: warpui::View>(
         initial_index: 0,
     });
 
-    for (i, uid) in artifact_uids.iter().enumerate() {
-        log::warn!("Hosted screenshot artifact {uid} is unavailable in this local-first build");
-        ctx.dispatch_typed_action(&WorkspaceAction::UpdateLightboxImage {
-            index: i,
-            image: LightboxImage {
-                source: LightboxImageSource::Loading,
-                description: Some(
-                    "Hosted screenshot artifacts are unavailable in this local-first build."
-                        .to_string(),
-                ),
+    for (index, uid) in artifact_uids.iter().enumerate() {
+        let uid = uid.clone();
+        ctx.spawn(
+            blocking::unblock(move || {
+                let uid = uuid::Uuid::parse_str(&uid)
+                    .map_err(|error| anyhow::anyhow!("invalid local artifact id: {error}"))?;
+                LocalArtifactRepository::open_current_scope()?
+                    .resolve_verified_path(uid)
+                    .map_err(anyhow::Error::new)
+            }),
+            move |_view, result, ctx| {
+                let image = match result {
+                    Ok(record) if record.mime_type.starts_with("image/") => LightboxImage {
+                        source: LightboxImageSource::Resolved {
+                            asset_source: AssetSource::LocalFile {
+                                path: record.local_path.to_string_lossy().into_owned(),
+                                content_version: None,
+                            }
+                            .with_local_file_content_version(),
+                        },
+                        description: record.description,
+                    },
+                    Ok(_) => LightboxImage {
+                        source: LightboxImageSource::Loading,
+                        description: Some("This local artifact is not an image.".to_string()),
+                    },
+                    Err(error) => {
+                        log::warn!("Failed to resolve local screenshot artifact: {error:#}");
+                        LightboxImage {
+                            source: LightboxImageSource::Loading,
+                            description: Some(
+                                "The local screenshot is missing or failed verification."
+                                    .to_string(),
+                            ),
+                        }
+                    }
+                };
+                ctx.dispatch_typed_action(&WorkspaceAction::UpdateLightboxImage { index, image });
             },
-        });
+        );
     }
 }
 
-pub fn download_file_artifact<V: warpui::View>(
-    artifact_uid: &str,
-    ctx: &mut warpui::ViewContext<V>,
-) {
+pub fn reveal_file_artifact<V: warpui::View>(artifact_uid: &str, ctx: &mut warpui::ViewContext<V>) {
     let artifact_uid = artifact_uid.to_string();
-    log::warn!("Hosted file artifact {artifact_uid} is unavailable in this local-first build");
-    show_file_download_toast(
-        &artifact_uid,
-        DismissibleToast::error(
-            "Hosted file artifacts are unavailable in this local-first build.".to_string(),
-        ),
-        ctx,
+    let toast_artifact_uid = artifact_uid.clone();
+    ctx.spawn(
+        blocking::unblock(move || {
+            let uid = uuid::Uuid::parse_str(&artifact_uid)
+                .map_err(|error| anyhow::anyhow!("invalid local artifact id: {error}"))?;
+            LocalArtifactRepository::open_current_scope()?
+                .resolve_verified_path(uid)
+                .map_err(anyhow::Error::new)
+        }),
+        move |_view, result, ctx| match result {
+            Ok(record) => ctx.open_file_path_in_explorer(&record.local_path),
+            Err(error) => {
+                log::warn!("Failed to reveal local file artifact: {error:#}");
+                show_file_artifact_toast(
+                    &toast_artifact_uid,
+                    DismissibleToast::error(
+                        "The local artifact is missing or failed verification.".to_string(),
+                    ),
+                    ctx,
+                );
+            }
+        },
     );
 }
 
-fn show_file_download_toast<V: warpui::View>(
+fn show_file_artifact_toast<V: warpui::View>(
     artifact_uid: &str,
     toast: DismissibleToast<WorkspaceAction>,
     ctx: &mut warpui::ViewContext<V>,

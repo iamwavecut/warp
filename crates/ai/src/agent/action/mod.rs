@@ -19,8 +19,8 @@ use crate::{
             RequestCommandOutputResult, RequestComputerUseResult, RequestFileEditsResult,
             RunAgentsResult, SearchCodebaseResult, SendMessageToAgentResult, StartAgentResult,
             StartAgentVersion, SuggestNewConversationResult, SuggestPromptResult,
-            TransferShellCommandControlToUserResult, UseComputerResult, WaitForEventsResult,
-            WriteToLongRunningShellCommandResult,
+            TransferShellCommandControlToUserResult, UploadArtifactResult, UseComputerResult,
+            WaitForEventsResult, WriteToLongRunningShellCommandResult,
         },
     },
     diff_validation::ParsedDiff,
@@ -66,6 +66,9 @@ pub enum AIAgentActionType {
 
     /// AI requested getting the content of some files.
     ReadFiles(ReadFilesRequest),
+
+    /// AI requested preserving a local file as a conversation-owned artifact.
+    UploadArtifact(UploadArtifactRequest),
 
     SearchCodebase(SearchCodebaseRequest),
 
@@ -344,6 +347,9 @@ impl AIAgentActionType {
                 AIAgentActionResultType::RequestFileEdits(RequestFileEditsResult::Cancelled)
             }
             Self::ReadFiles(..) => AIAgentActionResultType::ReadFiles(ReadFilesResult::Cancelled),
+            Self::UploadArtifact(..) => {
+                AIAgentActionResultType::UploadArtifact(UploadArtifactResult::Cancelled)
+            }
             Self::SearchCodebase(..) => {
                 AIAgentActionResultType::SearchCodebase(SearchCodebaseResult::Cancelled)
             }
@@ -428,6 +434,7 @@ impl AIAgentActionType {
                 "Write to long running shell command".to_string()
             }
             Self::ReadFiles(_) => "Read files".to_string(),
+            Self::UploadArtifact(_) => "Preserve local artifact".to_string(),
             Self::SearchCodebase(_) => "Search codebase".to_string(),
             Self::RequestFileEdits { file_edits, .. } => {
                 let file_names = file_edits.iter().filter_map(|edit| edit.file()).join(", ");
@@ -493,6 +500,9 @@ impl Display for AIAgentActionType {
                 )
             }
             AIAgentActionType::ReadFiles(request) => {
+                write!(f, "{request}")
+            }
+            AIAgentActionType::UploadArtifact(request) => {
                 write!(f, "{request}")
             }
             AIAgentActionType::SearchCodebase(request) => {
@@ -704,6 +714,18 @@ impl AskUserQuestionItem {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ReadFilesRequest {
     pub locations: Vec<FileLocations>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct UploadArtifactRequest {
+    pub file_path: String,
+    pub description: Option<String>,
+}
+
+impl Display for UploadArtifactRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PreserveLocalArtifact: {}", self.file_path)
+    }
 }
 
 impl Display for ReadFilesRequest {

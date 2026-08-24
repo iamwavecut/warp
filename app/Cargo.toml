@@ -72,6 +72,7 @@ base64.workspace = true
 bimap = "0.6.2"
 bincode.workspace = true
 bitflags.workspace = true
+blocking.workspace = true
 bounded-vec-deque = "0.1"
 bytecount = "0.6.9"
 bytes.workspace = true

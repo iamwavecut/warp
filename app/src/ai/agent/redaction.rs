@@ -150,6 +150,25 @@ pub(crate) fn redact_inputs(inputs: &mut [AIAgentInput]) {
                             }
                         }
                     }
+                    AIAgentActionResultType::UploadArtifact(upload_result) => {
+                        use crate::ai::agent::UploadArtifactResult::*;
+                        match upload_result {
+                            Success {
+                                filepath,
+                                description,
+                                ..
+                            } => {
+                                if let Some(filepath) = filepath {
+                                    redact_secrets(filepath);
+                                }
+                                if let Some(description) = description {
+                                    redact_secrets(description);
+                                }
+                            }
+                            Error(message) => redact_secrets(message),
+                            Cancelled => {}
+                        }
+                    }
                     AIAgentActionResultType::SearchCodebase(search_codebase_result) => {
                         if let crate::ai::agent::SearchCodebaseResult::Success { files } =
                             search_codebase_result

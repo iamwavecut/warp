@@ -687,6 +687,9 @@ impl ConvertAPIToolCallToAIAgentAction for api::message::ToolCall {
             api::message::tool_call::Tool::ReadFiles(read_files) => {
                 create_standard_action(read_files.into())
             }
+            api::message::tool_call::Tool::UploadFileArtifact(upload_artifact) => {
+                create_standard_action(upload_artifact.try_into()?)
+            }
             api::message::tool_call::Tool::SearchCodebase(search_codebase) => {
                 create_standard_action(search_codebase.into())
             }

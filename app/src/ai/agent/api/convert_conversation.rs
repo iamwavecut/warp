@@ -23,7 +23,7 @@ use crate::ai::agent::{
     RequestFileEditsResult, SearchCodebaseFailureReason, SearchCodebaseResult, ServerOutputId,
     Shared, ShellCommandCompletedTrigger, ShellCommandError, SuggestNewConversationResult,
     SuggestPromptResult, TransferShellCommandControlToUserResult, UpdatedFileContext,
-    WriteToLongRunningShellCommandResult, decode_local_memory_context,
+    UploadArtifactResult, WriteToLongRunningShellCommandResult, decode_local_memory_context,
 };
 use crate::ai::block_context::BlockContext;
 use crate::ai::document::ai_document_model::{AIDocumentId, AIDocumentVersion};
@@ -1530,10 +1530,34 @@ pub(crate) fn convert_tool_call_result_to_input(
                 context,
             })
         }
+        Some(ToolCallResultType::UploadFileArtifact(result)) => {
+            let upload_result = match &result.result {
+                Some(api::upload_file_artifact_result::Result::Success(success)) => {
+                    UploadArtifactResult::Success {
+                        artifact_uid: success.artifact_uid.clone(),
+                        filepath: None,
+                        mime_type: success.mime_type.clone(),
+                        description: None,
+                        size_bytes: success.size_bytes,
+                    }
+                }
+                Some(api::upload_file_artifact_result::Result::Error(error)) => {
+                    UploadArtifactResult::Error(error.message.clone())
+                }
+                None => UploadArtifactResult::Cancelled,
+            };
+            Some(AIAgentInput::ActionResult {
+                result: AIAgentActionResult {
+                    id: tool_call_id.into(),
+                    task_id: task_id.clone(),
+                    result: AIAgentActionResultType::UploadArtifact(upload_result),
+                },
+                context,
+            })
+        }
         // Deprecated/unused result types or absent result.
         Some(ToolCallResultType::SuggestCreatePlan(..))
         | Some(ToolCallResultType::SuggestPlan(..))
-        | Some(ToolCallResultType::UploadFileArtifact(..))
         | None => {
             log::warn!("No result present for tool call ID: {tool_call_id}");
             None
@@ -1589,6 +1613,9 @@ fn create_cancelled_result_for_tool_call(
             )
         }
         ToolType::ReadFiles(_) => AIAgentActionResultType::ReadFiles(ReadFilesResult::Cancelled),
+        ToolType::UploadFileArtifact(_) => {
+            AIAgentActionResultType::UploadArtifact(UploadArtifactResult::Cancelled)
+        }
         ToolType::SearchCodebase(_) => {
             AIAgentActionResultType::SearchCodebase(SearchCodebaseResult::Cancelled)
         }
@@ -1668,9 +1695,7 @@ fn create_cancelled_result_for_tool_call(
         }
         ToolType::WaitForEvents(_) => return None,
         // These tools are deprecated.
-        ToolType::SuggestCreatePlan(_)
-        | ToolType::SuggestPlan(_)
-        | ToolType::UploadFileArtifact(_) => return None,
+        ToolType::SuggestCreatePlan(_) | ToolType::SuggestPlan(_) => return None,
     };
 
     Some(AIAgentInput::ActionResult {

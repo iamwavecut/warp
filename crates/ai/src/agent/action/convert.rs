@@ -12,7 +12,8 @@ use crate::{
         action::{
             AIAgentActionType, AIAgentPtyWriteMode, CommentSide, FileEdit, InsertReviewComment,
             InsertedCommentLine, InsertedCommentLocation, ReadFilesRequest, ReadSkillRequest,
-            SearchCodebaseRequest, ShellCommandDelay, SuggestPromptRequest, UseComputerRequest,
+            SearchCodebaseRequest, ShellCommandDelay, SuggestPromptRequest, UploadArtifactRequest,
+            UseComputerRequest,
         },
         action_result::{AnyFileContent, FileContext},
         convert::ToolToAIAgentActionError,
@@ -136,6 +137,21 @@ impl From<api::message::tool_call::ReadFiles> for AIAgentActionType {
         AIAgentActionType::ReadFiles(ReadFilesRequest {
             locations: value.files.into_iter().map(Into::into).collect(),
         })
+    }
+}
+
+impl TryFrom<api::UploadFileArtifact> for AIAgentActionType {
+    type Error = ToolToAIAgentActionError;
+
+    fn try_from(value: api::UploadFileArtifact) -> Result<Self, Self::Error> {
+        let file = value
+            .file
+            .filter(|file| !file.file_path.trim().is_empty())
+            .ok_or(ToolToAIAgentActionError::MissingUploadArtifactFileReference)?;
+        Ok(Self::UploadArtifact(UploadArtifactRequest {
+            file_path: file.file_path,
+            description: value.description.none_if_default(),
+        }))
     }
 }
 

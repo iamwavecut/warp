@@ -278,8 +278,8 @@ impl ConversationEndedTombstoneView {
                 ArtifactButtonsRowEvent::ViewScreenshots { artifact_uids } => {
                     crate::ai::artifacts::open_screenshot_lightbox(artifact_uids, ctx);
                 }
-                ArtifactButtonsRowEvent::DownloadFile { artifact_uid } => {
-                    crate::ai::artifacts::download_file_artifact(artifact_uid, ctx);
+                ArtifactButtonsRowEvent::RevealFile { artifact_uid } => {
+                    crate::ai::artifacts::reveal_file_artifact(artifact_uid, ctx);
                 }
             },
         );

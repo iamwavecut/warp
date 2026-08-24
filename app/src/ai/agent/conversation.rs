@@ -1386,6 +1386,16 @@ impl AIConversation {
         terminal_surface_id: EntityId,
         ctx: &mut ModelContext<BlocklistAIHistoryModel>,
     ) {
+        if let Some(artifact_uid) = artifact.local_artifact_uid()
+            && let Ok(repository) =
+                crate::ai::local_artifacts::LocalArtifactRepository::open_current_scope()
+            && let Err(error) = repository.attach_owner_if_present(
+                artifact_uid,
+                &crate::ai::local_artifacts::LocalArtifactOwner::conversation(self.id),
+            )
+        {
+            log::warn!("Failed to attach local artifact owner: {error}");
+        }
         self.artifacts.push(artifact.clone());
         self.write_updated_conversation_state(ctx);
         ctx.emit(BlocklistAIHistoryEvent::UpdatedConversationArtifacts {

@@ -36,4 +36,6 @@ pub enum ToolToAIAgentActionError {
     UnexpectedTool,
     #[error("Missing required reference for read skill tool call")]
     MissingSkillReference,
+    #[error("Missing required file reference for local artifact tool call")]
+    MissingUploadArtifactFileReference,
 }

@@ -342,6 +342,7 @@ impl From<&AIAgentActionType> for PersistedAIAgentActionType {
             AIAgentActionType::ReadDocuments(_)
             | AIAgentActionType::EditDocuments(_)
             | AIAgentActionType::CreateDocuments(_)
+            | AIAgentActionType::UploadArtifact(_)
             | AIAgentActionType::ReadShellCommandOutput { .. }
             | AIAgentActionType::ReadSkill(_)
             | AIAgentActionType::TransferShellCommandControlToUser { .. } => Self::NotPersisted,
