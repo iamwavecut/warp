@@ -2028,6 +2028,27 @@ pub struct MCPServer {
     pub tools: Vec<rmcp::model::Tool>,
 }
 
+/// A bounded snapshot of a user-managed local memory selected for one request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalMemoryContextItem {
+    pub title: String,
+    pub content: String,
+    pub scope: String,
+    pub revision: i64,
+}
+
+pub(crate) const LOCAL_MEMORY_CONTEXT_PREFIX: &str = "warp.local_memory.context.v1:";
+
+pub(crate) fn encode_local_memory_context(items: &[LocalMemoryContextItem]) -> String {
+    let encoded = serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string());
+    format!("{LOCAL_MEMORY_CONTEXT_PREFIX}{encoded}")
+}
+
+pub(crate) fn decode_local_memory_context(text: &str) -> Option<Vec<LocalMemoryContextItem>> {
+    let encoded = text.strip_prefix(LOCAL_MEMORY_CONTEXT_PREFIX)?;
+    serde_json::from_str(encoded).ok()
+}
+
 /// Contains context that may be attached to a user query.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AIAgentContext {
@@ -2064,6 +2085,11 @@ pub enum AIAgentContext {
         root_path: String,
         active_rules: Vec<FileContext>,
         additional_rule_paths: Vec<String>,
+    },
+
+    /// Relevant user-managed memories retrieved from the local SQLite repository.
+    LocalMemory {
+        items: Vec<LocalMemoryContextItem>,
     },
 
     File(FileContext),

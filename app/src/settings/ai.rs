@@ -1491,16 +1491,16 @@ define_settings_group!(AISettings, settings: [
         surface: settings::SettingSurfaces::GUI,
         private: true,
     }
-    // Whether or not the user wants agent mode requests to use their saved rules.
+    // Whether user-managed local memories may be attached to agent requests.
     memory_enabled: MemoryEnabled {
         type: bool,
         default: true,
         supported_platforms: SupportedPlatforms::ALL,
-        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        sync_to_cloud: SyncToCloud::Never,
         surface: settings::SettingSurfaces::GUI,
         private: false,
         toml_path: "agents.knowledge.rules_enabled",
-        description: "Whether the agent uses your saved rules during requests.",
+        description: "Whether the agent uses keyword-relevant local memory during requests.",
     }
     // Whether the codebase speedbump banner has been permanently dismissed for a given repo path.
     //

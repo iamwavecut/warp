@@ -23,7 +23,7 @@ use crate::ai::agent::{
     RequestFileEditsResult, SearchCodebaseFailureReason, SearchCodebaseResult, ServerOutputId,
     Shared, ShellCommandCompletedTrigger, ShellCommandError, SuggestNewConversationResult,
     SuggestPromptResult, TransferShellCommandControlToUserResult, UpdatedFileContext,
-    WriteToLongRunningShellCommandResult,
+    WriteToLongRunningShellCommandResult, decode_local_memory_context,
 };
 use crate::ai::block_context::BlockContext;
 use crate::ai::document::ai_document_model::{AIDocumentId, AIDocumentVersion};
@@ -138,7 +138,13 @@ pub(crate) fn convert_input_context(context: Option<&api::InputContext>) -> Arc<
     // Convert selected text
     for selected_text in &context.selected_text {
         if !selected_text.text.is_empty() {
-            result.push(AIAgentContext::SelectedText(selected_text.text.clone()));
+            if let Some(items) = decode_local_memory_context(&selected_text.text) {
+                if !items.is_empty() {
+                    result.push(AIAgentContext::LocalMemory { items });
+                }
+            } else {
+                result.push(AIAgentContext::SelectedText(selected_text.text.clone()));
+            }
         }
     }
 
@@ -391,7 +397,7 @@ impl ConvertToExchanges for &api::Task {
                                 user_query,
                             };
                             current_inputs.push(input);
-                        };;
+                        }
 
                     true
                 }

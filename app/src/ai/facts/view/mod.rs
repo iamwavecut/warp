@@ -2,32 +2,44 @@ use std::path::PathBuf;
 
 use warp_core::ui::appearance::Appearance;
 use warpui::elements::{
-    Align, ChildView, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container, Flex,
-    MainAxisSize, ParentElement, ScrollbarWidth,
+    Align, ChildView, ClippedScrollStateHandle, ClippedScrollable, ConstrainedBox, Container,
+    CornerRadius, Flex, Hoverable, MainAxisSize, MouseStateHandle, ParentElement, ScrollbarWidth,
 };
+use warpui::platform::Cursor;
 use warpui::ui_components::components::UiComponent;
+use warpui::ui_components::components::UiComponentStyles;
 use warpui::{
     AppContext, Element, Entity, FocusContext, ModelHandle, SingletonEntity, TypedActionView, View,
     ViewContext, ViewHandle,
 };
 
+use crate::ai::facts::manager::AIFactManager;
 use crate::ai::facts::view::rule_editor::RuleEditorTarget;
 use crate::pane_group::focus_state::PaneFocusHandle;
 use crate::pane_group::pane::view;
 use crate::pane_group::{BackingView, PaneConfiguration, PaneEvent};
 
+pub mod memory;
+pub mod memory_editor;
 pub mod rule;
 pub mod rule_editor;
 mod style;
-use rule::*;
-use rule_editor::*;
+use crate::view_components::DismissibleToast;
+use crate::workspace::ToastStack;
+use memory::{MemoryView, MemoryViewEvent};
+use memory_editor::{MemoryEditorTarget, MemoryEditorView, MemoryEditorViewEvent};
+use rule::{RuleTarget, RuleView, RuleViewEvent};
+use rule_editor::{RuleEditorView, RuleEditorViewEvent};
 
-const OFFLINE_TEXT: &str = "Local rules remain available without a provider or network.";
+const HEADER_TEXT: &str = "Knowledge";
+const OFFLINE_TEXT: &str = "Local rules and memory remain available without a provider or network.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AIFactPage {
     Rules,
     RuleEditor { target: RuleEditorTarget },
+    Memory,
+    MemoryEditor { target: MemoryEditorTarget },
 }
 
 impl Default for AIFactPage {
@@ -41,6 +53,8 @@ impl std::fmt::Display for AIFactPage {
         match self {
             Self::Rules => write!(f, "Rules"),
             Self::RuleEditor { .. } => write!(f, "Rule Editor"),
+            Self::Memory => write!(f, "Memory"),
+            Self::MemoryEditor { .. } => write!(f, "Memory Editor"),
         }
     }
 }
@@ -65,6 +79,10 @@ pub struct AIFactView {
     current_page: AIFactPage,
     rule_view: ViewHandle<RuleView>,
     rule_editor_view: ViewHandle<RuleEditorView>,
+    memory_view: ViewHandle<MemoryView>,
+    memory_editor_view: ViewHandle<MemoryEditorView>,
+    rules_tab_mouse_state: MouseStateHandle,
+    memory_tab_mouse_state: MouseStateHandle,
     clipped_scroll_state: ClippedScrollStateHandle,
 }
 
@@ -79,12 +97,24 @@ impl AIFactView {
         ctx.subscribe_to_view(&rule_editor_view, |me, _, event, ctx| {
             me.handle_rule_editor_view_event(event, ctx)
         });
+        let memory_view = ctx.add_typed_action_view(MemoryView::new);
+        ctx.subscribe_to_view(&memory_view, |me, _, event, ctx| {
+            me.handle_memory_view_event(event, ctx)
+        });
+        let memory_editor_view = ctx.add_typed_action_view(MemoryEditorView::new);
+        ctx.subscribe_to_view(&memory_editor_view, |me, _, event, ctx| {
+            me.handle_memory_editor_view_event(event, ctx)
+        });
         Self {
             pane_configuration,
             focus_handle: None,
             current_page: AIFactPage::default(),
             rule_view,
             rule_editor_view,
+            memory_view,
+            memory_editor_view,
+            rules_tab_mouse_state: Default::default(),
+            memory_tab_mouse_state: Default::default(),
             clipped_scroll_state: Default::default(),
         }
     }
@@ -101,6 +131,8 @@ impl AIFactView {
         match &self.current_page {
             AIFactPage::Rules => ctx.focus(&self.rule_view),
             AIFactPage::RuleEditor { .. } => ctx.focus(&self.rule_editor_view),
+            AIFactPage::Memory => ctx.focus(&self.memory_view),
+            AIFactPage::MemoryEditor { .. } => ctx.focus(&self.memory_editor_view),
         }
     }
 
@@ -152,9 +184,70 @@ impl AIFactView {
         }
     }
 
+    fn handle_memory_view_event(&mut self, event: &MemoryViewEvent, ctx: &mut ViewContext<Self>) {
+        let target = match event {
+            MemoryViewEvent::Add(scope) => MemoryEditorTarget::New(scope.clone()),
+            MemoryViewEvent::Edit(memory) => MemoryEditorTarget::Existing(memory.clone()),
+        };
+        self.update_page(AIFactPage::MemoryEditor { target }, ctx);
+    }
+
+    fn handle_memory_editor_view_event(
+        &mut self,
+        event: &MemoryEditorViewEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let result = match event {
+            MemoryEditorViewEvent::Back => {
+                self.update_page(AIFactPage::Memory, ctx);
+                return;
+            }
+            MemoryEditorViewEvent::Save {
+                target,
+                title,
+                content,
+            } => AIFactManager::handle(ctx).update(ctx, |manager, ctx| match target {
+                MemoryEditorTarget::New(scope) => manager
+                    .create_memory(scope.clone(), title, content, ctx)
+                    .map(|_| ()),
+                MemoryEditorTarget::Existing(memory) => manager
+                    .update_memory(
+                        memory.id,
+                        memory.revision,
+                        memory.scope.clone(),
+                        title,
+                        content,
+                        ctx,
+                    )
+                    .map(|_| ()),
+            }),
+            MemoryEditorViewEvent::Delete { memory } => AIFactManager::handle(ctx)
+                .update(ctx, |manager, ctx| {
+                    manager.delete_memory(memory.id, memory.revision, ctx)
+                }),
+        };
+        match result {
+            Ok(()) => self.update_page(AIFactPage::Memory, ctx),
+            Err(error) => {
+                let window_id = ctx.window_id();
+                ToastStack::handle(ctx).update(ctx, |toasts, ctx| {
+                    toasts.add_ephemeral_toast(
+                        DismissibleToast::error(error.to_string()),
+                        window_id,
+                        ctx,
+                    )
+                });
+            }
+        }
+    }
+
     pub fn update_page(&mut self, page: AIFactPage, ctx: &mut ViewContext<Self>) {
         if let AIFactPage::RuleEditor { target } = &page {
             self.rule_editor_view
+                .update(ctx, |editor, ctx| editor.set_target(target.clone(), ctx));
+        }
+        if let AIFactPage::MemoryEditor { target } = &page {
+            self.memory_editor_view
                 .update(ctx, |editor, ctx| editor.set_target(target.clone(), ctx));
         }
         self.current_page = page;
@@ -174,6 +267,72 @@ impl AIFactView {
         .with_background(appearance.theme().surface_2())
         .with_vertical_padding(4.)
         .with_margin_bottom(style::ITEM_BOTTOM_MARGIN)
+        .finish()
+    }
+
+    fn render_knowledge_tabs(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let tab = |title: &str, page: AIFactPage, selected: bool, mouse_state: MouseStateHandle| {
+            let title = title.to_string();
+            Hoverable::new(mouse_state, move |state| {
+                let color = if selected {
+                    appearance
+                        .theme()
+                        .main_text_color(appearance.theme().background())
+                } else {
+                    appearance
+                        .theme()
+                        .sub_text_color(appearance.theme().background())
+                };
+                let mut container = Container::new(
+                    appearance
+                        .ui_builder()
+                        .wrappable_text(title.clone(), true)
+                        .with_style(UiComponentStyles {
+                            font_size: Some(style::TEXT_FONT_SIZE),
+                            font_color: Some(color.into()),
+                            ..Default::default()
+                        })
+                        .build()
+                        .finish(),
+                )
+                .with_horizontal_padding(style::ROW_HORIZONTAL_PADDING)
+                .with_vertical_padding(8.);
+                if selected || state.is_hovered() {
+                    container = container
+                        .with_background(if selected {
+                            appearance.theme().surface_2()
+                        } else {
+                            appearance.theme().surface_1()
+                        })
+                        .with_corner_radius(CornerRadius::with_all(
+                            warpui::elements::Radius::Pixels(4.),
+                        ));
+                }
+                container.finish()
+            })
+            .with_cursor(Cursor::PointingHand)
+            .on_click(move |ctx, _, _| {
+                ctx.dispatch_typed_action(AIFactViewAction::UpdatePage(page.clone()))
+            })
+            .finish()
+        };
+        Container::new(
+            Flex::row()
+                .with_child(tab(
+                    "Rules",
+                    AIFactPage::Rules,
+                    matches!(&self.current_page, AIFactPage::Rules),
+                    self.rules_tab_mouse_state.clone(),
+                ))
+                .with_child(tab(
+                    "Memory",
+                    AIFactPage::Memory,
+                    matches!(&self.current_page, AIFactPage::Memory),
+                    self.memory_tab_mouse_state.clone(),
+                ))
+                .finish(),
+        )
+        .with_margin_bottom(style::SECTION_MARGIN)
         .finish()
     }
 }
@@ -197,10 +356,17 @@ impl View for AIFactView {
         let appearance = Appearance::as_ref(app);
         let mut col = Flex::column().with_main_axis_size(MainAxisSize::Min);
         col.add_child(self.render_offline_banner(appearance));
+        if matches!(&self.current_page, AIFactPage::Rules | AIFactPage::Memory) {
+            col.add_child(self.render_knowledge_tabs(appearance));
+        }
         match &self.current_page {
             AIFactPage::Rules => col.add_child(ChildView::new(&self.rule_view).finish()),
             AIFactPage::RuleEditor { .. } => {
                 col.add_child(ChildView::new(&self.rule_editor_view).finish())
+            }
+            AIFactPage::Memory => col.add_child(ChildView::new(&self.memory_view).finish()),
+            AIFactPage::MemoryEditor { .. } => {
+                col.add_child(ChildView::new(&self.memory_editor_view).finish())
             }
         }
         ClippedScrollable::vertical(
@@ -223,6 +389,18 @@ impl View for AIFactView {
         )
         .finish()
     }
+}
+
+pub(super) fn truncate_display_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut truncated = text
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    truncated.push('…');
+    truncated
 }
 
 impl TypedActionView for AIFactView {

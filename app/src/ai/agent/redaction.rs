@@ -323,6 +323,12 @@ fn redact_context(context: &mut [AIAgentContext]) {
             AIAgentContext::SelectedText(text) => {
                 redact_secrets(text);
             }
+            AIAgentContext::LocalMemory { items } => {
+                for item in items {
+                    redact_secrets(&mut item.title);
+                    redact_secrets(&mut item.content);
+                }
+            }
             // Other context types don't contain user-provided text that needs redaction
             AIAgentContext::Directory { .. }
             | AIAgentContext::ExecutionEnvironment(_)

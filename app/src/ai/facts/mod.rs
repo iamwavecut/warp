@@ -16,6 +16,7 @@ use crate::drive::items::ai_fact::WarpDriveAIFact;
 use crate::server::ids::SyncId;
 use crate::server::sync_queue::QueueItem;
 
+pub mod local_memory;
 pub mod manager;
 pub mod view;
 pub use manager::AIFactManager;

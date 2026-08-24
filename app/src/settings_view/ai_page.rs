@@ -4906,17 +4906,17 @@ impl AIFactWidget {
         app: &warpui::AppContext,
     ) -> Box<dyn Element> {
         let toggle = render_ai_setting_toggle::<MemoryEnabled>(
-            "Rules",
+            "Local memory",
             AISettingsPageAction::ToggleRules,
             *ai_settings.memory_enabled,
-            ai_settings.is_any_ai_enabled(app),
+            true,
             self.rules_toggle.clone(),
             &view.local_only_icon_tooltip_states,
             app,
         );
 
         let rules_description = vec![FormattedTextFragment::plain_text(
-            "Rules help the Warp Agent follow your conventions, whether for codebases or specific workflows.",
+            "Attach only keyword-relevant user-managed memories to local agent requests. Rules remain file-backed and available independently.",
         )];
         let description = Container::new(
             FormattedTextElement::new(
@@ -4924,7 +4924,7 @@ impl AIFactWidget {
                 CONTENT_FONT_SIZE,
                 appearance.ui_font_family(),
                 appearance.ui_font_family(),
-                styles::description_font_color(ai_settings.is_any_ai_enabled(app), app).into(),
+                styles::description_font_color(true, app).into(),
                 self.rules_link_index.clone(),
             )
             .with_hyperlink_font_color(appearance.theme().accent().into_solid())
@@ -5002,8 +5002,8 @@ impl SettingsWidget for AIFactWidget {
         .finish();
 
         let button = render_full_pane_width_ai_button(
-            "Manage rules",
-            is_any_ai_enabled,
+            "Manage rules and memory",
+            true,
             self.manage_rules_button.clone(),
             AISettingsPageAction::OpenAIFactCollection,
             appearance,

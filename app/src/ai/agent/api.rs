@@ -400,6 +400,14 @@ fn router_context_chars(context: &AIAgentContext) -> usize {
                     .map(|path| path.chars().count())
                     .sum::<usize>()
         }
+        AIAgentContext::LocalMemory { items } => items
+            .iter()
+            .map(|item| {
+                item.title.chars().count()
+                    + item.content.chars().count()
+                    + item.scope.chars().count()
+            })
+            .sum(),
         AIAgentContext::File(file) => file.file_name.chars().count() + file_context_chars(file),
         AIAgentContext::Git { head, branch } => {
             head.chars().count() + branch.as_deref().unwrap_or_default().chars().count()

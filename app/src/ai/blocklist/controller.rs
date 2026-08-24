@@ -36,6 +36,10 @@ use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::ai::document::ai_document_model::{
     AIDocumentId, AIDocumentModel, AIDocumentUserEditStatus,
 };
+use crate::ai::facts::local_memory::{
+    MAX_CONTEXT_ITEM_CHARS, MAX_CONTEXT_MEMORY_CHARS, truncate_context_content,
+};
+use crate::ai::facts::manager::AIFactManager;
 use crate::ai::llms::LLMId;
 use crate::ai::local_agent_registry::{
     LocalAgentRegistry, LocalAgentStatus, local_controller_owner_id,
@@ -45,8 +49,8 @@ use crate::ai::{
     agent::{
         AIAgentActionResultType, AIAgentAttachment, AIAgentContext, AIAgentExchangeId,
         AIAgentInput, AIAgentOutputStatus, EntrypointType, FinishedAIAgentOutput,
-        RenderableAIError, RequestCost, RequestMetadata, StaticQueryType, UserQueryMode,
-        conversation::AIConversationId,
+        LocalMemoryContextItem, RenderableAIError, RequestCost, RequestMetadata, StaticQueryType,
+        UserQueryMode, conversation::AIConversationId,
     },
     llms::LLMPreferences,
 };
@@ -56,6 +60,7 @@ use crate::global_resource_handles::GlobalResourceHandlesProvider;
 use crate::network::NetworkStatus;
 use crate::notebooks::editor::model::FileLinkResolutionContext;
 use crate::persistence::ModelEvent;
+use crate::settings::AISettings;
 use crate::terminal::model::block::{
     BlockId, CURSOR_MARKER, formatted_terminal_contents_for_input,
 };
@@ -72,6 +77,7 @@ use parking_lot::FairMutex;
 use pending_response_streams::PendingResponseStreams;
 use session_sharing_protocol::common::ParticipantId;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use warp_core::assertions::safe_assert;
 use warp_multi_agent_api::{Task, ToolType, message};
@@ -2929,7 +2935,7 @@ fn input_for_query(
         .as_deref()
         .map(queued_attachments_for_request)
         .unwrap_or_default();
-    let context = if queued_attachments.is_some() {
+    let mut context = if queued_attachments.is_some() {
         input_context_for_queued_request(
             true,
             context_model,
@@ -2947,7 +2953,44 @@ fn input_for_query(
             vec![],
             app,
         )
-    };
+    }
+    .to_vec();
+    if AISettings::as_ref(app).is_memory_enabled(app) {
+        let current_directory = active_session
+            .current_working_directory_location(app)
+            .and_then(|location| location.to_local_path().map(PathBuf::from));
+        match AIFactManager::as_ref(app).search_memories(&query, current_directory.as_deref()) {
+            Ok(memories) => {
+                let mut remaining = MAX_CONTEXT_MEMORY_CHARS;
+                let items = memories
+                    .into_iter()
+                    .filter_map(|memory| {
+                        if remaining == 0 {
+                            return None;
+                        }
+                        let content = truncate_context_content(
+                            &memory.content,
+                            remaining.min(MAX_CONTEXT_ITEM_CHARS),
+                        );
+                        remaining = remaining.saturating_sub(content.chars().count());
+                        Some(LocalMemoryContextItem {
+                            title: memory.title,
+                            content,
+                            scope: memory.scope.display_name(),
+                            revision: memory.revision,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if !items.is_empty() {
+                    context.push(AIAgentContext::LocalMemory { items });
+                }
+            }
+            Err(error) => {
+                log::warn!("Local memory retrieval failed; continuing without memory: {error}")
+            }
+        }
+    }
+    let context = context.into();
     let intended_agent = BlocklistAIHistoryModel::as_ref(app)
         .conversation(&conversation_id)
         .and_then(|c| c.get_task(task_id))
