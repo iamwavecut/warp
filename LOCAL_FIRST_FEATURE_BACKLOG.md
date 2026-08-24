@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `37a68613`.
+- Current local implementation head: `d488ac31`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -442,7 +442,7 @@ separate P2 lifecycle.
 
 ## P2 — Local Redesigns
 
-Status: **P2.1 complete**; P2.2 is next.
+Status: **P2.1–P2.2 complete**; P2.3 is next.
 
 ### P2.1 Real local `/compact`
 
@@ -474,9 +474,32 @@ Never mutate history before the summary succeeds, and preserve tool chronology.
 
 ### P2.2 Local semantic code index
 
-Implement `LocalStoreClient` for chunks, Merkle state, vectors, query, and
-optional reranking. Use a configured `/embeddings` endpoint or local process and
-retain lexical search as the provider-free fallback.
+**Delivered:** `d488ac31`.
+
+The upstream full-source chunker, content-addressed Merkle tree, index manager,
+and persisted-workspace restore path now use a local `StoreClient` in app and
+CLI launch modes. Merkle nodes, raw source chunks, vectors, and repository roots
+are stored in scoped SQLite and survive process restart. Remote-server daemon
+mode remains isolated from the local route lifecycle.
+
+The first configured provider with an effective `embeddings` capability and an
+explicit embedding model is routed directly to its OpenAI-compatible
+`/embeddings` endpoint. Keyless endpoints and keys from secure storage or an
+explicit environment variable are supported. Responses must contain one
+finite, non-empty, consistently sized vector for every input. Endpoint, model,
+format, and provider identity define an isolated vector space; credential or
+route changes trigger a fresh sync without persisting credentials.
+
+Queries embed locally, walk only chunks reachable from the requested Merkle
+root, rank them by cosine similarity, and apply a deterministic local lexical
+reranker. Missing providers, missing capabilities, endpoint failures, and empty
+semantic results fall back to the existing local outline/content search. No
+Warp endpoint is consulted.
+
+Focused `local_only` tests passed durable SQLite restart and ranking, vector
+space isolation, keyless routing, explicit capability/model routing, invalid
+float rejection, legacy capability compatibility, and asynchronous semantic
+failure fallback to local lexical results.
 
 ### P2.3 Local long-term memory
 
