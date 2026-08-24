@@ -16,8 +16,8 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation tree: through `070f28a1`.
-- Current fetched upstream: `origin/master` at `702aa106`, recorded as an
+- Current local implementation tree: through `143bc138`.
+- Current fetched upstream: `origin/master` at `84d3e332`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
   were reconciled while the fork's local `TeamContext` behavior stayed intact.
@@ -25,6 +25,12 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
   hosted cloud-agent-environment cloning. It was recorded by the semantic
   rejection merge `b43125ed` with the local tree unchanged; accepting those
   surfaces would violate the explicit no-Teams/no-hosted-agent policy.
+- The range `702aa106..84d3e332` was integrated selectively before ancestry
+  merge `143bc138`: local runtime, compilation, settings-schema, PowerShell,
+  completion, toolchain, and CI improvements were preserved. Hosted
+  environment handling, multi-team/BYO policy, hosted release-only changes,
+  and an AI type extraction incompatible with retained local entrypoints were
+  reviewed but excluded from the resulting tree.
 
 The upstream ref is already descended from the audited upstream ref, while the
 fork contains the local-first delta. Comparisons therefore use final trees and
