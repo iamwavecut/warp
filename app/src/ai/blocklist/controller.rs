@@ -328,6 +328,10 @@ pub struct BlocklistAIController {
     pending_auto_resume_handles: HashMap<AIConversationId, SpawnedFutureHandle>,
     /// Passive conversations explicitly requested to follow up after actions complete.
     pending_passive_follow_ups: HashSet<AIConversationId>,
+    /// Streams whose client-side transaction failed. Their later protocol
+    /// `Finished` event must not overwrite the durable local error with a
+    /// success state.
+    failed_client_action_streams: HashSet<ResponseStreamId>,
     /// Passive suggestion results that should be included with the next request
     /// for a given conversation (e.g. accepted/iterated code diffs that weren't
     /// auto-resumed).
@@ -583,6 +587,7 @@ impl BlocklistAIController {
             attachments_download_dir: None,
             pending_auto_resume_handles: HashMap::new(),
             pending_passive_follow_ups: HashSet::new(),
+            failed_client_action_streams: HashSet::new(),
             pending_passive_suggestion_results: HashMap::new(),
         }
     }
@@ -1933,6 +1938,9 @@ impl BlocklistAIController {
         ctx: &mut ModelContext<Self>,
     ) -> anyhow::Result<(AIConversationId, ResponseStreamId)> {
         let history_model = BlocklistAIHistoryModel::handle(ctx);
+        let is_local_compaction = request_input
+            .all_inputs()
+            .any(|input| matches!(input, AIAgentInput::SummarizeConversation { .. }));
         let local_run_id = history_model.update(ctx, |history_model, ctx| {
             history_model.ensure_local_run_id_for_conversation(request_input.conversation_id, ctx)
         });
@@ -1956,7 +1964,16 @@ impl BlocklistAIController {
                 ));
             };
 
-            let active_tasks = conversation.compute_active_tasks();
+            let active_tasks = if is_local_compaction {
+                // Transactional compaction binds its CAS checksum to the full
+                // local task graph, including earlier compacted archives.
+                conversation
+                    .all_tasks()
+                    .filter_map(|task| task.source().cloned())
+                    .collect()
+            } else {
+                conversation.compute_active_tasks()
+            };
             let parent_run_id = history_model
                 .as_ref(ctx)
                 .resolved_parent_conversation_id_for_conversation(conversation)
@@ -2436,6 +2453,9 @@ impl BlocklistAIController {
                             warp_multi_agent_api::response_event::Type::Finished(
                                 finished_event,
                             ) => {
+                                if self.failed_client_action_streams.contains(&stream_id) {
+                                    return;
+                                }
                                 self.handle_response_stream_finished(
                                     &stream_id,
                                     finished_event,
@@ -2446,6 +2466,18 @@ impl BlocklistAIController {
                             }
                             warp_multi_agent_api::response_event::Type::ClientActions(actions) => {
                                 let client_actions = actions.actions;
+                                let is_local_compaction = client_actions.iter().any(|action| {
+                                    matches!(
+                                        action.action.as_ref(),
+                                        Some(
+                                            warp_multi_agent_api::client_action::Action::MoveMessagesToNewTask(
+                                                move_action
+                                            )
+                                        ) if move_action.new_task.as_ref().is_some_and(
+                                            crate::ai::local_compaction::LocalCompactionMetadata::is_local_compaction_task
+                                        )
+                                    )
+                                });
                                 let apply_result =
                                     history_model.update(ctx, |history_model, ctx| {
                                         history_model.apply_client_actions(
@@ -2457,6 +2489,26 @@ impl BlocklistAIController {
                                         )
                                     });
                                 if let Err(e) = apply_result {
+                                    if is_local_compaction {
+                                        let error_message = format!(
+                                            "Failed to commit local conversation update: {e}"
+                                        );
+                                        self.failed_client_action_streams.insert(stream_id.clone());
+                                        history_model.update(ctx, |history_model, ctx| {
+                                            history_model
+                                                .mark_response_stream_completed_with_error(
+                                                    RenderableAIError::Other {
+                                                        error_message,
+                                                        will_attempt_resume: false,
+                                                        waiting_for_network: false,
+                                                    },
+                                                    &stream_id,
+                                                    conversation_id,
+                                                    self.terminal_surface_id,
+                                                    ctx,
+                                                );
+                                        });
+                                    }
                                     report_error!(
                                         anyhow::Error::new(e).context(
                                             "Failed to apply client actions to conversation"
@@ -2497,6 +2549,7 @@ impl BlocklistAIController {
                 }
             }
             ResponseStreamEvent::AfterStreamFinished { cancellation } => {
+                self.failed_client_action_streams.remove(&stream_id);
                 // Cancellations provide conversation_id (survives truncation); otherwise use dynamic lookup.
                 let conversation_id = match &cancellation {
                     Some(stream_cancellation) => stream_cancellation.conversation_id,

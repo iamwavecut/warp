@@ -84,6 +84,10 @@ impl TryFrom<ServerConversationToken>
 #[derive(Debug, Clone)]
 pub struct RequestParams {
     pub input: Vec<AIAgentInput>,
+    /// Stable local conversation identity used by transactional operations
+    /// such as local compaction. This is deliberately independent of the
+    /// provider conversation token, which may be absent or provider-defined.
+    pub(crate) conversation_id: String,
     pub(crate) request_task_id: Option<String>,
     pub conversation_token: Option<ServerConversationToken>,
     pub tasks: Vec<warp_multi_agent_api::Task>,
@@ -131,6 +135,7 @@ impl RequestParams {
     pub fn new_for_test() -> Self {
         Self {
             input: vec![],
+            conversation_id: "00000000-0000-4000-8000-000000000000".to_string(),
             request_task_id: None,
             conversation_token: None,
             tasks: vec![],
@@ -286,6 +291,7 @@ impl RequestParams {
 
         Self {
             input: request_input.all_inputs().cloned().collect(),
+            conversation_id: conversation.id.to_string(),
             request_task_id,
             conversation_token: conversation.server_conversation_token,
             tasks: conversation.tasks,

@@ -7,6 +7,7 @@ use crate::ai::skills::SkillDescriptor;
 use crate::notebooks::NotebookId;
 use crate::persistence::model::{ConversationUsageMetadata, ModelTokenUsage, ToolUsageMetadata};
 use crate::server::ids::ServerId;
+use crate::settings::AISettings;
 use crate::terminal::general_settings::GeneralSettings;
 use crate::terminal::model::block::{
     AgentInteractionMetadata, AgentViewVisibility, BlockId, SerializedAIMetadata, SerializedBlock,
@@ -34,6 +35,7 @@ use warp_core::features::FeatureFlag;
 use warp_core::ui::appearance::Appearance;
 use warp_core::ui::theme::WarpTheme;
 use warp_core::ui::theme::color::internal_colors;
+use warp_multi_agent_api::client_action::MoveMessagesToNewTask;
 use warp_multi_agent_api::response_event::stream_finished;
 use warp_multi_agent_api::{self as api, response_event::stream_finished::TokenUsage};
 use warpui::color::ColorU;
@@ -2817,56 +2819,19 @@ impl AIConversation {
                     is_hidden: self.is_exchange_hidden(exchange_id),
                 });
             }
-            Action::MoveMessagesToNewTask(MoveMessagesToNewTask {
-                source_task_id,
-                new_task: Some(mut new_task),
-                first_message_id,
-                last_message_id,
-                expected_message_count,
-                replacement_messages,
-            }) => {
-                let source_task_id = TaskId::new(source_task_id);
-                self.checkpoint_task(&source_task_id);
-
-                // Extract messages from the source task (this also inserts replacement messages).
-                let mut extracted_messages = self
-                    .task_store
-                    .modify_task(&source_task_id, |task| {
-                        task.splice_messages(
-                            &first_message_id,
-                            &last_message_id,
-                            expected_message_count,
-                            replacement_messages,
-                        )
-                    })
-                    .ok_or(UpdateConversationError::TaskNotFound)??;
-
-                // Update task_id on each extracted message to reference the new task.
-                for msg in &mut extracted_messages {
-                    msg.task_id = new_task.id.clone();
+            Action::MoveMessagesToNewTask(action) => {
+                if action.new_task.is_none() {
+                    log::warn!("Received MoveMessagesToNewTask without a destination task");
+                    return Ok(());
                 }
-
-                // Append extracted messages to the new task.
-                new_task.messages.extend(extracted_messages);
-
-                // Get the source task's api::Task to look up subagent_params.
-                // At this point, the source task contains the replacement messages (including the
-                // subagent call referencing the new task), so new_summary_subtask can find them.
-                let source_api_task = self
-                    .task_store
-                    .get(&source_task_id)
-                    .and_then(|t| t.source())
-                    .cloned()
-                    .ok_or(UpdateConversationError::TaskNotInitialized)?;
-
-                // Create the subtask and add it to the task store.
-                let subtask = Task::new_moved_messages_subtask(new_task, &source_api_task);
-                self.task_store.insert(subtask);
-
-                // Note: We do NOT emit any BlocklistAIHistoryEvent here because we
-                // intentionally keep the UI unchanged during a live session. The
-                // exchange's client representation (added_message_ids) remains
-                // unmodified, pointing to message IDs that now exist in a subtask.
+                let is_local_compaction = action.new_task.as_ref().is_some_and(
+                    crate::ai::local_compaction::LocalCompactionMetadata::is_local_compaction_task,
+                );
+                if is_local_compaction {
+                    self.apply_local_compaction_action(action, ctx)?;
+                } else {
+                    self.apply_move_messages_to_new_task(action)?;
+                }
             }
             Action::StartNewConversation(_) => {
                 // New conversations are handled at the BlocklistAIHistoryModel layer
@@ -2876,6 +2841,99 @@ impl AIConversation {
             }
         }
 
+        Ok(())
+    }
+
+    fn apply_local_compaction_action(
+        &mut self,
+        action: MoveMessagesToNewTask,
+        ctx: &mut ModelContext<BlocklistAIHistoryModel>,
+    ) -> Result<(), UpdateConversationError> {
+        let archive = action.new_task.as_ref().ok_or_else(|| {
+            UpdateConversationError::LocalCompaction(
+                "Local compaction archive task is missing".to_string(),
+            )
+        })?;
+        let metadata =
+            crate::ai::local_compaction::LocalCompactionMetadata::parse(&archive.server_data)
+                .map_err(|error| UpdateConversationError::LocalCompaction(error.to_string()))?;
+        let current_route_fingerprint = crate::ai::local_compaction::configured_route_fingerprint(
+            &metadata.route.model_id,
+            &AISettings::as_ref(ctx).custom_providers,
+        )
+        .ok_or_else(|| {
+            UpdateConversationError::LocalCompaction(
+                crate::ai::local_compaction::LocalCompactionError::ProviderChanged.to_string(),
+            )
+        })?;
+        let tasks = self
+            .all_tasks()
+            .filter_map(|task| task.source().cloned())
+            .collect::<Vec<_>>();
+        crate::ai::local_compaction::LocalCompactionMetadata::validate_action(
+            &self.id.to_string(),
+            &tasks,
+            &action,
+            &current_route_fingerprint,
+        )
+        .map_err(|error| UpdateConversationError::LocalCompaction(error.to_string()))?;
+
+        let before = self.clone();
+        let result = self.apply_move_messages_to_new_task(action).and_then(|_| {
+            self.conversation_usage_metadata.was_summarized = true;
+            self.write_updated_conversation_state_durably(ctx)
+        });
+        if let Err(error) = result {
+            *self = before;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn apply_move_messages_to_new_task(
+        &mut self,
+        action: MoveMessagesToNewTask,
+    ) -> Result<(), UpdateConversationError> {
+        let MoveMessagesToNewTask {
+            source_task_id,
+            new_task: Some(mut new_task),
+            first_message_id,
+            last_message_id,
+            expected_message_count,
+            replacement_messages,
+        } = action
+        else {
+            return Err(UpdateConversationError::LocalCompaction(
+                "MoveMessagesToNewTask is missing its destination task".to_string(),
+            ));
+        };
+        let source_task_id = TaskId::new(source_task_id);
+        self.checkpoint_task(&source_task_id);
+
+        let mut extracted_messages = self
+            .task_store
+            .modify_task(&source_task_id, |task| {
+                task.splice_messages(
+                    &first_message_id,
+                    &last_message_id,
+                    expected_message_count,
+                    replacement_messages,
+                )
+            })
+            .ok_or(UpdateConversationError::TaskNotFound)??;
+        for message in &mut extracted_messages {
+            message.task_id = new_task.id.clone();
+        }
+        new_task.messages.extend(extracted_messages);
+
+        let source_api_task = self
+            .task_store
+            .get(&source_task_id)
+            .and_then(|task| task.source())
+            .cloned()
+            .ok_or(UpdateConversationError::TaskNotInitialized)?;
+        self.task_store
+            .insert(Task::new_moved_messages_subtask(new_task, &source_api_task));
         Ok(())
     }
 
@@ -3089,6 +3147,31 @@ impl AIConversation {
             return;
         };
 
+        let artifacts_json = match self.serialized_artifacts() {
+            Ok(artifacts_json) => artifacts_json,
+            Err(error) => {
+                log::error!(
+                    "Failed to serialize artifacts when persisting conversation data: {error}"
+                );
+                None
+            }
+        };
+        let event = self.updated_conversation_event(artifacts_json, None);
+        ctx.spawn(
+            async move {
+                if let Err(e) = sqlite_sender.send(event) {
+                    log::warn!("Failed to send updated AI tasks to sqlite writer thread: {e:?}");
+                }
+            },
+            |_, _, _| {},
+        );
+    }
+
+    fn updated_conversation_event(
+        &self,
+        artifacts_json: Option<String>,
+        completion: Option<std::sync::mpsc::SyncSender<Result<(), String>>>,
+    ) -> ModelEvent {
         let reverted_action_ids = if self.reverted_action_ids.is_empty() {
             None
         } else {
@@ -3101,21 +3184,7 @@ impl AIConversation {
             )
         };
 
-        let artifacts_json = if self.artifacts.is_empty() {
-            None
-        } else {
-            match serde_json::to_string(&self.artifacts) {
-                Ok(json) => Some(json),
-                Err(e) => {
-                    log::error!(
-                        "Failed to serialize artifacts when persisting conversation data: {e}"
-                    );
-                    None
-                }
-            }
-        };
-
-        let event = ModelEvent::UpdateMultiAgentConversation {
+        ModelEvent::UpdateMultiAgentConversation {
             conversation_id: self.id.to_string(),
             updated_tasks: self
                 .all_tasks()
@@ -3148,15 +3217,63 @@ impl AIConversation {
                 last_event_sequence: self.last_event_sequence,
                 pinned: self.pinned,
             },
-        };
-        ctx.spawn(
-            async move {
-                if let Err(e) = sqlite_sender.send(event) {
-                    log::warn!("Failed to send updated AI tasks to sqlite writer thread: {e:?}");
-                }
-            },
-            |_, _, _| {},
-        );
+            completion,
+        }
+    }
+
+    fn serialized_artifacts(&self) -> Result<Option<String>, serde_json::Error> {
+        if self.artifacts.is_empty() {
+            Ok(None)
+        } else {
+            serde_json::to_string(&self.artifacts).map(Some)
+        }
+    }
+
+    fn write_updated_conversation_state_durably(
+        &self,
+        ctx: &mut ModelContext<BlocklistAIHistoryModel>,
+    ) -> Result<(), UpdateConversationError> {
+        if self.is_viewing_shared_session {
+            return Err(UpdateConversationError::LocalCompaction(
+                "Local compaction is unavailable for shared conversations".to_string(),
+            ));
+        }
+        if !*GeneralSettings::as_ref(ctx).restore_session
+            || !AppExecutionMode::as_ref(ctx).can_save_session()
+        {
+            return Err(UpdateConversationError::LocalCompaction(
+                "Local compaction requires local conversation persistence".to_string(),
+            ));
+        }
+        let sqlite_sender = GlobalResourceHandlesProvider::as_ref(ctx)
+            .get()
+            .model_event_sender
+            .clone()
+            .ok_or_else(|| {
+                UpdateConversationError::LocalCompaction(
+                    "Local SQLite persistence is unavailable".to_string(),
+                )
+            })?;
+        let (completion, acknowledgement) = std::sync::mpsc::sync_channel(1);
+        let artifacts_json = self.serialized_artifacts().map_err(|error| {
+            UpdateConversationError::LocalCompaction(format!(
+                "Failed to serialize local conversation state: {error}"
+            ))
+        })?;
+        let event = self.updated_conversation_event(artifacts_json, Some(completion));
+        sqlite_sender.send(event).map_err(|error| {
+            UpdateConversationError::LocalCompaction(format!(
+                "Failed to queue the local SQLite transaction: {error}"
+            ))
+        })?;
+        acknowledgement
+            .recv()
+            .map_err(|error| {
+                UpdateConversationError::LocalCompaction(format!(
+                    "Local SQLite writer closed before acknowledging compaction: {error}"
+                ))
+            })?
+            .map_err(UpdateConversationError::LocalCompaction)
     }
 
     pub fn rollback_transaction(&mut self, response_stream_id: &ResponseStreamId) {
@@ -3977,6 +4094,8 @@ pub enum UpdateConversationError {
     NoActiveTask,
     #[error("No pending request.")]
     NoPendingRequest,
+    #[error("{0}")]
+    LocalCompaction(String),
 }
 
 /// A globally unique ID for a conversation with an AI agent.

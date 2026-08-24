@@ -1426,6 +1426,7 @@ impl BlocklistAIHistoryModel {
             conversation_id: forked_conversation_id.to_string(),
             updated_tasks: updated_tasks_with_new_ids.clone(),
             conversation_data: conversation_data.clone(),
+            completion: None,
         }) {
             return Err(anyhow!("Failed to persist forked conversation: {e:?}."));
         }
@@ -1586,6 +1587,7 @@ impl BlocklistAIHistoryModel {
             conversation_id: forked_conversation_id.to_string(),
             updated_tasks: updated_tasks_with_new_ids.clone(),
             conversation_data: conversation_data.clone(),
+            completion: None,
         }) {
             return Err(anyhow!(
                 "Failed to persist forked conversation at block: {e:?}."

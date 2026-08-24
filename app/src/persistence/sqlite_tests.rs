@@ -23,7 +23,7 @@ use crate::cloud_object::{CloudObjectPermissions, Owner};
 use crate::code::editor_management::CodeSource;
 use crate::drive::OpenWarpDriveObjectSettings;
 use crate::notebooks::{CloudNotebook, CloudNotebookModel};
-use crate::persistence::model::ObjectPermissions;
+use crate::persistence::model::{AgentConversationData, ObjectPermissions};
 use crate::persistence::{BlockCompleted, ModelEvent, PersistenceScope};
 use crate::server::ids::ClientId;
 use crate::tab::SelectedTabColor;
@@ -197,6 +197,102 @@ fn sqlite_writer_reuses_codebase_index_metadata_events() {
     let mut conn = setup_database(&database_path).expect("database should reopen");
     let restored = get_all_codebase_index_metadata(&mut conn).expect("metadata should load");
     assert!(restored.is_empty());
+}
+
+fn local_compaction_conversation_data() -> AgentConversationData {
+    AgentConversationData {
+        server_conversation_token: None,
+        conversation_usage_metadata: None,
+        reverted_action_ids: None,
+        forked_from_server_conversation_token: None,
+        artifacts_json: None,
+        parent_agent_id: None,
+        agent_name: None,
+        orchestration_harness_type: None,
+        parent_conversation_id: None,
+        is_remote_child: false,
+        root_task_is_optimistic: None,
+        run_id: None,
+        autoexecute_override: None,
+        last_event_sequence: None,
+        pinned: false,
+    }
+}
+
+#[test]
+fn sqlite_writer_acknowledges_durable_local_compaction_state() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let database_path = tempdir.path().join("warp.sqlite");
+    let conn = setup_database(&database_path).expect("database should initialize");
+    let writer = start_writer(conn, database_path.clone()).expect("writer should start");
+    let (completion, acknowledgement) = std::sync::mpsc::sync_channel(1);
+    let conversation_id = Uuid::new_v4().to_string();
+    writer
+        .sender
+        .send(ModelEvent::UpdateMultiAgentConversation {
+            conversation_id: conversation_id.clone(),
+            updated_tasks: vec![warp_multi_agent_api::Task {
+                id: "root".to_string(),
+                ..Default::default()
+            }],
+            conversation_data: local_compaction_conversation_data(),
+            completion: Some(completion),
+        })
+        .expect("durable conversation event should send");
+
+    assert_eq!(
+        acknowledgement
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("writer must acknowledge the SQLite transaction"),
+        Ok(())
+    );
+    writer
+        .sender
+        .send(ModelEvent::Terminate)
+        .expect("terminate event should send");
+    writer.handle.join().expect("writer should terminate");
+
+    let mut conn = setup_database(&database_path).expect("database should reopen");
+    let restored = read_sqlite_data(&mut conn, None).expect("persisted data should load");
+    assert!(
+        restored
+            .multi_agent_conversations
+            .iter()
+            .any(|conversation| conversation.conversation.conversation_id == conversation_id)
+    );
+}
+
+#[test]
+fn paused_sqlite_writer_rejects_durable_local_compaction_state() {
+    let tempdir = tempfile::tempdir().expect("tempdir should be created");
+    let database_path = tempdir.path().join("warp.sqlite");
+    let conn = setup_database(&database_path).expect("database should initialize");
+    let writer = start_writer(conn, database_path).expect("writer should start");
+    writer
+        .sender
+        .send(ModelEvent::PauseAndRemoveDatabase)
+        .expect("pause event should send");
+    let (completion, acknowledgement) = std::sync::mpsc::sync_channel(1);
+    writer
+        .sender
+        .send(ModelEvent::UpdateMultiAgentConversation {
+            conversation_id: Uuid::new_v4().to_string(),
+            updated_tasks: vec![],
+            conversation_data: local_compaction_conversation_data(),
+            completion: Some(completion),
+        })
+        .expect("durable conversation event should send");
+
+    let error = acknowledgement
+        .recv_timeout(std::time::Duration::from_secs(2))
+        .expect("paused writer must reject rather than deadlock")
+        .expect_err("paused writer must not acknowledge a commit");
+    assert!(error.contains("paused"));
+    writer
+        .sender
+        .send(ModelEvent::Terminate)
+        .expect("terminate event should send");
+    writer.handle.join().expect("writer should terminate");
 }
 #[test]
 fn test_deduplicate_snapshots() {

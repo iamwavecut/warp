@@ -165,6 +165,7 @@ fn persisted_agent_conversation_from_update_event(event: ModelEvent) -> AgentCon
         conversation_id,
         updated_tasks,
         conversation_data,
+        completion: _,
     } = event
     else {
         panic!("expected UpdateMultiAgentConversation event");

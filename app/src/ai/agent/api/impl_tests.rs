@@ -12,6 +12,7 @@ fn request_params_with_ask_user_question_enabled(ask_user_question_enabled: bool
 
     RequestParams {
         input: vec![],
+        conversation_id: "00000000-0000-4000-8000-000000000000".to_string(),
         request_task_id: None,
         conversation_token: None,
         tasks: vec![],

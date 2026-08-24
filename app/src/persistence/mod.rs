@@ -345,6 +345,9 @@ pub enum ModelEvent {
         conversation_id: String,
         updated_tasks: Vec<api::Task>,
         conversation_data: AgentConversationData,
+        /// Optional acknowledgement for state transitions that must not be
+        /// exposed as successful until their SQLite transaction commits.
+        completion: Option<SyncSender<Result<(), String>>>,
     },
     DeleteMultiAgentConversations {
         conversation_ids: Vec<String>,

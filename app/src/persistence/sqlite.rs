@@ -524,6 +524,10 @@ fn start_writer(conn: SqliteConnection, database_path: PathBuf) -> Result<Writer
                         event => {
                             if paused {
                                 log::info!("Ignoring event as SQLite Writer is on pause");
+                                acknowledge_rejected_event(
+                                    &event,
+                                    "SQLite writer is paused".to_string(),
+                                );
                                 continue;
                             }
                             if let Err(err) = handle_model_event(event, &mut current_conn) {
@@ -535,6 +539,16 @@ fn start_writer(conn: SqliteConnection, database_path: PathBuf) -> Result<Writer
             }
         })?;
     Ok(WriterHandles { handle, sender: tx })
+}
+
+fn acknowledge_rejected_event(event: &ModelEvent, message: String) {
+    if let ModelEvent::UpdateMultiAgentConversation {
+        completion: Some(completion),
+        ..
+    } = event
+    {
+        let _ = completion.send(Err(message));
+    }
 }
 
 /// Handles a single [`ModelEvent`] by dispatching to an event-specific function.
@@ -672,13 +686,24 @@ fn handle_model_event(event: ModelEvent, connection: &mut SqliteConnection) -> a
             conversation_id,
             updated_tasks,
             conversation_data,
-        } => upsert_agent_conversation(
-            connection,
-            &conversation_id,
-            &updated_tasks,
-            conversation_data,
-        )
-        .map_err(anyhow::Error::from),
+            completion,
+        } => {
+            let result = upsert_agent_conversation(
+                connection,
+                &conversation_id,
+                &updated_tasks,
+                conversation_data,
+            )
+            .map_err(anyhow::Error::from);
+            if let Some(completion) = completion {
+                let acknowledgement = result
+                    .as_ref()
+                    .map(|_| ())
+                    .map_err(|error| format!("{error:#}"));
+                let _ = completion.send(acknowledgement);
+            }
+            result
+        }
         ModelEvent::DeleteMultiAgentConversations { conversation_ids } => {
             delete_agent_conversations(connection, conversation_ids)
                 .map_err(anyhow::Error::from)
