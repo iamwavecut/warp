@@ -65,6 +65,7 @@ pub(crate) mod mcp_config;
 mod model;
 pub mod output;
 mod profiles;
+mod schedule;
 mod text_layout;
 
 /// Run a Warp CLI command.
@@ -86,6 +87,9 @@ fn dispatch_command(
         CliCommand::Agent(agent_cmd) => run_agent(ctx, global_options, agent_cmd),
         CliCommand::MCP(mcp_cmd) => mcp::run(ctx, global_options, mcp_cmd),
         CliCommand::Model(model_cmd) => model::run(ctx, global_options, model_cmd),
+        CliCommand::Schedule(schedule_cmd) => {
+            schedule::run(ctx, schedule_cmd, global_options.output_format)
+        }
         CliCommand::Login => admin::login(ctx),
         CliCommand::Logout => admin::logout(ctx),
         CliCommand::Whoami => admin::whoami(ctx, global_options.output_format),

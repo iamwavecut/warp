@@ -640,7 +640,9 @@ fn start_agent_error_message_for_status(
                 blocked_action.to_string()
             })
         }
-        ConversationStatus::InProgress | ConversationStatus::Success => None,
+        ConversationStatus::InProgress
+        | ConversationStatus::Success
+        | ConversationStatus::WaitingForEvents => None,
     }
 }
 

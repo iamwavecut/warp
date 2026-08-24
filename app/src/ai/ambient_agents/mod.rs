@@ -75,6 +75,9 @@ pub enum AmbientConversationStatus {
 pub fn conversation_output_status_from_conversation(
     conversation: &AIConversation,
 ) -> Option<AmbientConversationStatus> {
+    if conversation.status().is_waiting_for_events() {
+        return None;
+    }
     if let ConversationStatus::Blocked { blocked_action } = conversation.status() {
         return Some(AmbientConversationStatus::Blocked {
             blocked_action: blocked_action.clone(),

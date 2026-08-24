@@ -936,7 +936,7 @@ impl TryFrom<RequestComputerUseResult> for api::request::input::tool_call_result
             RequestComputerUseResult::Approved {
                 screenshot,
                 platform,
-                windows: _,
+                windows,
             } => Ok(
                 api::request::input::tool_call_result::Result::RequestComputerUse(
                     api::RequestComputerUseResult {
@@ -953,6 +953,7 @@ impl TryFrom<RequestComputerUseResult> for api::request::input::tool_call_result
                                     height: screenshot.height as i32,
                                 }),
                                 platform: convert_platform(platform).into(),
+                                windows: windows.into_iter().map(convert_window_info).collect(),
                             },
                         )),
                     },
@@ -986,6 +987,7 @@ impl TryFrom<UseComputerResult> for api::request::input::tool_call_result::Resul
     fn try_from(result: UseComputerResult) -> Result<Self, Self::Error> {
         match result {
             UseComputerResult::Success(result) => {
+                let captured_window = result.captured_window;
                 Ok(api::request::input::tool_call_result::Result::UseComputer(
                     api::UseComputerResult {
                         result: Some(api::use_computer_result::Result::Success(
@@ -997,6 +999,18 @@ impl TryFrom<UseComputerResult> for api::request::input::tool_call_result::Resul
                                     height: s.height as i32,
                                 }),
                                 cursor_position: result.cursor_position.map(vec_to_coordinates),
+                                windows: result
+                                    .windows
+                                    .into_iter()
+                                    .map(convert_window_info)
+                                    .collect(),
+                                captured_window: captured_window.map(|window| {
+                                    api::use_computer_result::success::CapturedWindow {
+                                        window_id: window.window_id.to_string(),
+                                        width_px: window.width_px,
+                                        height_px: window.height_px,
+                                    }
+                                }),
                             },
                         )),
                     },
@@ -1020,6 +1034,16 @@ fn vec_to_coordinates(vec: computer_use::Vector2I) -> api::Coordinates {
     api::Coordinates {
         x: vec.x(),
         y: vec.y(),
+    }
+}
+
+fn convert_window_info(window: computer_use::WindowInfo) -> api::WindowInfo {
+    api::WindowInfo {
+        window_id: window.window_id.to_string(),
+        pid: window.pid,
+        app_name: window.app_name,
+        title: window.title,
+        layer: window.layer,
     }
 }
 
@@ -1412,6 +1436,21 @@ impl TryFrom<InsertReviewCommentsResult> for api::request::input::tool_call_resu
                 ),
             ),
             InsertReviewCommentsResult::Cancelled => Err(ConvertToAPITypeError::Ignore),
+        }
+    }
+}
+
+impl TryFrom<WaitForEventsResult> for api::request::input::tool_call_result::Result {
+    type Error = ConvertToAPITypeError;
+
+    fn try_from(result: WaitForEventsResult) -> Result<Self, Self::Error> {
+        match result {
+            WaitForEventsResult::Completed => Ok(
+                api::request::input::tool_call_result::Result::WaitForEvents(
+                    api::WaitForEventsResult {},
+                ),
+            ),
+            WaitForEventsResult::Cancelled => Err(ConvertToAPITypeError::Ignore),
         }
     }
 }

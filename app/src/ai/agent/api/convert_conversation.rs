@@ -1538,6 +1538,7 @@ pub(crate) fn convert_tool_call_result_to_input(
             log::warn!("No result present for tool call ID: {tool_call_id}");
             None
         }
+        Some(ToolCallResultType::WaitForEvents(_)) => None,
     }
 }
 
@@ -1665,6 +1666,7 @@ fn create_cancelled_result_for_tool_call(
         ToolType::RunAgents(_) => {
             AIAgentActionResultType::RunAgents(ai::agent::action_result::RunAgentsResult::Cancelled)
         }
+        ToolType::WaitForEvents(_) => return None,
         // These tools are deprecated.
         ToolType::SuggestCreatePlan(_)
         | ToolType::SuggestPlan(_)

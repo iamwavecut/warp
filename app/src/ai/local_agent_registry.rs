@@ -1266,6 +1266,7 @@ fn local_status_for_conversation(
         ConversationStatus::Success => LocalAgentStatus::Succeeded,
         ConversationStatus::Error => LocalAgentStatus::Failed,
         ConversationStatus::Cancelled => LocalAgentStatus::Cancelled,
+        ConversationStatus::WaitingForEvents => LocalAgentStatus::Idle,
     }
 }
 

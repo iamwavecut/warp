@@ -1582,8 +1582,8 @@ impl BlocklistAIController {
         // subagent is or will be active — events will be delivered via the idle
         // path once the subagent session ends.
         let mut has_piggybacked_events = false;
-        if FeatureFlag::OrchestrationV2.is_enabled() {
-            if will_trigger_server_subagent || has_active_subagent {
+        if will_trigger_server_subagent || has_active_subagent {
+            if FeatureFlag::OrchestrationV2.is_enabled() {
                 log::debug!(
                     "Skipping event piggyback for conversation {conversation_id:?}: \
                      {}",
@@ -1593,20 +1593,18 @@ impl BlocklistAIController {
                         "a subagent is currently active"
                     }
                 );
-            } else {
-                if let Some((event_inputs, task_id)) = OrchestrationEventService::handle(ctx)
-                    .update(ctx, |svc, ctx| {
-                        svc.drain_events_for_request(conversation_id, ctx)
-                    })
-                {
-                    has_piggybacked_events = true;
-                    request_input
-                        .input_messages
-                        .entry(task_id)
-                        .or_default()
-                        .extend(event_inputs);
-                }
             }
+        } else if let Some((event_inputs, task_id)) = OrchestrationEventService::handle(ctx)
+            .update(ctx, |svc, ctx| {
+                svc.drain_events_for_request(conversation_id, ctx)
+            })
+        {
+            has_piggybacked_events = true;
+            request_input
+                .input_messages
+                .entry(task_id)
+                .or_default()
+                .extend(event_inputs);
         }
 
         let result = self.send_request_input(
@@ -1645,8 +1643,11 @@ impl BlocklistAIController {
             );
             return false;
         };
-        let is_success = matches!(conversation.status(), ConversationStatus::Success);
-        if !owns || has_active_stream || !is_success {
+        let is_ready = matches!(
+            conversation.status(),
+            ConversationStatus::Success | ConversationStatus::WaitingForEvents
+        );
+        if !owns || has_active_stream || !is_ready {
             log::info!(
                 "Pending events are not ready: conversation_id={conversation_id:?} owns_conversation={owns} has_active_stream={has_active_stream} status={:?}",
                 conversation.status()
@@ -1673,6 +1674,10 @@ impl BlocklistAIController {
         else {
             return;
         };
+
+        self.action_model.update(ctx, |action_model, ctx| {
+            action_model.cancel_wait_for_events_for_conversation(conversation_id, ctx);
+        });
 
         if self
             .send_request_input(

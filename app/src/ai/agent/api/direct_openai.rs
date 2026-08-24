@@ -1180,6 +1180,7 @@ fn local_orchestration_tool_requested(supported_tools: &[api::ToolType]) -> bool
             api::ToolType::StartAgent
                 | api::ToolType::RunAgents
                 | api::ToolType::SendMessageToAgent
+                | api::ToolType::WaitForEvents
         )
     })
 }
@@ -3464,6 +3465,7 @@ fn request_tool_call_result_from_action_result(
         }
         AIAgentActionResultType::AskUserQuestion(result) => Some(result.into()),
         AIAgentActionResultType::RunAgents(result) => Some(result.try_into().ok()?),
+        AIAgentActionResultType::WaitForEvents(result) => Some(result.try_into().ok()?),
     };
 
     Some(api::request::input::ToolCallResult {
@@ -3522,6 +3524,7 @@ fn request_tool_result_to_message_tool_result(
         RequestResult::StartAgentV2(result) => MessageResult::StartAgentV2(result),
         RequestResult::UploadFileArtifact(result) => MessageResult::UploadFileArtifact(result),
         RequestResult::RunAgentsResult(result) => MessageResult::RunAgentsResult(result),
+        RequestResult::WaitForEvents(result) => MessageResult::WaitForEvents(result),
     }
 }
 
@@ -3755,6 +3758,10 @@ fn openai_tool_call_from_api_tool_call(
                 "subject": call.subject,
                 "message": call.message,
             }),
+        ),
+        api::message::tool_call::Tool::WaitForEvents(call) => (
+            "wait_for_events",
+            json!({"idle_timeout_seconds": call.idle_timeout_seconds}),
         ),
         _ => return None,
     };
@@ -4266,6 +4273,19 @@ fn api_tool_from_openai_tool_call_inner(
         "send_message_to_agent" => Ok(api::message::tool_call::Tool::SendMessageToAgent(
             local_send_message_to_agent_arg(&args)?,
         )),
+        "wait_for_events" => {
+            reject_unexpected_arguments_except(
+                &args,
+                "wait_for_events",
+                &["idle_timeout_seconds"],
+            )?;
+            Ok(api::message::tool_call::Tool::WaitForEvents(
+                api::message::tool_call::WaitForEvents {
+                    idle_timeout_seconds: nonnegative_optional_i32(&args, "idle_timeout_seconds")?
+                        .unwrap_or_default(),
+                },
+            ))
+        }
         "ask_user_question" => Ok(api::message::tool_call::Tool::AskUserQuestion(
             ask_user_question_arg(&args)?,
         )),
@@ -5047,6 +5067,7 @@ fn use_computer_action_arg(
     };
     Ok(api::message::tool_call::use_computer::Action {
         r#type: Some(action),
+        target: None,
     })
 }
 
@@ -5242,6 +5263,7 @@ fn parse_screenshot_params(
         max_long_edge_px,
         max_total_px,
         region,
+        target: None,
     })
 }
 
@@ -5352,6 +5374,7 @@ fn tool_type_for_openai_name(name: &str) -> Option<api::ToolType> {
         "start_agent" => api::ToolType::StartAgent,
         "run_agents" => api::ToolType::RunAgents,
         "send_message_to_agent" => api::ToolType::SendMessageToAgent,
+        "wait_for_events" => api::ToolType::WaitForEvents,
         _ => return None,
     })
 }
@@ -5411,6 +5434,7 @@ fn openai_tool_name(tool: &api::message::tool_call::Tool) -> &'static str {
         api::message::tool_call::Tool::StartAgent(_) => "start_agent",
         api::message::tool_call::Tool::RunAgents(_) => "run_agents",
         api::message::tool_call::Tool::SendMessageToAgent(_) => "send_message_to_agent",
+        api::message::tool_call::Tool::WaitForEvents(_) => "wait_for_events",
         _ => "unsupported",
     }
 }
@@ -5837,6 +5861,7 @@ fn tool_call_result_type_name(result: &api::message::tool_call_result::Result) -
         ToolCallResultType::StartAgentV2(_) => "start_agent_v2",
         ToolCallResultType::UploadFileArtifact(_) => "upload_file_artifact",
         ToolCallResultType::RunAgentsResult(_) => "run_agents_result",
+        ToolCallResultType::WaitForEvents(_) => "wait_for_events",
     }
 }
 
@@ -6645,6 +6670,20 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                     ),
                 ],
                 ["addresses", "subject", "message"],
+            ),
+        ));
+    }
+
+    if supported.contains(&api::ToolType::WaitForEvents) {
+        tools.push(openai_tool(
+            "wait_for_events",
+            "Yield this local agent until a child lifecycle event or local agent message arrives. A bounded idle watchdog resumes the agent if no event arrives.",
+            json_schema_object(
+                [(
+                    "idle_timeout_seconds",
+                    json!({"type": "integer", "minimum": 0, "maximum": 86400}),
+                )],
+                [],
             ),
         ));
     }
@@ -10610,6 +10649,7 @@ mod tests {
                 api::message::tool_call::UseComputer {
                     actions: vec![
                         api::message::tool_call::use_computer::Action {
+                            target: None,
                             r#type: Some(
                                 api::message::tool_call::use_computer::action::Type::MouseMove(
                                     api::message::tool_call::use_computer::action::MouseMove {
@@ -10619,6 +10659,7 @@ mod tests {
                             ),
                         },
                         api::message::tool_call::use_computer::Action {
+                            target: None,
                             r#type: Some(
                                 api::message::tool_call::use_computer::action::Type::MouseDown(
                                     api::message::tool_call::use_computer::action::MouseDown {
@@ -10629,6 +10670,7 @@ mod tests {
                             ),
                         },
                         api::message::tool_call::use_computer::Action {
+                            target: None,
                             r#type: Some(
                                 api::message::tool_call::use_computer::action::Type::MouseUp(
                                     api::message::tool_call::use_computer::action::MouseUp {
@@ -10638,6 +10680,7 @@ mod tests {
                             ),
                         },
                         api::message::tool_call::use_computer::Action {
+                            target: None,
                             r#type: Some(
                                 api::message::tool_call::use_computer::action::Type::MouseWheel(
                                     api::message::tool_call::use_computer::action::MouseWheel {
@@ -10651,6 +10694,7 @@ mod tests {
                             ),
                         },
                         api::message::tool_call::use_computer::Action {
+                            target: None,
                             r#type: Some(
                                 api::message::tool_call::use_computer::action::Type::Wait(
                                     api::message::tool_call::use_computer::action::Wait {
@@ -10663,6 +10707,7 @@ mod tests {
                             ),
                         },
                         api::message::tool_call::use_computer::Action {
+                            target: None,
                             r#type: Some(
                                 api::message::tool_call::use_computer::action::Type::TypeText(
                                     api::message::tool_call::use_computer::action::TypeText {
@@ -10672,6 +10717,7 @@ mod tests {
                             ),
                         },
                         api::message::tool_call::use_computer::Action {
+                            target: None,
                             r#type: Some(
                                 api::message::tool_call::use_computer::action::Type::KeyDown(
                                     api::message::tool_call::use_computer::action::KeyDown {
@@ -10689,6 +10735,7 @@ mod tests {
                             ),
                         },
                         api::message::tool_call::use_computer::Action {
+                            target: None,
                             r#type: Some(
                                 api::message::tool_call::use_computer::action::Type::KeyUp(
                                     api::message::tool_call::use_computer::action::KeyUp {
@@ -10716,6 +10763,7 @@ mod tests {
                                     bottom_right: Some(api::Coordinates { x: 640, y: 480 }),
                                 },
                             ),
+                            target: None,
                         },
                     ),
                     action_summary: "Wait".to_string(),
@@ -10724,6 +10772,7 @@ mod tests {
             api::message::tool_call::Tool::UseComputer(
                 api::message::tool_call::UseComputer {
                     actions: vec![api::message::tool_call::use_computer::Action {
+                        target: None,
                         r#type: Some(
                             api::message::tool_call::use_computer::action::Type::Wait(
                                 api::message::tool_call::use_computer::action::Wait {
@@ -10756,6 +10805,7 @@ mod tests {
                         max_long_edge_px: 800,
                         max_total_px: 1600,
                         region: None,
+                        target: None,
                     }),
                 },
             ),
@@ -11164,6 +11214,31 @@ mod tests {
         )
         .unwrap();
         assert!(!run_shell_wait_value(&with_controls));
+    }
+
+    #[test]
+    fn p2_4_wait_for_events_is_advertised_and_parsed_locally() {
+        let tools = openai_tools_for_supported_tools(&[api::ToolType::WaitForEvents]);
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].function.name, "wait_for_events");
+
+        let call = OpenAIToolCall {
+            id: "wait-1".to_string(),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: "wait_for_events".to_string(),
+                arguments: json!({"idle_timeout_seconds": 600}).to_string(),
+            },
+        };
+        let tool = api_tool_from_openai_tool_call_with_supported_tools(
+            &call,
+            &[api::ToolType::WaitForEvents],
+        )
+        .unwrap();
+        let api::message::tool_call::Tool::WaitForEvents(wait) = tool else {
+            panic!("expected wait_for_events");
+        };
+        assert_eq!(wait.idle_timeout_seconds, 600);
     }
 
     #[test]

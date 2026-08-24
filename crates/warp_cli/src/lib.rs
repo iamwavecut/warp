@@ -20,6 +20,7 @@ pub mod json_filter;
 pub mod local_control;
 pub mod mcp;
 pub mod model;
+pub mod schedule;
 pub const OZ_RUN_ID_ENV: &str = "OZ_RUN_ID";
 pub const OZ_PARENT_RUN_ID_ENV: &str = "OZ_PARENT_RUN_ID";
 pub const OZ_CLI_ENV: &str = "OZ_CLI";
@@ -280,6 +281,10 @@ pub enum CliCommand {
     #[command(subcommand)]
     Model(crate::model::ModelCommand),
 
+    /// Create and manage durable local agent schedules.
+    #[command(subcommand)]
+    Schedule(crate::schedule::ScheduleCommand),
+
     /// Log in to Warp.
     Login,
     /// Log out of Warp.
@@ -295,6 +300,7 @@ impl CliCommand {
             CliCommand::Agent(command) => command.as_str_for_tracing(),
             CliCommand::MCP(command) => command.as_str_for_tracing(),
             CliCommand::Model(command) => command.as_str_for_tracing(),
+            CliCommand::Schedule(command) => command.as_str_for_tracing(),
             CliCommand::Login => "login",
             CliCommand::Logout => "logout",
             CliCommand::Whoami => "whoami",

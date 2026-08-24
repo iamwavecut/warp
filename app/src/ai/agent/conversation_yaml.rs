@@ -520,7 +520,8 @@ fn write_tool_call_args(out: &mut String, tool: &Tool) {
         | Tool::Server(_)
         | Tool::Subagent(_)
         | Tool::UploadFileArtifact(_)
-        | Tool::TransferShellCommandControlToUser(_) => {}
+        | Tool::TransferShellCommandControlToUser(_)
+        | Tool::WaitForEvents(_) => {}
     }
 }
 
@@ -548,6 +549,7 @@ fn write_tool_call_result_content(out: &mut String, result: &ToolCallResultType)
             }
             None => {}
         },
+        ToolCallResultType::WaitForEvents(_) => {}
         ToolCallResultType::StartAgentV2(r) => match &r.result {
             Some(api::start_agent_v2_result::Result::Success(s)) => {
                 out.push_str(&format!("agent_id: {}\n", s.agent_id));

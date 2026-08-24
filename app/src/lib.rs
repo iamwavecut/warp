@@ -1676,6 +1676,13 @@ pub(crate) fn initialize_app(
     // be rehydrated as stopped, without claiming that old child processes are
     // still alive after an app restart.
     ctx.add_singleton_model(ai::local_agent_registry::LocalAgentRegistry::new_registered);
+    // The local scheduler is a GUI-process supervisor. CLI processes mutate
+    // the same durable repository and exit; the running app observes those
+    // requests on its next local tick.
+    #[cfg(not(target_family = "wasm"))]
+    if matches!(launch_mode, LaunchMode::App { .. }) {
+        ctx.add_singleton_model(ai::local_scheduler::LocalScheduler::new);
+    }
     // Per-conversation queued prompts. Registered after the history model
     // since it subscribes to history events for cleanup.
     ctx.add_singleton_model(ai::blocklist::QueuedQueryModel::new_persistent);

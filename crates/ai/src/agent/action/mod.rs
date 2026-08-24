@@ -19,7 +19,7 @@ use crate::{
             RequestCommandOutputResult, RequestComputerUseResult, RequestFileEditsResult,
             RunAgentsResult, SearchCodebaseResult, SendMessageToAgentResult, StartAgentResult,
             StartAgentVersion, SuggestNewConversationResult, SuggestPromptResult,
-            TransferShellCommandControlToUserResult, UseComputerResult,
+            TransferShellCommandControlToUserResult, UseComputerResult, WaitForEventsResult,
             WriteToLongRunningShellCommandResult,
         },
     },
@@ -173,6 +173,14 @@ pub enum AIAgentActionType {
     /// `base_prompt + "\n\n" + agent_run_configs[i].prompt` (or just
     /// `base_prompt` when the per-agent `prompt` is empty).
     RunAgents(RunAgentsRequest),
+
+    /// Yield the parent agent until a local child message/status event arrives
+    /// or the bounded watchdog expires.
+    WaitForEvents {
+        tool_call_id: String,
+        /// Zero selects the local default timeout.
+        idle_timeout_seconds: i32,
+    },
 }
 
 /// Run-wide + per-agent configuration for a `RunAgents` tool call.
@@ -405,6 +413,9 @@ impl AIAgentActionType {
                 AIAgentActionResultType::AskUserQuestion(AskUserQuestionResult::Cancelled)
             }
             Self::RunAgents(_) => AIAgentActionResultType::RunAgents(RunAgentsResult::Cancelled),
+            Self::WaitForEvents { .. } => {
+                AIAgentActionResultType::WaitForEvents(WaitForEventsResult::Cancelled)
+            }
         }
     }
 
@@ -452,6 +463,7 @@ impl AIAgentActionType {
             Self::RunAgents(req) => {
                 format!("Orchestrate {} agent(s)", req.agent_run_configs.len())
             }
+            Self::WaitForEvents { .. } => "Wait for local agent events".to_string(),
         }
     }
 }
@@ -630,6 +642,13 @@ impl Display for AIAgentActionType {
                     .join(", ");
                 write!(f, "Orchestrate: summary='{}' agents=[{names}]", req.summary,)
             }
+            AIAgentActionType::WaitForEvents {
+                tool_call_id,
+                idle_timeout_seconds,
+            } => write!(
+                f,
+                "WaitForEvents: tool_call_id={tool_call_id} idle_timeout_seconds={idle_timeout_seconds}"
+            ),
         }
     }
 }

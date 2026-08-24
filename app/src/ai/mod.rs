@@ -36,6 +36,8 @@ pub(crate) mod local_codebase_index;
 pub(crate) mod local_compaction;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod local_named_agents;
+#[cfg(not(target_family = "wasm"))]
+pub(crate) mod local_scheduler;
 pub mod onboarding;
 pub(crate) mod persisted_workspace;
 pub(crate) mod predict;

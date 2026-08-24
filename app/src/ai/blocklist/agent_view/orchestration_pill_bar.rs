@@ -124,7 +124,7 @@ fn pill_status_sort_key(status: Option<&ConversationStatus>) -> u8 {
     match status {
         Some(ConversationStatus::Blocked { .. }) => 0,
         Some(ConversationStatus::Error) => 1,
-        Some(ConversationStatus::InProgress) => 2,
+        Some(ConversationStatus::InProgress | ConversationStatus::WaitingForEvents) => 2,
         Some(ConversationStatus::Cancelled) | Some(ConversationStatus::Success) => DONE_STATUS_KEY,
         None => 2,
     }

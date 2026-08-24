@@ -7,6 +7,9 @@ use crate::ai::agent::{
     conversation::{AIConversationId, ConversationStatus},
     task::TaskId,
 };
+use crate::ai::local_agent_registry::{
+    LocalAgentRegistry, LocalAgentRegistryEvent, LocalAgentStatus,
+};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 use warp_core::features::FeatureFlag;
@@ -110,7 +113,98 @@ impl OrchestrationEventService {
         ctx.subscribe_to_model(&history_model, move |me, _, event, ctx| {
             me.handle_history_event(event, ctx);
         });
+        let local_registry = LocalAgentRegistry::handle(ctx);
+        ctx.subscribe_to_model(&local_registry, move |me, _, event, ctx| {
+            me.handle_local_registry_event(event, ctx);
+        });
         Self::new_without_subscriptions()
+    }
+
+    fn handle_local_registry_event(
+        &mut self,
+        event: &LocalAgentRegistryEvent,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let LocalAgentRegistryEvent::StatusChanged { run_id, status } = event else {
+            return;
+        };
+        let (parent_conversation_id, source_agent_id) = {
+            let registry = LocalAgentRegistry::as_ref(ctx);
+            let Some(run) = registry.get(run_id) else {
+                return;
+            };
+            let Some(parent_run_id) = run.parent_run_id.as_deref() else {
+                return;
+            };
+            let Some(parent) = registry.get(parent_run_id) else {
+                return;
+            };
+            (parent.conversation_id, run.run_id.clone())
+        };
+        let (event_type, detail) = match status {
+            LocalAgentStatus::Starting => (
+                LifecycleEventType::Started,
+                LifecycleEventDetailPayload::default(),
+            ),
+            LocalAgentStatus::Running => (
+                LifecycleEventType::InProgress,
+                LifecycleEventDetailPayload::default(),
+            ),
+            LocalAgentStatus::Idle => (
+                LifecycleEventType::Idle,
+                LifecycleEventDetailPayload::default(),
+            ),
+            LocalAgentStatus::Succeeded => (
+                LifecycleEventType::Succeeded,
+                LifecycleEventDetailPayload::default(),
+            ),
+            LocalAgentStatus::Failed | LocalAgentStatus::Stopped => (
+                LifecycleEventType::Failed,
+                LifecycleEventDetailPayload {
+                    stage: Some(LifecycleEventDetailStage::Runtime),
+                    reason: Some("local_agent_stopped".to_string()),
+                    error_message: Some(format!("local agent ended with status {status:?}")),
+                    blocked_action: None,
+                },
+            ),
+            LocalAgentStatus::Cancelled => (
+                LifecycleEventType::Cancelled,
+                LifecycleEventDetailPayload::default(),
+            ),
+            LocalAgentStatus::Blocked => (
+                LifecycleEventType::Blocked,
+                LifecycleEventDetailPayload {
+                    blocked_action: Some("local child agent is blocked".to_string()),
+                    ..LifecycleEventDetailPayload::default()
+                },
+            ),
+        };
+        let occurred_at = chrono::Utc::now();
+        let event_id = Uuid::new_v4().to_string();
+        let lifecycle_event = build_lifecycle_event(
+            event_id.clone(),
+            source_agent_id.clone(),
+            event_type,
+            prost_types::Timestamp {
+                seconds: occurred_at.timestamp(),
+                nanos: occurred_at.timestamp_subsec_nanos() as i32,
+            },
+            &detail,
+        );
+        self.enqueue_lifecycle_event(
+            parent_conversation_id,
+            PendingEvent {
+                event_id,
+                source_agent_id,
+                attempt_count: 0,
+                detail: PendingEventDetail::Lifecycle {
+                    event: lifecycle_event,
+                },
+            },
+        );
+        ctx.emit(OrchestrationEventServiceEvent::EventsReady {
+            conversation_id: parent_conversation_id,
+        });
     }
 
     fn new_without_subscriptions() -> Self {

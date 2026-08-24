@@ -365,6 +365,8 @@ impl From<&AIAgentActionType> for PersistedAIAgentActionType {
             // Orchestrate is rendered from the in-history tool call message;
             // there is no per-action state we need to persist locally.
             AIAgentActionType::RunAgents(_) => Self::NotPersisted,
+            // A local wait is tied to the live process and is safely dropped on restart.
+            AIAgentActionType::WaitForEvents { .. } => Self::NotPersisted,
         }
     }
 }

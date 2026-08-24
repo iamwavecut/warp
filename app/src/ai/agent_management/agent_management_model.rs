@@ -353,7 +353,7 @@ impl AgentNotificationsModel {
 
         match status {
             // When the agent resumes its work, clear stale notifications.
-            ConversationStatus::InProgress => {
+            ConversationStatus::InProgress | ConversationStatus::WaitingForEvents => {
                 self.remove_notification_by_source(origin, ctx);
             }
             ConversationStatus::Success => {

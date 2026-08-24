@@ -97,6 +97,9 @@ pub enum AIAgentActionResultType {
     /// The result of an orchestrate tool call: launched (with per-agent
     /// outcomes), launch denied (Stage 2), failure, or cancelled.
     RunAgents(RunAgentsResult),
+
+    /// Result of the local event wait or its watchdog.
+    WaitForEvents(WaitForEventsResult),
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct ReadFilesFailedFile {
@@ -174,6 +177,7 @@ impl Display for AIAgentActionResultType {
             AIAgentActionResultType::TransferShellCommandControlToUser(result) => result.fmt(f),
             AIAgentActionResultType::AskUserQuestion(result) => result.fmt(f),
             AIAgentActionResultType::RunAgents(result) => result.fmt(f),
+            AIAgentActionResultType::WaitForEvents(result) => result.fmt(f),
             AIAgentActionResultType::OpenCodeReview | AIAgentActionResultType::InitProject => {
                 Ok(())
             }
@@ -754,6 +758,7 @@ impl AIAgentActionResultType {
             AIAgentActionResultType::RunAgents(_) => {
                 "The result of an orchestrate batch of child agents"
             }
+            AIAgentActionResultType::WaitForEvents(_) => "The local wait for child-agent events",
         }
     }
 
@@ -791,6 +796,7 @@ impl AIAgentActionResultType {
             ) => true,
             Self::AskUserQuestion(AskUserQuestionResult::Success { .. }) => true,
             Self::RunAgents(RunAgentsResult::Launched { .. }) => true,
+            Self::WaitForEvents(WaitForEventsResult::Completed) => true,
             _ => false,
         }
     }
@@ -864,6 +870,7 @@ impl AIAgentActionResultType {
             // SkippedByAutoApprove is intentionally excluded: the agent should continue.
             | Self::AskUserQuestion(AskUserQuestionResult::Cancelled)
             | Self::RunAgents(RunAgentsResult::Cancelled) => true,
+            Self::WaitForEvents(WaitForEventsResult::Cancelled) => true,
             _ => false,
         }
     }
@@ -1439,6 +1446,21 @@ impl Display for AskUserQuestionResult {
                     question_ids.len()
                 )
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum WaitForEventsResult {
+    Completed,
+    Cancelled,
+}
+
+impl Display for WaitForEventsResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Completed => write!(f, "Wait for local events completed"),
+            Self::Cancelled => write!(f, "Wait for local events cancelled"),
         }
     }
 }
