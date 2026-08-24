@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `72b4c299`.
+- Current local implementation tree: through `070f28a1`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -442,7 +442,8 @@ separate P2 lifecycle.
 
 ## P2 — Local Redesigns
 
-Status: **P2.1–P2.4 complete**; P2.5 is next.
+Status: **complete** through P2.5. The focused P2.5 suite, `cargo fmt --check`,
+and default plus `local_only` all-target builds passed on 2026-08-24.
 
 ### P2.1 Real local `/compact`
 
@@ -559,6 +560,28 @@ timezone and missed-run policy, cancellation, `WaitForEvents`, and OS
 notifications. Hosted ambient spawn/poll code is not reusable.
 
 ### P2.5 Local file and screenshot artifacts
+
+**Delivered:** `070f28a1`.
+
+Files and screenshots selected by a local agent are copied into a private,
+application-managed artifact root. A scoped SQLite repository persists the
+artifact ID, canonical managed path, MIME type, size, SHA-256 checksum, creation
+time, and explicit owners. Owner attachment is transactional; releasing the
+last owner removes both metadata and the managed copy, while shared artifacts
+remain available until their final owner is released.
+
+The direct OpenAI-compatible adapter advertises and parses the local
+`upload_file_artifact` tool only for a local conversation executor. Execution
+enforces permissions and size bounds, canonicalizes the source to prevent
+symlink path escapes, and attaches the resulting local file or screenshot to
+the conversation without a network request. Screenshot lightbox display and
+Finder reveal resolve only canonical managed paths and verify the checksum
+before opening. Conversation deletion releases its artifact ownership. There
+are no signed URLs, hosted-upload fallback, Warp auth, or telemetry calls.
+
+The focused `local_only` suite passed four tests covering direct-provider tool
+schema and parsing, restart persistence of metadata and bytes, shared-owner
+lifecycle cleanup, and checksum-tamper rejection.
 
 Store local path, MIME type, checksum, and owner metadata. Implement safe
 open/reveal/lightbox and lifecycle cleanup without signed URLs or remote upload.
