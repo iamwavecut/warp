@@ -8,8 +8,12 @@ use warp_cli::agent::Harness;
 use warp_errors::report_error;
 
 use crate::ai::artifacts::{Artifact, deserialize_artifacts};
+use crate::ai::local_agent_registry::{
+    LocalAgentRegistry, LocalAgentRegistryEvent, LocalAgentStatus, local_controller_owner_id,
+};
 use crate::view_components::DismissibleToast;
 use crate::workspace::ToastStack;
+use crate::workspace::WorkspaceRegistry;
 use warpui::{SingletonEntity, View, ViewContext};
 
 use super::AmbientAgentTaskId;
@@ -469,19 +473,63 @@ pub struct RequestUsage {
 
 /// Cancel an ambient agent task and show a toast with the result.
 pub fn cancel_task_with_toast<V: View>(task_id: AmbientAgentTaskId, ctx: &mut ViewContext<V>) {
-    let _ = task_id;
     let window_id = ctx.window_id();
+    let result = cancel_local_task(task_id, ctx);
     ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-        let toast = DismissibleToast::default(
-            "Hosted ambient task cancellation is disabled in this local-first build.".to_string(),
-        );
+        let toast = DismissibleToast::default(match result {
+            Ok(()) => "Cancelled local agent task.".to_string(),
+            Err(error) => format!("Could not cancel local agent task: {error}"),
+        });
         toast_stack.add_ephemeral_toast(toast, window_id, ctx);
     });
 }
 
 /// Cancel an ambient agent task without surfacing a toast to the user.
 pub fn cancel_task_silently<V: View>(task_id: AmbientAgentTaskId, ctx: &mut ViewContext<V>) {
-    let _ = (task_id, ctx);
+    if let Err(error) = cancel_local_task(task_id, ctx) {
+        log::warn!("Could not cancel local agent task: {error}");
+    }
+}
+
+fn cancel_local_task<V: View>(
+    task_id: AmbientAgentTaskId,
+    ctx: &mut ViewContext<V>,
+) -> Result<(), String> {
+    let run_id = task_id.to_string();
+    let run = LocalAgentRegistry::as_ref(ctx)
+        .get(&run_id)
+        .cloned()
+        .ok_or_else(|| format!("local run `{run_id}` is not live in this process"))?;
+    let terminal_surface_id = run
+        .terminal_surface_id
+        .ok_or_else(|| format!("local run `{run_id}` has no owning terminal"))?;
+    let owner = local_controller_owner_id(terminal_surface_id);
+    let terminal_view = WorkspaceRegistry::as_ref(ctx)
+        .all_workspaces(ctx)
+        .into_iter()
+        .find_map(|(_, workspace)| {
+            workspace.as_ref(ctx).tab_views().find_map(|pane_group| {
+                let pane_group = pane_group.as_ref(ctx);
+                let pane_id =
+                    pane_group.find_pane_id_for_terminal_view(terminal_surface_id, ctx)?;
+                pane_group.terminal_view_from_pane_id(pane_id, ctx)
+            })
+        })
+        .ok_or_else(|| format!("owning terminal for local run `{run_id}` is unavailable"))?;
+    LocalAgentRegistry::handle(ctx).update(ctx, |registry, ctx| {
+        registry
+            .cancel(&run_id, &owner)
+            .map_err(|error| error.to_string())?;
+        ctx.emit(LocalAgentRegistryEvent::StatusChanged {
+            run_id: run_id.clone(),
+            status: LocalAgentStatus::Cancelled,
+        });
+        Ok::<_, String>(())
+    })?;
+    terminal_view.update(ctx, |terminal_view, ctx| {
+        terminal_view.stop_local_agent_conversation(run.conversation_id, ctx);
+    });
+    Ok(())
 }
 
 #[cfg(test)]

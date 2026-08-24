@@ -37,6 +37,9 @@ use crate::ai::document::ai_document_model::{
     AIDocumentId, AIDocumentModel, AIDocumentUserEditStatus,
 };
 use crate::ai::llms::LLMId;
+use crate::ai::local_agent_registry::{
+    LocalAgentRegistry, LocalAgentStatus, local_controller_owner_id,
+};
 use crate::ai::{
     AIRequestUsageModel,
     agent::{
@@ -1005,6 +1008,28 @@ impl BlocklistAIController {
         );
     }
 
+    /// Atomically accepts a process-local agent envelope into the normal next
+    /// `AIAgentInput` path. Callers retain the envelope when this returns an
+    /// error; there is no server echo or model-text acknowledgement.
+    pub fn accept_local_agent_message(
+        &mut self,
+        query: String,
+        conversation_id: AIConversationId,
+        ctx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<()> {
+        self.send_user_query_in_conversation_internal(
+            query,
+            conversation_id,
+            None,
+            true,
+            HashMap::new(),
+            EntrypointType::AgentInitiated,
+            false,
+            None,
+            ctx,
+        )
+    }
+
     /// Sends the given user query to the AI model.
     pub fn send_user_query_in_conversation(
         &mut self,
@@ -1908,7 +1933,19 @@ impl BlocklistAIController {
         ctx: &mut ModelContext<Self>,
     ) -> anyhow::Result<(AIConversationId, ResponseStreamId)> {
         let history_model = BlocklistAIHistoryModel::handle(ctx);
-        let (conversation_id, conversation_server_token, active_tasks, parent_agent_id, agent_name) = {
+        let local_run_id = history_model.update(ctx, |history_model, ctx| {
+            history_model.ensure_local_run_id_for_conversation(request_input.conversation_id, ctx)
+        });
+        let (
+            conversation_id,
+            conversation_server_token,
+            active_tasks,
+            parent_agent_id,
+            agent_name,
+            local_parent_run_id,
+            local_harness,
+            local_name,
+        ) = {
             let Some(conversation) = history_model
                 .as_ref(ctx)
                 .conversation(&request_input.conversation_id)
@@ -1920,6 +1957,16 @@ impl BlocklistAIController {
             };
 
             let active_tasks = conversation.compute_active_tasks();
+            let parent_run_id = history_model
+                .as_ref(ctx)
+                .resolved_parent_conversation_id_for_conversation(conversation)
+                .and_then(|parent_id| {
+                    history_model
+                        .as_ref(ctx)
+                        .conversation(&parent_id)
+                        .and_then(AIConversation::run_id)
+                })
+                .or_else(|| conversation.parent_agent_id().map(ToString::to_string));
 
             (
                 conversation.id(),
@@ -1927,8 +1974,37 @@ impl BlocklistAIController {
                 active_tasks,
                 conversation.parent_agent_id().map(str::to_string),
                 conversation.agent_name().map(str::to_string),
+                parent_run_id,
+                conversation
+                    .orchestration_harness()
+                    .unwrap_or(warp_cli::agent::Harness::Oz),
+                conversation
+                    .agent_name()
+                    .map(str::to_string)
+                    .or_else(|| conversation.title())
+                    .unwrap_or_else(|| "Local agent".to_string()),
             )
         };
+
+        let local_run_id = local_run_id
+            .ok_or_else(|| anyhow!("Could not assign a local run ID to the active conversation"))?;
+        let controller_owner = local_controller_owner_id(self.terminal_surface_id);
+        LocalAgentRegistry::handle(ctx).update(ctx, |registry, _ctx| {
+            registry
+                .register_existing(
+                    local_run_id.clone(),
+                    conversation_id,
+                    Some(self.terminal_surface_id),
+                    None,
+                    local_parent_run_id,
+                    local_name,
+                    local_harness,
+                    Some(controller_owner),
+                    LocalAgentStatus::Running,
+                )
+                .map(|_| ())
+                .map_err(|error| anyhow!(error.to_string()))
+        })?;
 
         // Cancel any pending auto-resume for this conversation, since the user is sending a new
         // request.
@@ -1974,6 +2050,8 @@ impl BlocklistAIController {
         );
         request_params.parent_agent_id = parent_agent_id;
         request_params.agent_name = agent_name;
+        request_params.local_orchestration_ready =
+            LocalAgentRegistry::as_ref(ctx).is_ready(&local_run_id);
 
         let response_stream = ctx.add_model(|ctx| {
             ResponseStream::new(request_params.clone(), can_attempt_resume_on_error, ctx)

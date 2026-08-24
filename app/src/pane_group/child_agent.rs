@@ -14,6 +14,9 @@ use crate::ai::attachment_utils::attachments_download_dir;
 use crate::ai::blocklist::agent_view::AgentViewEntryOrigin;
 use crate::ai::blocklist::{BlocklistAIHistoryModel, StartAgentRequestId};
 use crate::ai::llms::LLMPreferences;
+use crate::ai::local_agent_registry::{
+    LocalAgentRegistry, LocalAgentStatus, local_controller_owner_id,
+};
 use crate::pane_group::{PaneGroup, PaneId};
 use crate::terminal::TerminalView;
 
@@ -131,6 +134,8 @@ pub(crate) fn create_hidden_child_agent_conversation(
         env_vars,
         task_context,
     } = request;
+    let registry_name = name.clone();
+    let registry_harness = orchestration_harness.unwrap_or(Harness::Oz);
     let new_pane_id =
         group.insert_terminal_pane_hidden_for_child_agent(parent_pane_id, env_vars, ctx);
     let Some(new_terminal_view) = group.terminal_view_from_pane_id(new_pane_id, ctx) else {
@@ -152,6 +157,53 @@ pub(crate) fn create_hidden_child_agent_conversation(
         orchestration_harness,
         ctx,
     );
+
+    let local_identity = {
+        let history = BlocklistAIHistoryModel::as_ref(ctx);
+        history
+            .conversation(&conversation_id)
+            .and_then(|conversation| {
+                let run_id = conversation.run_id()?;
+                let parent_run_id = history
+                    .conversation(&parent_conversation_id)
+                    .and_then(|parent| parent.run_id())
+                    .or_else(|| conversation.parent_agent_id().map(ToString::to_string));
+                Some((run_id, parent_run_id))
+            })
+    };
+    let Some((run_id, parent_run_id)) = local_identity else {
+        report_error!("Failed to assign local run ID to child conversation");
+        group.discard_pane(new_pane_id.into(), ctx);
+        BlocklistAIHistoryModel::handle(ctx).update(ctx, |history, ctx| {
+            history.delete_conversation(conversation_id, Some(terminal_view_id), ctx);
+        });
+        return None;
+    };
+    let controller_owner = Some(local_controller_owner_id(terminal_view_id));
+    let registration = LocalAgentRegistry::handle(ctx).update(ctx, |registry, _ctx| {
+        registry.register_existing(
+            run_id,
+            conversation_id,
+            Some(terminal_view_id),
+            None,
+            parent_run_id,
+            registry_name,
+            registry_harness,
+            controller_owner,
+            LocalAgentStatus::Starting,
+        )
+    });
+    if let Err(error) = registration {
+        report_error!(
+            "Failed to register local child agent",
+            extra: { "error" => %error }
+        );
+        group.discard_pane(new_pane_id.into(), ctx);
+        BlocklistAIHistoryModel::handle(ctx).update(ctx, |history, ctx| {
+            history.delete_conversation(conversation_id, Some(terminal_view_id), ctx);
+        });
+        return None;
+    }
 
     group
         .child_agent_panes

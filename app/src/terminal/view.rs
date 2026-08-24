@@ -27,6 +27,7 @@ pub use init_project::{
 use onboarding::callout::{FinalState, OnboardingCalloutViewEvent, OnboardingQuery};
 use onboarding::{OnboardingCalloutView, OnboardingKeybindings};
 use repo_metadata::CanonicalizedPath;
+use warp_cli::agent::Harness;
 use warp_util::remote_path::RemotePath;
 use warp_util::standardized_path::StandardizedPath;
 pub(crate) mod docker_sandbox;
@@ -166,6 +167,9 @@ use crate::workspaces::user_workspaces::UserWorkspacesEvent;
 pub use self::link_detection::GridHighlightedLink;
 pub use self::link_detection::{RichContentLink, RichContentLinkTooltipInfo};
 use crate::ai::llms::{LLMId, LLMModelHost, LLMPreferences};
+use crate::ai::local_agent_registry::{
+    LocalAgentRegistry, LocalAgentRegistryEvent, LocalAgentStatus, local_controller_owner_id,
+};
 use crate::settings::CodeSettings;
 use crate::util::repo_detection::{RepoDetectionSessionType, detect_possible_git_repo};
 pub use action::{AgentOnboardingVersion, OnboardingIntention, OnboardingVersion, TerminalAction};
@@ -3691,6 +3695,10 @@ impl TerminalView {
             &BlocklistAIHistoryModel::handle(ctx),
             Self::handle_ai_history_model_event,
         );
+        ctx.subscribe_to_model(
+            &LocalAgentRegistry::handle(ctx),
+            Self::handle_local_agent_registry_event,
+        );
         ctx.subscribe_to_model(&ai_input_model, Self::handle_ai_input_model_event);
         ctx.subscribe_to_model(&ai_action_model, Self::handle_ai_action_model_event);
         ctx.subscribe_to_model(&CLIAgentSessionsModel::handle(ctx), |me, _, event, ctx| {
@@ -4695,6 +4703,23 @@ impl TerminalView {
         } = event
         {
             self.maybe_insert_aws_bedrock_login_banner(model_id, ctx);
+            let owner = local_controller_owner_id(self.view_id);
+            if let Some(run_id) = LocalAgentRegistry::as_ref(ctx)
+                .run_id_for_conversation(*conversation_id)
+                .map(ToString::to_string)
+            {
+                LocalAgentRegistry::handle(ctx).update(ctx, |registry, ctx| {
+                    if registry
+                        .set_status(&run_id, &owner, LocalAgentStatus::Running)
+                        .is_ok()
+                    {
+                        ctx.emit(LocalAgentRegistryEvent::StatusChanged {
+                            run_id,
+                            status: LocalAgentStatus::Running,
+                        });
+                    }
+                });
+            }
             if *is_queued_prompt {
                 if let Err(error) = QueuedQueryModel::handle(ctx).update(ctx, |model, _| {
                     model.set_prompt_dispatch_marker(*conversation_id, stream_id.clone())
@@ -4803,7 +4828,75 @@ impl TerminalView {
             }
 
             self.update_input_prompt_suggestions_banner_state(ctx);
+            self.try_dispatch_next_local_agent_message_for_conversation(*conversation_id, ctx);
             ctx.notify();
+        }
+    }
+
+    fn handle_local_agent_registry_event(
+        &mut self,
+        _: ModelHandle<LocalAgentRegistry>,
+        event: &LocalAgentRegistryEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            LocalAgentRegistryEvent::MessageAccepted { recipient_run_id } => {
+                self.try_dispatch_next_local_agent_message(recipient_run_id, ctx);
+            }
+            LocalAgentRegistryEvent::StatusChanged { .. } => ctx.notify(),
+        }
+    }
+
+    fn try_dispatch_next_local_agent_message_for_conversation(
+        &mut self,
+        conversation_id: AIConversationId,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        let run_id = LocalAgentRegistry::as_ref(ctx)
+            .run_id_for_conversation(conversation_id)
+            .map(ToString::to_string);
+        if let Some(run_id) = run_id {
+            self.try_dispatch_next_local_agent_message(&run_id, ctx);
+        }
+    }
+
+    fn try_dispatch_next_local_agent_message(&mut self, run_id: &str, ctx: &mut ViewContext<Self>) {
+        let Some(run) = LocalAgentRegistry::as_ref(ctx).get(run_id).cloned() else {
+            return;
+        };
+        if run.terminal_surface_id != Some(self.view_id)
+            || run.harness != Harness::Oz
+            || !run.is_controller_ready()
+            || self
+                .ai_controller
+                .as_ref(ctx)
+                .has_active_stream_for_conversation(run.conversation_id, ctx)
+        {
+            return;
+        }
+
+        let owner = local_controller_owner_id(self.view_id);
+        let envelope = LocalAgentRegistry::handle(ctx).update(ctx, |registry, _ctx| {
+            registry.take_next_pending_message(run_id, &owner)
+        });
+        let Ok(Some(envelope)) = envelope else {
+            return;
+        };
+        let query = format!(
+            "Local agent message\nFrom run: {}\nSubject: {}\n\n{}",
+            envelope.sender_run_id, envelope.subject, envelope.body
+        );
+        let result = self.ai_controller.update(ctx, |controller, ctx| {
+            controller.accept_local_agent_message(query, run.conversation_id, ctx)
+        });
+        if let Err(error) = result {
+            log::warn!(
+                "Failed to accept local agent message {}: {error:#}",
+                envelope.message_id
+            );
+            let _ = LocalAgentRegistry::handle(ctx).update(ctx, |registry, _ctx| {
+                registry.requeue_message_front(run_id, &owner, envelope)
+            });
         }
     }
 
@@ -6799,6 +6892,11 @@ impl TerminalView {
         match event {
             StartAgentExecutorEvent::CreateAgent(request) => {
                 ctx.emit(Event::StartAgentConversation(request.clone()));
+            }
+            StartAgentExecutorEvent::StopAgent(conversation_id) => {
+                ctx.emit(Event::StopAgentConversation {
+                    conversation_id: *conversation_id,
+                });
             }
         }
     }

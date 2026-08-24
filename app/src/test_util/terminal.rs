@@ -34,6 +34,7 @@ use crate::ai::blocklist::orchestration_events::OrchestrationEventService;
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::llms::LLMPreferences;
+use crate::ai::local_agent_registry::LocalAgentRegistry;
 use crate::ai::outline::RepoOutlines;
 use crate::ai::restored_conversations::RestoredAgentConversations;
 use crate::auth::AuthStateProvider;
@@ -42,6 +43,8 @@ use crate::suggestions::ignored_suggestions_model::IgnoredSuggestionsModel;
 use crate::terminal::shared_session::permissions_manager::SessionPermissionsManager;
 use crate::terminal::view::inline_banner::ByoLlmAuthBannerSessionState;
 use crate::undo_close::UndoCloseStack;
+#[cfg(feature = "voice_input")]
+use crate::voice::transcriber::VoiceTranscriber;
 use crate::workspace::{OneTimeModalModel, WorkspaceRegistry};
 use crate::{
     ai::{AIRequestUsageModel, blocklist::BlocklistAIHistoryModel},
@@ -96,6 +99,7 @@ pub fn initialize_app_for_terminal_view(app: &mut App) {
     app.add_singleton_model(LocalWorkflows::new);
     app.add_singleton_model(|_| History::default());
     app.add_singleton_model(|_| BlocklistAIHistoryModel::new_for_test());
+    app.add_singleton_model(LocalAgentRegistry::new_registered);
     // QueuedQueryModel subscribes to history events; register after the
     // history model is in place.
     app.add_singleton_model(QueuedQueryModel::new);
@@ -122,6 +126,8 @@ pub fn initialize_app_for_terminal_view(app: &mut App) {
     app.add_singleton_model(AuthManager::new_for_test);
     app.add_singleton_model(LLMPreferences::new);
     app.add_singleton_model(HarnessAvailabilityModel::new);
+    #[cfg(feature = "voice_input")]
+    app.add_singleton_model(|_| VoiceTranscriber::disabled());
     app.add_singleton_model(|ctx| AITipModel::new_for_agent_tips(ctx));
     app.add_singleton_model(SessionPermissionsManager::new);
     app.add_singleton_model(DirectoryWatcher::new);

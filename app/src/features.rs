@@ -24,7 +24,6 @@ pub fn init_feature_flags() {
         FeatureFlag::GitCredentialRefresh,
         FeatureFlag::OrchestrationV2,
         FeatureFlag::RunAgentsTool,
-        FeatureFlag::OrchestrationPillBar,
         FeatureFlag::OrchestrationViewerPillBar,
         FeatureFlag::OzLaunchModal,
         FeatureFlag::OpenWarpLaunchModal,
@@ -45,7 +44,12 @@ pub fn init_feature_flags() {
         flag.set_enabled(false);
     }
 
-    for flag in [FeatureFlag::SoloUserByok, FeatureFlag::AgentHarness] {
+    for flag in [
+        FeatureFlag::SoloUserByok,
+        FeatureFlag::AgentHarness,
+        FeatureFlag::LocalClaudeCodexChildHarnesses,
+        FeatureFlag::OrchestrationPillBar,
+    ] {
         flag.set_enabled(true);
     }
 

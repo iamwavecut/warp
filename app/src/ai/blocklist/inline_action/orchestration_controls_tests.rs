@@ -1,5 +1,6 @@
 use ai::agent::action::RunAgentsExecutionMode;
 use ai::agent::orchestration_config::{OrchestrationConfig, OrchestrationExecutionMode};
+use warp_core::features::FeatureFlag;
 
 use super::{OrchestrationEditState, should_show_harness_picker};
 
@@ -13,6 +14,7 @@ fn local_config(harness_type: &str, model_id: &str) -> OrchestrationConfig {
 
 #[test]
 fn from_orchestration_config_preserves_local_claude() {
+    let _local_harnesses = FeatureFlag::LocalClaudeCodexChildHarnesses.override_enabled(true);
     let state =
         OrchestrationEditState::from_orchestration_config(&local_config("claude", "sonnet"));
     assert_eq!(state.harness_type, "claude");
@@ -25,6 +27,7 @@ fn from_orchestration_config_preserves_local_claude() {
 
 #[test]
 fn harness_picker_stays_visible_for_local_mode() {
+    let _local_harnesses = FeatureFlag::LocalClaudeCodexChildHarnesses.override_enabled(true);
     let state = OrchestrationEditState::from_run_agents_fields(
         "auto",
         "oz",
@@ -35,6 +38,7 @@ fn harness_picker_stays_visible_for_local_mode() {
 
 #[test]
 fn harness_picker_stays_visible_for_remote_mode() {
+    let _local_harnesses = FeatureFlag::LocalClaudeCodexChildHarnesses.override_enabled(true);
     let state = OrchestrationEditState::from_run_agents_fields(
         "auto",
         "oz",
@@ -50,6 +54,7 @@ fn harness_picker_stays_visible_for_remote_mode() {
 
 #[test]
 fn from_orchestration_config_preserves_remote_claude() {
+    let _local_harnesses = FeatureFlag::LocalClaudeCodexChildHarnesses.override_enabled(true);
     let state = OrchestrationEditState::from_orchestration_config(&OrchestrationConfig {
         model_id: "sonnet".to_string(),
         harness_type: "claude".to_string(),
@@ -63,11 +68,7 @@ fn from_orchestration_config_preserves_remote_claude() {
     assert_eq!(state.model_id, "sonnet");
     assert!(matches!(
         state.execution_mode,
-        RunAgentsExecutionMode::Remote {
-            ref environment_id,
-            ref worker_host,
-            computer_use_enabled: false,
-        } if environment_id == "env-1" && worker_host == "warp"
+        RunAgentsExecutionMode::Local
     ));
 }
 
@@ -95,6 +96,7 @@ fn toggle_to_local_sanitizes_disabled_codex() {
 
 #[test]
 fn toggle_to_local_preserves_claude() {
+    let _local_harnesses = FeatureFlag::LocalClaudeCodexChildHarnesses.override_enabled(true);
     let mut state = OrchestrationEditState::from_run_agents_fields(
         "sonnet",
         "claude",
@@ -117,6 +119,7 @@ fn toggle_to_local_preserves_claude() {
 
 #[test]
 fn accept_disabled_reason_allows_local_claude_product() {
+    let _local_harnesses = FeatureFlag::LocalClaudeCodexChildHarnesses.override_enabled(true);
     let state = OrchestrationEditState::from_run_agents_fields(
         "auto",
         "claude",
@@ -127,6 +130,7 @@ fn accept_disabled_reason_allows_local_claude_product() {
 
 #[test]
 fn resolve_from_config_preserves_local_claude() {
+    let _local_harnesses = FeatureFlag::LocalClaudeCodexChildHarnesses.override_enabled(true);
     let mut state =
         OrchestrationEditState::from_run_agents_fields("", "", &RunAgentsExecutionMode::Local);
 

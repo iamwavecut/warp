@@ -809,6 +809,14 @@ impl BlocklistAIActionExecutor {
                 self.search_codebase_executor.update(ctx, |executor, ctx| {
                     executor.cancel_execution(&running.action.id, ctx);
                 });
+            } else if matches!(running.action.action, AIAgentActionType::StartAgent { .. }) {
+                self.start_agent_executor.update(ctx, |executor, ctx| {
+                    executor.cancel_execution(&running.action.id, ctx);
+                });
+            } else if matches!(running.action.action, AIAgentActionType::RunAgents(..)) {
+                self.run_agents_executor.update(ctx, |executor, ctx| {
+                    executor.cancel_execution(&running.action.id, ctx);
+                });
             }
             ctx.emit(BlocklistAIActionExecutorEvent::FinishedAction {
                 result: Arc::new(AIAgentActionResult {

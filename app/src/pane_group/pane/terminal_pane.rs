@@ -27,6 +27,10 @@ use crate::{
         },
         conversation_utils,
         llms::LLMPreferences,
+        local_agent_registry::{
+            LocalAgentRegistry, LocalAgentRegistryEvent, LocalAgentStatus,
+            local_controller_owner_id,
+        },
     },
     app_state::{AmbientAgentPaneSnapshot, LeafContents, TerminalPaneSnapshot},
     features::FeatureFlag,
@@ -592,10 +596,12 @@ fn retrieve_shared_session_link(manager: &Manager, terminal_view_id: &EntityId) 
     None
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct AgentConversationActionState {
     owner_terminal_view_id: EntityId,
     task_id: Option<AmbientAgentTaskId>,
+    run_id: Option<String>,
+    is_child_agent: bool,
     is_in_progress: bool,
     is_cloud_cancel_candidate: bool,
 }
@@ -611,10 +617,45 @@ fn agent_conversation_action_state(
     Some(AgentConversationActionState {
         owner_terminal_view_id,
         task_id: conversation.task_id(),
+        run_id: conversation.run_id(),
+        is_child_agent: conversation.is_child_agent_conversation(),
         is_in_progress: conversation.status().is_in_progress(),
         is_cloud_cancel_candidate: conversation.is_remote_child()
             || conversation.is_viewing_shared_session(),
     })
+}
+
+fn cancel_owned_local_run(
+    state: &AgentConversationActionState,
+    ctx: &mut ViewContext<PaneGroup>,
+) -> bool {
+    let Some(run_id) = state.run_id.as_deref() else {
+        return !state.is_child_agent;
+    };
+    if LocalAgentRegistry::as_ref(ctx).get(run_id).is_none() {
+        if state.is_child_agent {
+            log::warn!("Local child run {run_id} is not owned by this process");
+            return false;
+        }
+        return true;
+    }
+    let owner = local_controller_owner_id(state.owner_terminal_view_id);
+    match LocalAgentRegistry::handle(ctx).update(ctx, |registry, ctx| {
+        let result = registry.cancel(run_id, &owner);
+        if result.is_ok() {
+            ctx.emit(LocalAgentRegistryEvent::StatusChanged {
+                run_id: run_id.to_string(),
+                status: LocalAgentStatus::Cancelled,
+            });
+        }
+        result
+    }) {
+        Ok(_) => true,
+        Err(error) => {
+            log::warn!("Refusing to cancel unowned local run {run_id}: {error}");
+            false
+        }
+    }
 }
 
 fn terminal_view_for_owner_in_group(
@@ -703,6 +744,8 @@ fn stop_agent_conversation(
     }
     if state.is_cloud_cancel_candidate {
         cancel_cloud_agent_task(state.task_id, conversation_id, true, ctx);
+    } else if !cancel_owned_local_run(&state, ctx) {
+        return;
     } else if !stop_local_agent_conversation(
         group,
         state.owner_terminal_view_id,
@@ -803,12 +846,15 @@ fn kill_agent_conversation(
         });
     }
 
-    if let Some(state) = state
+    if let Some(state) = state.as_ref()
         && state.is_in_progress
     {
         if state.is_cloud_cancel_candidate {
             cancel_cloud_agent_task(state.task_id, conversation_id, false, ctx);
         } else {
+            if !cancel_owned_local_run(state, ctx) {
+                return;
+            }
             stop_local_agent_conversation(
                 group,
                 state.owner_terminal_view_id,
@@ -819,6 +865,7 @@ fn kill_agent_conversation(
     }
 
     let owner_terminal_view_id = state
+        .as_ref()
         .map(|state| state.owner_terminal_view_id)
         .or(source_terminal_view_id);
     if !discard_child_agent_pane_for_conversation(
@@ -1403,6 +1450,9 @@ fn handle_terminal_view_event(
             }
             Event::StartAgentConversation(request) => {
                 let mut request = request.clone();
+                if request.cancellation.is_cancelled() {
+                    return;
+                }
                 request.execution_mode = request.execution_mode.clone().local_first();
                 match request.execution_mode.clone() {
                     StartAgentExecutionMode::Local {
@@ -1482,6 +1532,7 @@ fn handle_terminal_view_event(
                         let parent_run_id = request.parent_run_id.clone();
                         let prompt = request.prompt.clone();
                         let lifecycle_subscription = request.lifecycle_subscription.clone();
+                        let cancellation = request.cancellation.clone();
                         let orchestration_harness =
                             Harness::parse_orchestration_harness(&harness_type)
                                 .unwrap_or(Harness::Unknown);
@@ -1504,16 +1555,20 @@ fn handle_terminal_view_event(
                                 )
                                 .await
                             },
-                            move |group, result, ctx| match result {
+                            move |group, result, ctx| {
+                                if cancellation.is_cancelled() {
+                                    return;
+                                }
+                                match result {
                                 Ok(launch) => {
                                     let lifecycle_launch = launch.clone();
                                     let PreparedLocalHarnessLaunch {
                                         command,
                                         env_vars,
-                                        run_id,
                                         task_id,
                                         ..
                                     } = launch;
+                                    let local_agent_run_id = task_id.to_string();
                                     match create_hidden_child_agent_conversation(
                                         group,
                                         HiddenChildAgentConversationRequest {
@@ -1539,23 +1594,58 @@ fn handle_terminal_view_event(
 
                                         BlocklistAIHistoryModel::handle(ctx).update(
                                             ctx,
-                                            |model, ctx| {
-                                                model.record_new_conversation_request_complete(
-                                                    request_id,
+                                            |history_model, ctx| {
+                                                history_model.assign_run_id_for_conversation(
                                                     conversation_id,
+                                                    local_agent_run_id.clone(),
+                                                    Some(task_id),
+                                                    terminal_view_id,
                                                     ctx,
                                                 );
                                             },
                                         );
+                                        let rebind_result = LocalAgentRegistry::handle(ctx).update(
+                                            ctx,
+                                            |registry, _ctx| {
+                                                registry.rebind_run_id(
+                                                    conversation_id,
+                                                    local_agent_run_id.clone(),
+                                                )
+                                            },
+                                        );
+                                        if let Err(error) = rebind_result {
+                                            log::warn!(
+                                                "Failed to bind local harness task ID for {conversation_id:?}: {error}"
+                                            );
+                                            BlocklistAIHistoryModel::handle(ctx).update(
+                                                ctx,
+                                                |history_model, ctx| {
+                                                    history_model.update_conversation_status_with_error(
+                                                        terminal_view_id,
+                                                        conversation_id,
+                                                        ConversationStatus::Error,
+                                                        Some(crate::ai::agent::RenderableAIError::other(
+                                                            error.to_string(),
+                                                            false,
+                                                        )),
+                                                        ctx,
+                                                    );
+                                                    history_model.record_new_conversation_request_complete(
+                                                        request_id,
+                                                        conversation_id,
+                                                        ctx,
+                                                    );
+                                                },
+                                            );
+                                            return;
+                                        }
 
                                         BlocklistAIHistoryModel::handle(ctx).update(
                                             ctx,
-                                            |history_model, ctx| {
-                                                history_model.assign_run_id_for_conversation(
+                                            |model, ctx| {
+                                                model.record_new_conversation_request_complete(
+                                                    request_id,
                                                     conversation_id,
-                                                    run_id,
-                                                    Some(task_id),
-                                                    terminal_view_id,
                                                     ctx,
                                                 );
                                             },
@@ -1616,6 +1706,7 @@ fn handle_terminal_view_event(
                                         },
                                         ctx,
                                     );
+                                }
                                 }
                             },
                         );

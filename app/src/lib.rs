@@ -1672,6 +1672,10 @@ pub(crate) fn initialize_app(
         let conversations = &multi_agent_conversations;
         ctx.add_singleton_model(move |_| BlocklistAIHistoryModel::new(ai_queries, conversations));
     }
+    // Registered after the history model so restored local agent topology can
+    // be rehydrated as stopped, without claiming that old child processes are
+    // still alive after an app restart.
+    ctx.add_singleton_model(ai::local_agent_registry::LocalAgentRegistry::new_registered);
     // Per-conversation queued prompts. Registered after the history model
     // since it subscribes to history events for cleanup.
     ctx.add_singleton_model(ai::blocklist::QueuedQueryModel::new_persistent);
@@ -2467,7 +2471,6 @@ pub fn init_feature_flags() {
         FeatureFlag::GitCredentialRefresh,
         FeatureFlag::OrchestrationV2,
         FeatureFlag::RunAgentsTool,
-        FeatureFlag::OrchestrationPillBar,
         FeatureFlag::OrchestrationViewerPillBar,
         FeatureFlag::OzLaunchModal,
         FeatureFlag::OpenWarpLaunchModal,
@@ -2488,7 +2491,12 @@ pub fn init_feature_flags() {
         flag.set_enabled(false);
     }
 
-    for flag in [FeatureFlag::SoloUserByok, FeatureFlag::AgentHarness] {
+    for flag in [
+        FeatureFlag::SoloUserByok,
+        FeatureFlag::AgentHarness,
+        FeatureFlag::LocalClaudeCodexChildHarnesses,
+        FeatureFlag::OrchestrationPillBar,
+    ] {
         flag.set_enabled(true);
     }
 

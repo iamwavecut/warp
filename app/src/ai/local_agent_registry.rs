@@ -7,17 +7,21 @@
 //! for historical topology; this registry only owns state that is live in the
 //! current process.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::path::PathBuf;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use warp_cli::agent::Harness;
-use warpui::{Entity, EntityId, SingletonEntity};
+use warpui::{Entity, EntityId, ModelContext, SingletonEntity};
 
-use crate::ai::agent::conversation::AIConversationId;
+use crate::ai::agent::conversation::{AIConversationId, ConversationStatus};
+use crate::ai::blocklist::{BlocklistAIHistoryEvent, BlocklistAIHistoryModel};
 
 /// Maximum number of children accepted by one local `RunAgents` call.
 pub const MAX_LOCAL_CHILD_FANOUT: usize = 8;
@@ -183,7 +187,7 @@ pub struct LocalAgentRun {
 
 impl LocalAgentRun {
     pub fn is_controller_ready(&self) -> bool {
-        self.controller_owner.is_some() && self.status.is_live()
+        self.harness == Harness::Oz && self.controller_owner.is_some() && self.status.is_live()
     }
 }
 
@@ -292,24 +296,41 @@ impl fmt::Display for LocalAgentRegistryError {
                 write!(f, "local child fan-out {requested} exceeds limit {limit}")
             }
             Self::DepthLimit { requested, limit } => {
-                write!(f, "local child nesting depth {requested} exceeds limit {limit}")
+                write!(
+                    f,
+                    "local child nesting depth {requested} exceeds limit {limit}"
+                )
             }
             Self::ConcurrentLimit { limit } => {
                 write!(f, "local live child limit {limit} has been reached")
             }
             Self::QueueFull { run_id, limit } => {
-                write!(f, "local run `{run_id}` message queue is full (limit {limit})")
+                write!(
+                    f,
+                    "local run `{run_id}` message queue is full (limit {limit})"
+                )
             }
             Self::ModelUnavailable => write!(f, "selected local child model is unavailable"),
             Self::ToolsUnavailable => write!(f, "selected local child model has no tools"),
             Self::WorkingDirectoryUnavailable(path) => {
-                write!(f, "local child working directory is unavailable: {}", path.display())
+                write!(
+                    f,
+                    "local child working directory is unavailable: {}",
+                    path.display()
+                )
             }
             Self::UnsupportedHarness(harness) => {
-                write!(f, "local child harness {} is unavailable", harness.display_name())
+                write!(
+                    f,
+                    "local child harness {} is unavailable",
+                    harness.display_name()
+                )
             }
             Self::IdempotencyConflict(key) => {
-                write!(f, "local action/request id `{key}` was already used for another run")
+                write!(
+                    f,
+                    "local action/request id `{key}` was already used for another run"
+                )
             }
             Self::DuplicateConversation(conversation_id) => {
                 write!(f, "conversation `{conversation_id}` is already registered")
@@ -327,6 +348,7 @@ impl std::error::Error for LocalAgentRegistryError {}
 #[derive(Debug)]
 pub struct LocalAgentRegistry {
     runs: HashMap<String, LocalAgentRun>,
+    run_order: Vec<String>,
     conversation_to_run: HashMap<AIConversationId, String>,
     idempotency: HashMap<String, String>,
     pending_messages: HashMap<String, VecDeque<LocalAgentMessageEnvelope>>,
@@ -337,10 +359,15 @@ pub struct LocalAgentRegistry {
 /// The registry currently emits no network-facing events.  The event type is
 /// kept explicit so controllers can subscribe to local wakeups as the
 /// process-local input path is wired into the agent controller.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LocalAgentRegistryEvent {
-    MessageAccepted,
-    StatusChanged,
+    MessageAccepted {
+        recipient_run_id: String,
+    },
+    StatusChanged {
+        run_id: String,
+        status: LocalAgentStatus,
+    },
 }
 
 impl Entity for LocalAgentRegistry {
@@ -356,6 +383,14 @@ impl Default for LocalAgentRegistry {
 }
 
 impl LocalAgentRegistry {
+    pub fn new_registered(ctx: &mut ModelContext<Self>) -> Self {
+        let history = BlocklistAIHistoryModel::handle(ctx);
+        ctx.subscribe_to_model(&history, |registry, _, event, ctx| {
+            registry.handle_history_event(event, ctx);
+        });
+        Self::new()
+    }
+
     pub fn new() -> Self {
         Self::with_limits(LocalAgentLimits::default())
     }
@@ -363,6 +398,7 @@ impl LocalAgentRegistry {
     pub fn with_limits(limits: LocalAgentLimits) -> Self {
         Self {
             runs: HashMap::new(),
+            run_order: Vec::new(),
             conversation_to_run: HashMap::new(),
             idempotency: HashMap::new(),
             pending_messages: HashMap::new(),
@@ -373,6 +409,93 @@ impl LocalAgentRegistry {
 
     pub fn limits(&self) -> LocalAgentLimits {
         self.limits
+    }
+
+    fn handle_history_event(
+        &mut self,
+        event: &BlocklistAIHistoryEvent,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            BlocklistAIHistoryEvent::RestoredConversations {
+                terminal_surface_id,
+                conversation_ids,
+            } => {
+                let restored = {
+                    let history = BlocklistAIHistoryModel::as_ref(ctx);
+                    conversation_ids
+                        .iter()
+                        .filter_map(|conversation_id| {
+                            let conversation = history.conversation(conversation_id)?;
+                            let run_id = conversation.run_id()?;
+                            let parent_run_id = history
+                                .resolved_parent_conversation_id_for_conversation(conversation)
+                                .and_then(|parent_id| {
+                                    history
+                                        .conversation(&parent_id)
+                                        .and_then(|parent| parent.run_id())
+                                })
+                                .or_else(|| {
+                                    conversation.parent_agent_id().map(ToString::to_string)
+                                });
+                            Some(RestoredLocalAgent {
+                                run_id,
+                                conversation_id: *conversation_id,
+                                terminal_surface_id: Some(*terminal_surface_id),
+                                pane_id: None,
+                                parent_run_id,
+                                name: conversation
+                                    .agent_name()
+                                    .map(str::to_string)
+                                    .or_else(|| conversation.title())
+                                    .unwrap_or_else(|| "Local agent".to_string()),
+                                harness: conversation
+                                    .orchestration_harness()
+                                    .unwrap_or(Harness::Oz),
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                };
+                for restored in restored {
+                    if self
+                        .run_id_for_conversation(restored.conversation_id)
+                        .is_none()
+                        && let Err(error) = self.restore_stopped(restored)
+                    {
+                        log::warn!("Failed to restore local agent topology: {error}");
+                    }
+                }
+            }
+            BlocklistAIHistoryEvent::UpdatedConversationStatus {
+                conversation_id,
+                new_status,
+                ..
+            } => {
+                let Some(run_id) = self
+                    .run_id_for_conversation(*conversation_id)
+                    .map(ToString::to_string)
+                else {
+                    return;
+                };
+                let Some(run) = self.runs.get(&run_id) else {
+                    return;
+                };
+                let status = local_status_for_conversation(new_status, run);
+                if let Some(run) = self.runs.get_mut(&run_id) {
+                    run.status = status;
+                }
+                ctx.emit(LocalAgentRegistryEvent::StatusChanged { run_id, status });
+            }
+            BlocklistAIHistoryEvent::DeletedConversation {
+                conversation_id, ..
+            } => self.remove_conversation(*conversation_id),
+            BlocklistAIHistoryEvent::ConversationTransferredBetweenTerminalSurfaces {
+                conversation_id,
+                new_terminal_surface_id,
+                ..
+            } => self.update_terminal_surface(*conversation_id, *new_terminal_surface_id),
+            _ => {}
+        }
     }
 
     /// Allocates the stable local run identifier before a child process is
@@ -406,6 +529,47 @@ impl LocalAgentRegistry {
             .unwrap_or_default()
     }
 
+    pub fn run_for_conversation(
+        &self,
+        conversation_id: AIConversationId,
+    ) -> Option<&LocalAgentRun> {
+        self.run_id_for_conversation(conversation_id)
+            .and_then(|run_id| self.get(run_id))
+    }
+
+    fn rebuild_topology(&mut self) {
+        let depths = self
+            .run_order
+            .iter()
+            .map(|run_id| (run_id.clone(), validated_topology_depth(&self.runs, run_id)))
+            .collect::<HashMap<_, _>>();
+
+        for run in self.runs.values_mut() {
+            run.child_run_ids.clear();
+            run.depth = depths
+                .get(&run.run_id)
+                .copied()
+                .flatten()
+                .unwrap_or_default();
+        }
+
+        for child_run_id in self.run_order.clone() {
+            if depths.get(&child_run_id).copied().flatten().is_none() {
+                continue;
+            }
+            let parent_run_id = self
+                .runs
+                .get(&child_run_id)
+                .and_then(|run| run.parent_run_id.clone());
+            if let Some(parent_run_id) = parent_run_id
+                && let Some(parent) = self.runs.get_mut(&parent_run_id)
+                && !parent.child_run_ids.contains(&child_run_id)
+            {
+                parent.child_run_ids.push(child_run_id);
+            }
+        }
+    }
+
     pub fn preflight(
         &self,
         request: &LocalAgentPreflight,
@@ -434,7 +598,9 @@ impl LocalAgentRegistry {
         if let Some(path) = request.working_directory.as_ref()
             && !path.is_dir()
         {
-            return Err(LocalAgentRegistryError::WorkingDirectoryUnavailable(path.clone()));
+            return Err(LocalAgentRegistryError::WorkingDirectoryUnavailable(
+                path.clone(),
+            ));
         }
 
         let depth = if let Some(parent_run_id) = request.parent_run_id.as_deref() {
@@ -443,12 +609,14 @@ impl LocalAgentRegistry {
                 .get(parent_run_id)
                 .ok_or_else(|| LocalAgentRegistryError::UnknownRun(parent_run_id.to_string()))?;
             if !parent.status.is_live() || parent.controller_owner.is_none() {
-                return Err(LocalAgentRegistryError::HistoricalRun(parent_run_id.to_string()));
+                return Err(LocalAgentRegistryError::HistoricalRun(
+                    parent_run_id.to_string(),
+                ));
             }
             let sibling_name_in_use = parent.child_run_ids.iter().any(|child_run_id| {
                 self.runs
                     .get(child_run_id)
-                    .is_some_and(|child| child.name == request.name)
+                    .is_some_and(|child| child.status.is_live() && child.name == request.name)
             });
             if sibling_name_in_use {
                 return Err(LocalAgentRegistryError::DuplicateSiblingName(
@@ -462,11 +630,19 @@ impl LocalAgentRegistry {
                     limit: self.limits.max_depth,
                 });
             }
-            if parent.child_run_ids.len().saturating_add(request.requested_fanout)
-                > self.limits.max_fanout
+            let live_sibling_count = parent
+                .child_run_ids
+                .iter()
+                .filter(|child_run_id| {
+                    self.runs
+                        .get(*child_run_id)
+                        .is_some_and(|child| child.status.is_live())
+                })
+                .count();
+            if live_sibling_count.saturating_add(request.requested_fanout) > self.limits.max_fanout
             {
                 return Err(LocalAgentRegistryError::FanoutLimit {
-                    requested: parent.child_run_ids.len() + request.requested_fanout,
+                    requested: live_sibling_count + request.requested_fanout,
                     limit: self.limits.max_fanout,
                 });
             }
@@ -570,6 +746,7 @@ impl LocalAgentRegistry {
             self.idempotency.insert(key, run_id.clone());
         }
         self.pending_messages.entry(run_id.clone()).or_default();
+        self.run_order.push(run_id.clone());
         self.runs.insert(run_id, run.clone());
         Ok(LocalAgentRegistrationOutcome { run, created: true })
     }
@@ -594,12 +771,31 @@ impl LocalAgentRegistry {
         if run_id.trim().is_empty() {
             return Err(LocalAgentRegistryError::InvalidRunId);
         }
-        if let Some(existing_run_id) = self.conversation_to_run.get(&conversation_id) {
-            let existing = self
-                .runs
-                .get(existing_run_id)
-                .expect("conversation index must point to a run");
-            if existing.run_id == run_id {
+        if parent_run_id.as_deref() == Some(run_id.as_str()) {
+            return Err(LocalAgentRegistryError::InvalidTopology(
+                "a run cannot be its own parent".to_string(),
+            ));
+        }
+        if let Some(existing_run_id) = self.conversation_to_run.get(&conversation_id).cloned() {
+            if existing_run_id == run_id {
+                let existing = self
+                    .runs
+                    .get_mut(&existing_run_id)
+                    .expect("conversation index must point to a run");
+                if let (Some(existing_owner), Some(requested_owner)) = (
+                    existing.controller_owner.as_deref(),
+                    controller_owner.as_deref(),
+                ) && existing_owner != requested_owner
+                {
+                    return Err(LocalAgentRegistryError::ControllerOwnedByAnotherRun(run_id));
+                }
+                existing.terminal_surface_id = terminal_surface_id;
+                existing.pane_id = pane_id;
+                existing.name = name;
+                existing.harness = harness;
+                existing.controller_owner = controller_owner.or(existing.controller_owner.clone());
+                existing.status = status;
+                existing.cancellation = LocalAgentCancellationHandle::default();
                 return Ok(existing.clone());
             }
             return Err(LocalAgentRegistryError::DuplicateConversation(
@@ -633,9 +829,12 @@ impl LocalAgentRegistry {
         {
             parent.child_run_ids.push(run_id.clone());
         }
-        self.conversation_to_run.insert(conversation_id, run_id.clone());
+        self.conversation_to_run
+            .insert(conversation_id, run_id.clone());
         self.pending_messages.entry(run_id.clone()).or_default();
+        self.run_order.push(run_id.clone());
         self.runs.insert(run_id, run.clone());
+        self.rebuild_topology();
         Ok(run)
     }
 
@@ -698,7 +897,9 @@ impl LocalAgentRegistry {
         self.pending_messages
             .entry(restored.run_id.clone())
             .or_default();
+        self.run_order.push(restored.run_id.clone());
         self.runs.insert(restored.run_id, run.clone());
+        self.rebuild_topology();
         Ok(run)
     }
 
@@ -710,7 +911,9 @@ impl LocalAgentRegistry {
     ) -> Result<LocalAgentCancellationHandle, LocalAgentRegistryError> {
         let controller_owner = controller_owner.into();
         if controller_owner.trim().is_empty() {
-            return Err(LocalAgentRegistryError::ControllerRequired(run_id.to_string()));
+            return Err(LocalAgentRegistryError::ControllerRequired(
+                run_id.to_string(),
+            ));
         }
         let run = self
             .runs
@@ -724,8 +927,9 @@ impl LocalAgentRegistry {
             ));
         }
         run.controller_owner = Some(controller_owner);
-        if run.status == LocalAgentStatus::Stopped {
+        if run.status.is_terminal() {
             run.status = LocalAgentStatus::Idle;
+            run.cancellation = LocalAgentCancellationHandle::default();
         }
         Ok(run.cancellation.clone())
     }
@@ -770,6 +974,95 @@ impl LocalAgentRegistry {
         Ok(())
     }
 
+    pub fn update_terminal_surface(
+        &mut self,
+        conversation_id: AIConversationId,
+        terminal_surface_id: EntityId,
+    ) {
+        if let Some(run_id) = self.conversation_to_run.get(&conversation_id)
+            && let Some(run) = self.runs.get_mut(run_id)
+        {
+            run.terminal_surface_id = Some(terminal_surface_id);
+        }
+    }
+
+    pub fn rebind_run_id(
+        &mut self,
+        conversation_id: AIConversationId,
+        new_run_id: String,
+    ) -> Result<LocalAgentRun, LocalAgentRegistryError> {
+        if new_run_id.trim().is_empty() {
+            return Err(LocalAgentRegistryError::InvalidRunId);
+        }
+        let old_run_id = self
+            .conversation_to_run
+            .get(&conversation_id)
+            .cloned()
+            .ok_or_else(|| LocalAgentRegistryError::UnknownRun(conversation_id.to_string()))?;
+        if old_run_id == new_run_id {
+            return self
+                .runs
+                .get(&old_run_id)
+                .cloned()
+                .ok_or(LocalAgentRegistryError::UnknownRun(old_run_id));
+        }
+        if self.runs.contains_key(&new_run_id) {
+            return Err(LocalAgentRegistryError::DuplicateConversation(new_run_id));
+        }
+
+        let mut run = self
+            .runs
+            .remove(&old_run_id)
+            .ok_or_else(|| LocalAgentRegistryError::UnknownRun(old_run_id.clone()))?;
+        run.run_id.clone_from(&new_run_id);
+        self.conversation_to_run
+            .insert(conversation_id, new_run_id.clone());
+        if let Some(queue) = self.pending_messages.remove(&old_run_id) {
+            self.pending_messages.insert(new_run_id.clone(), queue);
+        }
+        for queue in self.pending_messages.values_mut() {
+            for envelope in queue {
+                if envelope.sender_run_id == old_run_id {
+                    envelope.sender_run_id.clone_from(&new_run_id);
+                }
+                if envelope.recipient_run_id == old_run_id {
+                    envelope.recipient_run_id.clone_from(&new_run_id);
+                }
+            }
+        }
+        for ordered_run_id in &mut self.run_order {
+            if *ordered_run_id == old_run_id {
+                ordered_run_id.clone_from(&new_run_id);
+            }
+        }
+        for indexed_run_id in self.idempotency.values_mut() {
+            if *indexed_run_id == old_run_id {
+                indexed_run_id.clone_from(&new_run_id);
+            }
+        }
+        for child in self.runs.values_mut() {
+            if child.parent_run_id.as_deref() == Some(old_run_id.as_str()) {
+                child.parent_run_id = Some(new_run_id.clone());
+            }
+        }
+        self.runs.insert(new_run_id, run.clone());
+        self.rebuild_topology();
+        Ok(run)
+    }
+
+    pub fn remove_conversation(&mut self, conversation_id: AIConversationId) {
+        let Some(run_id) = self.conversation_to_run.remove(&conversation_id) else {
+            return;
+        };
+        self.runs.remove(&run_id);
+        self.pending_messages.remove(&run_id);
+        self.idempotency
+            .retain(|_, indexed_run_id| indexed_run_id != &run_id);
+        self.run_order
+            .retain(|ordered_run_id| ordered_run_id != &run_id);
+        self.rebuild_topology();
+    }
+
     pub fn cancel(
         &mut self,
         run_id: &str,
@@ -780,6 +1073,9 @@ impl LocalAgentRegistry {
             .get_mut(run_id)
             .ok_or_else(|| LocalAgentRegistryError::UnknownRun(run_id.to_string()))?;
         ensure_owner(run, controller_owner)?;
+        if !run.status.is_live() {
+            return Err(LocalAgentRegistryError::HistoricalRun(run_id.to_string()));
+        }
         run.cancellation.cancel();
         run.status = LocalAgentStatus::Cancelled;
         if let Some(queue) = self.pending_messages.get_mut(run_id) {
@@ -831,7 +1127,7 @@ impl LocalAgentRegistry {
                 sender_run_id.to_string(),
             ));
         }
-        if sender.controller_owner.is_none() {
+        if !sender.is_controller_ready() {
             return Err(LocalAgentRegistryError::ControllerRequired(
                 sender_run_id.to_string(),
             ));
@@ -848,7 +1144,7 @@ impl LocalAgentRegistry {
                 recipient_run_id.to_string(),
             ));
         }
-        if recipient.controller_owner.is_none() {
+        if !recipient.is_controller_ready() {
             return Err(LocalAgentRegistryError::ControllerRequired(
                 recipient_run_id.to_string(),
             ));
@@ -902,11 +1198,94 @@ impl LocalAgentRegistry {
             .unwrap_or_default())
     }
 
+    pub fn take_next_pending_message(
+        &mut self,
+        run_id: &str,
+        controller_owner: &str,
+    ) -> Result<Option<LocalAgentMessageEnvelope>, LocalAgentRegistryError> {
+        let run = self
+            .runs
+            .get(run_id)
+            .ok_or_else(|| LocalAgentRegistryError::UnknownRun(run_id.to_string()))?;
+        ensure_owner(run, controller_owner)?;
+        if !run.status.is_live() {
+            return Err(LocalAgentRegistryError::HistoricalRun(run_id.to_string()));
+        }
+        Ok(self
+            .pending_messages
+            .get_mut(run_id)
+            .and_then(VecDeque::pop_front))
+    }
+
+    pub fn requeue_message_front(
+        &mut self,
+        run_id: &str,
+        controller_owner: &str,
+        envelope: LocalAgentMessageEnvelope,
+    ) -> Result<(), LocalAgentRegistryError> {
+        let run = self
+            .runs
+            .get(run_id)
+            .ok_or_else(|| LocalAgentRegistryError::UnknownRun(run_id.to_string()))?;
+        ensure_owner(run, controller_owner)?;
+        let queue = self.pending_messages.entry(run_id.to_string()).or_default();
+        if queue.len() >= self.limits.max_pending_messages {
+            return Err(LocalAgentRegistryError::QueueFull {
+                run_id: run_id.to_string(),
+                limit: self.limits.max_pending_messages,
+            });
+        }
+        queue.push_front(envelope);
+        Ok(())
+    }
+
     pub fn pending_message_count(&self, run_id: &str) -> usize {
         self.pending_messages
             .get(run_id)
             .map(VecDeque::len)
             .unwrap_or_default()
+    }
+}
+
+pub fn local_controller_owner_id(terminal_surface_id: EntityId) -> String {
+    format!("terminal:{terminal_surface_id:?}")
+}
+
+fn local_status_for_conversation(
+    status: &ConversationStatus,
+    run: &LocalAgentRun,
+) -> LocalAgentStatus {
+    match status {
+        ConversationStatus::InProgress => LocalAgentStatus::Running,
+        ConversationStatus::Blocked { .. } => LocalAgentStatus::Blocked,
+        ConversationStatus::Success
+            if run.harness == Harness::Oz && run.controller_owner.is_some() =>
+        {
+            LocalAgentStatus::Idle
+        }
+        ConversationStatus::Success => LocalAgentStatus::Succeeded,
+        ConversationStatus::Error => LocalAgentStatus::Failed,
+        ConversationStatus::Cancelled => LocalAgentStatus::Cancelled,
+    }
+}
+
+fn validated_topology_depth(runs: &HashMap<String, LocalAgentRun>, run_id: &str) -> Option<usize> {
+    let mut seen = HashSet::new();
+    let mut current = run_id;
+    let mut depth = 0usize;
+    loop {
+        if !seen.insert(current.to_string()) {
+            return None;
+        }
+        let run = runs.get(current)?;
+        let Some(parent_run_id) = run.parent_run_id.as_deref() else {
+            return Some(depth);
+        };
+        if !runs.contains_key(parent_run_id) {
+            return Some(0);
+        }
+        depth = depth.saturating_add(1);
+        current = parent_run_id;
     }
 }
 
@@ -930,7 +1309,9 @@ fn ensure_owner(
         Some(_) => Err(LocalAgentRegistryError::ControllerOwnedByAnotherRun(
             run.run_id.clone(),
         )),
-        None => Err(LocalAgentRegistryError::ControllerRequired(run.run_id.clone())),
+        None => Err(LocalAgentRegistryError::ControllerRequired(
+            run.run_id.clone(),
+        )),
     }
 }
 

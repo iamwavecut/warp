@@ -4020,7 +4020,7 @@ fn local_run_agents_arg(args: &Value) -> Result<api::RunAgents, AIApiError> {
         summary: optional_string_strict(args, "summary")?.unwrap_or_default(),
         base_prompt: optional_string_strict(args, "base_prompt")?.unwrap_or_default(),
         skills: local_skill_references_arg(args)?,
-        model_id: required_string(args, "model_id")?,
+        model_id: optional_string_strict(args, "model_id")?.unwrap_or_default(),
         harness: optional_string_strict(args, "harness")?
             .map(|harness| local_harness_arg(&harness))
             .transpose()?,
@@ -4080,11 +4080,10 @@ fn local_harness_arg(value: &str) -> Result<api::Harness, AIApiError> {
         "oz" => api::harness::Variant::Oz(api::harness::Oz {}),
         "claude" => api::harness::Variant::ClaudeCode(api::harness::ClaudeCode {}),
         "opencode" => api::harness::Variant::OpenCode(api::harness::OpenCode {}),
-        "gemini" => api::harness::Variant::Gemini(api::harness::Gemini {}),
         "codex" => api::harness::Variant::Codex(api::harness::Codex {}),
         _ => {
             return Err(AIApiError::Other(anyhow::anyhow!(
-                "run_agents harness must be one of oz, claude, opencode, gemini, or codex"
+                "run_agents harness must be one of oz, claude, opencode, or codex"
             )));
         }
     };
@@ -6261,18 +6260,6 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
     }
 
     if supported.contains(&api::ToolType::RunAgents) {
-        let local_skill_reference = json!({
-            "type": "object",
-            "properties": {
-                "skill_path": {"type": "string", "minLength": 1},
-                "bundled_skill_id": {"type": "string", "minLength": 1},
-            },
-            "oneOf": [
-                {"required": ["skill_path"]},
-                {"required": ["bundled_skill_id"]},
-            ],
-            "additionalProperties": false,
-        });
         let local_agent_config = json!({
             "type": "object",
             "properties": {
@@ -6285,22 +6272,18 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
         });
         tools.push(openai_tool(
             "run_agents",
-            "Start a bounded, ordered batch of local child agents. All children inherit the current concrete local model/profile; execution mode is always same-process local.",
+            "Start a bounded, ordered batch of local child agents. Oz children inherit the current concrete local model/profile; orchestration ownership is process-local and never uses a hosted runner.",
             json_schema_object(
                 [
                     ("summary", json!({"type": "string"})),
                     ("base_prompt", json!({"type": "string"})),
                     (
-                        "skills",
-                        json!({"type": "array", "items": local_skill_reference}),
-                    ),
-                    (
                         "model_id",
-                        json!({"type": "string", "minLength": 1}),
+                        json!({"type": "string", "description": "Compatibility hint only; local children inherit the active concrete model."}),
                     ),
                     (
                         "harness",
-                        json!({"type": "string", "enum": ["oz", "claude", "opencode", "gemini", "codex"]}),
+                        json!({"type": "string", "enum": ["oz", "claude", "opencode", "codex"]}),
                     ),
                     (
                         "agent_run_configs",
@@ -6313,7 +6296,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                     ),
                     ("plan_id", json!({"type": "string"})),
                 ],
-                ["model_id", "agent_run_configs"],
+                ["agent_run_configs"],
             ),
         ));
     }
@@ -9015,10 +8998,7 @@ mod tests {
 
         let run_agents = &tools[1].function.parameters;
         assert_eq!(run_agents["additionalProperties"], json!(false));
-        assert_eq!(
-            run_agents["required"],
-            json!(["model_id", "agent_run_configs"])
-        );
+        assert_eq!(run_agents["required"], json!(["agent_run_configs"]));
         assert_eq!(
             run_agents["properties"]["agent_run_configs"]["maxItems"],
             json!(8)
@@ -9099,7 +9079,7 @@ mod tests {
             ),
             (
                 "run_agents",
-                json!({"model_id":"custom/local/model","harness":"oz","base_prompt":"Inspect","agent_run_configs":[{"name":"one","prompt":"Check"}]}),
+                json!({"harness":"oz","base_prompt":"Inspect","agent_run_configs":[{"name":"one","prompt":"Check"}]}),
                 "run_agents",
             ),
             (
@@ -9157,6 +9137,10 @@ mod tests {
             (
                 "run_agents",
                 json!({"model_id":"model","agent_run_configs":[{"name":"one"}],"execution_mode":"remote"}),
+            ),
+            (
+                "run_agents",
+                json!({"agent_run_configs":[{"name":"one","prompt":"run"}],"harness":"gemini"}),
             ),
             (
                 "send_message_to_agent",

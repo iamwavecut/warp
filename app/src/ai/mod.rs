@@ -30,8 +30,8 @@ pub(crate) mod get_relevant_files;
 pub mod harness_availability;
 pub(crate) mod harness_display;
 pub(crate) mod llms;
-pub(crate) mod local_child_harnesses;
 pub(crate) mod local_agent_registry;
+pub(crate) mod local_child_harnesses;
 #[cfg(not(target_family = "wasm"))]
 pub(crate) mod local_named_agents;
 pub mod onboarding;
@@ -56,7 +56,6 @@ pub mod outline;
 pub(crate) use ai::paths;
 
 pub fn init(app: &mut AppContext) {
-    app.add_singleton_model(|_| local_agent_registry::LocalAgentRegistry::new());
     blocklist::keyboard_navigable_buttons::init(app);
     blocklist::block::number_shortcut_buttons::init(app);
     blocklist::toggleable_items::init(app);

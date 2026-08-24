@@ -28,8 +28,8 @@ use crate::ai::agent::api::ServerConversationToken;
 use crate::ai::agent::conversation::ConversationStatus;
 use crate::ai::agent::conversation::{ServerAIConversationMetadata, UpdateConversationError};
 use crate::ai::agent::task::TaskId;
-use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::ai::agent::task::helper::{MessageExt, ToolCallExt};
+use crate::ai::ambient_agents::AmbientAgentTaskId;
 use crate::ai::artifacts::Artifact;
 use crate::ai::conversation_rename::{
     ConversationTitleValidationError, validate_conversation_title,
@@ -1210,6 +1210,40 @@ impl BlocklistAIHistoryModel {
             conversation_id,
             terminal_surface_id,
         });
+    }
+
+    /// Ensures that a locally controlled conversation has a stable persisted
+    /// run ID before a direct provider can advertise child-agent tools. This
+    /// does not create or wait for a Warp server token.
+    pub fn ensure_local_run_id_for_conversation(
+        &mut self,
+        conversation_id: AIConversationId,
+        ctx: &mut ModelContext<Self>,
+    ) -> Option<String> {
+        if let Some(run_id) = self
+            .conversations_by_id
+            .get(&conversation_id)
+            .and_then(AIConversation::run_id)
+        {
+            return Some(run_id);
+        }
+
+        let run_id = AmbientAgentTaskId::generate();
+        let agent_key = {
+            let conversation = self.conversations_by_id.get_mut(&conversation_id)?;
+            conversation.set_task_id(run_id);
+            agent_id_key(conversation)
+        };
+        if let Some(agent_key) = agent_key {
+            self.agent_id_to_conversation_id
+                .insert(agent_key, conversation_id);
+        }
+        self.persist_conversation_state(conversation_id, ctx);
+        ctx.emit(BlocklistAIHistoryEvent::UpdatedConversationMetadata {
+            terminal_surface_id: self.terminal_surface_id_for_conversation(&conversation_id),
+            conversation_id,
+        });
+        Some(run_id.to_string())
     }
 
     /// Resolves a server-side agent identifier to a local conversation ID.

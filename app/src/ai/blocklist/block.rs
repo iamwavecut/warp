@@ -2032,34 +2032,33 @@ impl AIBlock {
                     });
             }
 
-            // Register collapsible state for orchestration action messages.
-            if FeatureFlag::OrchestrationV2.is_enabled() {
-                match &message.message {
-                    AIAgentOutputMessageType::Action(AIAgentAction {
-                        action:
-                            AIAgentActionType::StartAgent { .. }
-                            | AIAgentActionType::SendMessageToAgent { .. },
-                        ..
-                    }) => {
+            // Local Start/Run/Send action cards use the same transcript state
+            // without enabling the hosted OrchestrationV2 service.
+            match &message.message {
+                AIAgentOutputMessageType::Action(AIAgentAction {
+                    action:
+                        AIAgentActionType::StartAgent { .. }
+                        | AIAgentActionType::SendMessageToAgent { .. },
+                    ..
+                }) => {
+                    self.collapsible_block_states
+                        .entry(message.id.clone())
+                        .or_default();
+                }
+                AIAgentOutputMessageType::MessagesReceivedFromAgents { messages } => {
+                    for received_message in messages {
+                        let collapsible_id =
+                            received_message_collapsible_id(&received_message.message_id);
                         self.collapsible_block_states
-                            .entry(message.id.clone())
+                            .entry(collapsible_id.clone())
+                            .or_default();
+                        self.state_handles
+                            .transcript_avatar_handles
+                            .entry(collapsible_id)
                             .or_default();
                     }
-                    AIAgentOutputMessageType::MessagesReceivedFromAgents { messages } => {
-                        for received_message in messages {
-                            let collapsible_id =
-                                received_message_collapsible_id(&received_message.message_id);
-                            self.collapsible_block_states
-                                .entry(collapsible_id.clone())
-                                .or_default();
-                            self.state_handles
-                                .transcript_avatar_handles
-                                .entry(collapsible_id)
-                                .or_default();
-                        }
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
         }
 

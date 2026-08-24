@@ -139,6 +139,7 @@ impl OrchestrationEditState {
         if self.model_id.is_empty() && !config.model_id.is_empty() {
             self.model_id = config.model_id.clone();
         }
+        self.sanitize_for_local_execution();
     }
 
     /// Unconditionally overrides model, harness, and execution mode
@@ -150,6 +151,7 @@ impl OrchestrationEditState {
         self.model_id = config.model_id.clone();
         self.harness_type = config.harness_type.clone();
         self.execution_mode = RunAgentsExecutionMode::Local;
+        self.sanitize_for_local_execution();
     }
 
     /// Converts to a native `OrchestrationConfig` for storage / match.
