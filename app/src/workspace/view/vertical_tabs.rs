@@ -34,8 +34,8 @@ use crate::pane_group::{
     CodePane, NotebookPane, PaneGroup, PaneId, TabBarHoverIndex, WorkflowPane,
 };
 use crate::tab::{
-    SelectedTabColor, TAB_ACTIVATE_BINDING_NAMES, TAB_INDICATOR_SYNCED_COLOR, TabData,
-    reveals_tab_shortcut_hints, tab_position_id,
+    SelectedTabColor, TAB_INDICATOR_SYNCED_COLOR, TabData, reveals_tab_shortcut_hints,
+    tab_activate_binding_name, tab_position_id,
 };
 use crate::terminal::TerminalView;
 use crate::terminal::session_settings::SessionSettings;
@@ -378,7 +378,7 @@ fn render_pane_row_element(
         rename_editor: _,
         is_pane_being_renamed,
         pane_rename_editor: _,
-        shortcut_hint_tab_index: _,
+        shortcut_hint_binding_name: _,
     } = props;
     let is_selected = is_active_tab && is_focused;
     let mut row = Hoverable::new(mouse_state, move |state| {
@@ -782,7 +782,7 @@ struct PaneProps<'a> {
     rename_editor: Option<ViewHandle<EditorView>>,
     is_pane_being_renamed: bool,
     pane_rename_editor: Option<ViewHandle<EditorView>>,
-    shortcut_hint_tab_index: Option<usize>,
+    shortcut_hint_binding_name: Option<&'static str>,
 }
 
 struct PaneRowState {
@@ -1163,7 +1163,7 @@ impl VerticalTabsPanelState {
                                 None,
                                 false,
                                 None,
-                                Some(*tab_index),
+                                None,
                                 app,
                             )
                             .is_some_and(|props| pane_matches_query(&props, &query_lower, app))
@@ -1763,7 +1763,7 @@ fn render_groups(
                                     None,
                                     false,
                                     None,
-                                    Some(tab_index),
+                                    None,
                                     app,
                                 )
                                 .is_some_and(|props| {
@@ -1793,7 +1793,7 @@ fn render_groups(
                                 None,
                                 false,
                                 None,
-                                Some(tab_index),
+                                None,
                                 app,
                             )
                             .is_some_and(|props| pane_matches_query(&props, &query_lower, app))
@@ -2132,7 +2132,7 @@ fn render_tab_group_internal(
                     (!uses_outer_group_container).then_some(rename_editor.clone()),
                     false,
                     None,
-                    Some(tab_index),
+                    tab_activate_binding_name(tab_index, workspace.tabs.len()),
                     app,
                 ) else {
                     return Empty::new().finish();
@@ -2189,7 +2189,7 @@ fn render_tab_group_internal(
                     (!uses_outer_group_container).then_some(rename_editor.clone()),
                     is_pane_being_renamed,
                     is_pane_being_renamed.then_some(workspace.pane_rename_editor.clone()),
-                    Some(tab_index),
+                    tab_activate_binding_name(tab_index, workspace.tabs.len()),
                     app,
                 ) else {
                     continue;
@@ -3221,16 +3221,13 @@ fn render_synced_inputs_indicator() -> Box<dyn Element> {
     .finish()
 }
 
-fn shows_shortcut_hint(modifier_held: bool, tab_index: usize) -> bool {
-    modifier_held && tab_index < TAB_ACTIVATE_BINDING_NAMES.len()
-}
-
+/// Resolves the switch-to-tab shortcut label for a row while the reveal
+/// modifier is held. Returns `None` when no hint should be shown.
 fn shortcut_hint_label(props: &PaneProps<'_>, app: &AppContext) -> Option<String> {
-    let tab_index = props.shortcut_hint_tab_index?;
-    if !shows_shortcut_hint(reveals_tab_shortcut_hints(app), tab_index) {
+    if !reveals_tab_shortcut_hints(app) {
         return None;
     }
-    keybinding_name_to_display_string(TAB_ACTIVATE_BINDING_NAMES[tab_index], app)
+    keybinding_name_to_display_string(props.shortcut_hint_binding_name?, app)
 }
 
 fn render_shortcut_hint(label: &str, appearance: &Appearance) -> Box<dyn Element> {
@@ -3684,7 +3681,7 @@ impl<'a> PaneProps<'a> {
         rename_editor: Option<ViewHandle<EditorView>>,
         is_pane_being_renamed: bool,
         pane_rename_editor: Option<ViewHandle<EditorView>>,
-        shortcut_hint_tab_index: Option<usize>,
+        shortcut_hint_binding_name: Option<&'static str>,
         app: &AppContext,
     ) -> Option<Self> {
         let pane = pane_group.pane_by_id(pane_id)?;
@@ -3736,7 +3733,7 @@ impl<'a> PaneProps<'a> {
             rename_editor,
             is_pane_being_renamed,
             pane_rename_editor,
-            shortcut_hint_tab_index,
+            shortcut_hint_binding_name,
         })
     }
 
