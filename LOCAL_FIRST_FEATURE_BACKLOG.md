@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `d488ac31`.
+- Current local implementation head: `72b4c299`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -442,7 +442,7 @@ separate P2 lifecycle.
 
 ## P2 — Local Redesigns
 
-Status: **P2.1–P2.2 complete**; P2.3 is next.
+Status: **P2.1–P2.3 complete**; P2.4 is next.
 
 ### P2.1 Real local `/compact`
 
@@ -502,6 +502,28 @@ float rejection, legacy capability compatibility, and asynchronous semantic
 failure fallback to local lexical results.
 
 ### P2.3 Local long-term memory
+
+**Delivered:** `72b4c299`.
+
+User-managed memories now have explicit create, edit, and delete flows in the
+local Knowledge pane, with global or canonical project scope. The scoped
+SQLite repository uses compare-and-swap revisions, retains immutable version
+history including deletion tombstones, validates size/count limits, and
+survives application restart. The enablement setting is local-only and memory
+management remains usable without any configured provider.
+
+Recall is deterministic and provider-free: normalized keyword matches are
+ranked across global entries and only the project entries applicable to the
+current local working directory. At most eight results and 6,000 content
+characters are attached to a request. The direct OpenAI-compatible adapter
+validates, persists, restores, redacts, and projects this typed context; invalid
+or oversized restored data fails closed. Storage/retrieval failures continue
+without memory and never consult Warp. Semantic recall and automatic extraction
+remain optional future refinements rather than dependencies of the feature.
+
+The focused `local_only` suite passed six tests covering durable CRUD/history,
+stale-revision rejection, ranked scope-aware recall, validation bounds, local
+task-storage roundtrip, and restored-context revalidation.
 
 Add scoped SQLite memory with explicit CRUD/versioning and bounded keyword
 retrieval. Semantic recall and automatic extraction are optional layers using
