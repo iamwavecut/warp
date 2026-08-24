@@ -16,7 +16,7 @@ endpoint may run locally or remotely, but Warp domains must never be a fallback.
 
 - Original audited fork tree: `master` / `fork/master` at `3f23a5a3d0a4`.
 - Original audited upstream tree: `origin/master` at `e722ebeda286`.
-- Current local implementation head: `40aa33f85`.
+- Current local implementation head: `bcac94830`.
 - Current fetched upstream: `origin/master` at `702aa106`, recorded as an
   ancestor of the local branch.
 - `e2a08021` was merged semantically as `c66af8fb`: upstream type/API changes
@@ -389,6 +389,17 @@ secrets. Reuse the current one-shot JSON/YAML config merge path.
 **Estimate / risk:** 3–7 days / high.
 
 ### P1.10 Resume local CLI harnesses
+
+**Delivered in code:** `6f73fa136`, `bcac94830`. Codex and Claude Code runs
+now have stable local run IDs, a versioned secret-free session index, secure
+no-follow transcript binding, advisory locking, atomic revision updates,
+capability preflight, canonical Claude index/cwd handling, fatal final-save
+semantics, CLI `--resume`, and child-run task association. Resume uses only
+third-party CLI files and never calls Warp harness-support, auth, snapshot, or
+upload APIs.
+
+Focused default and `local_only` lifecycle suites passed 14 tests each; the CLI
+suite passed 1 test. The broad build/bundle gate remains batched with P1.11.
 
 Reuse only the local JSONL discovery and rehydration portions of upstream Codex
 and Claude transcript code. Maintain a local conversation-to-session index and
