@@ -21,6 +21,34 @@ fn agent_run_accepts_model() {
 }
 
 #[test]
+fn agent_run_keeps_harness_source_distinguishable_from_default() {
+    let implicit = Args::try_parse_from(["warp", "agent", "run", "--prompt", "hello"]).unwrap();
+    let explicit = Args::try_parse_from([
+        "warp",
+        "agent",
+        "run",
+        "--prompt",
+        "hello",
+        "--harness",
+        "oz",
+    ])
+    .unwrap();
+
+    let extract = |args: Args| {
+        let Some(Command::CommandLine(boxed_cmd)) = args.command else {
+            panic!("Expected `warp agent run` command");
+        };
+        let CliCommand::Agent(AgentCommand::Run(run_args)) = boxed_cmd.as_ref() else {
+            panic!("Expected `warp agent run` command");
+        };
+        run_args.harness
+    };
+
+    assert_eq!(extract(implicit), None);
+    assert_eq!(extract(explicit), Some(Harness::Oz));
+}
+
+#[test]
 fn model_list_parses() {
     let args = Args::try_parse_from(["warp", "model", "list"]).unwrap();
 

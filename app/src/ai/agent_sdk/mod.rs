@@ -7,6 +7,7 @@ use std::path::Path;
 use crate::ai::agent::api::direct_openai::CustomProviderRoute;
 use crate::ai::agent_sdk::driver::harness::{
     HarnessKind, LocalHarnessRepository, LocalHarnessResumePayload, harness_kind,
+    resume_cli_help_is_compatible,
 };
 use crate::ai::agent_sdk::driver::{AgentDriverOptions, AgentRunPrompt, Task};
 use crate::ai::agent_sdk::mcp_config::build_mcp_servers_from_specs;
@@ -20,6 +21,7 @@ use crate::workflows::{
 };
 use ai::api_keys::ApiKeyManager;
 use anyhow::Context;
+use command::r#async::Command as AsyncCommand;
 use uuid::Uuid;
 use warp_cli::skill::SkillSpec;
 use warp_cli::{
@@ -30,7 +32,10 @@ use warp_core::features::FeatureFlag;
 #[cfg(not(target_family = "wasm"))]
 use warp_logging::log_file_path;
 use warpui::{AppContext, platform::TerminationMode};
-use warpui::{ModelSpawner, SingletonEntity};
+use warpui::{
+    ModelSpawner, SingletonEntity,
+    r#async::{FutureExt as _, TimeoutError},
+};
 
 use crate::{ai::ambient_agents::task::HarnessConfig, server::server_api::ai::AgentConfigSnapshot};
 use driver::AgentDriverError;
@@ -131,10 +136,11 @@ fn run_agent(
             if args.skill.is_some() && !FeatureFlag::OzPlatformSkills.is_enabled() {
                 return Err(anyhow::anyhow!("unexpected argument '--skill' found"));
             }
-            if args.harness != Harness::Oz && !FeatureFlag::AgentHarness.is_enabled() {
+            let harness = args.harness.unwrap_or_default();
+            if harness != Harness::Oz && !FeatureFlag::AgentHarness.is_enabled() {
                 return Err(anyhow::anyhow!("unexpected argument '--harness' found"));
             }
-            if args.harness == Harness::OpenCode {
+            if harness == Harness::OpenCode {
                 return Err(anyhow::anyhow!(
                     "The opencode harness is only supported for local child agent launches."
                 ));
@@ -204,8 +210,7 @@ fn build_merged_config_and_task(
         .as_ref()
         .map(|skill| skill.instructions.clone());
 
-    let harness_override =
-        (args.harness != Harness::Oz).then_some(HarnessConfig::from_harness_type(args.harness));
+    let harness_override = args.harness.map(HarnessConfig::from_harness_type);
 
     let cli_config = AgentConfigSnapshot {
         name: args.name.clone(),
@@ -293,7 +298,7 @@ fn build_merged_config_and_task(
                 .harness
                 .as_ref()
                 .map(|config| config.harness_type)
-                .unwrap_or(args.harness),
+                .unwrap_or(args.harness.unwrap_or_default()),
         )?,
         local_only: named_bundle.is_some(),
     };
@@ -407,6 +412,38 @@ fn resolve_saved_prompt(selector: &str) -> Result<Prompt, AgentDriverError> {
 /// requires spawning an async task, which requires a ModelContext.
 struct AgentDriverRunner;
 
+const RESUME_CAPABILITY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+async fn run_resume_capability_probe(
+    cli_name: &str,
+    argument: &str,
+) -> Result<String, AgentDriverError> {
+    let mut command = AsyncCommand::new(cli_name);
+    command.arg(argument).kill_on_drop(true);
+    let output = command
+        .output()
+        .with_timeout(RESUME_CAPABILITY_TIMEOUT)
+        .await
+        .map_err(|_: TimeoutError| AgentDriverError::HarnessSetupFailed {
+            harness: cli_name.to_owned(),
+            reason: format!("local `{cli_name} {argument}` capability probe timed out"),
+        })?
+        .map_err(|error| AgentDriverError::HarnessSetupFailed {
+            harness: cli_name.to_owned(),
+            reason: format!(
+                "failed to run local `{cli_name} {argument}` capability probe: {error}"
+            ),
+        })?;
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    if !output.stderr.is_empty() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    Ok(text)
+}
+
 impl warpui::Entity for AgentDriverRunner {
     type Event = ();
 }
@@ -437,6 +474,13 @@ impl AgentDriverRunner {
             // Validate that the third-party harness is installed and authed.
             if let HarnessKind::ThirdParty(harness) = &task.harness {
                 harness.validate()?;
+                if driver_options
+                    .local_resume
+                    .as_ref()
+                    .is_some_and(|resume| resume.is_resume)
+                {
+                    Self::validate_resume_cli_compatibility(harness.as_ref()).await?;
+                }
             }
 
             // Run the driver
@@ -456,6 +500,31 @@ impl AgentDriverRunner {
         .await;
 
         result
+    }
+
+    /// Probe only the installed CLI's help/version surface before a resumed
+    /// harness can receive the prompt or start any tool process.
+    async fn validate_resume_cli_compatibility(
+        harness: &dyn crate::ai::agent_sdk::driver::harness::ThirdPartyHarness,
+    ) -> Result<(), AgentDriverError> {
+        let cli_name = harness.cli_agent().command_prefix().to_owned();
+        let help_output = run_resume_capability_probe(&cli_name, "--help").await?;
+        if resume_cli_help_is_compatible(harness.harness(), &help_output).is_ok() {
+            return Ok(());
+        }
+
+        let version_output = run_resume_capability_probe(&cli_name, "--version")
+            .await
+            .unwrap_or_else(|error| error.to_string());
+        let reason = resume_cli_help_is_compatible(harness.harness(), &help_output)
+            .expect_err("resume capability probe should reject unsupported help output");
+        Err(AgentDriverError::HarnessSetupFailed {
+            harness: cli_name,
+            reason: format!(
+                "cannot resume this local run: {reason}. Installed CLI version probe: {}",
+                version_output.trim()
+            ),
+        })
     }
 
     /// Resolve the skill spec from args, if one was provided.
@@ -563,25 +632,66 @@ impl AgentDriverRunner {
             .transpose()?;
 
         if let Some(record) = resume_record.as_ref() {
-            if args.harness != Harness::Oz && args.harness != record.harness {
+            if let Some(requested_harness) = args.harness
+                && requested_harness != record.harness
+            {
                 return Err(AgentDriverError::ConfigBuildFailed(anyhow::anyhow!(
                     "resume harness conflict: local run {} uses {}, but {} was requested",
                     record.run_id,
                     record.harness,
-                    args.harness
+                    requested_harness
                 )));
             }
-            args.harness = record.harness;
+            // An omitted `--harness` adopts the stored harness. An explicit
+            // value, including `--harness oz`, was checked above and must not
+            // silently override the local session contract.
+            args.harness.get_or_insert(record.harness);
         }
 
-        // Get the working directory
+        let stored_working_dir = resume_record
+            .as_ref()
+            .map(|record| {
+                LocalHarnessRepository::for_user().canonical_working_dir(&record.working_dir)
+            })
+            .transpose()
+            .map_err(|error| AgentDriverError::ConfigBuildFailed(anyhow::Error::new(error)))?;
+
+        // Get the working directory. Claude sessions are project-bound: an
+        // override would select a different encoded transcript directory, so
+        // reject it unless it resolves to the original canonical project.
+        if let (Some(explicit_cwd), Some(record), Some(stored_cwd)) = (
+            args.cwd.as_ref(),
+            resume_record.as_ref(),
+            stored_working_dir.as_ref(),
+        ) && record.harness == Harness::Claude
+        {
+            let explicit_cwd = dunce::canonicalize(explicit_cwd).map_err(|error| {
+                AgentDriverError::ConfigBuildFailed(anyhow::anyhow!(
+                    "Unable to resolve {}: {error}",
+                    explicit_cwd.display()
+                ))
+            })?;
+            if explicit_cwd != *stored_cwd {
+                return Err(AgentDriverError::ConfigBuildFailed(anyhow::anyhow!(
+                    "Claude local resume is bound to {}; --cwd {} selects a different project",
+                    stored_cwd.display(),
+                    explicit_cwd.display()
+                )));
+            }
+        }
+
         let working_dir = match (args.cwd.as_ref(), resume_record.as_ref()) {
             (Some(dir), _) => dunce::canonicalize(dir)
                 .with_context(|| format!("Unable to resolve {}", dir.display())),
-            (None, Some(record)) => Ok(record.working_dir.clone()),
-            (None, None) => {
-                std::env::current_dir().context("Unable to determine working directory")
-            }
+            (None, Some(_record)) => Ok(stored_working_dir
+                .clone()
+                .expect("stored working directory is present for a resume")),
+            (None, None) => std::env::current_dir()
+                .context("Unable to determine working directory")
+                .and_then(|dir| {
+                    dunce::canonicalize(&dir)
+                        .with_context(|| format!("Unable to resolve {}", dir.display()))
+                }),
         }
         .map_err(AgentDriverError::ConfigBuildFailed)?;
 
@@ -680,7 +790,7 @@ impl AgentDriverRunner {
                     .harness
                     .as_ref()
                     .map(|config| config.harness_type)
-                    .unwrap_or(args.harness);
+                    .unwrap_or(args.harness.unwrap_or_default());
 
                 if let Some(record) = resume_record_for_driver.as_ref()
                     && selected_harness != record.harness

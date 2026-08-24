@@ -7,10 +7,19 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::time::UNIX_EPOCH;
+
+#[cfg(unix)]
+use std::os::unix::io::{AsRawFd, FromRawFd};
+
+#[cfg(unix)]
+use nix::fcntl::{FlockArg, OFlag, flock, open, openat};
+#[cfg(unix)]
+use nix::sys::stat::{Mode, SFlag, fstat};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 use uuid::Uuid;
 use warp_cli::agent::Harness;
 
@@ -178,6 +187,10 @@ pub(crate) enum LocalHarnessResumeError {
     MalformedTranscript { path: PathBuf, reason: String },
     #[error("transcript session UUID at {path} does not match indexed UUID {expected}")]
     TranscriptSessionMismatch { path: PathBuf, expected: Uuid },
+    #[error("local harness working directory {path} is invalid: {reason}")]
+    InvalidWorkingDirectory { path: PathBuf, reason: String },
+    #[error("Claude session index conflicts with local session {session_id}: {reason}")]
+    ClaudeSessionIndexConflict { session_id: Uuid, reason: String },
     #[error("local harness resume I/O at {path}: {source}")]
     Io {
         path: PathBuf,
@@ -186,6 +199,40 @@ pub(crate) enum LocalHarnessResumeError {
     },
     #[error("could not serialize local harness resume record: {0}")]
     Serialize(#[from] serde_json::Error),
+}
+
+/// Check the local CLI's advertised continuation syntax without launching a
+/// prompt. This deliberately uses only help text: an installed but older CLI
+/// must fail before a resumed harness process can mutate files or call tools.
+pub(crate) fn resume_cli_help_is_compatible(
+    harness: Harness,
+    help_text: &str,
+) -> Result<(), String> {
+    let normalized = help_text.to_ascii_lowercase();
+    let supported = match harness {
+        Harness::Codex => normalized.lines().any(|line| {
+            let line = line.trim_start();
+            line == "resume"
+                || line.starts_with("resume ")
+                || line.starts_with("resume\t")
+                || line.starts_with("codex resume ")
+        }),
+        Harness::Claude => normalized.contains("--resume"),
+        unsupported => {
+            return Err(format!(
+                "local resume is not supported for the {unsupported} harness"
+            ));
+        }
+    };
+    supported.then_some(()).ok_or_else(|| match harness {
+        Harness::Codex => {
+            "the installed Codex CLI does not advertise `codex resume <session-id>`".to_owned()
+        }
+        Harness::Claude => {
+            "the installed Claude CLI does not advertise `claude --resume <session-id>`".to_owned()
+        }
+        unsupported => format!("local resume is not supported for the {unsupported} harness"),
+    })
 }
 
 /// Local repository with a per-run lock and atomic publication.
@@ -224,6 +271,41 @@ impl LocalHarnessRepository {
 
     pub(crate) fn path_for_id(&self, run_id: Uuid) -> PathBuf {
         self.index_dir.join(format!("{run_id}.{JSON_EXTENSION}"))
+    }
+
+    /// Resolve a stored working directory before it is used as a resume
+    /// default. The persisted value must identify an existing directory; the
+    /// canonical result is returned so symlink spellings cannot select a
+    /// different Claude project directory.
+    pub(crate) fn canonical_working_dir(
+        &self,
+        path: &Path,
+    ) -> Result<PathBuf, LocalHarnessResumeError> {
+        if !path.is_absolute() {
+            return Err(LocalHarnessResumeError::InvalidWorkingDirectory {
+                path: path.to_path_buf(),
+                reason: "path is not absolute".to_owned(),
+            });
+        }
+        let canonical = fs::canonicalize(path).map_err(|source| {
+            LocalHarnessResumeError::InvalidWorkingDirectory {
+                path: path.to_path_buf(),
+                reason: source.to_string(),
+            }
+        })?;
+        let metadata = fs::metadata(&canonical).map_err(|source| {
+            LocalHarnessResumeError::InvalidWorkingDirectory {
+                path: canonical.clone(),
+                reason: source.to_string(),
+            }
+        })?;
+        if !metadata.is_dir() {
+            return Err(LocalHarnessResumeError::InvalidWorkingDirectory {
+                path: canonical,
+                reason: "path is not a directory".to_owned(),
+            });
+        }
+        Ok(canonical)
     }
 
     pub(crate) fn create(
@@ -392,7 +474,8 @@ impl LocalHarnessRepository {
                 find_codex_transcript(&self.codex_sessions_root, record.harness_session_id)?
             }
             Harness::Claude => {
-                let relative = PathBuf::from(encode_claude_cwd(&record.working_dir))
+                let working_dir = self.canonical_working_dir(&record.working_dir)?;
+                let relative = PathBuf::from(encode_claude_cwd(&working_dir))
                     .join(format!("{}.jsonl", record.harness_session_id));
                 let path = self.claude_projects_root.join(relative);
                 match fs::symlink_metadata(&path) {
@@ -440,6 +523,131 @@ impl LocalHarnessRepository {
         self.validate_locator(record, locator)
     }
 
+    /// Keep Claude's project-local `sessions-index.json` in the schema Claude
+    /// uses for its resume picker. The index is owned by Claude, so existing
+    /// entries are preserved; this only upserts the current session and never
+    /// copies prompt or transcript contents into Warp's index.
+    pub(crate) fn upsert_claude_sessions_index(
+        &self,
+        record: &LocalHarnessRecord,
+        transcript_path: &Path,
+    ) -> Result<(), LocalHarnessResumeError> {
+        if record.harness != Harness::Claude {
+            return Err(LocalHarnessResumeError::UnsupportedHarness {
+                run_id: record.run_id,
+                harness: record.harness,
+            });
+        }
+        let working_dir = self.canonical_working_dir(&record.working_dir)?;
+        let projects_root = canonical_root(&self.claude_projects_root)?;
+        let project_dir = projects_root.join(encode_claude_cwd(&working_dir));
+        if !project_dir.exists() {
+            fs::create_dir_all(&project_dir)
+                .map_err(|source| io_error(project_dir.clone(), source))?;
+        }
+        let project_dir = canonical_root(&project_dir)?;
+        let expected_transcript = project_dir.join(format!("{}.jsonl", record.harness_session_id));
+        let transcript_path = fs::canonicalize(transcript_path)
+            .map_err(|source| io_error(transcript_path.to_path_buf(), source))?;
+        if transcript_path != expected_transcript {
+            return Err(LocalHarnessResumeError::ClaudeSessionIndexConflict {
+                session_id: record.harness_session_id,
+                reason: format!(
+                    "transcript {} is not in the indexed project {}",
+                    transcript_path.display(),
+                    project_dir.display()
+                ),
+            });
+        }
+
+        let index_path = project_dir.join("sessions-index.json");
+        let mut index = read_json_value_no_follow(&index_path, record.harness_session_id)?
+            .unwrap_or_else(|| json!({ "version": 1, "entries": [] }));
+        let object = index.as_object_mut().ok_or_else(|| {
+            LocalHarnessResumeError::ClaudeSessionIndexConflict {
+                session_id: record.harness_session_id,
+                reason: "sessions-index.json is not a JSON object".to_owned(),
+            }
+        })?;
+        if object
+            .get("version")
+            .and_then(Value::as_i64)
+            .is_some_and(|version| version != 1)
+        {
+            return Err(LocalHarnessResumeError::ClaudeSessionIndexConflict {
+                session_id: record.harness_session_id,
+                reason: "unsupported sessions-index.json version".to_owned(),
+            });
+        }
+        object.insert("version".to_owned(), Value::from(1));
+        let entries = object
+            .entry("entries")
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or_else(|| LocalHarnessResumeError::ClaudeSessionIndexConflict {
+                session_id: record.harness_session_id,
+                reason: "sessions-index.json entries is not an array".to_owned(),
+            })?;
+
+        let now = Utc::now();
+        let now_rfc3339 = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let file_mtime = fs::metadata(&transcript_path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or_else(|| now.timestamp_millis());
+        let full_path = transcript_path.to_string_lossy().into_owned();
+        let project_path = working_dir.to_string_lossy().into_owned();
+        let session_id = record.harness_session_id.to_string();
+        let mut entry = Map::new();
+        entry.insert("sessionId".to_owned(), Value::String(session_id.clone()));
+        entry.insert("fullPath".to_owned(), Value::String(full_path.clone()));
+        entry.insert("fileMtime".to_owned(), Value::from(file_mtime));
+        entry.insert("firstPrompt".to_owned(), Value::String(String::new()));
+        entry.insert("summary".to_owned(), Value::String(String::new()));
+        entry.insert("messageCount".to_owned(), Value::from(0));
+        entry.insert("created".to_owned(), Value::String(now_rfc3339.clone()));
+        entry.insert("modified".to_owned(), Value::String(now_rfc3339));
+        entry.insert("gitBranch".to_owned(), Value::Null);
+        entry.insert(
+            "projectPath".to_owned(),
+            Value::String(project_path.clone()),
+        );
+        entry.insert("isSidechain".to_owned(), Value::Bool(false));
+
+        if let Some(existing) = entries.iter_mut().find(|entry| {
+            entry
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value == session_id)
+        }) {
+            let existing_project = existing.get("projectPath").and_then(Value::as_str);
+            if existing_project.is_some_and(|value| value != project_path)
+                || existing
+                    .get("fullPath")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value != full_path)
+            {
+                return Err(LocalHarnessResumeError::ClaudeSessionIndexConflict {
+                    session_id: record.harness_session_id,
+                    reason: "existing session entry is bound to a different project".to_owned(),
+                });
+            }
+            let existing = existing.as_object_mut().ok_or_else(|| {
+                LocalHarnessResumeError::ClaudeSessionIndexConflict {
+                    session_id: record.harness_session_id,
+                    reason: "session index entry is not an object".to_owned(),
+                }
+            })?;
+            existing.extend(entry);
+        } else {
+            entries.push(Value::Object(entry));
+        }
+
+        write_json_value_atomically(&index_path, &index)
+    }
+
     fn validate_locator(
         &self,
         record: &LocalHarnessRecord,
@@ -456,53 +664,26 @@ impl LocalHarnessRepository {
             TranscriptRoot::ClaudeProjects => &self.claude_projects_root,
         };
         let relative = safe_relative_path(&locator.relative_path)?;
-        let root = canonical_root(root)?;
-        let mut path = root.clone();
-        let components = relative.components().collect::<Vec<_>>();
-        for (index, component) in components.iter().enumerate() {
-            let Component::Normal(name) = component else {
+        if record.harness == Harness::Claude {
+            let working_dir = self.canonical_working_dir(&record.working_dir)?;
+            let expected_project = encode_claude_cwd(&working_dir);
+            let Some(Component::Normal(project)) = relative.components().next() else {
                 return Err(LocalHarnessResumeError::UnsafeTranscriptPath {
                     path: locator.relative_path.clone(),
                 });
             };
-            path.push(name);
-            let metadata = fs::symlink_metadata(&path).map_err(|source| {
-                if source.kind() == io::ErrorKind::NotFound {
-                    LocalHarnessResumeError::MissingTranscript { path: path.clone() }
-                } else {
-                    io_error(path.clone(), source)
-                }
-            })?;
-            if metadata.file_type().is_symlink() {
-                return Err(LocalHarnessResumeError::UnsafeTranscriptPath {
-                    path: locator.relative_path.clone(),
-                });
-            }
-            if index + 1 != components.len() && !metadata.is_dir() {
-                return Err(LocalHarnessResumeError::MalformedTranscript {
-                    path: path.clone(),
-                    reason: "transcript parent is not a directory".to_owned(),
+            if project.to_string_lossy() != expected_project {
+                return Err(LocalHarnessResumeError::ClaudeSessionIndexConflict {
+                    session_id: record.harness_session_id,
+                    reason: format!(
+                        "transcript locator belongs to a different encoded Claude project (expected {expected_project})"
+                    ),
                 });
             }
         }
-        let metadata =
-            fs::symlink_metadata(&path).map_err(|source| io_error(path.clone(), source))?;
-        if !metadata.is_file() {
-            return Err(LocalHarnessResumeError::MalformedTranscript {
-                path,
-                reason: "transcript is not a regular file".to_owned(),
-            });
-        }
-        let mut options = OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-        }
-        let mut file = options
-            .open(&path)
-            .map_err(|source| io_error(path.clone(), source))?;
+        let root = canonical_root(root)?;
+        let path = root.join(&relative);
+        let mut file = open_transcript_nofollow(&root, &relative, &path)?;
         validate_transcript_jsonl(record.harness, record.harness_session_id, &path, &mut file)?;
         Ok(path)
     }
@@ -535,7 +716,7 @@ impl LocalHarnessRepository {
     fn acquire_lock(&self, run_id: Uuid) -> Result<LockFile, LocalHarnessResumeError> {
         let path = self.index_dir.join(format!(".{run_id}.lock"));
         let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
+        options.write(true).create(true);
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -543,18 +724,24 @@ impl LocalHarnessRepository {
                 .mode(0o600)
                 .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
         }
-        let file = options.open(&path).map_err(|source| {
-            if source.kind() == io::ErrorKind::AlreadyExists {
-                LocalHarnessResumeError::Conflict {
-                    run_id,
-                    expected: 0,
-                    actual: None,
+        let file = options
+            .open(&path)
+            .map_err(|source| io_error(path.clone(), source))?;
+        #[cfg(unix)]
+        {
+            flock(file.as_raw_fd(), FlockArg::LockExclusiveNonblock).map_err(|error| {
+                if matches!(error, nix::errno::Errno::EAGAIN) {
+                    LocalHarnessResumeError::Conflict {
+                        run_id,
+                        expected: 0,
+                        actual: None,
+                    }
+                } else {
+                    io_error(path.clone(), io::Error::from_raw_os_error(error as i32))
                 }
-            } else {
-                io_error(path.clone(), source)
-            }
-        })?;
-        Ok(LockFile { path, _file: file })
+            })?;
+        }
+        Ok(LockFile { _file: file })
     }
 
     fn write_atomically(
@@ -615,18 +802,204 @@ impl LocalHarnessRepository {
 }
 
 struct LockFile {
-    path: PathBuf,
     _file: File,
 }
 
-impl Drop for LockFile {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+fn read_json_value_no_follow(
+    path: &Path,
+    session_id: Uuid,
+) -> Result<Option<Value>, LocalHarnessResumeError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(io_error(path.to_path_buf(), source)),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(LocalHarnessResumeError::UnsafeTranscriptPath {
+            path: path.display().to_string(),
+        });
     }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|source| io_error(path.to_path_buf(), source))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|source| io_error(path.to_path_buf(), source))?;
+    let value = serde_json::from_slice(&bytes).map_err(|error| {
+        LocalHarnessResumeError::ClaudeSessionIndexConflict {
+            session_id,
+            reason: format!("sessions-index.json is malformed: {error}"),
+        }
+    })?;
+    Ok(Some(value))
+}
+
+fn write_json_value_atomically(path: &Path, value: &Value) -> Result<(), LocalHarnessResumeError> {
+    let serialized = serde_json::to_vec_pretty(value)?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let temp_path = parent.join(format!(
+        ".{}.tmp-{}",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        Uuid::new_v4()
+    ));
+    let result = (|| {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW);
+        }
+        let mut file = options
+            .open(&temp_path)
+            .map_err(|source| io_error(temp_path.clone(), source))?;
+        file.write_all(&serialized)
+            .and_then(|_| file.flush())
+            .and_then(|_| file.sync_all())
+            .map_err(|source| io_error(temp_path.clone(), source))?;
+        drop(file);
+        fs::rename(&temp_path, path).map_err(|source| io_error(path.to_path_buf(), source))?;
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
 }
 
 fn io_error(path: PathBuf, source: io::Error) -> LocalHarnessResumeError {
     LocalHarnessResumeError::Io { path, source }
+}
+
+#[cfg(unix)]
+fn open_transcript_nofollow(
+    root: &Path,
+    relative: &Path,
+    full_path: &Path,
+) -> Result<File, LocalHarnessResumeError> {
+    let root_fd = open(
+        root,
+        OFlag::O_RDONLY | OFlag::O_DIRECTORY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW,
+        Mode::empty(),
+    )
+    .map_err(|error| map_nix_transcript_error(error, full_path))?;
+    // Keep every parent directory open while resolving its child with openat;
+    // a path component cannot be swapped for a symlink between validation and
+    // the final file open.
+    let mut directory = unsafe { File::from_raw_fd(root_fd) };
+    let components = relative.components().collect::<Vec<_>>();
+    for (index, component) in components.iter().enumerate() {
+        let Component::Normal(name) = component else {
+            return Err(LocalHarnessResumeError::UnsafeTranscriptPath {
+                path: relative.display().to_string(),
+            });
+        };
+        let Some(name) = name.to_str() else {
+            return Err(LocalHarnessResumeError::UnsafeTranscriptPath {
+                path: relative.display().to_string(),
+            });
+        };
+        let is_file = index + 1 == components.len();
+        let flags = if is_file {
+            OFlag::O_RDONLY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW
+        } else {
+            OFlag::O_RDONLY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW | OFlag::O_DIRECTORY
+        };
+        let fd = openat(directory.as_raw_fd(), name, flags, Mode::empty())
+            .map_err(|error| map_nix_transcript_error(error, full_path))?;
+        let next = unsafe { File::from_raw_fd(fd) };
+        if is_file {
+            let stat = fstat(next.as_raw_fd())
+                .map_err(|error| map_nix_transcript_error(error, full_path))?;
+            if !SFlag::from_bits_truncate(stat.st_mode).contains(SFlag::S_IFREG) {
+                return Err(LocalHarnessResumeError::MalformedTranscript {
+                    path: full_path.to_path_buf(),
+                    reason: "transcript is not a regular file".to_owned(),
+                });
+            }
+            return Ok(next);
+        }
+        directory = next;
+    }
+    Err(LocalHarnessResumeError::UnsafeTranscriptPath {
+        path: relative.display().to_string(),
+    })
+}
+
+#[cfg(unix)]
+fn map_nix_transcript_error(error: nix::errno::Errno, path: &Path) -> LocalHarnessResumeError {
+    match error {
+        nix::errno::Errno::ELOOP => LocalHarnessResumeError::UnsafeTranscriptPath {
+            path: path.display().to_string(),
+        },
+        nix::errno::Errno::ENOENT => LocalHarnessResumeError::MissingTranscript {
+            path: path.to_path_buf(),
+        },
+        nix::errno::Errno::ENOTDIR => LocalHarnessResumeError::MalformedTranscript {
+            path: path.to_path_buf(),
+            reason: "transcript parent is not a directory".to_owned(),
+        },
+        error => io_error(
+            path.to_path_buf(),
+            io::Error::from_raw_os_error(error as i32),
+        ),
+    }
+}
+
+#[cfg(not(unix))]
+fn open_transcript_nofollow(
+    root: &Path,
+    relative: &Path,
+    full_path: &Path,
+) -> Result<File, LocalHarnessResumeError> {
+    let mut path = root.to_path_buf();
+    let components = relative.components().collect::<Vec<_>>();
+    for (index, component) in components.iter().enumerate() {
+        let Component::Normal(name) = component else {
+            return Err(LocalHarnessResumeError::UnsafeTranscriptPath {
+                path: relative.display().to_string(),
+            });
+        };
+        path.push(name);
+        let metadata = fs::symlink_metadata(&path).map_err(|source| {
+            if source.kind() == io::ErrorKind::NotFound {
+                LocalHarnessResumeError::MissingTranscript {
+                    path: full_path.to_path_buf(),
+                }
+            } else {
+                io_error(path.clone(), source)
+            }
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(LocalHarnessResumeError::UnsafeTranscriptPath {
+                path: relative.display().to_string(),
+            });
+        }
+        if index + 1 != components.len() && !metadata.is_dir() {
+            return Err(LocalHarnessResumeError::MalformedTranscript {
+                path,
+                reason: "transcript parent is not a directory".to_owned(),
+            });
+        }
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    let file = options
+        .open(full_path)
+        .map_err(|source| io_error(full_path.to_path_buf(), source))?;
+    Ok(file)
 }
 
 fn ensure_supported_harness(record: &LocalHarnessRecord) -> Result<(), LocalHarnessResumeError> {
@@ -802,9 +1175,12 @@ fn validate_transcript_jsonl(
                 .and_then(|value| Uuid::parse_str(value).ok())
         }),
         Harness::Claude => entries.iter().find_map(|entry| {
-            ["sessionId", "session_id", "uuid"]
-                .iter()
-                .find_map(|key| entry.get(*key).and_then(Value::as_str))
+            // Claude's canonical transcript events carry the session binding
+            // in the top-level `sessionId` field. `uuid` identifies an
+            // individual message and must never be treated as a session ID.
+            entry
+                .get("sessionId")
+                .and_then(Value::as_str)
                 .and_then(|value| Uuid::parse_str(value).ok())
         }),
         _ => None,

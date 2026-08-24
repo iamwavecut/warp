@@ -378,6 +378,12 @@ pub enum AgentDriverError {
         /// Matching row(s) from the harness block, trimmed and capped.
         excerpt: String,
     },
+    #[error("Harness '{harness}' final local save failed: {source}")]
+    HarnessFinalSaveFailed {
+        harness: String,
+        #[source]
+        source: anyhow::Error,
+    },
 }
 
 impl From<warpui::ModelDropped> for AgentDriverError {
@@ -1988,18 +1994,15 @@ impl AgentDriver {
 
         // Final save after the command finishes.
         log::debug!("Triggering final save of harness conversation data");
-        let final_save_succeeded = match runner
+        let final_save_error = match runner
             .save_conversation(SavePoint::Final, foreground)
             .await
             .context("Failed to save harness conversation (final)")
         {
-            Ok(()) => true,
-            Err(err) => {
-                report_error!(err);
-                false
-            }
+            Ok(()) => None,
+            Err(err) => Some(err),
         };
-        let cleanup_disposition = if final_save_succeeded
+        let cleanup_disposition = if final_save_error.is_none()
             && detected_runtime_failure.is_none()
             && matches!(command_result.as_ref(), Ok(exit_code) if exit_code.was_successful())
         {
@@ -2013,6 +2016,13 @@ impl AgentDriver {
             .context("Failed to clean up harness runtime state")
         {
             report_error!(err);
+        }
+
+        if let Some(source) = final_save_error {
+            return Err(AgentDriverError::HarnessFinalSaveFailed {
+                harness: harness_name,
+                source,
+            });
         }
 
         // A runtime failure detected mid-run takes precedence over the

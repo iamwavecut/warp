@@ -390,8 +390,8 @@ pub struct RunAgentArgs {
     ///
     /// "oz" (default) uses Warp's built-in agent infrastructure.
     /// "claude" delegates to the `claude` CLI.
-    #[arg(long = "harness", value_name = "HARNESS", default_value_t = Harness::Oz, hide = true)]
-    pub harness: Harness,
+    #[arg(long = "harness", value_name = "HARNESS", hide = true)]
+    pub harness: Option<Harness>,
 }
 
 impl RunAgentArgs {

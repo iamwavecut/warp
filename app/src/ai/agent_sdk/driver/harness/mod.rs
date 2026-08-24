@@ -33,7 +33,7 @@ use codex::CodexHarness;
 use gemini::GeminiHarness;
 pub(crate) use local_resume::{
     LocalHarnessRecord, LocalHarnessRepository, LocalHarnessResumeError, LocalHarnessResumePayload,
-    LocalHarnessSavePoint, TranscriptLocator, TranscriptRoot,
+    LocalHarnessSavePoint, TranscriptLocator, TranscriptRoot, resume_cli_help_is_compatible,
 };
 
 /// Trait for third-party agent harnesses that execute prompts via their own CLIs.

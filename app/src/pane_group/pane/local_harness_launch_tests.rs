@@ -172,6 +172,13 @@ async fn prepare_local_codex_child_launch_does_not_rewrite_global_codex_state() 
         prepared.command,
         "codex --dangerously-bypass-approvals-and-sandbox 'hello world'"
     );
+    assert_ne!(prepared.run_id, prepared.task_id.to_string());
+    assert_eq!(prepared.harness, Harness::Codex);
+    assert_eq!(
+        prepared.working_dir,
+        dunce::canonicalize(fake_home.path().join("workspace")).unwrap()
+    );
+    assert_eq!(prepared.session_id, None);
     assert!(!fake_home.path().join(".codex").exists());
 }
 

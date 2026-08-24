@@ -234,16 +234,18 @@ impl ClaudeHarnessRunner {
         }
 
         let discovered = self.repository.discover_transcript(&record)?;
-        let Some((locator, _path)) = discovered else {
+        let Some((locator, path)) = discovered else {
             record.last_save_point = Some(save_point);
             record.terminal = terminal;
             record.complete = terminal;
-            let _ = self.repository.update(record.clone(), record.revision)?;
+            self.repository.update(record.clone(), record.revision)?;
             if terminal {
                 anyhow::bail!("Claude transcript was not created before final local save");
             }
             return Ok(());
         };
+        self.repository
+            .upsert_claude_sessions_index(&record, &path)?;
         record.transcript = Some(locator);
         record.last_save_point = Some(save_point);
         record.terminal = terminal;

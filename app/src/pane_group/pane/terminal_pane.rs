@@ -59,7 +59,10 @@ use crate::ai::blocklist::BlocklistAIHistoryEvent;
 use warp_core::execution_mode::AppExecutionMode;
 
 #[cfg(not(target_family = "wasm"))]
-use super::local_harness_launch::{PreparedLocalHarnessLaunch, prepare_local_harness_child_launch};
+use super::local_harness_launch::{
+    PreparedLocalHarnessLaunch, prepare_local_harness_child_launch,
+    register_local_harness_child_lifecycle,
+};
 use super::{
     DetachType, PaneConfiguration, PaneContent, PaneId, PaneStackEvent, PaneView, ShareableLink,
     ShareableLinkError, TerminalPaneId,
@@ -1503,11 +1506,13 @@ fn handle_terminal_view_event(
                             },
                             move |group, result, ctx| match result {
                                 Ok(launch) => {
+                                    let lifecycle_launch = launch.clone();
                                     let PreparedLocalHarnessLaunch {
                                         command,
                                         env_vars,
                                         run_id,
                                         task_id,
+                                        ..
                                     } = launch;
                                     match create_hidden_child_agent_conversation(
                                         group,
@@ -1554,6 +1559,12 @@ fn handle_terminal_view_event(
                                                     ctx,
                                                 );
                                             },
+                                        );
+
+                                        register_local_harness_child_lifecycle(
+                                            terminal_view_id,
+                                            &lifecycle_launch,
+                                            ctx,
                                         );
 
                                         register_legacy_local_lifecycle_subscription(

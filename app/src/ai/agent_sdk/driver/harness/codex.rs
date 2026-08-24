@@ -201,7 +201,7 @@ impl CodexHarnessRunner {
             record.last_save_point = Some(save_point);
             record.terminal = terminal;
             record.complete = terminal;
-            let _ = self.repository.update(record.clone(), record.revision)?;
+            self.repository.update(record.clone(), record.revision)?;
             if terminal {
                 anyhow::bail!("Codex transcript was not created before final local save");
             }
