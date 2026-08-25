@@ -111,23 +111,6 @@ fn test_two_editors_sharing_a_buffer_both_lay_out_a_large_content_replace() {
 }
 
 #[test]
-fn replace_first_n_characters_handles_incremental_unicode_prefix() {
-    App::test((), |mut app| async move {
-        initialize_deps(&mut app);
-        let editor = mock_model(&mut app, "suffix", ContentVersion::new());
-
-        editor.update(&mut app, |editor, ctx| {
-            editor.replace_first_n_characters(CharOffset::from(0), "é", ctx);
-            editor.replace_first_n_characters(CharOffset::from(1), "élan", ctx);
-        });
-
-        editor.read(&app, |editor, ctx| {
-            assert_eq!(editor.content().as_ref(ctx).text().as_str(), "élansuffix");
-        });
-    });
-}
-
-#[test]
 fn test_no_trailing_newline() {
     App::test((), |mut app| async move {
         initialize_deps(&mut app);

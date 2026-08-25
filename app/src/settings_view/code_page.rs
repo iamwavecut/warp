@@ -5,8 +5,8 @@ use super::{
     flags,
     settings_page::{
         Category, HEADER_PADDING, MatchData, PageType, SettingsPageMeta, SettingsPageViewHandle,
-        SettingsWidget, TOGGLE_BUTTON_RIGHT_PADDING, build_sub_header, render_body_item,
-        render_separator,
+        SettingsWidget, TOGGLE_BUTTON_RIGHT_PADDING, add_setting, build_sub_header,
+        render_body_item, render_dropdown_item, render_separator,
     },
 };
 #[cfg(not(target_family = "wasm"))]
@@ -18,7 +18,7 @@ use crate::{
         EnablementState, LspRepoStatus, PersistedWorkspace, PersistedWorkspaceEvent,
     },
     appearance::Appearance,
-    settings::{AISettings, CodeSettings},
+    settings::{AISettings, AppEditorSettings, CodeEditorLineNumberMode, CodeSettings},
     terminal::general_settings::GeneralSettings,
     ui_components::{
         avatar::{Avatar, AvatarContent, StatusElementTypes},
@@ -26,7 +26,7 @@ use crate::{
         icons::Icon,
     },
     view_components::{
-        DismissibleToast,
+        DismissibleToast, Dropdown, DropdownItem,
         action_button::{ActionButton, SecondaryTheme},
     },
     workspace::ToastStack,
@@ -53,7 +53,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use warp_core::{
     features::FeatureFlag,
-    settings::ToggleableSetting as _,
+    settings::{Setting as _, ToggleableSetting as _},
     ui::theme::{AnsiColorIdentifier, Fill as ThemeFill},
 };
 #[cfg(not(target_family = "wasm"))]
@@ -198,6 +198,7 @@ pub struct CodeSettingsPageView {
     suggested_server_statuses: HashMap<(PathBuf, LSPServerType), LspRepoStatus>,
     #[cfg(feature = "local_fs")]
     external_editor_view: Option<ViewHandle<ExternalEditorView>>,
+    code_editor_line_number_mode_dropdown: ViewHandle<Dropdown<CodeSettingsPageAction>>,
 }
 
 impl CodeSettingsPageView {
@@ -350,6 +351,19 @@ impl CodeSettingsPageView {
 
         let workspace_count = PersistedWorkspace::as_ref(ctx).workspaces().count();
 
+        let code_editor_line_number_mode_dropdown = ctx.add_typed_action_view(Dropdown::new);
+        Self::update_code_editor_line_number_mode_dropdown(
+            code_editor_line_number_mode_dropdown.clone(),
+            ctx,
+        );
+        ctx.subscribe_to_model(&AppEditorSettings::handle(ctx), |me, _, _, ctx| {
+            Self::update_code_editor_line_number_mode_dropdown(
+                me.code_editor_line_number_mode_dropdown.clone(),
+                ctx,
+            );
+            ctx.notify();
+        });
+
         #[cfg(feature = "local_fs")]
         let external_editor_view;
         let page = if FeatureFlag::OpenWarpNewSettingsModes.is_enabled() {
@@ -371,6 +385,7 @@ impl CodeSettingsPageView {
                 Box<dyn SettingsWidget<View = Self>>,
             > = vec![];
             code_editor_review_widgets.extend([
+                Box::new(CodeEditorLineNumberModeWidget) as Box<dyn SettingsWidget<View = Self>>,
                 Box::new(AutoOpenCodeReviewPaneCodeWidget::default())
                     as Box<dyn SettingsWidget<View = Self>>,
                 Box::new(CodeReviewPanelToggleWidget::default()),
@@ -418,6 +433,7 @@ impl CodeSettingsPageView {
             suggested_server_statuses: HashMap::new(),
             #[cfg(feature = "local_fs")]
             external_editor_view,
+            code_editor_line_number_mode_dropdown,
         }
     }
 
@@ -457,6 +473,8 @@ impl CodeSettingsPageView {
                         #[cfg(feature = "local_fs")]
                         widgets.push(Box::new(ExternalEditorCodeWidget));
                         widgets.extend([
+                            Box::new(CodeEditorLineNumberModeWidget)
+                                as Box<dyn SettingsWidget<View = Self>>,
                             Box::new(AutoOpenCodeReviewPaneCodeWidget::default())
                                 as Box<dyn SettingsWidget<View = Self>>,
                             Box::new(CodeReviewPanelToggleWidget::default()),
@@ -509,6 +527,7 @@ impl CodeSettingsPageView {
                 Box<dyn SettingsWidget<View = Self>>,
             > = vec![];
             code_editor_review_widgets.extend([
+                Box::new(CodeEditorLineNumberModeWidget) as Box<dyn SettingsWidget<View = Self>>,
                 Box::new(AutoOpenCodeReviewPaneCodeWidget::default())
                     as Box<dyn SettingsWidget<View = Self>>,
                 Box::new(CodeReviewPanelToggleWidget::default()),
@@ -540,6 +559,39 @@ impl CodeSettingsPageView {
                 })];
             PageType::new_uncategorized(widgets, None)
         }
+    }
+
+    fn update_code_editor_line_number_mode_dropdown(
+        dropdown: ViewHandle<Dropdown<CodeSettingsPageAction>>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        dropdown.update(ctx, |dropdown, ctx| {
+            let values = [
+                CodeEditorLineNumberMode::Absolute,
+                CodeEditorLineNumberMode::Relative,
+            ];
+            let current_value = *AppEditorSettings::as_ref(ctx)
+                .code_editor_line_number_mode
+                .value();
+            let selected_index = values
+                .iter()
+                .position(|value| *value == current_value)
+                .unwrap_or(0);
+
+            dropdown.set_items(
+                values
+                    .into_iter()
+                    .map(|value| {
+                        DropdownItem::new(
+                            value.dropdown_item_label(),
+                            CodeSettingsPageAction::SetCodeEditorLineNumberMode(value),
+                        )
+                    })
+                    .collect(),
+                ctx,
+            );
+            dropdown.set_selected_by_index(selected_index, ctx);
+        });
     }
 
     /// Resize `open_project_rules_mouse_states` to match the current workspace count.
@@ -602,7 +654,7 @@ pub enum CodeSettingsPageEvent {
 }
 
 // Define the code page actions.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CodeSettingsPageAction {
     ToggleCodebaseContext,
     ToggleAutoIndexing,
@@ -638,6 +690,7 @@ pub enum CodeSettingsPageAction {
     ToggleShowHiddenFiles,
     ToggleFormatOnSave,
     ToggleAutoSave,
+    SetCodeEditorLineNumberMode(CodeEditorLineNumberMode),
     /// Install (if needed) and enable a suggested LSP server.
     InstallAndEnableLspServer {
         workspace_path: PathBuf,
@@ -812,6 +865,15 @@ impl TypedActionView for CodeSettingsPageView {
             CodeSettingsPageAction::ToggleAutoSave => {
                 CodeSettings::handle(ctx).update(ctx, |settings, ctx| {
                     report_if_error!(settings.auto_save.toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
+            CodeSettingsPageAction::SetCodeEditorLineNumberMode(mode) => {
+                AppEditorSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    if let Err(error) = settings.code_editor_line_number_mode.set_value(*mode, ctx)
+                    {
+                        log::warn!("Failed to persist code editor line number mode: {error:?}");
+                    }
                 });
                 ctx.notify();
             }
@@ -2571,6 +2633,41 @@ impl SettingsWidget for ExternalEditorCodeWidget {
         } else {
             Empty::new().finish()
         }
+    }
+}
+
+struct CodeEditorLineNumberModeWidget;
+
+impl SettingsWidget for CodeEditorLineNumberModeWidget {
+    type View = CodeSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "line number numbers relative line vim gutter code editor"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let mut column = Flex::column();
+        add_setting(
+            &mut column,
+            &AppEditorSettings::as_ref(app).code_editor_line_number_mode,
+            || {
+                render_dropdown_item(
+                    appearance,
+                    "Code editor line numbers:",
+                    None,
+                    None,
+                    LocalOnlyIconState::Hidden,
+                    None,
+                    &view.code_editor_line_number_mode_dropdown,
+                )
+            },
+        );
+        column.finish()
     }
 }
 
