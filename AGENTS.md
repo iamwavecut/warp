@@ -332,6 +332,17 @@ backend. Hide or no-op clearly cloud-backed features. Preserve or localize
 features that can reasonably run through local inference, local storage, local
 tools, MCP, or BYOK/custom providers.
 
+For every apparently hosted upstream feature, perform a localization assessment
+during the same merge iteration before rejecting it. Separate the user-visible
+result from its transport and server implementation, trace its callers and
+consumers, and check whether the result can be reproduced with direct
+OpenAI-compatible providers, local models, local storage, MCP/local tools,
+terminal/client state, or OS APIs. When that adaptation is bounded and does not
+need a forbidden third party, implement it unconditionally in the fork with
+focused regression coverage during the same iteration. Reject a feature only
+after recording concrete evidence that it has no independent local consumer or
+cannot work without a prohibited hosted dependency.
+
 After every upstream merge, inspect the incoming commits for new cloud-backed,
 hosted, account, billing, manufacturer data collection, remote incident upload,
 Warp Drive, or proprietary auth behavior before continuing feature work. Keep

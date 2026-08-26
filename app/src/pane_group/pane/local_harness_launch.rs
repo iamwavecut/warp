@@ -230,7 +230,7 @@ pub(super) fn register_local_harness_child_lifecycle(
                 (LocalHarnessSavePoint::PostTurn, false)
             }
             CLIAgentSessionsModelEvent::StatusChanged { status, .. }
-                if matches!(status, CLIAgentSessionStatus::Success | CLIAgentSessionStatus::Failed { .. }) =>
+                if matches!(status, CLIAgentSessionStatus::Success | CLIAgentSessionStatus::Failed { .. } | CLIAgentSessionStatus::Cancelled) =>
             {
                 (LocalHarnessSavePoint::PostTurn, false)
             }

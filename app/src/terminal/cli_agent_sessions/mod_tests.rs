@@ -5,6 +5,8 @@ use super::{
 };
 use crate::ai::blocklist::{InputConfig, InputType};
 use crate::terminal::CLIAgent;
+use std::time::Duration;
+use warpui::{App, EntityId, r#async::Timer};
 
 #[test]
 fn parse_stop_notification() {
@@ -633,4 +635,186 @@ fn permission_request_still_populates_summary_and_tool_fields() {
         session.status,
         CLIAgentSessionStatus::Blocked { .. },
     ));
+}
+
+const CTRL_C_TEST_WINDOW: Duration = Duration::from_millis(80);
+const CTRL_C_TEST_BUFFER: Duration = Duration::from_millis(80);
+
+fn tracked_cli_agent_session(status: CLIAgentSessionStatus) -> CLIAgentSession {
+    CLIAgentSession {
+        agent: CLIAgent::Claude,
+        status,
+        session_context: CLIAgentSessionContext::default(),
+        input_state: CLIAgentInputState::Closed,
+        should_auto_toggle_input: false,
+        listener: None,
+        remote_host: None,
+        plugin_version: None,
+        draft_text: None,
+        custom_command_prefix: None,
+    }
+}
+
+fn cli_agent_event(event: CLIAgentEventType) -> CLIAgentEvent {
+    CLIAgentEvent {
+        v: 1,
+        agent: CLIAgent::Claude,
+        event,
+        session_id: None,
+        cwd: None,
+        project: None,
+        payload: CLIAgentEventPayload::default(),
+    }
+}
+
+#[test]
+fn ctrl_c_requires_a_started_cli_agent_turn() {
+    App::test((), |mut app| async move {
+        let model = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        let view_id = EntityId::new();
+        model.update(&mut app, |model, ctx| {
+            model.set_session(
+                view_id,
+                tracked_cli_agent_session(CLIAgentSessionStatus::InProgress),
+                ctx,
+            );
+            model.observe_ctrl_c_write_with_window(view_id, CTRL_C_TEST_WINDOW, ctx);
+        });
+
+        assert!(!model.read(&app, |model, _| {
+            model.has_pending_or_resolved_ctrl_c_cancel(view_id)
+        }));
+    });
+}
+
+#[test]
+fn silent_ctrl_c_marks_the_local_cli_agent_session_cancelled() {
+    App::test((), |mut app| async move {
+        let model = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        let view_id = EntityId::new();
+        model.update(&mut app, |model, ctx| {
+            model.set_session(
+                view_id,
+                tracked_cli_agent_session(CLIAgentSessionStatus::InProgress),
+                ctx,
+            );
+            model.update_from_event(
+                view_id,
+                &cli_agent_event(CLIAgentEventType::PromptSubmit),
+                ctx,
+            );
+            model.observe_ctrl_c_write_with_window(view_id, CTRL_C_TEST_WINDOW, ctx);
+        });
+
+        Timer::after(CTRL_C_TEST_WINDOW + CTRL_C_TEST_BUFFER).await;
+
+        assert_eq!(
+            model.read(&app, |model, _| model
+                .session(view_id)
+                .map(|session| session.status.clone())),
+            Some(CLIAgentSessionStatus::Cancelled)
+        );
+    });
+}
+
+#[test]
+fn plugin_activity_disarms_a_pending_ctrl_c_cancel() {
+    App::test((), |mut app| async move {
+        let model = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        let view_id = EntityId::new();
+        model.update(&mut app, |model, ctx| {
+            model.set_session(
+                view_id,
+                tracked_cli_agent_session(CLIAgentSessionStatus::InProgress),
+                ctx,
+            );
+            model.update_from_event(
+                view_id,
+                &cli_agent_event(CLIAgentEventType::PromptSubmit),
+                ctx,
+            );
+            model.observe_ctrl_c_write_with_window(view_id, CTRL_C_TEST_WINDOW, ctx);
+            model.update_from_event(view_id, &cli_agent_event(CLIAgentEventType::Stop), ctx);
+        });
+
+        Timer::after(CTRL_C_TEST_WINDOW + CTRL_C_TEST_BUFFER).await;
+
+        assert_eq!(
+            model.read(&app, |model, _| model
+                .session(view_id)
+                .map(|session| session.status.clone())),
+            Some(CLIAgentSessionStatus::Success)
+        );
+    });
+}
+
+#[test]
+fn a_new_prompt_resumes_a_cancelled_cli_agent_session() {
+    App::test((), |mut app| async move {
+        let model = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        let view_id = EntityId::new();
+        model.update(&mut app, |model, ctx| {
+            model.set_session(
+                view_id,
+                tracked_cli_agent_session(CLIAgentSessionStatus::InProgress),
+                ctx,
+            );
+            model.update_from_event(
+                view_id,
+                &cli_agent_event(CLIAgentEventType::PromptSubmit),
+                ctx,
+            );
+            model.observe_ctrl_c_write_with_window(view_id, CTRL_C_TEST_WINDOW, ctx);
+        });
+        Timer::after(CTRL_C_TEST_WINDOW + CTRL_C_TEST_BUFFER).await;
+
+        model.update(&mut app, |model, ctx| {
+            model.update_from_event(
+                view_id,
+                &cli_agent_event(CLIAgentEventType::PromptSubmit),
+                ctx,
+            );
+        });
+
+        assert_eq!(
+            model.read(&app, |model, _| model
+                .session(view_id)
+                .map(|session| session.status.clone())),
+            Some(CLIAgentSessionStatus::InProgress)
+        );
+    });
+}
+
+#[test]
+fn repeated_ctrl_c_does_not_extend_the_original_cancel_window() {
+    App::test((), |mut app| async move {
+        let model = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+        let view_id = EntityId::new();
+        let window = Duration::from_millis(160);
+        model.update(&mut app, |model, ctx| {
+            model.set_session(
+                view_id,
+                tracked_cli_agent_session(CLIAgentSessionStatus::InProgress),
+                ctx,
+            );
+            model.update_from_event(
+                view_id,
+                &cli_agent_event(CLIAgentEventType::PromptSubmit),
+                ctx,
+            );
+            model.observe_ctrl_c_write_with_window(view_id, window, ctx);
+        });
+        Timer::after(Duration::from_millis(100)).await;
+        model.update(&mut app, |model, ctx| {
+            model.observe_ctrl_c_write_with_window(view_id, window, ctx);
+        });
+        Timer::after(Duration::from_millis(90)).await;
+
+        assert_eq!(
+            model.read(&app, |model, _| model
+                .session(view_id)
+                .map(|session| session.status.clone())),
+            Some(CLIAgentSessionStatus::Cancelled)
+        );
+    });
 }

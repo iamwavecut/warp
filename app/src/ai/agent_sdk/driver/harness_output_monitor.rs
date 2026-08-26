@@ -201,7 +201,9 @@ pub(crate) fn should_suppress_runtime_failure(status: Option<&CLIAgentSessionSta
     // so we don't need to do runtime pattern matching to find the failure.
     matches!(
         status,
-        Some(CLIAgentSessionStatus::Success) | Some(CLIAgentSessionStatus::Failed { .. })
+        Some(CLIAgentSessionStatus::Success)
+            | Some(CLIAgentSessionStatus::Failed { .. })
+            | Some(CLIAgentSessionStatus::Cancelled)
     )
 }
 

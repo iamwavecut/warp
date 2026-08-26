@@ -4,13 +4,17 @@ pub mod listener;
 pub(crate) mod plugin_manager;
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use event::{CLIAgentEvent, CLIAgentEventType};
+use warpui::r#async::SpawnedFutureHandle;
 use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
 use self::listener::CLIAgentSessionListener;
 use super::CLIAgent;
 use crate::ai::blocklist::InputConfig;
+
+const CTRL_C_CANCEL_WINDOW: Duration = Duration::from_secs(2);
 
 /// Status of a tracked CLI agent session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +28,7 @@ pub enum CLIAgentSessionStatus {
     Blocked {
         message: Option<String>,
     },
+    Cancelled,
 }
 
 impl CLIAgentSessionStatus {
@@ -36,6 +41,7 @@ impl CLIAgentSessionStatus {
             CLIAgentSessionStatus::Blocked { message } => ConversationStatus::Blocked {
                 blocked_action: message.clone().unwrap_or_default(),
             },
+            CLIAgentSessionStatus::Cancelled => ConversationStatus::Cancelled,
         }
     }
 }
@@ -306,6 +312,15 @@ pub struct CLIAgentSessionsModel {
     /// Tracks (agent, remote_host) pairs where an auto plugin operation (install or update) has failed.
     /// Shared across all views so failure in one tab is reflected everywhere.
     plugin_auto_failures: HashSet<(CLIAgent, Option<String>)>,
+    ctrl_c_cancel_state: HashMap<EntityId, CtrlCCancelState>,
+    next_ctrl_c_token: u64,
+}
+
+#[derive(Default)]
+struct CtrlCCancelState {
+    has_seen_prompt_submit: bool,
+    pending_cancel: Option<SpawnedFutureHandle>,
+    armed_token: Option<u64>,
 }
 
 impl Entity for CLIAgentSessionsModel {
@@ -319,6 +334,8 @@ impl CLIAgentSessionsModel {
         Self {
             sessions: HashMap::new(),
             plugin_auto_failures: HashSet::new(),
+            ctrl_c_cancel_state: HashMap::new(),
+            next_ctrl_c_token: 0,
         }
     }
 
@@ -399,6 +416,8 @@ impl CLIAgentSessionsModel {
     }
 
     pub fn remove_session(&mut self, terminal_view_id: EntityId, ctx: &mut ModelContext<Self>) {
+        self.abort_pending_cancel(terminal_view_id);
+        self.ctrl_c_cancel_state.remove(&terminal_view_id);
         if let Some(session) = self.sessions.remove(&terminal_view_id) {
             ctx.emit(CLIAgentSessionsModelEvent::Ended {
                 terminal_view_id,
@@ -414,9 +433,24 @@ impl CLIAgentSessionsModel {
         event: &CLIAgentEvent,
         ctx: &mut ModelContext<Self>,
     ) {
-        let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
+        if !self.sessions.contains_key(&terminal_view_id) {
             return;
-        };
+        }
+
+        if !matches!(event.event, CLIAgentEventType::IdlePrompt) {
+            self.abort_pending_cancel(terminal_view_id);
+        }
+        if matches!(event.event, CLIAgentEventType::PromptSubmit) {
+            self.ctrl_c_cancel_state
+                .entry(terminal_view_id)
+                .or_default()
+                .has_seen_prompt_submit = true;
+        }
+
+        let session = self
+            .sessions
+            .get_mut(&terminal_view_id)
+            .expect("session presence checked above");
 
         let event_type = &event.event;
         if let Some(new_status) = session.apply_event(event) {
@@ -440,6 +474,115 @@ impl CLIAgentSessionsModel {
                 agent: session.agent,
             });
         }
+    }
+
+    pub fn observe_ctrl_c_write(
+        &mut self,
+        terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.observe_ctrl_c_write_with_window(terminal_view_id, CTRL_C_CANCEL_WINDOW, ctx);
+    }
+
+    fn observe_ctrl_c_write_with_window(
+        &mut self,
+        terminal_view_id: EntityId,
+        window: Duration,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let Some(session) = self.sessions.get(&terminal_view_id) else {
+            return;
+        };
+        let can_arm = matches!(
+            session.status,
+            CLIAgentSessionStatus::InProgress | CLIAgentSessionStatus::Blocked { .. }
+        ) && self
+            .ctrl_c_cancel_state
+            .get(&terminal_view_id)
+            .is_some_and(|state| state.has_seen_prompt_submit);
+        if !can_arm
+            || self
+                .ctrl_c_cancel_state
+                .get(&terminal_view_id)
+                .is_some_and(|state| state.pending_cancel.is_some())
+        {
+            return;
+        }
+
+        let token = self.next_ctrl_c_token;
+        self.next_ctrl_c_token = self.next_ctrl_c_token.wrapping_add(1);
+        let handle = ctx.spawn_abortable(
+            async move { warpui::r#async::Timer::after(window).await },
+            move |model, _, ctx| model.resolve_pending_cancel(terminal_view_id, token, ctx),
+            |_, _| {},
+        );
+        let state = self
+            .ctrl_c_cancel_state
+            .entry(terminal_view_id)
+            .or_default();
+        state.pending_cancel = Some(handle);
+        state.armed_token = Some(token);
+    }
+
+    fn resolve_pending_cancel(
+        &mut self,
+        terminal_view_id: EntityId,
+        token: u64,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let owns_current_window = self
+            .ctrl_c_cancel_state
+            .get_mut(&terminal_view_id)
+            .is_some_and(|state| {
+                if state.armed_token != Some(token) {
+                    return false;
+                }
+                state.pending_cancel = None;
+                state.armed_token = None;
+                true
+            });
+        if !owns_current_window {
+            return;
+        }
+
+        let Some(session) = self.sessions.get_mut(&terminal_view_id) else {
+            return;
+        };
+        if !matches!(
+            session.status,
+            CLIAgentSessionStatus::InProgress | CLIAgentSessionStatus::Blocked { .. }
+        ) {
+            return;
+        }
+        session.status = CLIAgentSessionStatus::Cancelled;
+        ctx.emit(CLIAgentSessionsModelEvent::StatusChanged {
+            terminal_view_id,
+            agent: session.agent,
+            status: CLIAgentSessionStatus::Cancelled,
+            session_context: Box::new(session.session_context.clone()),
+        });
+    }
+
+    fn abort_pending_cancel(&mut self, terminal_view_id: EntityId) {
+        if let Some(state) = self.ctrl_c_cancel_state.get_mut(&terminal_view_id) {
+            state.armed_token = None;
+            if let Some(handle) = state.pending_cancel.take() {
+                handle.abort();
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn has_pending_or_resolved_ctrl_c_cancel(&self, terminal_view_id: EntityId) -> bool {
+        matches!(
+            self.sessions
+                .get(&terminal_view_id)
+                .map(|session| &session.status),
+            Some(CLIAgentSessionStatus::Cancelled)
+        ) || self
+            .ctrl_c_cancel_state
+            .get(&terminal_view_id)
+            .is_some_and(|state| state.pending_cancel.is_some())
     }
 
     pub fn open_input(
@@ -505,6 +648,8 @@ impl CLIAgentSessionsModel {
         // Close any open rich input before replacing, so subscribers can
         // restore input config before the session ends.
         self.close_input(terminal_view_id, false, ctx);
+        self.abort_pending_cancel(terminal_view_id);
+        self.ctrl_c_cancel_state.remove(&terminal_view_id);
         if let Some(old) = self.sessions.insert(terminal_view_id, session) {
             ctx.emit(CLIAgentSessionsModelEvent::Ended {
                 terminal_view_id,

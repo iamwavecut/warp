@@ -41,9 +41,9 @@ use crate::{ai::ambient_agents::task::HarnessConfig, server::server_api::ai::Age
 use driver::AgentDriverError;
 
 use crate::ai::local_named_agents::{
-    LocalNamedAgentRepository, LocalNamedAgentRunMetadata, NamedAgentBundle,
-    NamedAgentRunOverrides, merge_named_agent_config, profile_sync_id, validate_named_config_file,
-    validate_named_mcp_servers, validate_named_run_args,
+    LocalNamedAgentRepository, LocalNamedAgentRunMetadata, LocalNamedAgentRunStatus,
+    NamedAgentBundle, NamedAgentRunOverrides, merge_named_agent_config, profile_sync_id,
+    validate_named_config_file, validate_named_mcp_servers, validate_named_run_args,
 };
 use crate::ai::mcp::TemplatableMCPServerManager;
 use crate::ai::skills::{
@@ -460,8 +460,9 @@ impl AgentDriverRunner {
         args: RunAgentArgs,
         output_format: OutputFormat,
     ) -> Result<(), AgentDriverError> {
+        let (driver_options, task, named_run_id) =
+            Self::build_driver_options_and_task(&foreground, args).await?;
         let result: Result<(), AgentDriverError> = async {
-            let (driver_options, task) = Self::build_driver_options_and_task(&foreground, args).await?;
 
             match &task.harness {
                 HarnessKind::Unsupported(harness) => {
@@ -495,6 +496,7 @@ impl AgentDriverRunner {
                         driver_options,
                         output_format,
                         task,
+                        named_run_id,
                     );
                 })
                 .await?;
@@ -503,6 +505,11 @@ impl AgentDriverRunner {
         }
         .await;
 
+        if result.is_err()
+            && let Some(run_id) = named_run_id
+        {
+            Self::record_named_run_status(run_id, LocalNamedAgentRunStatus::Failed);
+        }
         result
     }
 
@@ -619,7 +626,7 @@ impl AgentDriverRunner {
     async fn build_driver_options_and_task(
         foreground: &ModelSpawner<Self>,
         mut args: RunAgentArgs,
-    ) -> Result<(AgentDriverOptions, Task), AgentDriverError> {
+    ) -> Result<(AgentDriverOptions, Task, Option<Uuid>), AgentDriverError> {
         let resume_record = args
             .resume
             .as_deref()
@@ -722,6 +729,11 @@ impl AgentDriverRunner {
             .map(|selector| LocalNamedAgentRepository::for_user().resolve(selector))
             .transpose()
             .map_err(|error| AgentDriverError::ConfigBuildFailed(anyhow::Error::new(error)))?;
+        if named_record.is_some() {
+            LocalNamedAgentRepository::for_user()
+                .repair_stale_runs()
+                .map_err(|error| AgentDriverError::ConfigBuildFailed(anyhow::Error::new(error)))?;
+        }
         let named_bundle = named_record.as_ref().map(|record| record.bundle().clone());
         let named_record_for_metadata = named_record.clone();
 
@@ -779,7 +791,7 @@ impl AgentDriverRunner {
 
         // Build the AgentConfigSnapshot, Task, and AgentDriverOptions
         let prompt_clone = prompt.clone();
-        let (merged_config, task, driver_options) = foreground
+        let (task, driver_options, named_run_id) = foreground
             .spawn(move |_, ctx| -> anyhow::Result<_> {
                 let (merged_config, task) = build_merged_config_and_task(
                     &args,
@@ -789,6 +801,11 @@ impl AgentDriverRunner {
                     named_bundle.as_ref(),
                     ctx,
                 )?;
+                if merged_config.environment_id.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "cloud environments are disabled in this local-first build"
+                    ));
+                }
 
                 let selected_harness = merged_config
                     .harness
@@ -848,29 +865,28 @@ impl AgentDriverRunner {
                     local_resume,
                 };
 
-                if let Some(record) = named_record_for_metadata.as_ref() {
+                let named_run_id = if let Some(record) = named_record_for_metadata.as_ref() {
+                    let run_id = Uuid::new_v4();
                     let metadata = LocalNamedAgentRunMetadata::from_record(
-                        Uuid::new_v4(),
+                        run_id,
                         record,
                         &merged_config,
-                    );
+                        &working_dir,
+                    )?;
                     LocalNamedAgentRepository::for_user()
                         .write_run_metadata(&metadata)
                         .map_err(|error| anyhow::Error::new(error))?;
-                }
+                    Some(run_id)
+                } else {
+                    None
+                };
 
-                Ok((merged_config, task, driver_options))
+                Ok((task, driver_options, named_run_id))
             })
             .await?
             .map_err(AgentDriverError::ConfigBuildFailed)?;
 
-        if merged_config.environment_id.is_some() {
-            return Err(AgentDriverError::EnvironmentNotFound(
-                "cloud environments are disabled in this local-first build".to_string(),
-            ));
-        }
-
-        Ok((driver_options, task))
+        Ok((driver_options, task, named_run_id))
     }
 
     /// Create the AgentDriver and start running the task.
@@ -879,6 +895,7 @@ impl AgentDriverRunner {
         driver_options: driver::AgentDriverOptions,
         output_format: OutputFormat,
         task: driver::Task,
+        named_run_id: Option<Uuid>,
     ) {
         // Initializing the driver will fail if not logged in. Since we check that above, panic here - it's difficult to
         // fallibly instantiate a UI framework model.
@@ -890,15 +907,32 @@ impl AgentDriverRunner {
             driver.set_output_format(output_format);
             let agent_future = driver.run(task, ctx);
 
-            ctx.spawn(agent_future, |_, result, ctx| match result {
-                Ok(()) => {
-                    ctx.terminate_app(TerminationMode::ForceTerminate, None);
+            ctx.spawn(agent_future, move |_, result, ctx| {
+                if let Some(run_id) = named_run_id {
+                    let status = match &result {
+                        Ok(()) => LocalNamedAgentRunStatus::Succeeded,
+                        Err(AgentDriverError::ConversationCancelled { .. }) => {
+                            LocalNamedAgentRunStatus::Cancelled
+                        }
+                        Err(_) => LocalNamedAgentRunStatus::Failed,
+                    };
+                    Self::record_named_run_status(run_id, status);
                 }
-                Err(err) => {
-                    report_fatal_error(err.into(), ctx);
+
+                match result {
+                    Ok(()) | Err(AgentDriverError::ConversationCancelled { .. }) => {
+                        ctx.terminate_app(TerminationMode::ForceTerminate, None);
+                    }
+                    Err(err) => report_fatal_error(err.into(), ctx),
                 }
             });
         });
+    }
+
+    fn record_named_run_status(run_id: Uuid, status: LocalNamedAgentRunStatus) {
+        if let Err(error) = LocalNamedAgentRepository::for_user().mark_run_status(run_id, status) {
+            log::warn!("Failed to update local named-agent run {run_id}: {error}");
+        }
     }
 }
 

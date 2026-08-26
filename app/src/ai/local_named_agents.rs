@@ -14,6 +14,7 @@ use std::io::Read;
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 
+use chrono::{DateTime, Utc};
 #[cfg(unix)]
 use nix::fcntl::{AtFlags, FlockArg, OFlag, flock, open, openat, renameat};
 #[cfg(unix)]
@@ -28,6 +29,7 @@ use std::os::unix::io::RawFd;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 use uuid::Uuid;
 use warp_cli::agent::{
     AgentCommand, CreateNamedAgentArgs, DeleteNamedAgentArgs, Harness, NamedAgentFieldsArgs,
@@ -571,6 +573,80 @@ pub struct LocalNamedAgentRunMetadata {
     pub ordered_skills: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_refs: Option<AgentBundleSecretRefs>,
+    #[serde(default)]
+    pub status: LocalNamedAgentRunStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_snapshot: Option<LocalAgentEnvironmentSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalNamedAgentRunStatus {
+    #[default]
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+    Interrupted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAgentEnvironmentSnapshot {
+    pub captured_at: DateTime<Utc>,
+    pub working_directory: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_root: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory_relative_to_repository: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_reference: Option<String>,
+}
+
+impl LocalAgentEnvironmentSnapshot {
+    fn capture(working_directory: &Path) -> Result<Self, NamedAgentError> {
+        let working_directory =
+            dunce::canonicalize(working_directory).map_err(|source| NamedAgentError::Io {
+                path: working_directory.to_path_buf(),
+                source,
+            })?;
+        let repository = git2::Repository::discover(&working_directory).ok();
+        let repository_root = repository
+            .as_ref()
+            .and_then(git2::Repository::workdir)
+            .and_then(|root| dunce::canonicalize(root).ok());
+        let working_directory_relative_to_repository = repository_root
+            .as_ref()
+            .and_then(|root| working_directory.strip_prefix(root).ok())
+            .map(Path::to_path_buf);
+        let (head_commit, head_reference) = repository
+            .as_ref()
+            .and_then(|repository| repository.head().ok())
+            .map(|head| {
+                (
+                    head.target().map(|id| id.to_string()),
+                    head.shorthand().map(str::to_owned),
+                )
+            })
+            .unwrap_or_default();
+
+        Ok(Self {
+            captured_at: Utc::now(),
+            working_directory,
+            repository_root,
+            working_directory_relative_to_repository,
+            head_commit,
+            head_reference,
+        })
+    }
 }
 
 impl LocalNamedAgentRunMetadata {
@@ -578,7 +654,8 @@ impl LocalNamedAgentRunMetadata {
         run_id: Uuid,
         record: &NamedAgentRecord,
         effective_config: &AgentConfigSnapshot,
-    ) -> Self {
+        working_directory: &Path,
+    ) -> Result<Self, NamedAgentError> {
         let mut effective_config = effective_config.clone();
         // The prompt is needed by the live request, but is not part of
         // restart/resume metadata. Secret-bearing harness fields and hosted
@@ -586,14 +663,19 @@ impl LocalNamedAgentRunMetadata {
         effective_config.base_prompt = None;
         effective_config.harness_auth_secrets = None;
         effective_config.worker_host = None;
-        Self {
+        Ok(Self {
             run_id,
             named_agent_id: record.id,
             bundle_revision: record.revision.clone(),
             effective_config,
             ordered_skills: record.bundle.skills.clone(),
             secret_refs: record.bundle.secret_refs.clone(),
-        }
+            status: LocalNamedAgentRunStatus::Running,
+            started_at: Some(Utc::now()),
+            completed_at: None,
+            owner_pid: Some(std::process::id()),
+            environment_snapshot: Some(LocalAgentEnvironmentSnapshot::capture(working_directory)?),
+        })
     }
 }
 
@@ -721,6 +803,87 @@ impl LocalNamedAgentRepository {
             }
         })?;
         parse_run_metadata(&path, &bytes)
+    }
+
+    pub fn mark_run_status(
+        &self,
+        run_id: Uuid,
+        status: LocalNamedAgentRunStatus,
+    ) -> Result<LocalNamedAgentRunMetadata, NamedAgentError> {
+        let directory = self.directory.join("runs");
+        self.ensure_managed_directory(&directory)?;
+        let directory_lock =
+            acquire_directory_lock(&directory, true).map_err(|source| NamedAgentError::Io {
+                path: directory.clone(),
+                source,
+            })?;
+        let path = directory.join(format!("{run_id}.yaml"));
+        let bytes = read_managed_file_locked(&directory_lock, &path)?;
+        let mut metadata = parse_run_metadata(&path, &bytes)?;
+        metadata.status = status;
+        if status == LocalNamedAgentRunStatus::Running {
+            metadata.completed_at = None;
+            metadata.owner_pid = Some(std::process::id());
+        } else {
+            metadata.completed_at = Some(Utc::now());
+            metadata.owner_pid = None;
+        }
+        replace_run_metadata_locked(&directory_lock, &path, &metadata)?;
+        Ok(metadata)
+    }
+
+    pub fn repair_stale_runs(&self) -> Result<usize, NamedAgentError> {
+        let directory = self.directory.join("runs");
+        self.ensure_managed_directory(&directory)?;
+        let directory_lock =
+            acquire_directory_lock(&directory, true).map_err(|source| NamedAgentError::Io {
+                path: directory.clone(),
+                source,
+            })?;
+        let mut system = System::new();
+        system.refresh_processes(ProcessesToUpdate::All, true);
+        let mut repaired = 0;
+
+        for entry in fs::read_dir(&directory).map_err(|source| NamedAgentError::Io {
+            path: directory.clone(),
+            source,
+        })? {
+            let entry = entry.map_err(|source| NamedAgentError::Io {
+                path: directory.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            let Some(stem) = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(".yaml"))
+            else {
+                continue;
+            };
+            let Ok(run_id) = Uuid::parse_str(stem) else {
+                continue;
+            };
+            if run_id.hyphenated().to_string() != stem {
+                continue;
+            }
+
+            let bytes = read_managed_file_locked(&directory_lock, &path)?;
+            let mut metadata = parse_run_metadata(&path, &bytes)?;
+            let owner_is_live = metadata
+                .owner_pid
+                .is_some_and(|pid| system.process(Pid::from_u32(pid)).is_some());
+            if metadata.status != LocalNamedAgentRunStatus::Running || owner_is_live {
+                continue;
+            }
+
+            metadata.status = LocalNamedAgentRunStatus::Interrupted;
+            metadata.completed_at = Some(Utc::now());
+            metadata.owner_pid = None;
+            replace_run_metadata_locked(&directory_lock, &path, &metadata)?;
+            repaired += 1;
+        }
+
+        Ok(repaired)
     }
 
     pub fn create(&self, bundle: NamedAgentBundle) -> Result<NamedAgentRecord, NamedAgentError> {
@@ -1168,6 +1331,20 @@ fn parse_run_metadata(
         });
     }
     Ok(metadata)
+}
+
+fn replace_run_metadata_locked(
+    directory_lock: &DirectoryLock,
+    path: &Path,
+    metadata: &LocalNamedAgentRunMetadata,
+) -> Result<(), NamedAgentError> {
+    let bytes = serde_yaml::to_string(metadata)?.into_bytes();
+    if bytes.len() as u64 > MAX_BUNDLE_BYTES {
+        return Err(NamedAgentError::InvalidBundle {
+            reason: "run metadata exceeds size limit".to_owned(),
+        });
+    }
+    write_replace_atomic_locked(directory_lock, path, &bytes)
 }
 
 fn yaml_error_location(error: &serde_yaml::Error) -> String {

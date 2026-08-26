@@ -2002,9 +2002,21 @@ impl AgentDriver {
             Ok(()) => None,
             Err(err) => Some(err),
         };
+        let final_cli_status = foreground
+            .spawn(|me, ctx| {
+                let view_id = me.terminal_driver.as_ref(ctx).terminal_view().id();
+                CLIAgentSessionsModel::handle(ctx)
+                    .as_ref(ctx)
+                    .session(view_id)
+                    .map(|session| session.status.clone())
+            })
+            .await
+            .ok()
+            .flatten();
         let cleanup_disposition = if final_save_error.is_none()
             && detected_runtime_failure.is_none()
-            && matches!(command_result.as_ref(), Ok(exit_code) if exit_code.was_successful())
+            && (matches!(command_result.as_ref(), Ok(exit_code) if exit_code.was_successful())
+                || matches!(final_cli_status, Some(CLIAgentSessionStatus::Cancelled)))
         {
             HarnessCleanupDisposition::PreserveResumptionStateIfSupported
         } else {
@@ -2033,6 +2045,12 @@ impl AgentDriver {
                 harness: harness_name,
                 pattern: error.pattern,
                 excerpt: error.excerpt,
+            });
+        }
+
+        if matches!(final_cli_status, Some(CLIAgentSessionStatus::Cancelled)) {
+            return Err(AgentDriverError::ConversationCancelled {
+                reason: CancellationReason::ManuallyCancelled,
             });
         }
 
@@ -2445,7 +2463,8 @@ impl AgentDriver {
                     match status {
                         CLIAgentSessionStatus::Success
                         | CLIAgentSessionStatus::Failed { .. }
-                        | CLIAgentSessionStatus::Blocked { .. } => {
+                        | CLIAgentSessionStatus::Blocked { .. }
+                        | CLIAgentSessionStatus::Cancelled => {
                             if let Some(idle_timeout) = me.idle_on_complete {
                                 log::info!(
                                     "Ambient agent CLI lifecycle: event=idle_timeout_scheduled task_id={:?} terminal_view_id={terminal_view_id:?} timeout={idle_timeout:?}",

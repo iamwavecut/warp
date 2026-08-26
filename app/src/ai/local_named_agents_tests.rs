@@ -9,9 +9,9 @@ use uuid::Uuid;
 use warp_cli::agent::Harness;
 
 use super::{
-    AgentBundleSecretRefs, LocalNamedAgentRepository, LocalNamedAgentRunMetadata, NamedAgentBundle,
-    NamedAgentError, NamedAgentList, NamedAgentRunOverrides, merge_named_agent_config,
-    profile_sync_id,
+    AgentBundleSecretRefs, LocalNamedAgentRepository, LocalNamedAgentRunMetadata,
+    LocalNamedAgentRunStatus, NamedAgentBundle, NamedAgentError, NamedAgentList,
+    NamedAgentRunOverrides, merge_named_agent_config, profile_sync_id,
 };
 use crate::ai::agent_sdk::config_file::AgentConfigSnapshotFile;
 use crate::ai::ambient_agents::AgentConfigSnapshot;
@@ -278,7 +278,8 @@ fn local_named_agent_run_metadata_round_trips_without_prompt_or_secret_values() 
     let record = repository.create(source).unwrap();
     let run_id = Uuid::new_v4();
     let effective = record.bundle().to_snapshot();
-    let metadata = LocalNamedAgentRunMetadata::from_record(run_id, &record, &effective);
+    let metadata =
+        LocalNamedAgentRunMetadata::from_record(run_id, &record, &effective, dir.path()).unwrap();
     let path = repository.write_run_metadata(&metadata).unwrap();
     assert!(path.ends_with(format!("{run_id}.yaml")));
     let encoded = fs::read_to_string(path).unwrap();
@@ -293,6 +294,144 @@ fn local_named_agent_run_metadata_round_trips_without_prompt_or_secret_values() 
     assert_eq!(restored.bundle_revision, record.revision());
     assert_eq!(restored.ordered_skills, record.bundle().skills);
     assert!(restored.effective_config.base_prompt.is_none());
+    assert_eq!(restored.status, LocalNamedAgentRunStatus::Running);
+    assert_eq!(restored.owner_pid, Some(std::process::id()));
+    assert_eq!(
+        restored
+            .environment_snapshot
+            .as_ref()
+            .unwrap()
+            .working_directory,
+        dunce::canonicalize(dir.path()).unwrap()
+    );
+    assert!(
+        restored
+            .environment_snapshot
+            .as_ref()
+            .unwrap()
+            .repository_root
+            .is_none()
+    );
+    assert!(restored.completed_at.is_none());
+}
+
+#[test]
+fn local_named_agent_run_status_is_updated_atomically() {
+    let dir = TempDir::new().unwrap();
+    let repository = LocalNamedAgentRepository::new(dir.path());
+    let record = repository.create(bundle("Status")).unwrap();
+    let run_id = Uuid::new_v4();
+    let metadata = LocalNamedAgentRunMetadata::from_record(
+        run_id,
+        &record,
+        &record.bundle().to_snapshot(),
+        dir.path(),
+    )
+    .unwrap();
+    repository.write_run_metadata(&metadata).unwrap();
+
+    let completed = repository
+        .mark_run_status(run_id, LocalNamedAgentRunStatus::Cancelled)
+        .unwrap();
+
+    assert_eq!(completed.status, LocalNamedAgentRunStatus::Cancelled);
+    assert!(completed.completed_at.is_some());
+    assert_eq!(completed.owner_pid, None);
+    assert_eq!(repository.read_run_metadata(run_id).unwrap(), completed);
+}
+
+#[test]
+fn stale_running_metadata_is_repaired_without_touching_a_live_run() {
+    let dir = TempDir::new().unwrap();
+    let repository = LocalNamedAgentRepository::new(dir.path());
+    let record = repository.create(bundle("Repair")).unwrap();
+
+    let stale_id = Uuid::new_v4();
+    let mut stale = LocalNamedAgentRunMetadata::from_record(
+        stale_id,
+        &record,
+        &record.bundle().to_snapshot(),
+        dir.path(),
+    )
+    .unwrap();
+    stale.owner_pid = None;
+    repository.write_run_metadata(&stale).unwrap();
+
+    let live_id = Uuid::new_v4();
+    let live = LocalNamedAgentRunMetadata::from_record(
+        live_id,
+        &record,
+        &record.bundle().to_snapshot(),
+        dir.path(),
+    )
+    .unwrap();
+    repository.write_run_metadata(&live).unwrap();
+
+    assert_eq!(repository.repair_stale_runs().unwrap(), 1);
+    assert_eq!(
+        repository.read_run_metadata(stale_id).unwrap().status,
+        LocalNamedAgentRunStatus::Interrupted
+    );
+    assert_eq!(
+        repository.read_run_metadata(live_id).unwrap().status,
+        LocalNamedAgentRunStatus::Running
+    );
+}
+
+#[test]
+fn local_environment_snapshot_captures_git_state_without_remote_data() {
+    let dir = TempDir::new().unwrap();
+    let git_repository = git2::Repository::init(dir.path()).unwrap();
+    fs::write(dir.path().join("tracked.txt"), "local state\n").unwrap();
+    let mut index = git_repository.index().unwrap();
+    index.add_path(std::path::Path::new("tracked.txt")).unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = git_repository.find_tree(tree_id).unwrap();
+    let signature = git2::Signature::now("WarpOss", "local@example.invalid").unwrap();
+    let commit_id = git_repository
+        .commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "local snapshot",
+            &tree,
+            &[],
+        )
+        .unwrap();
+    let expected_head_reference = git_repository
+        .head()
+        .unwrap()
+        .shorthand()
+        .unwrap()
+        .to_owned();
+    let working_dir = dir.path().join("nested");
+    fs::create_dir(&working_dir).unwrap();
+
+    let agents_dir = TempDir::new().unwrap();
+    let repository = LocalNamedAgentRepository::new(agents_dir.path());
+    let record = repository.create(bundle("Git snapshot")).unwrap();
+    let metadata = LocalNamedAgentRunMetadata::from_record(
+        Uuid::new_v4(),
+        &record,
+        &record.bundle().to_snapshot(),
+        &working_dir,
+    )
+    .unwrap();
+    let snapshot = metadata.environment_snapshot.unwrap();
+
+    assert_eq!(
+        snapshot.repository_root,
+        Some(dunce::canonicalize(dir.path()).unwrap())
+    );
+    assert_eq!(
+        snapshot.working_directory_relative_to_repository,
+        Some(std::path::PathBuf::from("nested"))
+    );
+    assert_eq!(snapshot.head_commit, Some(commit_id.to_string()));
+    assert_eq!(
+        snapshot.head_reference.as_deref(),
+        Some(expected_head_reference.as_str())
+    );
 }
 
 #[test]
