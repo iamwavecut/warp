@@ -90,17 +90,13 @@ fn remote_supported_tools_omit_search_codebase_when_remote_is_not_connected() {
 fn p2_4_local_orchestration_tools_require_explicit_controller_readiness() {
     let mut params = request_params_with_ask_user_question_enabled(false);
     let unavailable = get_supported_tools(&params);
-    assert!(!unavailable.contains(&api::ToolType::StartAgent));
-    assert!(!unavailable.contains(&api::ToolType::StartAgentV2));
     assert!(!unavailable.contains(&api::ToolType::RunAgents));
     assert!(!unavailable.contains(&api::ToolType::SendMessageToAgent));
     assert!(!unavailable.contains(&api::ToolType::WaitForEvents));
 
     params.local_orchestration_ready = true;
     let ready = get_supported_tools(&params);
-    assert!(ready.contains(&api::ToolType::StartAgent));
     assert!(ready.contains(&api::ToolType::RunAgents));
     assert!(ready.contains(&api::ToolType::SendMessageToAgent));
     assert!(ready.contains(&api::ToolType::WaitForEvents));
-    assert!(!ready.contains(&api::ToolType::StartAgentV2));
 }

@@ -512,6 +512,8 @@ impl BlocklistAIController {
                     credits_spent: conversation.credits_spent(),
                     platform_credits_spent: 0.0,
                     summarized: conversation.was_summarized(),
+                    total_input_tokens: 0,
+                    total_charges: None,
                     #[allow(deprecated)]
                     token_usage: conversation
                         .token_usage()
@@ -534,6 +536,7 @@ impl BlocklistAIController {
                         .iter()
                         .filter_map(|u| u.to_proto_custom_endpoint_usage())
                         .collect(),
+                    context_window_segments: vec![],
                 })
         });
 
@@ -549,6 +552,7 @@ impl BlocklistAIController {
                     token_usage: vec![],
                     should_refresh_model_config: false,
                     request_cost: None,
+                    request_charges: None,
                 },
             )),
         };

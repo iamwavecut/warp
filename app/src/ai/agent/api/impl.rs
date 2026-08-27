@@ -108,10 +108,8 @@ fn get_supported_tools(params: &RequestParams) -> Vec<api::ToolType> {
     }
 
     if params.local_orchestration_ready {
-        // These are the only orchestration tools that the process-local
-        // controller can execute.  Do not advertise StartAgentV2 or any
-        // hosted/SSE-backed variant from this direct-provider boundary.
-        supported_tools.push(api::ToolType::StartAgent);
+        // These are the orchestration tools that the process-local controller
+        // can execute without any hosted/SSE-backed transport.
         supported_tools.push(api::ToolType::RunAgents);
         supported_tools.push(api::ToolType::SendMessageToAgent);
         supported_tools.push(api::ToolType::WaitForEvents);

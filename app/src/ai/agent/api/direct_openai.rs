@@ -1187,8 +1187,7 @@ fn local_orchestration_tool_requested(supported_tools: &[api::ToolType]) -> bool
     supported_tools.iter().any(|tool| {
         matches!(
             tool,
-            api::ToolType::StartAgent
-                | api::ToolType::RunAgents
+            api::ToolType::RunAgents
                 | api::ToolType::SendMessageToAgent
                 | api::ToolType::WaitForEvents
         )
@@ -2949,6 +2948,7 @@ fn api_messages_from_inputs(
 
 fn api_message(task_id: &str, request_id: &str, message: api::message::Message) -> api::Message {
     api::Message {
+        fetched_memories: vec![],
         id: Uuid::new_v4().to_string(),
         task_id: task_id.to_string(),
         request_id: request_id.to_string(),
@@ -3469,7 +3469,9 @@ fn request_tool_call_result_from_action_result(
         AIAgentActionResultType::UseComputer(result) => Some(result.try_into().ok()?),
         AIAgentActionResultType::RequestComputerUse(result) => Some(result.try_into().ok()?),
         AIAgentActionResultType::FetchConversation(result) => Some(result.try_into().ok()?),
-        AIAgentActionResultType::StartAgent(result) => Some(result.into()),
+        // The removed StartAgent protobuf surface belonged to the hosted protocol. Local child
+        // agents use RunAgents and its process-local controller instead.
+        AIAgentActionResultType::StartAgent(_) => None,
         AIAgentActionResultType::SendMessageToAgent(result) => Some(result.into()),
         AIAgentActionResultType::TransferShellCommandControlToUser(result) => {
             Some(result.try_into().ok()?)
@@ -3526,16 +3528,16 @@ fn request_tool_result_to_message_tool_result(
         }
         RequestResult::ReadSkill(result) => MessageResult::ReadSkill(result),
         RequestResult::FetchConversation(result) => MessageResult::FetchConversation(result),
-        RequestResult::StartAgent(result) => MessageResult::StartAgent(result),
         RequestResult::SendMessageToAgent(result) => MessageResult::SendMessageToAgent(result),
         RequestResult::TransferShellCommandControlToUser(result) => {
             MessageResult::TransferShellCommandControlToUser(result)
         }
         RequestResult::AskUserQuestion(result) => MessageResult::AskUserQuestion(result),
-        RequestResult::StartAgentV2(result) => MessageResult::StartAgentV2(result),
         RequestResult::UploadFileArtifact(result) => MessageResult::UploadFileArtifact(result),
         RequestResult::RunAgentsResult(result) => MessageResult::RunAgentsResult(result),
         RequestResult::WaitForEvents(result) => MessageResult::WaitForEvents(result),
+        RequestResult::StartRecording(result) => MessageResult::StartRecording(result),
+        RequestResult::StopRecording(result) => MessageResult::StopRecording(result),
     }
 }
 
@@ -3745,13 +3747,6 @@ fn openai_tool_call_from_api_tool_call(
             json!({
                 "task_summary": call.task_summary,
                 "screenshot_params": call.screenshot_params.as_ref().map(screenshot_params_to_json),
-            }),
-        ),
-        api::message::tool_call::Tool::StartAgent(call) => (
-            "start_agent",
-            json!({
-                "name": call.name,
-                "prompt": call.prompt,
             }),
         ),
         api::message::tool_call::Tool::RunAgents(call) => (
@@ -4050,6 +4045,7 @@ fn api_tool_call_message_inner(
         long_running_shell_controls_advertised,
     )?;
     Ok(api::Message {
+        fetched_memories: vec![],
         id: Uuid::new_v4().to_string(),
         task_id: task_id.to_string(),
         request_id: request_id.to_string(),
@@ -4291,9 +4287,6 @@ fn api_tool_from_openai_tool_call_inner(
                 conversation_id: required_string(&args, "conversation_id")?,
             },
         )),
-        "start_agent" => Ok(api::message::tool_call::Tool::StartAgent(
-            local_start_agent_arg(&args)?,
-        )),
         "run_agents" => Ok(api::message::tool_call::Tool::RunAgents(
             local_run_agents_arg(&args)?,
         )),
@@ -4326,18 +4319,6 @@ fn api_tool_from_openai_tool_call_inner(
             "OpenAI-compatible provider called unsupported Warp tool `{other}`"
         ))),
     }
-}
-
-fn local_start_agent_arg(args: &Value) -> Result<api::StartAgent, AIApiError> {
-    reject_unexpected_arguments_except(args, "start_agent", &["name", "prompt"])?;
-    Ok(api::StartAgent {
-        name: required_string(args, "name")?,
-        prompt: required_string(args, "prompt")?,
-        lifecycle_subscription: None,
-        execution_mode: Some(api::start_agent::ExecutionMode {
-            mode: Some(api::start_agent::execution_mode::Mode::Local(())),
-        }),
-    })
 }
 
 fn local_run_agents_arg(args: &Value) -> Result<api::RunAgents, AIApiError> {
@@ -4383,6 +4364,10 @@ fn local_run_agents_arg(args: &Value) -> Result<api::RunAgents, AIApiError> {
                 name: required_string(config, "name")?,
                 prompt: optional_string_strict(config, "prompt")?.unwrap_or_default(),
                 title: optional_string_strict(config, "title")?.unwrap_or_default(),
+                agent_identity_uid: String::new(),
+                model_id: String::new(),
+                harness: None,
+                execution_mode: None,
             })
         })
         .collect::<Result<Vec<_>, AIApiError>>()?;
@@ -4395,7 +4380,7 @@ fn local_run_agents_arg(args: &Value) -> Result<api::RunAgents, AIApiError> {
         harness: optional_string_strict(args, "harness")?
             .map(|harness| local_harness_arg(&harness))
             .transpose()?,
-        execution_mode: Some(api::run_agents::ExecutionMode::Local(
+        execution_mode: Some(api::run_agents::ExecutionModeOneOf::Local(
             api::run_agents::Local {},
         )),
         agent_run_configs,
@@ -5399,7 +5384,6 @@ fn tool_type_for_openai_name(name: &str) -> Option<api::ToolType> {
         "ask_user_question" => api::ToolType::AskUserQuestion,
         "use_computer" => api::ToolType::UseComputer,
         "request_computer_use" => api::ToolType::RequestComputerUse,
-        "start_agent" => api::ToolType::StartAgent,
         "run_agents" => api::ToolType::RunAgents,
         "send_message_to_agent" => api::ToolType::SendMessageToAgent,
         "wait_for_events" => api::ToolType::WaitForEvents,
@@ -5460,7 +5444,6 @@ fn openai_tool_name(tool: &api::message::tool_call::Tool) -> &'static str {
         api::message::tool_call::Tool::AskUserQuestion(_) => "ask_user_question",
         api::message::tool_call::Tool::UseComputer(_) => "use_computer",
         api::message::tool_call::Tool::RequestComputerUse(_) => "request_computer_use",
-        api::message::tool_call::Tool::StartAgent(_) => "start_agent",
         api::message::tool_call::Tool::RunAgents(_) => "run_agents",
         api::message::tool_call::Tool::SendMessageToAgent(_) => "send_message_to_agent",
         api::message::tool_call::Tool::WaitForEvents(_) => "wait_for_events",
@@ -5883,16 +5866,16 @@ fn tool_call_result_type_name(result: &api::message::tool_call_result::Result) -
         ToolCallResultType::ReadSkill(_) => "read_skill",
         ToolCallResultType::RequestComputerUseResult(_) => "request_computer_use",
         ToolCallResultType::FetchConversation(_) => "fetch_conversation",
-        ToolCallResultType::StartAgent(_) => "start_agent",
         ToolCallResultType::SendMessageToAgent(_) => "send_message_to_agent",
         ToolCallResultType::TransferShellCommandControlToUser(_) => {
             "transfer_shell_command_control_to_user"
         }
         ToolCallResultType::AskUserQuestion(_) => "ask_user_question",
-        ToolCallResultType::StartAgentV2(_) => "start_agent_v2",
         ToolCallResultType::UploadFileArtifact(_) => "upload_file_artifact",
         ToolCallResultType::RunAgentsResult(_) => "run_agents_result",
         ToolCallResultType::WaitForEvents(_) => "wait_for_events",
+        ToolCallResultType::StartRecording(_) => "start_recording",
+        ToolCallResultType::StopRecording(_) => "stop_recording",
     }
 }
 
@@ -5950,6 +5933,7 @@ fn model_used_message(
             model_id: selected_model_id.to_string(),
             model_display_name: format!("{} / {}", route.provider_name, route.model),
             is_fallback: false,
+            prompt_cache_expires_at: None,
         }),
     )
 }
@@ -5961,6 +5945,7 @@ fn agent_output_message(
     text: String,
 ) -> api::Message {
     api::Message {
+        fetched_memories: vec![],
         id: message_id,
         task_id: task_id.to_string(),
         request_id: request_id.to_string(),
@@ -5979,6 +5964,7 @@ fn append_agent_output_event(task_id: &str, message_id: &str, delta: String) -> 
             api::client_action::AppendToMessageContent {
                 task_id: task_id.to_string(),
                 message: Some(api::Message {
+                    fetched_memories: vec![],
                     id: message_id.to_string(),
                     task_id: task_id.to_string(),
                     request_id: String::new(),
@@ -6052,6 +6038,7 @@ fn finished_event(reason: api::response_event::stream_finished::Reason) -> api::
                 request_cost: None,
                 conversation_usage_metadata: None,
                 reason: Some(reason),
+                request_charges: None,
             },
         )),
     }
@@ -6662,26 +6649,6 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
             json_schema_object(
                 [("conversation_id", json!({"type": "string"}))],
                 ["conversation_id"],
-            ),
-        ));
-    }
-
-    if supported.contains(&api::ToolType::StartAgent) {
-        tools.push(openai_tool(
-            "start_agent",
-            "Start a child agent in the current local controller. The child inherits the concrete local model/profile and runs in the same process.",
-            json_schema_object(
-                [
-                    (
-                        "name",
-                        json!({"type": "string", "minLength": 1}),
-                    ),
-                    (
-                        "prompt",
-                        json!({"type": "string", "minLength": 1}),
-                    ),
-                ],
-                ["name", "prompt"],
             ),
         ));
     }
@@ -7357,6 +7324,7 @@ mod tests {
             })
         };
         api::Message {
+            fetched_memories: vec![],
             id: id.to_string(),
             task_id: "root".to_string(),
             request_id: request_id.to_string(),
@@ -7657,7 +7625,7 @@ mod tests {
         let mut response = generate(
             route,
             super::super::RequestParams::new_for_test(),
-            vec![api::ToolType::StartAgent],
+            vec![api::ToolType::RunAgents],
         )
         .await
         .expect("not-ready local setup should produce a local error stream");
@@ -8170,6 +8138,7 @@ mod tests {
             tasks: vec![api::Task {
                 id: "task-1".to_string(),
                 messages: vec![api::Message {
+                    fetched_memories: vec![],
                     id: "result-1".to_string(),
                     task_id: "task-1".to_string(),
                     request_id: "request-1".to_string(),
@@ -8221,6 +8190,7 @@ mod tests {
     #[test]
     fn historical_parallel_tool_results_emit_all_tools_before_context_parts() {
         let tool_call = |message_id: &str, tool_call_id: &str| api::Message {
+            fetched_memories: vec![],
             id: message_id.to_string(),
             task_id: "task-1".to_string(),
             request_id: "request-1".to_string(),
@@ -8238,6 +8208,7 @@ mod tests {
             })),
         };
         let tool_result = |message_id: &str, tool_call_id: &str| api::Message {
+            fetched_memories: vec![],
             id: message_id.to_string(),
             task_id: "task-1".to_string(),
             request_id: "request-2".to_string(),
@@ -8556,6 +8527,7 @@ mod tests {
             tasks: vec![api::Task {
                 id: "task-1".to_string(),
                 messages: vec![api::Message {
+                    fetched_memories: vec![],
                     id: "historical-user".to_string(),
                     task_id: "task-1".to_string(),
                     request_id: "request-1".to_string(),
@@ -8604,6 +8576,7 @@ mod tests {
             .decode(valid_test_png_base64())
             .expect("test image base64 should decode");
         let historical_message = api::Message {
+            fetched_memories: vec![],
             id: "historical-user".to_string(),
             task_id: "task-1".to_string(),
             request_id: "request-1".to_string(),
@@ -9622,12 +9595,8 @@ mod tests {
             api_key: None,
             capabilities: Default::default(),
         };
-        let message = model_used_message(
-            "task-1",
-            "request-1",
-            "custom/local-lab/qwen-local",
-            &route,
-        );
+        let message =
+            model_used_message("task-1", "request-1", "custom/local-lab/qwen-local", &route);
         let Some(api::message::Message::ModelUsed(model)) = message.message else {
             panic!("expected local model-used message");
         };
@@ -9666,8 +9635,7 @@ mod tests {
         let tools = openai_tools_for_supported_tools(&[api::ToolType::ApplyFileDiffs]);
         let parameters = &tools[0].function.parameters;
         assert_eq!(
-            parameters["properties"]["new_files"]["items"]["properties"]
-                ["allow_overwrite"]["type"],
+            parameters["properties"]["new_files"]["items"]["properties"]["allow_overwrite"]["type"],
             json!("boolean")
         );
 
@@ -9715,8 +9683,6 @@ mod tests {
             api::ToolType::TransferShellCommandControlToUser,
             api::ToolType::AskUserQuestion,
             api::ToolType::Subagent,
-            api::ToolType::StartAgent,
-            api::ToolType::StartAgentV2,
             api::ToolType::RunAgents,
             api::ToolType::SendMessageToAgent,
         ]);
@@ -9748,7 +9714,6 @@ mod tests {
                 "create_documents",
                 "insert_review_comments",
                 "fetch_conversation",
-                "start_agent",
                 "run_agents",
                 "send_message_to_agent",
                 "ask_user_question",
@@ -9759,15 +9724,13 @@ mod tests {
         assert!(
             names
                 .iter()
-                .all(|name| { !matches!(*name, "subagent" | "start_agent_v2") })
+                .all(|name| { !matches!(*name, "subagent" | "start_agent" | "start_agent_v2") })
         );
     }
 
     #[test]
-    fn local_orchestration_schemas_are_strict_and_never_advertise_v2() {
+    fn local_orchestration_schemas_are_strict_and_never_advertise_removed_start_agent() {
         let tools = openai_tools_for_supported_tools(&[
-            api::ToolType::StartAgent,
-            api::ToolType::StartAgentV2,
             api::ToolType::RunAgents,
             api::ToolType::SendMessageToAgent,
         ]);
@@ -9775,16 +9738,9 @@ mod tests {
             .iter()
             .map(|tool| tool.function.name)
             .collect::<Vec<_>>();
-        assert_eq!(
-            names,
-            vec!["start_agent", "run_agents", "send_message_to_agent"]
-        );
+        assert_eq!(names, vec!["run_agents", "send_message_to_agent"]);
 
-        let start_agent = &tools[0].function.parameters;
-        assert_eq!(start_agent["additionalProperties"], json!(false));
-        assert_eq!(start_agent["required"], json!(["name", "prompt"]));
-
-        let run_agents = &tools[1].function.parameters;
+        let run_agents = &tools[0].function.parameters;
         assert_eq!(run_agents["additionalProperties"], json!(false));
         assert_eq!(run_agents["required"], json!(["agent_run_configs"]));
         assert_eq!(
@@ -9792,7 +9748,7 @@ mod tests {
             json!(8)
         );
 
-        let send = &tools[2].function.parameters;
+        let send = &tools[1].function.parameters;
         assert_eq!(send["additionalProperties"], json!(false));
         assert_eq!(send["required"], json!(["addresses", "subject", "message"]));
     }
@@ -9859,11 +9815,6 @@ mod tests {
                 "transfer_shell_command_control_to_user",
                 json!({"reason":"The command needs interactive input."}),
                 "transfer_shell_command_control_to_user",
-            ),
-            (
-                "start_agent",
-                json!({"name":"child","prompt":"Inspect locally"}),
-                "start_agent",
             ),
             (
                 "run_agents",
@@ -10183,6 +10134,7 @@ mod tests {
     #[test]
     fn history_groups_contiguous_parallel_tool_calls_and_preserves_results() {
         let first = api::Message {
+            fetched_memories: vec![],
             id: "call-message-1".to_string(),
             task_id: "task-1".to_string(),
             request_id: "request-1".to_string(),
@@ -10200,6 +10152,7 @@ mod tests {
             })),
         };
         let second = api::Message {
+            fetched_memories: vec![],
             id: "call-message-2".to_string(),
             task_id: "task-1".to_string(),
             request_id: "request-1".to_string(),
@@ -10217,6 +10170,7 @@ mod tests {
             })),
         };
         let result = api::Message {
+            fetched_memories: vec![],
             id: "result-message".to_string(),
             task_id: "task-1".to_string(),
             request_id: "request-2".to_string(),
@@ -10424,6 +10378,7 @@ mod tests {
                 id: "task-1".to_string(),
                 messages: vec![
                     api::Message {
+                        fetched_memories: vec![],
                         id: "call-message".to_string(),
                         task_id: "task-1".to_string(),
                         request_id: "request-1".to_string(),
@@ -10436,6 +10391,7 @@ mod tests {
                         })),
                     },
                     api::Message {
+                        fetched_memories: vec![],
                         id: "result-message".to_string(),
                         task_id: "task-1".to_string(),
                         request_id: "request-2".to_string(),
@@ -10503,6 +10459,7 @@ mod tests {
             tasks: vec![api::Task {
                 id: "task-1".to_string(),
                 messages: vec![api::Message {
+                    fetched_memories: vec![],
                     id: "call-message".to_string(),
                     task_id: "task-1".to_string(),
                     request_id: "request-1".to_string(),

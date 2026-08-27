@@ -33,7 +33,6 @@ fn model_info(display_name: &str, is_fallback: bool) -> OutputModelInfo {
         model_id: "claude-4-5-sonnet".into(),
         display_name: display_name.to_owned(),
         is_fallback,
-        prompt_cache_expires_at: None,
     }
 }
 

@@ -37,9 +37,7 @@ use warpui::color::ColorU;
 use super::kitty::parse_kitty_chunk;
 use super::terminal_model::TmuxInstallationState;
 use crate::features::FeatureFlag;
-use crate::terminal::model::completions::{
-    ShellCompletion, ShellCompletionUpdate, ShellData as CompletionsShellData,
-};
+use crate::terminal::model::completions::{ShellCompletion, ShellCompletionUpdate};
 use crate::terminal::model::escape_sequences::C0;
 use crate::terminal::model::index::VisibleRow;
 use crate::terminal::model::iterm_image::parse_iterm_image_metadata;
@@ -82,19 +80,21 @@ const WARP_COMPLETIONS_OSC_MARKER: &[u8] = b"9280";
 const WARP_COMPLETIONS_START_BYTE: &[u8] = b"A";
 const WARP_COMPLETIONS_END_BYTE: &[u8] = b"B";
 const WARP_COMPLETIONS_MATCH_RESULT_BYTE: &[u8] = b"C";
+const WARP_COMPLETIONS_REPLACEMENT_SPAN_BYTE: &[u8] = b"S";
 
 /// Denotes an OSC that sends metadata about the last match result.
 /// The sequence begins with `D?` followed by the field that should be updated.
 /// For example: `D?description'{OSC_PAYLOAD}` updates the description of the last match.
 const WARP_COMPLETIONS_MATCH_UPDATE_METADATA: &[u8] = b"D?";
 
-/// Marks an OSC that tells the terminal that the shell is ready to receive
-/// the the string to run completions for.
-const WARP_COMPLETIONS_PROMPT_BYTE: &[u8] = b"P";
-
 const WARP_KV_START_BYTE: &[u8] = b"A";
 const WARP_KV_ENTRY_BYTE: &[u8] = b"B";
 const WARP_KV_END_BYTE: &[u8] = b"C";
+
+fn decode_hex_completions_payload(payload: Option<&&[u8]>) -> Option<String> {
+    let decoded = hex::decode(payload?).ok()?;
+    String::from_utf8(decoded).ok()
+}
 
 /// Parse colors in XParseColor format.
 #[allow(dead_code)]
@@ -1299,32 +1299,20 @@ where
             // Received a Warp OSC used for completions.
             WARP_COMPLETIONS_OSC_MARKER => match params.get(1) {
                 Some(&WARP_COMPLETIONS_START_BYTE) => {
-                    let Some(format) = params
-                        .get(2)
-                        .map(|osc_data| String::from_utf8_lossy(osc_data))
-                        .and_then(|format| CompletionsShellData::from_format_type(&format))
-                    else {
-                        log::warn!("Warp start completions OSC marker contained invalid format.");
-                        return;
-                    };
-                    self.handler.start_completions_output(format);
+                    self.handler.start_completions_output();
                 }
                 Some(&WARP_COMPLETIONS_END_BYTE) => {
                     self.handler.end_completions_output();
                 }
                 Some(&WARP_COMPLETIONS_MATCH_RESULT_BYTE) => {
-                    // The payload for the OSC is contained in the third parameter.
-                    let Some(data_str) = params
-                        .get(2)
-                        .map(|osc_data| String::from_utf8_lossy(osc_data))
-                    else {
+                    let Some(data_str) = decode_hex_completions_payload(params.get(2)) else {
                         log::warn!(
                             "Warp completions match result OSC marker did not contain payload"
                         );
                         return;
                     };
 
-                    let shell_completion_result = ShellCompletion::new(data_str.to_string());
+                    let shell_completion_result = ShellCompletion::new(data_str);
 
                     self.handler
                         .on_completion_result_received(shell_completion_result);
@@ -1337,24 +1325,14 @@ where
                         return;
                     };
 
-                    // Read out the payload for the OSC (stored in the 3rd parameter).
-                    let Some(data_str) = params
-                        .get(2)
-                        .map(|osc_data| String::from_utf8_lossy(osc_data))
-                    else {
-                        log::warn!(
-                            "Warp completions match metadata OSC marker did not contain payload"
-                        );
-                        return;
-                    };
+                    let data_str =
+                        decode_hex_completions_payload(params.get(2)).unwrap_or_default();
 
                     // Determine which field we are trying to update.
                     match &parameter[2..] {
                         "description" => {
                             self.handler.update_last_completion_result(
-                                ShellCompletionUpdate::Description {
-                                    value: data_str.into(),
-                                },
+                                ShellCompletionUpdate::Description { value: data_str },
                             );
                         }
                         _ => {
@@ -1364,8 +1342,20 @@ where
                         }
                     }
                 }
-                Some(&WARP_COMPLETIONS_PROMPT_BYTE) => {
-                    self.handler.send_completions_prompt();
+                Some(&WARP_COMPLETIONS_REPLACEMENT_SPAN_BYTE) => {
+                    let Some((start, length)) = params
+                        .get(2)
+                        .and_then(|value| str::from_utf8(value).ok())
+                        .and_then(|value| value.split_once(','))
+                        .and_then(|(start, length)| {
+                            Some((start.parse().ok()?, length.parse().ok()?))
+                        })
+                    else {
+                        log::warn!("Warp completions replacement span was malformed.");
+                        return;
+                    };
+                    self.handler
+                        .on_completion_replacement_span_received(start, length);
                 }
                 _ => {
                     log::warn!("Received a Warp OSC completions marker missing required param.");

@@ -12,26 +12,6 @@ use super::{
     },
 };
 use crate::{
-    ai::agent_tips::AITipModel,
-    terminal::{
-        input::buffer_model::InputBufferUpdateEvent,
-        view::ambient_agent::is_cloud_agent_pre_first_exchange,
-    },
-};
-use crate::{
-    ai::blocklist::agent_view::{
-        AgentMessageBar, AgentViewController, EphemeralMessageModel,
-        child_agent_status_card::ChildAgentStatusCard, is_in_cloud_context,
-    },
-    terminal::input::{
-        buffer_model::InputBufferModel,
-        message_bar::common::{render_standard_message_bar, render_wrapping_standard_message_bar},
-        message_bar::{Message, MessageItem},
-        slash_command_model::SlashCommandModel,
-        suggestions_mode_model::InputSuggestionsModeModel,
-    },
-};
-use crate::{
     BlocklistAIHistoryModel,
     ai::{
         AgentTip,
@@ -65,6 +45,26 @@ use crate::{
         warpify::render::LEFT_STRIPE_WIDTH,
     },
     util::bindings::keybinding_name_to_keystroke,
+};
+use crate::{
+    ai::agent_tips::AITipModel,
+    terminal::{
+        input::buffer_model::InputBufferUpdateEvent,
+        view::ambient_agent::is_cloud_agent_pre_first_exchange,
+    },
+};
+use crate::{
+    ai::blocklist::agent_view::{
+        AgentMessageBar, AgentViewController, EphemeralMessageModel,
+        child_agent_status_card::ChildAgentStatusCard, is_in_cloud_context,
+    },
+    terminal::input::{
+        buffer_model::InputBufferModel,
+        message_bar::common::{render_standard_message_bar, render_wrapping_standard_message_bar},
+        message_bar::{Message, MessageItem},
+        slash_command_model::SlashCommandModel,
+        suggestions_mode_model::InputSuggestionsModeModel,
+    },
 };
 use instant::Instant;
 use parking_lot::FairMutex;

@@ -22,6 +22,7 @@ fn conversation_for_filtered_rename(
         vec![api::Task {
             id: "filtered-rename-root".to_owned(),
             messages: vec![api::Message {
+                fetched_memories: vec![],
                 id: "filtered-rename-message".to_owned(),
                 task_id: "filtered-rename-root".to_owned(),
                 server_message_data: String::new(),

@@ -197,6 +197,7 @@ impl ApiKeyManager {
                 allow_use_of_warp_credits: false,
                 aws_credentials,
                 google_cloud_credentials: None,
+                grok_oauth_access_token: String::new(),
             })
         }
     }

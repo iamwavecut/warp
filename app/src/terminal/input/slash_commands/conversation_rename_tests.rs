@@ -13,6 +13,7 @@ fn restored_local_conversation_for_rename(conversation_id: AIConversationId) -> 
         vec![warp_multi_agent_api::Task {
             id: "rename-root".to_owned(),
             messages: vec![warp_multi_agent_api::Message {
+                fetched_memories: vec![],
                 id: "rename-message".to_owned(),
                 task_id: "rename-root".to_owned(),
                 server_message_data: String::new(),

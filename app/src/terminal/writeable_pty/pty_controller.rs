@@ -692,10 +692,10 @@ impl<T: EventLoopSender> PtyController<T> {
                             self.is_bracketed_paste_enabled,
                         )),
                         true,
-                        Some(
-                            Box::new(move || terminal_model.lock().start_in_band_command_execution())
-                                as Box<dyn Fn() -> StartCommandOutcome + Send + 'static>,
-                        ),
+                        Some(Box::new(move || {
+                            terminal_model.lock().start_in_band_command_execution()
+                        })
+                            as Box<dyn Fn() -> StartCommandOutcome + Send + 'static>),
                         false,
                         Some(shell_type),
                     )

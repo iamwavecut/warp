@@ -691,6 +691,7 @@ fn api_message(
     message: api::message::Message,
 ) -> api::Message {
     api::Message {
+        fetched_memories: vec![],
         id: id.to_string(),
         task_id: task_id.to_string(),
         request_id: request_id.to_string(),
@@ -790,6 +791,7 @@ mod tests {
 
     fn message(id: &str, request_id: &str, message: api::message::Message) -> api::Message {
         api::Message {
+            fetched_memories: vec![],
             id: id.to_string(),
             task_id: ROOT_TASK_ID.to_string(),
             request_id: request_id.to_string(),

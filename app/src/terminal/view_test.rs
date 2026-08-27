@@ -317,6 +317,7 @@ fn local_conversation_rename_event_refreshes_active_pane_title() {
             vec![warp_multi_agent_api::Task {
                 id: root_task_id.to_owned(),
                 messages: vec![warp_multi_agent_api::Message {
+                    fetched_memories: vec![],
                     id: "local-pane-rename-message".to_owned(),
                     task_id: root_task_id.to_owned(),
                     server_message_data: String::new(),
