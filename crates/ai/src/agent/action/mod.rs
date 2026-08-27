@@ -935,6 +935,7 @@ pub enum FileEdit {
     Create {
         file: Option<String>,
         content: Option<String>,
+        allow_overwrite: bool,
     },
     /// Delete an existing file.
     Delete { file: Option<String> },

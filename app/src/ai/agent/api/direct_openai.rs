@@ -969,6 +969,7 @@ pub(super) async fn generate(
     let task_id = response_task_id(&params);
     let needs_create_task = should_create_task(&params, &task_id);
     let request_id = Uuid::new_v4().to_string();
+    let selected_model_id = params.model.as_str().to_string();
     let conversation_id = params
         .conversation_token
         .as_ref()
@@ -1020,6 +1021,15 @@ pub(super) async fn generate(
         if !input_messages.is_empty() {
             prefix_actions.push(add_messages_action(&task_id, input_messages));
         }
+        prefix_actions.push(add_messages_action(
+            &task_id,
+            vec![model_used_message(
+                &task_id,
+                &request_id,
+                &selected_model_id,
+                &route,
+            )],
+        ));
 
         let body = ChatCompletionRequest {
             model: route.model.clone(),
@@ -3661,6 +3671,7 @@ fn openai_tool_call_from_api_tool_call(
                 "new_files": call.new_files.iter().map(|file| json!({
                     "file_path": file.file_path,
                     "content": file.content,
+                    "allow_overwrite": file.allow_overwrite,
                 })).collect::<Vec<_>>(),
                 "deleted_files": call.deleted_files.iter().map(|file| json!({
                     "file_path": file.file_path,
@@ -5584,6 +5595,8 @@ fn apply_file_diffs_arg(
                 Ok(api::message::tool_call::apply_file_diffs::NewFile {
                     file_path: required_string_from_alias(file, &["file_path", "path"])?,
                     content: required_string(file, "content")?,
+                    allow_overwrite: optional_bool_strict(file, "allow_overwrite")?
+                        .unwrap_or(false),
                 })
             })
             .collect::<Result<Vec<_>, AIApiError>>()?,
@@ -5922,6 +5935,23 @@ fn add_messages_action(task_id: &str, messages: Vec<api::Message>) -> api::Clien
             },
         )),
     }
+}
+
+fn model_used_message(
+    task_id: &str,
+    request_id: &str,
+    selected_model_id: &str,
+    route: &CustomProviderRoute,
+) -> api::Message {
+    api_message(
+        task_id,
+        request_id,
+        api::message::Message::ModelUsed(api::message::ModelUsed {
+            model_id: selected_model_id.to_string(),
+            model_display_name: format!("{} / {}", route.provider_name, route.model),
+            is_fallback: false,
+        }),
+    )
 }
 
 fn agent_output_message(
@@ -6400,7 +6430,11 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                                 "type": "object",
                                 "properties": {
                                     "file_path": {"type": "string"},
-                                    "content": {"type": "string"}
+                                    "content": {"type": "string"},
+                                    "allow_overwrite": {
+                                        "type": "boolean",
+                                        "description": "Replace the complete contents when the target already exists."
+                                    }
                                 },
                                 "required": ["file_path", "content"]
                             }
@@ -9580,6 +9614,30 @@ mod tests {
     }
 
     #[test]
+    fn local_model_used_message_names_the_direct_provider_without_hosted_identity() {
+        let route = CustomProviderRoute {
+            provider_name: "local-lab".to_string(),
+            base_url: "http://127.0.0.1:1234/v1".to_string(),
+            model: "qwen-local".to_string(),
+            api_key: None,
+            capabilities: Default::default(),
+        };
+        let message = model_used_message(
+            "task-1",
+            "request-1",
+            "custom/local-lab/qwen-local",
+            &route,
+        );
+        let Some(api::message::Message::ModelUsed(model)) = message.message else {
+            panic!("expected local model-used message");
+        };
+
+        assert_eq!(model.model_id, "custom/local-lab/qwen-local");
+        assert_eq!(model.model_display_name, "local-lab / qwen-local");
+        assert!(!model.is_fallback);
+    }
+
+    #[test]
     fn supported_tools_are_advertised_to_openai() {
         let tools = openai_tools_for_supported_tools(&[
             api::ToolType::RunShellCommand,
@@ -9601,6 +9659,32 @@ mod tests {
                 "read_skill"
             ]
         );
+    }
+
+    #[test]
+    fn direct_file_creation_advertises_and_parses_local_overwrite() {
+        let tools = openai_tools_for_supported_tools(&[api::ToolType::ApplyFileDiffs]);
+        let parameters = &tools[0].function.parameters;
+        assert_eq!(
+            parameters["properties"]["new_files"]["items"]["properties"]
+                ["allow_overwrite"]["type"],
+            json!("boolean")
+        );
+
+        let parse = |allow_overwrite: Option<bool>| {
+            let mut new_file = json!({"file_path": "notes.txt", "content": "replacement"});
+            if let Some(allow_overwrite) = allow_overwrite {
+                new_file["allow_overwrite"] = json!(allow_overwrite);
+            }
+            apply_file_diffs_arg(&json!({"summary": "write", "new_files": [new_file]}))
+                .expect("direct OpenAI-compatible file edit should parse")
+                .new_files
+                .remove(0)
+                .allow_overwrite
+        };
+
+        assert!(!parse(None));
+        assert!(parse(Some(true)));
     }
 
     #[test]
