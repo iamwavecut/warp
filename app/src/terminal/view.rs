@@ -379,6 +379,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 use sum_tree::SeekBias;
 use vec1::vec1;
+use warp_completer::meta::Span;
 use warp_core::context_flag::ContextFlag;
 use warp_core::user_preferences::GetUserPreferences as _;
 #[cfg(feature = "local_fs")]
@@ -1887,7 +1888,7 @@ pub enum Event {
     TerminateFileUploadSession(FileUploadId),
     RunNativeShellCompletions {
         buffer_text: String,
-        results_tx: async_channel::Sender<Vec<ShellCompletion>>,
+        results_tx: async_channel::Sender<(Vec<ShellCompletion>, Option<Span>)>,
     },
     /// Emitted when the user clicks "install" in the SSH remote-server choice block.
     RemoteServerInstallRequested {
@@ -11924,8 +11925,7 @@ impl TerminalView {
                 ctx.emit(Event::ShellSpawned(*shell_type));
                 ctx.notify();
             }
-            ModelEvent::CompletionsFinished(_data) => {}
-            ModelEvent::SendCompletionsPrompt => {}
+            ModelEvent::CompletionsFinished(..) => {}
             ModelEvent::ImageReceived {
                 image_id,
                 image_data,

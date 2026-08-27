@@ -825,6 +825,7 @@ pub const DOGFOOD_FLAGS: &[FeatureFlag] = &[
     FeatureFlag::RunGeneratorsWithCmdExe,
     FeatureFlag::Projects,
     FeatureFlag::MarkdownImages,
+    FeatureFlag::NativeShellCompletions,
     FeatureFlag::FileAndDiffSetComments,
     FeatureFlag::FileGlobV2Warnings,
     FeatureFlag::SummarizationViaMessageReplacement,

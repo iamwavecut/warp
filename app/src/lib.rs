@@ -2549,6 +2549,7 @@ pub fn init_feature_flags() {
         FeatureFlag::AgentHarness,
         FeatureFlag::LocalClaudeCodexChildHarnesses,
         FeatureFlag::OrchestrationPillBar,
+        FeatureFlag::NativeShellCompletions,
     ] {
         flag.set_enabled(true);
     }
