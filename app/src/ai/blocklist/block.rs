@@ -123,10 +123,10 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::{cell::OnceCell, sync::Arc};
+use string_offset::StringRange;
 use warp_util::path::ShellFamily;
 use warpui::elements::MainAxisAlignment;
 use warpui::elements::MainAxisSize;
-use warpui::elements::SecretRange;
 use warpui::ui_components::button::ButtonVariant;
 use warpui::ui_components::button::TextAndIcon;
 use warpui::ui_components::button::TextAndIconAlignment;
@@ -6181,7 +6181,7 @@ impl TypedActionView for AIBlock {
                     .write(ClipboardContent::plain_text(prompt_text));
             }
             AIBlockAction::CopyTimestamp => {
-                if let Some(timestamp) = self.query_sent_at(ctx) {
+                if let Some(timestamp) = self.model.query_sent_at(ctx) {
                     ctx.clipboard()
                         .write(ClipboardContent::plain_text(format_message_timestamp(
                             &timestamp,

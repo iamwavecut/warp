@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use itertools::Itertools;
 pub use secret_redaction::{
     SECRET_REDACTION_REPLACEMENT_CHARACTER, find_secrets_in_text, find_secrets_in_text_with_levels,
+    find_secrets_in_text_with_levels_using_regex, merge_sorted_ranges_with_levels,
 };
 use similar::DiffableStr;
 use string_offset::StringRange;

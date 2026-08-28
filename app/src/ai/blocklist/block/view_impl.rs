@@ -987,7 +987,7 @@ impl View for AIBlock {
                     user_display_name: &avatar_display_name,
                     profile_image_path: profile_image_path.as_ref(),
                     avatar_color,
-                    query_sent_at: self.query_sent_at(app),
+                    query_sent_at: self.model.query_sent_at(app),
                     query_timestamp_tooltip_handle: &self
                         .state_handles
                         .query_timestamp_tooltip_handle,
