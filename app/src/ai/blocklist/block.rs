@@ -135,7 +135,7 @@ use warpui::ui_components::components::UiComponentStyles;
 
 use crate::util::link_detection::*;
 use crate::util::time_format::format_message_timestamp;
-use chrono::Duration;
+use chrono::{DateTime, Duration, Local};
 use itertools::Itertools;
 use secret_redaction::*;
 #[cfg(feature = "local_fs")]
@@ -5075,6 +5075,10 @@ impl AIBlock {
 
     pub fn status(&self, app: &AppContext) -> AIBlockOutputStatus {
         self.model.status(app)
+    }
+
+    pub fn query_sent_at(&self, app: &AppContext) -> Option<DateTime<Local>> {
+        self.model.query_sent_at(app)
     }
 
     pub fn has_expanded_running_commands(&self, app: &AppContext) -> bool {
