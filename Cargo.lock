@@ -11305,7 +11305,6 @@ dependencies = [
  "regex_dfas",
  "string-offset",
  "warp_core",
- "warp_errors",
 ]
 
 [[package]]
@@ -14052,6 +14051,7 @@ dependencies = [
  "rayon",
  "regex",
  "regex-automata",
+ "regex_dfas",
  "remote_server",
  "repo_metadata",
  "reqwest",
@@ -14061,6 +14061,7 @@ dependencies = [
  "rustc-hash 2.1.1",
  "rustls",
  "schemars 1.0.4",
+ "secret_redaction",
  "serde",
  "serde-bytes-repr",
  "serde_bytes",
