@@ -134,6 +134,7 @@ use warpui::ui_components::components::UiComponent;
 use warpui::ui_components::components::UiComponentStyles;
 
 use crate::util::link_detection::*;
+use crate::util::time_format::format_message_timestamp;
 use chrono::Duration;
 use itertools::Itertools;
 use secret_redaction::*;
@@ -413,6 +414,7 @@ pub(super) struct AIBlockStateHandles {
 
     /// Mouse state handle for the overflow menu button
     overflow_menu_handle: MouseStateHandle,
+    query_timestamp_tooltip_handle: MouseStateHandle,
 
     menu_accept_button_handle: MouseStateHandle,
     menu_reject_button_handle: MouseStateHandle,
@@ -5749,6 +5751,7 @@ pub enum AIBlockAction {
     /// Copy the content from the previous user query.
     /// Note that this block may not have the user query.
     CopyQuery,
+    CopyTimestamp,
     /// Copy all AI output from the previous user query to the next user query.
     /// Note that this contains more than just this block, since from the user perspective everything after the user query appears like one block.
     CopyOutput,
@@ -6176,6 +6179,14 @@ impl TypedActionView for AIBlock {
                 let prompt_text = self.get_preceding_user_query(ctx);
                 ctx.clipboard()
                     .write(ClipboardContent::plain_text(prompt_text));
+            }
+            AIBlockAction::CopyTimestamp => {
+                if let Some(timestamp) = self.query_sent_at(ctx) {
+                    ctx.clipboard()
+                        .write(ClipboardContent::plain_text(format_message_timestamp(
+                            &timestamp,
+                        )));
+                }
             }
             AIBlockAction::CopyOutput => {
                 // Copy all AI output from preceding user query until the next user query

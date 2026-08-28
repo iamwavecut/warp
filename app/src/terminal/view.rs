@@ -1392,6 +1392,9 @@ pub enum ContextMenuAction {
     CopyAIBlockQuery {
         ai_block_view_id: EntityId,
     },
+    CopyAIBlockTimestamp {
+        ai_block_view_id: EntityId,
+    },
     /// Copy the AI block output text
     CopyAIBlockOutput {
         ai_block_view_id: EntityId,
@@ -1489,6 +1492,7 @@ impl fmt::Debug for ContextMenuAction {
             StopSharing => f.write_str("StopSharing"),
             CopyAIDebuggingLink { .. } => f.write_str("CopyAIDebuggingLink"),
             CopyAIBlockQuery { .. } => f.write_str("CopyAIBlockPrompt"),
+            CopyAIBlockTimestamp { .. } => f.write_str("CopyAIBlockTimestamp"),
             CopyAIBlockOutput { .. } => f.write_str("CopyAIBlockOutput"),
             CopyAIBlock { .. } => f.write_str("CopyAIBlockBoth"),
             CopyAIBlockConversation { .. } => f.write_str("CopyAIBlockConversation"),
@@ -16371,6 +16375,28 @@ impl TerminalView {
                 .into_item(),
         ];
 
+        let has_query_timestamp = self.rich_content_views.iter().any(|rich_content| {
+            rich_content
+                .ai_block_metadata()
+                .filter(|metadata| metadata.ai_block_handle.id() == ai_block_view_id)
+                .is_some_and(|metadata| {
+                    metadata
+                        .ai_block_handle
+                        .as_ref(ctx)
+                        .query_sent_at(ctx)
+                        .is_some()
+                })
+        });
+        if has_query_timestamp {
+            items.push(
+                MenuItemFields::new("Copy timestamp")
+                    .with_on_select_action(TerminalAction::ContextMenu(
+                        ContextMenuAction::CopyAIBlockTimestamp { ai_block_view_id },
+                    ))
+                    .into_item(),
+            );
+        }
+
         if let Some(link) = hovered_link {
             match link {
                 RichContentLink::Url(url) => {
@@ -23337,6 +23363,18 @@ impl TerminalView {
                     {
                         ai_metadata.ai_block_handle.update(ctx, |block, ctx| {
                             block.handle_action(&AIBlockAction::CopyQuery, ctx);
+                        });
+                        break;
+                    }
+                }
+            }
+            CopyAIBlockTimestamp { ai_block_view_id } => {
+                for rich_content in self.rich_content_views.iter() {
+                    if let Some(ai_metadata) = rich_content.ai_block_metadata()
+                        && ai_metadata.ai_block_handle.id() == *ai_block_view_id
+                    {
+                        ai_metadata.ai_block_handle.update(ctx, |block, ctx| {
+                            block.handle_action(&AIBlockAction::CopyTimestamp, ctx);
                         });
                         break;
                     }

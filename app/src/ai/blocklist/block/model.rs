@@ -13,7 +13,7 @@ use crate::ai::{
     },
     llms::LLMId,
 };
-use chrono::TimeDelta;
+use chrono::{DateTime, Local, TimeDelta};
 use warpui::{AppContext, ViewContext};
 
 #[derive(Debug, Clone, Copy)]
@@ -174,6 +174,10 @@ pub trait AIBlockModel {
     ///
     /// `None` if there was no request for data in this block (e.g. if it's for a restored AI block).
     fn time_since_request_start(&self, _app: &AppContext) -> Option<TimeDelta> {
+        None
+    }
+
+    fn query_sent_at(&self, _app: &AppContext) -> Option<DateTime<Local>> {
         None
     }
 
