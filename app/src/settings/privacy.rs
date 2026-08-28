@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use regex::Regex;
+pub use secret_redaction::RegexDisplayInfo;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity, UpdateModel};
 
 use crate::terminal::safe_mode_settings::SafeModeSettings;
@@ -13,11 +14,6 @@ use settings::{
 use serde::{Deserialize, Serialize};
 
 use crate::workspaces::workspace::EnterpriseSecretRegex;
-
-pub trait RegexDisplayInfo {
-    fn pattern(&self) -> &str;
-    fn name(&self) -> Option<&str>;
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(description = "A custom regex pattern for detecting and redacting secrets.")]
