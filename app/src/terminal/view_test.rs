@@ -1,3 +1,4 @@
+use crate::ai::active_agent_views_model::ActiveAgentViewsModel;
 use crate::ai::agent::conversation::{AIConversation, AIConversationId, ConversationStatus};
 use crate::ai::agent::task::TaskId;
 use crate::ai::agent::{
@@ -5876,6 +5877,8 @@ fn cli_session_status_updates_active_child_conversation() {
         let _agent_view = FeatureFlag::AgentView.override_enabled(true);
 
         let terminal = add_window_with_terminal(&mut app, None);
+        let task_id = AmbientAgentTaskId::from_str("123e4567-e89b-12d3-a456-426614174000")
+            .expect("valid task id");
 
         let child_conversation_id = terminal.update(&mut app, |view, ctx| {
             let parent_conversation_id =
@@ -5884,13 +5887,18 @@ fn cli_session_status_updates_active_child_conversation() {
                 });
             let child_conversation_id =
                 BlocklistAIHistoryModel::handle(ctx).update(ctx, |history_model, ctx| {
-                    history_model.start_new_child_conversation(
+                    let child_conversation_id = history_model.start_new_child_conversation(
                         view.view_id,
                         "Agent 2".to_string(),
                         parent_conversation_id,
                         None,
                         ctx,
-                    )
+                    );
+                    history_model
+                        .conversation_mut(&child_conversation_id)
+                        .expect("child conversation should exist")
+                        .set_task_id(task_id);
+                    child_conversation_id
                 });
 
             view.enter_agent_view(
@@ -5899,6 +5907,10 @@ fn cli_session_status_updates_active_child_conversation() {
                 AgentViewEntryOrigin::ChildAgent,
                 ctx,
             );
+
+            ActiveAgentViewsModel::handle(ctx).update(ctx, |active_views, ctx| {
+                active_views.register_ambient_session(view.view_id, task_id, ctx);
+            });
 
             CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
                 sessions.set_session(
@@ -6024,6 +6036,8 @@ fn cli_session_status_updates_single_child_conversation_without_agent_view() {
         let _agent_view = FeatureFlag::AgentView.override_enabled(true);
 
         let terminal = add_window_with_terminal(&mut app, None);
+        let task_id = AmbientAgentTaskId::from_str("123e4567-e89b-12d3-a456-426614174001")
+            .expect("valid task id");
 
         let child_conversation_id = terminal.update(&mut app, |view, ctx| {
             let parent_conversation_id =
@@ -6032,14 +6046,23 @@ fn cli_session_status_updates_single_child_conversation_without_agent_view() {
                 });
             let child_conversation_id =
                 BlocklistAIHistoryModel::handle(ctx).update(ctx, |history_model, ctx| {
-                    history_model.start_new_child_conversation(
+                    let child_conversation_id = history_model.start_new_child_conversation(
                         view.view_id,
                         "Agent 2".to_string(),
                         parent_conversation_id,
                         None,
                         ctx,
-                    )
+                    );
+                    history_model
+                        .conversation_mut(&child_conversation_id)
+                        .expect("child conversation should exist")
+                        .set_task_id(task_id);
+                    child_conversation_id
                 });
+
+            ActiveAgentViewsModel::handle(ctx).update(ctx, |active_views, ctx| {
+                active_views.register_ambient_session(view.view_id, task_id, ctx);
+            });
 
             CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
                 sessions.set_session(
@@ -6095,6 +6118,85 @@ fn cli_session_status_updates_single_child_conversation_without_agent_view() {
             let conversation = BlocklistAIHistoryModel::as_ref(ctx)
                 .conversation(&child_conversation_id)
                 .expect("child conversation should exist");
+            assert_eq!(conversation.status(), &ConversationStatus::Success);
+        });
+    })
+}
+
+#[test]
+fn cli_session_status_updates_matching_root_conversation() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let task_id = AmbientAgentTaskId::from_str("123e4567-e89b-12d3-a456-426614174002")
+            .expect("valid task id");
+
+        let conversation_id = terminal.update(&mut app, |view, ctx| {
+            let conversation_id =
+                BlocklistAIHistoryModel::handle(ctx).update(ctx, |history_model, ctx| {
+                    let conversation_id = history_model.start_new_conversation(
+                        view.view_id,
+                        false,
+                        false,
+                        false,
+                        ctx,
+                    );
+                    history_model
+                        .conversation_mut(&conversation_id)
+                        .expect("conversation should exist")
+                        .set_task_id(task_id);
+                    conversation_id
+                });
+
+            ActiveAgentViewsModel::handle(ctx).update(ctx, |active_views, ctx| {
+                active_views.register_ambient_session(view.view_id, task_id, ctx);
+            });
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(
+                    view.view_id,
+                    CLIAgentSession {
+                        agent: CLIAgent::Claude,
+                        status: CLIAgentSessionStatus::InProgress,
+                        session_context: CLIAgentSessionContext::default(),
+                        input_state: CLIAgentInputState::Closed,
+                        should_auto_toggle_input: false,
+                        listener: None,
+                        remote_host: None,
+                        plugin_version: None,
+                        draft_text: None,
+                        custom_command_prefix: None,
+                    },
+                    ctx,
+                );
+            });
+            conversation_id
+        });
+
+        terminal.update(&mut app, |view, ctx| {
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.update_from_event(
+                    view.view_id,
+                    &CLIAgentEvent {
+                        v: 1,
+                        agent: CLIAgent::Claude,
+                        event: CLIAgentEventType::Stop,
+                        session_id: None,
+                        cwd: None,
+                        project: None,
+                        payload: CLIAgentEventPayload {
+                            response: Some("Done".to_owned()),
+                            ..Default::default()
+                        },
+                    },
+                    ctx,
+                );
+            });
+        });
+
+        terminal.read(&app, |_view, ctx| {
+            let conversation = BlocklistAIHistoryModel::as_ref(ctx)
+                .conversation(&conversation_id)
+                .expect("conversation should exist");
             assert_eq!(conversation.status(), &ConversationStatus::Success);
         });
     })

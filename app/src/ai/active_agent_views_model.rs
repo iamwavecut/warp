@@ -382,6 +382,14 @@ impl ActiveAgentViewsModel {
         }
     }
 
+    /// Returns the local ambient task associated with a terminal pane.
+    pub fn task_id_for_terminal_view(
+        &self,
+        terminal_view_id: EntityId,
+    ) -> Option<AmbientAgentTaskId> {
+        self.ambient_sessions.get(&terminal_view_id).copied()
+    }
+
     /// Unregister an ambient session when the tab is closed.
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
     pub fn unregister_ambient_session(

@@ -53,7 +53,6 @@ pub enum IsObfuscated {
     No,
 }
 
-
 /// Whether or not to respect obfuscated secrets when retrieving grid contents.
 #[derive(Copy, Clone, PartialEq)]
 pub enum RespectObfuscatedSecrets {
@@ -321,7 +320,6 @@ impl StepLite for RangeMapPoint {
         }
     }
 }
-
 
 #[cfg(test)]
 #[path = "secrets_tests.rs"]
