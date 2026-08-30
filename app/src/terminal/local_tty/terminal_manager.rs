@@ -3,7 +3,7 @@ use crate::ai::llms::{LLMPreferences, LLMPreferencesEvent};
 use crate::auth::AuthStateProvider;
 use crate::auth::auth_state::AuthState;
 use crate::terminal::TerminalManager as _;
-use crate::terminal::model::terminal_model::ExitReason;
+use crate::terminal::model::terminal_model::{ExitReason, ShellProcessInfo};
 use crate::terminal::shared_session::shared_handlers::{
     RemoteUpdateGuard, build_selected_conversation_update,
 };
@@ -913,10 +913,15 @@ impl TerminalManager {
             }
         };
 
-        #[cfg(feature = "integration_tests")]
         let pid = pty.get_pid();
         #[cfg(unix)]
         let fd = pty.get_fd();
+
+        model.lock().set_shell_process_info(ShellProcessInfo {
+            pid,
+            #[cfg(unix)]
+            pty_leader_fd: Some(fd),
+        });
 
         // Create the channel above and pass the receving side to the event loop.
         let event_loop_handle = Self::start_pty_event_loop(

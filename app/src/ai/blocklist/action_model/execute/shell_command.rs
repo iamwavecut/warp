@@ -16,6 +16,7 @@ use warp_util::path::ShellFamily;
 use warpui::r#async::{Spawnable, Timer};
 use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
+use super::lrc_activity::{LrcActivity, LrcActivityMonitor, SAMPLE_INTERVAL};
 use crate::ai::agent::{
     AIAgentActionId, AIAgentActionType, AIAgentPtyWriteMode, ReadShellCommandOutputResult,
     RequestCommandOutputResult, ShellCommandDelay, ShellCommandError,
@@ -28,6 +29,7 @@ use crate::terminal::event::BlockMetadataReceivedEvent;
 use crate::terminal::model::block::{
     Block, BlockId, CURSOR_MARKER, formatted_terminal_contents_for_input,
 };
+use crate::terminal::model::session::SessionType;
 use crate::terminal::shell::ShellType;
 use crate::{
     ai::agent::AIAgentActionResultType,
@@ -51,6 +53,7 @@ pub struct ShellCommandExecutor {
     terminal_view_id: EntityId,
     /// Sender to notify when user hands control back to agent after TransferShellCommandControlToUser.
     control_handback_sender: Option<oneshot::Sender<()>>,
+    activity_monitor: Arc<LrcActivityMonitor>,
 }
 
 impl ShellCommandExecutor {
@@ -76,7 +79,42 @@ impl ShellCommandExecutor {
             force_refresh_senders: HashMap::new(),
             terminal_view_id,
             control_handback_sender: None,
+            activity_monitor: Arc::new(LrcActivityMonitor::new()),
         }
+    }
+
+    fn begin_monitoring(&mut self, ctx: &mut ModelContext<Self>) -> LrcMonitoringGuard {
+        let is_local = matches!(
+            self.active_session.as_ref(ctx).session_type(ctx),
+            Some(SessionType::Local)
+        );
+        self.activity_monitor.set_monitoring_enabled(
+            is_local && !cfg!(target_os = "windows") && !cfg!(target_family = "wasm"),
+        );
+
+        let guard = LrcMonitoringGuard {
+            monitor: self.activity_monitor.clone(),
+        };
+        if self.activity_monitor.arm() {
+            self.sample_activity(ctx);
+        }
+        guard
+    }
+
+    fn sample_activity(&mut self, ctx: &mut ModelContext<Self>) {
+        let monitor = self.activity_monitor.clone();
+        let terminal_model = self.terminal_model.clone();
+        ctx.spawn(
+            async move {
+                Timer::after(SAMPLE_INTERVAL).await;
+                monitor.sample(&terminal_model)
+            },
+            move |me, keep_sampling, ctx| {
+                if keep_sampling {
+                    me.sample_activity(ctx);
+                }
+            },
+        );
     }
 
     fn handle_terminal_model_event(
@@ -260,6 +298,7 @@ impl ShellCommandExecutor {
                     self.action_result_future(
                         block_selector.clone(),
                         wait_policy_for_requested_command(*wait_until_completion),
+                        ctx,
                     ),
                     move |result, ctx| {
                         // Remove the senders from the maps.
@@ -326,6 +365,7 @@ impl ShellCommandExecutor {
                         ShellCommandWaitPolicy::AgentDelay(Some(ShellCommandDelay::Duration(
                             Duration::from_millis(200),
                         ))),
+                        ctx,
                     ),
                     move |result, ctx| {
                         // Remove the senders from the maps.
@@ -370,6 +410,7 @@ impl ShellCommandExecutor {
                     self.action_result_future(
                         block_selector.clone(),
                         ShellCommandWaitPolicy::AgentDelay(delay.clone()),
+                        ctx,
                     ),
                     move |result, ctx| {
                         // Remove the senders from the maps.
@@ -417,10 +458,13 @@ impl ShellCommandExecutor {
                     .insert(block_selector.clone(), block_finished_tx);
 
                 // Build the future that captures terminal model and block data.
+                let monitoring = self.begin_monitoring(ctx);
+                let monitor = self.activity_monitor.clone();
                 let transfer_future = {
                     let terminal_model = self.terminal_model.clone();
                     let block_id = block_id.clone();
                     async move {
+                        let _monitoring = monitoring;
                         pin!(handback_rx);
                         pin!(block_finished_rx);
 
@@ -444,6 +488,7 @@ impl ShellCommandExecutor {
                                 match model.block_list().block_with_id(&block_id) {
                                     Some(block) => {
                                         if block.finished() {
+                                            monitor.forget(block.id());
                                             ActionResult::CommandFinished {
                                                 block_id: block.id().clone(),
                                                 output: block.output_with_secrets_unobfuscated(),
@@ -452,7 +497,8 @@ impl ShellCommandExecutor {
                                                 completed_ts: block.completed_ts().cloned(),
                                             }
                                         } else {
-                                            let grid_contents = if model.is_alt_screen_active() {
+                                            let mut grid_contents = if model.is_alt_screen_active()
+                                            {
                                                 formatted_terminal_contents_for_input(
                                                     model.alt_screen().grid_handler(),
                                                     None,
@@ -465,6 +511,10 @@ impl ShellCommandExecutor {
                                                     CURSOR_MARKER,
                                                 )
                                             };
+                                            append_activity(
+                                                &mut grid_contents,
+                                                monitor.report(block.id()),
+                                            );
                                             ActionResult::LongRunningCommandSnapshot {
                                                 block_id: block.id().clone(),
                                                 grid_contents,
@@ -511,7 +561,11 @@ impl ShellCommandExecutor {
         &mut self,
         block_selector: BlockSelector,
         wait_policy: ShellCommandWaitPolicy,
+        ctx: &mut ModelContext<Self>,
     ) -> impl Spawnable<Output = ActionResult> + use<> {
+        let monitoring = self.begin_monitoring(ctx);
+        let monitor = self.activity_monitor.clone();
+
         // Create a channel to notify us when we receive block metadata.
         let (block_metadata_received_tx, block_metadata_received_rx) = oneshot::channel();
         self.block_finished_senders
@@ -537,6 +591,7 @@ impl ShellCommandExecutor {
         }
 
         async move {
+            let _monitoring = monitoring;
             pin!(block_metadata_received_rx);
             pin!(force_refresh_rx);
 
@@ -583,6 +638,7 @@ impl ShellCommandExecutor {
             match block_selector.get_block(&model) {
                 Some(block) => {
                     if block.finished() {
+                        monitor.forget(block.id());
                         ActionResult::CommandFinished {
                             block_id: block.id().clone(),
                             output: block.output_with_secrets_unobfuscated(),
@@ -591,7 +647,7 @@ impl ShellCommandExecutor {
                             completed_ts: block.completed_ts().cloned(),
                         }
                     } else {
-                        let grid_contents = if model.is_alt_screen_active() {
+                        let mut grid_contents = if model.is_alt_screen_active() {
                             formatted_terminal_contents_for_input(
                                 model.alt_screen().grid_handler(),
                                 None,
@@ -605,6 +661,7 @@ impl ShellCommandExecutor {
                                 CURSOR_MARKER,
                             )
                         };
+                        append_activity(&mut grid_contents, monitor.report(block.id()));
                         ActionResult::LongRunningCommandSnapshot {
                             block_id: block.id().clone(),
                             grid_contents,
@@ -975,4 +1032,24 @@ enum ActionResult {
     },
     Cancelled,
     BlockNotFound,
+}
+
+fn append_activity(grid_contents: &mut String, activity: Option<LrcActivity>) {
+    let Some(activity) = activity else {
+        return;
+    };
+    if !grid_contents.is_empty() && !grid_contents.ends_with('\n') {
+        grid_contents.push('\n');
+    }
+    grid_contents.push_str(&activity.annotation());
+}
+
+struct LrcMonitoringGuard {
+    monitor: Arc<LrcActivityMonitor>,
+}
+
+impl Drop for LrcMonitoringGuard {
+    fn drop(&mut self) {
+        self.monitor.disarm();
+    }
 }

@@ -617,6 +617,16 @@ pub struct TerminalModel {
     /// bootstrap init scripts. Used to validate DCS hook integrity: hooks
     /// carrying an unrecognized session_id are rejected.
     registered_session_ids: HashSet<SessionId>,
+
+    /// The local shell process backing this terminal while its pty is alive.
+    shell_process_info: Option<ShellProcessInfo>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShellProcessInfo {
+    pub pid: u32,
+    #[cfg(unix)]
+    pub pty_leader_fd: Option<std::os::fd::RawFd>,
 }
 
 #[derive(Clone, Debug)]
@@ -1191,6 +1201,7 @@ impl TerminalModel {
             // Start mid-way through the u32 range to avoid collisions
             next_kitty_image_id: 2147483647,
             registered_session_ids: HashSet::new(),
+            shell_process_info: None,
         }
     }
 
@@ -1531,6 +1542,7 @@ impl TerminalModel {
         let transition = self.plan_lifecycle_transition(LifecycleInput::Exit, None, None, None);
 
         self.handled_exit = true;
+        self.shell_process_info = None;
         // Forcibly exit the alt screen so that we can show the user the
         // banner informing them that the shell process exited.
         self.exit_alt_screen(true);
@@ -2037,6 +2049,14 @@ impl TerminalModel {
 
     pub fn active_shell_launch_data(&self) -> Option<&ShellLaunchData> {
         self.active_shell_launch_data.as_ref()
+    }
+
+    pub fn shell_process_info(&self) -> Option<&ShellProcessInfo> {
+        self.shell_process_info.as_ref()
+    }
+
+    pub fn set_shell_process_info(&mut self, shell_process_info: ShellProcessInfo) {
+        self.shell_process_info = Some(shell_process_info);
     }
 
     pub fn set_login_shell_spawned(&mut self, shell_type: ShellType) {

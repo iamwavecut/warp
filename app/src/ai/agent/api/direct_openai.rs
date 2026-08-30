@@ -5816,6 +5816,7 @@ fn tool_call_result_to_text_with_tool_policy(
     result_without_context.context = None;
     let encoded =
         base64::engine::general_purpose::STANDARD.encode(result_without_context.encode_to_vec());
+    let shell_snapshot = result.result.as_ref().and_then(local_shell_snapshot_json);
     serde_json::to_string(&json!({
         "schema": "warp.direct_openai.tool_result",
         "version": 1,
@@ -5825,12 +5826,43 @@ fn tool_call_result_to_text_with_tool_policy(
             .as_ref()
             .map(tool_call_result_type_name)
             .unwrap_or("none"),
+        "shell_snapshot": shell_snapshot,
         "protobuf_base64": encoded,
     }))
     .unwrap_or_else(|_| {
         "{\"schema\":\"warp.direct_openai.tool_result\",\"version\":1,\"result_type\":\"none\"}"
             .to_string()
     })
+}
+
+fn local_shell_snapshot_json(result: &api::message::tool_call_result::Result) -> Option<Value> {
+    let snapshot = match result {
+        api::message::tool_call_result::Result::RunShellCommand(result) => match result.result.as_ref()? {
+            api::run_shell_command_result::Result::LongRunningCommandSnapshot(snapshot) => snapshot,
+            _ => return None,
+        },
+        api::message::tool_call_result::Result::WriteToLongRunningShellCommand(result) => match result.result.as_ref()? {
+            api::write_to_long_running_shell_command_result::Result::LongRunningCommandSnapshot(snapshot) => snapshot,
+            _ => return None,
+        },
+        api::message::tool_call_result::Result::ReadShellCommandOutput(result) => match result.result.as_ref()? {
+            api::read_shell_command_output_result::Result::LongRunningCommandSnapshot(snapshot) => snapshot,
+            _ => return None,
+        },
+        api::message::tool_call_result::Result::TransferShellCommandControlToUser(result) => match result.result.as_ref()? {
+            api::transfer_shell_command_control_to_user_result::Result::LongRunningCommandSnapshot(snapshot) => snapshot,
+            _ => return None,
+        },
+        _ => return None,
+    };
+
+    Some(json!({
+        "command_id": snapshot.command_id,
+        "output": snapshot.output,
+        "cursor": snapshot.cursor,
+        "is_alt_screen_active": snapshot.is_alt_screen_active,
+        "is_preempted": snapshot.is_preempted,
+    }))
 }
 
 fn tool_call_result_type_name(result: &api::message::tool_call_result::Result) -> &'static str {
@@ -11419,6 +11451,75 @@ mod tests {
         assert_eq!(complete["version"], 1);
         assert_eq!(complete["result_type"], "run_shell_command");
         assert!(complete["protobuf_base64"].as_str().is_some());
+    }
+
+    #[test]
+    fn long_running_snapshot_exposes_local_activity_to_openai_compatible_models() {
+        let snapshot = api::LongRunningShellCommandSnapshot {
+            command_id: "block-activity".to_string(),
+            output: "[local process activity: running; 3 live processes; CPU +2750 ms; writes +4096 bytes; last activity 1.5 s ago]".to_string(),
+            cursor: "<|cursor|>".to_string(),
+            is_alt_screen_active: false,
+            is_preempted: false,
+        };
+        let results = [
+            api::message::tool_call_result::Result::RunShellCommand(
+                api::RunShellCommandResult {
+                    command: "cargo build >build.log".to_string(),
+                    result: Some(
+                        api::run_shell_command_result::Result::LongRunningCommandSnapshot(
+                            snapshot.clone(),
+                        ),
+                    ),
+                    ..Default::default()
+                },
+            ),
+            api::message::tool_call_result::Result::WriteToLongRunningShellCommand(
+                api::WriteToLongRunningShellCommandResult {
+                    result: Some(
+                        api::write_to_long_running_shell_command_result::Result::LongRunningCommandSnapshot(
+                            snapshot.clone(),
+                        ),
+                    ),
+                },
+            ),
+            api::message::tool_call_result::Result::ReadShellCommandOutput(
+                api::ReadShellCommandOutputResult {
+                    command: "cargo build >build.log".to_string(),
+                    result: Some(
+                        api::read_shell_command_output_result::Result::LongRunningCommandSnapshot(
+                            snapshot.clone(),
+                        ),
+                    ),
+                },
+            ),
+            api::message::tool_call_result::Result::TransferShellCommandControlToUser(
+                api::TransferShellCommandControlToUserResult {
+                    result: Some(
+                        api::transfer_shell_command_control_to_user_result::Result::LongRunningCommandSnapshot(
+                            snapshot,
+                        ),
+                    ),
+                },
+            ),
+        ];
+
+        for result in results {
+            let result = api::message::ToolCallResult {
+                tool_call_id: "call-activity".to_string(),
+                context: None,
+                result: Some(result),
+            };
+            let content = tool_call_result_to_text_with_tool_policy(&result, true);
+            let envelope: Value =
+                serde_json::from_str(&content).expect("tool content must be JSON");
+            assert_eq!(envelope["shell_snapshot"]["command_id"], "block-activity");
+            assert_eq!(
+                envelope["shell_snapshot"]["output"],
+                "[local process activity: running; 3 live processes; CPU +2750 ms; writes +4096 bytes; last activity 1.5 s ago]"
+            );
+            assert_eq!(envelope["shell_snapshot"]["is_preempted"], false);
+        }
     }
 
     #[test]
