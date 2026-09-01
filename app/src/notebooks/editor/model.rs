@@ -171,17 +171,23 @@ impl NotebooksEditorModel {
         rte_window_id: WindowId,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::new_internal(text_styles, Some(rte_window_id), ctx)
+        Self::new_internal(text_styles, Some(rte_window_id), false, ctx)
     }
 
     /// Create a model that is not yet bound to a window. The window id should be set later via `set_window_id`.
     pub fn new_unbound(text_styles: RichTextStyles, ctx: &mut ModelContext<Self>) -> Self {
-        Self::new_internal(text_styles, None, ctx)
+        Self::new_internal(text_styles, None, false, ctx)
+    }
+
+    /// Create an unbound model that defers text layout until its element is first laid out.
+    pub fn new_unbound_lazy(text_styles: RichTextStyles, ctx: &mut ModelContext<Self>) -> Self {
+        Self::new_internal(text_styles, None, true, ctx)
     }
 
     fn new_internal(
         text_styles: RichTextStyles,
         rte_window_id: Option<WindowId>,
+        lazy_layout: bool,
         ctx: &mut ModelContext<Self>,
     ) -> Self {
         let content = ctx.add_model(|_| {
@@ -194,7 +200,8 @@ impl NotebooksEditorModel {
 
         let selection_model = ctx.add_model(|_ctx| BufferSelectionModel::new(content.clone()));
 
-        let render_state = ctx.add_model(|ctx| RenderState::new(text_styles, false, None, ctx));
+        let render_state =
+            ctx.add_model(|ctx| RenderState::new(text_styles, lazy_layout, None, ctx));
         ctx.subscribe_to_model(&render_state, Self::handle_render_model_event);
 
         let selection = ctx.add_model(|ctx| {
@@ -252,6 +259,11 @@ impl NotebooksEditorModel {
 
     pub fn markdown_table_count(&self, ctx: &impl ModelAsRef) -> usize {
         self.render_state.as_ref(ctx).markdown_table_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn nested_command_count_for_test(&self) -> usize {
+        self.child_models.model_handles::<NotebookCommand>().count()
     }
 
     pub fn set_interaction_state(
@@ -350,7 +362,7 @@ impl NotebooksEditorModel {
                 // When a debounced resize event fires, the model is laid out from scratch, using [`Self::rebuild_layout`].
                 let _ = self.resize_tx.try_send(());
             }
-            RenderEvent::LayoutUpdated => {
+            RenderEvent::LayoutUpdated | RenderEvent::PendingEditsFlushed => {
                 self.child_models.update(
                     self.interaction_state.clone(),
                     self.content.clone(),
@@ -363,7 +375,7 @@ impl NotebooksEditorModel {
                     self.rebuild_layout(ctx);
                 }
             }
-            _ => (),
+            RenderEvent::ViewportUpdated(_) => {}
         }
     }
 
@@ -410,14 +422,9 @@ impl NotebooksEditorModel {
             .child_models
             .model_handles::<NotebookCommand>()
             .filter_map(|handle| {
-                if matches!(
-                    handle.as_ref(ctx).mermaid_display_mode,
-                    MarkdownDisplayMode::Rendered
-                ) {
-                    handle
-                        .as_ref(ctx)
-                        .start_offset(ctx)
-                        .map(|o| o + CharOffset::from(1))
+                let command = handle.as_ref(ctx);
+                if command.is_rendered_mermaid(ctx) {
+                    command.start_offset(ctx).map(|o| o + CharOffset::from(1))
                 } else {
                     None
                 }

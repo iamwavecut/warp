@@ -51,6 +51,42 @@ fn test_create_document() {
 }
 
 #[test]
+fn restored_document_defers_editor_layout_until_opened() {
+    App::test((), |mut app| async move {
+        initialize_app_for_ai_document_tests(&mut app);
+        let model_handle = app.add_model(|_ctx| AIDocumentModel::new_for_test());
+        let document_id = AIDocumentId::new();
+
+        model_handle.update(&mut app, |model, ctx| {
+            model.restore_document(
+                document_id,
+                AIConversationId::new(),
+                "Restored plan",
+                "```\necho deferred\n```",
+                Local::now(),
+                ctx,
+            );
+        });
+        let editor = model_handle.read(&app, |model, _| {
+            model
+                .get_current_document(&document_id)
+                .expect("restored document should exist")
+                .editor
+        });
+        editor
+            .read(&app, |editor, ctx| {
+                editor.render_state().as_ref(ctx).layout_complete()
+            })
+            .await;
+
+        assert_eq!(
+            editor.read(&app, |editor, _| editor.nested_command_count_for_test()),
+            0
+        );
+    });
+}
+
+#[test]
 fn test_apply_diffs_creates_version() {
     App::test((), |mut app| async move {
         initialize_app_for_ai_document_tests(&mut app);

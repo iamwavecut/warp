@@ -167,6 +167,12 @@ pub enum AIDocumentUpdateSource {
     Restoration,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayoutTiming {
+    Eager,
+    Lazy,
+}
+
 /// Queued plan-card edit; cleared once it piggybacks onto an outbound query.
 #[derive(Debug, Clone)]
 pub struct DirtyOrchestrationEvent {
@@ -387,6 +393,7 @@ impl AIDocumentModel {
             conversation_id,
             file_link_resolution_context,
             Local::now(),
+            LayoutTiming::Eager,
             ctx,
         );
         id
@@ -411,6 +418,7 @@ impl AIDocumentModel {
             conversation_id,
             file_link_resolution_context,
             Local::now(),
+            LayoutTiming::Lazy,
             ctx,
         );
 
@@ -431,9 +439,11 @@ impl AIDocumentModel {
         conversation_id: AIConversationId,
         file_link_resolution_context: Option<FileLinkResolutionContext>,
         created_at: DateTime<Local>,
+        layout_timing: LayoutTiming,
         ctx: &mut ModelContext<Self>,
     ) {
-        let editor = Self::create_editor_model(content, file_link_resolution_context, ctx);
+        let editor =
+            Self::create_editor_model(content, file_link_resolution_context, layout_timing, ctx);
 
         // Subscribe to editor content changes
         ctx.subscribe_to_model(&editor, move |me, _, event, ctx| {
@@ -480,6 +490,7 @@ impl AIDocumentModel {
         title: impl Into<String>,
         initial_content: impl Into<String>,
         file_link_resolution_context: Option<FileLinkResolutionContext>,
+        will_auto_open: bool,
         ctx: &mut ModelContext<Self>,
     ) -> (AIDocumentId, bool) {
         let key = (conversation_id, action_id.clone(), document_index);
@@ -496,6 +507,11 @@ impl AIDocumentModel {
             conversation_id,
             file_link_resolution_context,
             Local::now(),
+            if will_auto_open {
+                LayoutTiming::Eager
+            } else {
+                LayoutTiming::Lazy
+            },
             ctx,
         );
         self.streaming_create_documents.insert(key, id);
@@ -759,6 +775,7 @@ impl AIDocumentModel {
                 AIConversationId::new(),
                 None,
                 Local::now(),
+                LayoutTiming::Lazy,
                 ctx,
             );
             return;
@@ -816,6 +833,7 @@ impl AIDocumentModel {
     fn create_editor_model(
         content: impl Into<String>,
         file_link_resolution_context: Option<FileLinkResolutionContext>,
+        layout_timing: LayoutTiming,
         ctx: &mut ModelContext<Self>,
     ) -> ModelHandle<NotebooksEditorModel> {
         ctx.add_model(|ctx| {
@@ -825,7 +843,10 @@ impl AIDocumentModel {
             // Use the same rich text styles as notebooks for consistency
             let styles = rich_text_styles(appearance, font_settings);
 
-            let mut model = NotebooksEditorModel::new_unbound(styles, ctx);
+            let mut model = match layout_timing {
+                LayoutTiming::Eager => NotebooksEditorModel::new_unbound(styles, ctx),
+                LayoutTiming::Lazy => NotebooksEditorModel::new_unbound_lazy(styles, ctx),
+            };
             model.set_default_mermaid_display_mode(MarkdownDisplayMode::Rendered, ctx);
             model.set_file_link_resolution_context(file_link_resolution_context);
 
@@ -858,6 +879,7 @@ impl AIDocumentModel {
         let editor = Self::create_editor_model(
             doc.editor.as_ref(ctx).markdown_unescaped(ctx),
             file_link_resolution_context,
+            LayoutTiming::Lazy,
             ctx,
         );
 
@@ -925,6 +947,7 @@ impl AIDocumentModel {
             conversation_id,
             None,
             created_at,
+            LayoutTiming::Lazy,
             ctx,
         );
 

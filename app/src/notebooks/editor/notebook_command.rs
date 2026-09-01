@@ -297,7 +297,6 @@ impl NotebookCommand {
         self.start.clone()
     }
 
-    // Returns the CodeBlockType of this command
     fn code_block_type(&self, ctx: &AppContext) -> CodeBlockType {
         if let Some(offset) = self.end_offset(ctx) {
             NotebookCommand::block_type_to_code_type(
@@ -306,6 +305,11 @@ impl NotebookCommand {
         } else {
             Default::default()
         }
+    }
+
+    pub(crate) fn is_rendered_mermaid(&self, ctx: &AppContext) -> bool {
+        matches!(self.code_block_type(ctx), CodeBlockType::Mermaid)
+            && matches!(self.mermaid_display_mode, MarkdownDisplayMode::Rendered)
     }
 
     #[cfg(test)]

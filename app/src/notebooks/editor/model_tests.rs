@@ -24,6 +24,8 @@ use crate::settings::FontSettings;
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::terminal::keys::TerminalKeybindings;
 use crate::test_util::settings::initialize_settings_for_tests;
+#[cfg(feature = "voice_input")]
+use crate::voice::transcriber::VoiceTranscriber;
 use crate::workflows::workflow::Workflow;
 use crate::workflows::{CloudWorkflow, CloudWorkflowModel, WorkflowId};
 use crate::workspace::ActiveSession;
@@ -84,6 +86,17 @@ fn model_from_markdown(
     app: &mut App,
     should_initialize_cloud_model: bool,
 ) -> ModelHandle<NotebooksEditorModel> {
+    let window = setup_editor_window(app, should_initialize_cloud_model);
+    app.add_model(|ctx| {
+        let styles = rich_text_styles(Appearance::as_ref(ctx), FontSettings::as_ref(ctx));
+        let mut model = NotebooksEditorModel::new(styles, window, ctx);
+        model.reset_with_markdown(markdown, ctx);
+
+        model
+    })
+}
+
+fn setup_editor_window(app: &mut App, should_initialize_cloud_model: bool) -> warpui::WindowId {
     let global_resources = GlobalResourceHandles::mock(app);
     app.add_singleton_model(|_| GlobalResourceHandlesProvider::new(global_resources));
     app.add_singleton_model(|_| ActiveSession::default());
@@ -118,13 +131,7 @@ fn model_from_markdown(
         });
         TestView { editor }
     });
-    app.add_model(|ctx| {
-        let styles = rich_text_styles(Appearance::as_ref(ctx), FontSettings::as_ref(ctx));
-        let mut model = NotebooksEditorModel::new(styles, window, ctx);
-        model.reset_with_markdown(markdown, ctx);
-
-        model
-    })
+    window
 }
 
 fn initialize_deps(app: &mut App) {
@@ -142,6 +149,8 @@ fn initialize_deps(app: &mut App) {
     app.add_singleton_model(|_| AuthStateProvider::new_for_test());
     #[cfg(feature = "voice_input")]
     app.add_singleton_model(voice_input::VoiceInput::new);
+    #[cfg(feature = "voice_input")]
+    app.add_singleton_model(|_| VoiceTranscriber::disabled());
     initialize_settings_for_tests(app);
 }
 
@@ -2815,6 +2824,52 @@ fn test_default_mermaid_display_mode_renders_initial_mermaid_blocks() {
         assert!(is_mermaid_diagram);
     });
 }
+
+#[test]
+fn lazy_unbound_layout_populates_controls_after_first_flush() {
+    App::test((), |mut app| async move {
+        initialize_deps(&mut app);
+        let _enabled = FeatureFlag::MarkdownMermaid.override_enabled(true);
+        let window = setup_editor_window(&mut app, true);
+        let markdown = "```\necho two\n```\n\n```mermaid\ngraph TD\n  C-->D\n```";
+
+        let model_handle = app.add_model(|ctx| {
+            let styles = rich_text_styles(Appearance::as_ref(ctx), FontSettings::as_ref(ctx));
+            let mut model = NotebooksEditorModel::new_unbound_lazy(styles, ctx);
+            model.set_default_mermaid_display_mode(MarkdownDisplayMode::Rendered, ctx);
+            model.reset_with_markdown(markdown, ctx);
+            model
+        });
+
+        layout_model(&mut app, &model_handle).await;
+        assert!(command_models(&model_handle, &mut app).is_empty());
+
+        model_handle.update(&mut app, |model, ctx| model.set_window_id(window, ctx));
+        let pending_edits_flushed = model_handle.read(&app, |model, ctx| {
+            model.render_state.as_ref(ctx).try_layout_pending_edits(ctx)
+        });
+        assert!(pending_edits_flushed);
+        model_handle.update(&mut app, |model, ctx| {
+            model.handle_render_model_event(
+                model.render_state.clone(),
+                &RenderEvent::PendingEditsFlushed,
+                ctx,
+            );
+        });
+
+        assert_eq!(command_models(&model_handle, &mut app).len(), 2);
+        let mermaid_offset_count = model_handle.read(&app, |model, ctx| {
+            model
+                .render_state
+                .as_ref(ctx)
+                .layout_options()
+                .mermaid_render_offsets
+                .len()
+        });
+        assert_eq!(mermaid_offset_count, 1);
+    });
+}
+
 #[test]
 fn test_dont_invalidate_command_selection() {
     App::test((), |mut app| async move {
