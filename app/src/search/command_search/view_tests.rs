@@ -1,5 +1,7 @@
 use warpui::{App, platform::WindowStyle};
 
+#[cfg(feature = "voice_input")]
+use crate::voice::transcriber::VoiceTranscriber;
 use crate::{
     auth::{AuthManager, AuthStateProvider},
     cloud_object::model::persistence::CloudModel,
@@ -40,6 +42,8 @@ fn initialize_app(app: &mut App) {
     app.add_singleton_model(|_| KeybindingChangedNotifier::mock());
     #[cfg(feature = "voice_input")]
     app.add_singleton_model(voice_input::VoiceInput::new);
+    #[cfg(feature = "voice_input")]
+    app.add_singleton_model(|_| VoiceTranscriber::disabled());
 }
 
 #[test]

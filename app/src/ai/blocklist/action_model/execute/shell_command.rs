@@ -88,9 +88,8 @@ impl ShellCommandExecutor {
             self.active_session.as_ref(ctx).session_type(ctx),
             Some(SessionType::Local)
         );
-        self.activity_monitor.set_monitoring_enabled(
-            is_local && !cfg!(target_os = "windows") && !cfg!(target_family = "wasm"),
-        );
+        self.activity_monitor
+            .set_monitoring_enabled(is_local && !cfg!(target_family = "wasm"));
 
         let guard = LrcMonitoringGuard {
             monitor: self.activity_monitor.clone(),

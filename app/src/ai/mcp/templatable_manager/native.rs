@@ -1422,6 +1422,73 @@ enum Transport {
     Sse(Option<rmcp::transport::auth::AuthClient<reqwest::Client>>),
 }
 
+const CREDENTIAL_HEADER_NAMES: [&str; 3] = ["authorization", "x-api-key", "api-key"];
+
+fn has_caller_supplied_credential(headers: &HashMap<String, String>) -> bool {
+    headers.iter().any(|(name, value)| {
+        !value.trim().is_empty()
+            && CREDENTIAL_HEADER_NAMES.contains(&name.to_ascii_lowercase().as_str())
+    })
+}
+
+fn is_oauth_challenge(www_authenticate: &str) -> bool {
+    challenge_parameter_names(www_authenticate)
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case("resource_metadata"))
+}
+
+fn challenge_parameter_names(www_authenticate: &str) -> Vec<&str> {
+    let mut names = Vec::new();
+    let mut rest = www_authenticate;
+
+    while let Some(equals) = rest.find('=') {
+        let name = rest[..equals]
+            .trim_end()
+            .rsplit([',', ' ', '\t'])
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if !name.is_empty() {
+            names.push(name);
+        }
+
+        let after_equals = rest[equals + 1..].trim_start();
+        rest = match after_equals.strip_prefix('"') {
+            Some(unquoted) => {
+                let mut escaped = false;
+                let closing_quote = unquoted.char_indices().find_map(|(index, character)| {
+                    if escaped {
+                        escaped = false;
+                        return None;
+                    }
+                    if character == '\\' {
+                        escaped = true;
+                        return None;
+                    }
+                    (character == '"').then_some(index)
+                });
+                closing_quote.map_or("", |closing| &unquoted[closing + 1..])
+            }
+            None => match after_equals.find(',') {
+                Some(comma) => &after_equals[comma + 1..],
+                None => "",
+            },
+        };
+    }
+
+    names
+}
+
+fn should_report_rejected_credentials(
+    headers: &HashMap<String, String>,
+    www_authenticate: &[String],
+) -> bool {
+    has_caller_supplied_credential(headers)
+        && !www_authenticate
+            .iter()
+            .any(|challenge| is_oauth_challenge(challenge))
+}
+
 /// Determines which transport to use.
 ///
 /// This sends a "preflight" InitializeRequest to the server to determine whether the
@@ -1440,10 +1507,19 @@ async fn determine_transport(
             "Unexpected status code: {status}"
         ))
     }
-    match send_initialize_request(url, headers, None).await? {
+    let preflight = send_initialize_request(url, headers, None).await?;
+    match preflight.status {
         StatusCode::OK => Ok(Transport::Http(None)),
         StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED => Ok(Transport::Sse(None)),
         StatusCode::UNAUTHORIZED => {
+            if should_report_rejected_credentials(headers, &preflight.www_authenticate) {
+                return Err(rmcp::RmcpError::transport_creation::<ReqwestHttpTransport>(
+                    format!(
+                        "MCP server '{server_name}' rejected the configured credentials (HTTP 401). \
+                         Check the token, expiry, and scope; the server did not request OAuth."
+                    ),
+                ));
+            }
             if !FeatureFlag::McpOauth.is_enabled() {
                 return Err(rmcp::RmcpError::transport_creation::<ReqwestHttpTransport>(
                     "Server requires authentication, which is not yet supported.".to_string(),
@@ -1457,7 +1533,10 @@ async fn determine_transport(
                 .boxed()
                 .await
                 .map_err(rmcp::RmcpError::transport_creation::<ReqwestHttpTransport>)?;
-            let transport = match send_initialize_request(url, headers, Some(&client)).await? {
+            let transport = match send_initialize_request(url, headers, Some(&client))
+                .await?
+                .status
+            {
                 StatusCode::OK => Ok(Transport::Http(Some(client))),
                 StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED => {
                     Ok(Transport::Sse(Some(client)))
@@ -1488,12 +1567,17 @@ async fn determine_transport(
     }
 }
 
-/// Sends an InitializeRequest to the server, and returns the HTTP status code from the response.
+struct PreflightResponse {
+    status: reqwest::StatusCode,
+    www_authenticate: Vec<String>,
+}
+
+/// Sends an InitializeRequest to the server and returns the response data needed for transport selection.
 async fn send_initialize_request(
     url: &str,
     headers: &std::collections::HashMap<String, String>,
     auth_client: Option<&rmcp::transport::auth::AuthClient<reqwest::Client>>,
-) -> Result<reqwest::StatusCode, rmcp::RmcpError> {
+) -> Result<PreflightResponse, rmcp::RmcpError> {
     use rmcp::transport::common::http_header::{EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE};
 
     let request = rmcp::model::InitializeRequest::new(make_client_info());
@@ -1523,7 +1607,18 @@ async fn send_initialize_request(
         .await
         .map_err(rmcp::RmcpError::transport_creation::<ReqwestHttpTransport>)?;
 
-    Ok(response.status())
+    let www_authenticate = response
+        .headers()
+        .get_all(http::header::WWW_AUTHENTICATE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .map(ToString::to_string)
+        .collect();
+
+    Ok(PreflightResponse {
+        status: response.status(),
+        www_authenticate,
+    })
 }
 
 /// Creates a [`ClientInfo`] for the MCP client.
@@ -1589,3 +1684,7 @@ impl<T: rmcp::transport::Transport<R>, R: rmcp::service::ServiceRole> rmcp::tran
         self.transport.close()
     }
 }
+
+#[cfg(test)]
+#[path = "native_tests.rs"]
+mod tests;

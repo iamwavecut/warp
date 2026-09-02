@@ -243,7 +243,7 @@ fn test_no_query_filter_runs_all_data_sources() {
                     .iter()
                     .map(|result| result.accessibility_label())
                     .collect_vec(),
-                vec!["History item: git", "History item: git checkout"]
+                vec!["History item: git checkout", "History item: git"]
             );
         });
     });
@@ -319,7 +319,7 @@ fn test_query_filter_limits_data_sources() {
                     .iter()
                     .map(|result| result.accessibility_label())
                     .collect_vec(),
-                vec!["History item: git", "History item: git checkout"]
+                vec!["History item: git checkout", "History item: git"]
             );
         });
     });
