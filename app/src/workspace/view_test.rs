@@ -7,6 +7,7 @@ use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::facts::manager::AIFactManager;
 use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::llms::LLMPreferences;
+use crate::ai::local_agent_registry::LocalAgentRegistry;
 use crate::ai::outline::RepoOutlines;
 use crate::ai::persisted_workspace::PersistedWorkspace;
 use crate::ai::restored_conversations::RestoredAgentConversations;
@@ -71,6 +72,8 @@ use crate::resource_center::Tip;
 use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::test_util::settings::initialize_settings_for_tests;
 use crate::undo_close::UndoCloseSettings;
+#[cfg(feature = "voice_input")]
+use crate::voice::transcriber::VoiceTranscriber;
 use crate::warp_managed_paths_watcher::WarpManagedPathsWatcher;
 use crate::workflows::local_workflows::LocalWorkflows;
 use crate::{AgentNotificationsModel, ObjectActions};
@@ -132,6 +135,7 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(crate::ai::blocklist::QueuedQueryModel::new);
     app.add_singleton_model(|ctx| OrchestrationPillBarModel::new(Default::default(), ctx));
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+    app.add_singleton_model(LocalAgentRegistry::new_registered);
     // The blocklist controller created during terminal bootstrap subscribes to
     // OrchestrationEventService and OrchestrationEventStreamer unconditionally,
     // so both singletons must be registered before bootstrap.
@@ -168,6 +172,8 @@ pub(crate) fn initialize_app(app: &mut App) {
     app.add_singleton_model(RepoOutlines::new_for_test);
     #[cfg(feature = "voice_input")]
     app.add_singleton_model(voice_input::VoiceInput::new);
+    #[cfg(feature = "voice_input")]
+    app.add_singleton_model(|_| VoiceTranscriber::disabled());
     app.add_singleton_model(BlocklistAIPermissions::new);
     app.add_singleton_model(|_| GPUState::new());
     app.add_singleton_model(|_| RestoredAgentConversations::new(vec![]));
@@ -1247,6 +1253,35 @@ fn test_workspace_sessions_retrieves_tabs() {
                     .any(|x| { x.pane_view_locator().pane_id == new_pane_id })
             );
         });
+    });
+}
+
+#[test]
+fn ctrl_t_action_forwards_to_pty_when_no_external_widget_is_detected() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let terminal_view = workspace.update(&mut app, |workspace, ctx| {
+            workspace
+                .active_session_view(ctx)
+                .expect("workspace should have an active terminal")
+        });
+
+        let pty_writes: std::rc::Rc<std::cell::RefCell<Vec<Vec<u8>>>> = Default::default();
+        let writes = pty_writes.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal_view, move |_, event, _| {
+                if let crate::terminal::view::Event::WriteBytesToPty { bytes } = event {
+                    writes.borrow_mut().push(bytes.to_vec());
+                }
+            });
+        });
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(&WorkspaceAction::TriggerExternalCtrlTFileSearch, ctx);
+        });
+
+        assert_eq!(*pty_writes.borrow(), vec![vec![0x14]]);
     });
 }
 

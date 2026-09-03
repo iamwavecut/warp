@@ -13730,6 +13730,15 @@ impl Workspace {
             return;
         }
 
+        if query_filter.is_none()
+            && let Some(terminal_view) = self.active_session_view(ctx)
+            && terminal_view.update(ctx, |terminal, ctx| {
+                terminal.maybe_trigger_external_ctrl_r_history_search(ctx)
+            })
+        {
+            return;
+        }
+
         // Close all overlays including chip menus before opening command search
         self.close_all_overlays(ctx);
 
@@ -13802,6 +13811,19 @@ impl Workspace {
         app.view(self.active_tab_pane_group())
             .active_session_view(app)
             .map(|terminal_view_handle| app.view(&terminal_view_handle).input().clone())
+    }
+
+    fn trigger_external_ctrl_t_file_search(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.is_readonly_shared_session_active(ctx) {
+            return;
+        }
+        if let Some(terminal_view) = self.active_session_view(ctx) {
+            terminal_view.update(ctx, |terminal, ctx| {
+                if !terminal.maybe_trigger_external_ctrl_t_file_search(ctx) {
+                    terminal.write_user_bytes_to_pty(vec![0x14], ctx);
+                }
+            });
+        }
     }
 
     fn get_active_session_terminal_model(
@@ -19753,6 +19775,7 @@ impl TypedActionView for Workspace {
                 filter,
                 init_content,
             }) => self.show_command_search(*filter, init_content, ctx),
+            TriggerExternalCtrlTFileSearch => self.trigger_external_ctrl_t_file_search(ctx),
             ImportToPersonalDrive => {
                 if let Some(personal_drive) = UserWorkspaces::as_ref(ctx).personal_drive(ctx) {
                     self.open_import_modal(personal_drive, &None, ctx);

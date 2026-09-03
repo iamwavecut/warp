@@ -285,7 +285,9 @@ use crate::terminal::event::RemoteServerSetupState;
 use crate::terminal::general_settings::GeneralSettings;
 use crate::terminal::grid_size_util::grid_cell_dimensions;
 use crate::terminal::input::decorations::InputBackgroundJobOptions;
-use crate::terminal::input::{CommandExecutionSource, InputAction, InputEmptyStateChangeReason};
+use crate::terminal::input::{
+    CommandExecutionSource, InputAction, InputEmptyStateChangeReason, ShellWidgetApplyMode,
+};
 use crate::terminal::ligature_settings::{LigatureSettings, should_use_ligature_rendering};
 #[cfg(feature = "local_tty")]
 use crate::terminal::local_tty::get_shell_starter;
@@ -705,6 +707,10 @@ const DEFAULT_AI_BLOCK_HEIGHT: f32 = 96.;
 pub const DEFAULT_ASK_AI_AUTOSUGGESTION_TEXT: &str = "What happened here?";
 
 const WARP_MD_PATH: &str = "WARP.md";
+const EXTERNAL_CTRL_R_HISTORY_PLUGIN_TAG: &str = "external_ctrl_r_history";
+const EXTERNAL_CTRL_T_FILE_PLUGIN_TAG: &str = "external_ctrl_t_file";
+const EXTERNAL_CTRL_R_HELPER_COMMAND: &str = "warp_run_external_ctrl_r_widget";
+const EXTERNAL_CTRL_T_HELPER_COMMAND: &str = "warp_run_external_ctrl_t_widget";
 
 pub const LONG_RUNNING_AGENT_REQUESTED_COMMAND_CONTEXT_KEY: &str = "LongRunningRequestedCommand";
 pub const LONG_RUNNING_AGENT_REQUESTED_COMMAND_USER_TOOK_OVER_CONTEXT_KEY: &str =
@@ -7107,6 +7113,73 @@ impl TerminalView {
             .map(|s| s.shell().shell_type())
     }
 
+    pub fn maybe_trigger_external_ctrl_r_history_search(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if self.is_long_running() || self.model.lock().is_alt_screen_active() {
+            return false;
+        }
+        let Some(session_id) = self.active_block_session_id() else {
+            return false;
+        };
+        let detected = self
+            .sessions
+            .as_ref(ctx)
+            .get(session_id)
+            .is_some_and(|session| {
+                session
+                    .shell()
+                    .plugins()
+                    .contains(EXTERNAL_CTRL_R_HISTORY_PLUGIN_TAG)
+            });
+        detected
+            && self.input.update(ctx, |input, ctx| {
+                input.trigger_external_shell_widget_handoff(
+                    EXTERNAL_CTRL_R_HELPER_COMMAND,
+                    ShellWidgetApplyMode::Replace,
+                    false,
+                    ctx,
+                )
+            })
+    }
+
+    pub fn maybe_trigger_external_ctrl_t_file_search(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if self.is_long_running() || self.model.lock().is_alt_screen_active() {
+            return false;
+        }
+        let Some(session_id) = self.active_block_session_id() else {
+            return false;
+        };
+        let Some(session) = self.sessions.as_ref(ctx).get(session_id) else {
+            return false;
+        };
+        if !session
+            .shell()
+            .plugins()
+            .contains(EXTERNAL_CTRL_T_FILE_PLUGIN_TAG)
+        {
+            return false;
+        }
+        let apply_mode = match session.shell().shell_type() {
+            ShellType::Fish => ShellWidgetApplyMode::Replace,
+            ShellType::Bash | ShellType::Zsh | ShellType::PowerShell => {
+                ShellWidgetApplyMode::Splice
+            }
+        };
+        self.input.update(ctx, |input, ctx| {
+            input.trigger_external_shell_widget_handoff(
+                EXTERNAL_CTRL_T_HELPER_COMMAND,
+                apply_mode,
+                true,
+                ctx,
+            )
+        })
+    }
+
     pub fn active_session_path_if_local<C: ModelAsRef>(&self, ctx: &C) -> Option<PathBuf> {
         if self.active_session_is_local(ctx) == Some(true) {
             self.active_block_metadata
@@ -8328,7 +8401,7 @@ impl TerminalView {
 
     /// Writes to the PTY, resets selected blocks and updates scroll position.
     /// Also calls logic to emit a sync event and reports whether bytes were forwarded.
-    fn write_user_bytes_to_pty<B: Into<Cow<'static, [u8]>>>(
+    pub(crate) fn write_user_bytes_to_pty<B: Into<Cow<'static, [u8]>>>(
         &mut self,
         data: B,
         ctx: &mut ViewContext<Self>,
@@ -11906,6 +11979,13 @@ impl TerminalView {
             ModelEvent::HonorPS1OutOfSync => {}
             ModelEvent::Typeahead => {
                 self.handle_typeahead_event(ctx);
+            }
+            ModelEvent::ExternalShellWidgetSelection(data) => {
+                if let Some(session_id) = data.session_id.map(SessionId::from) {
+                    self.input.update(ctx, |input, _| {
+                        input.set_external_shell_widget_selection(session_id, &data.buffer);
+                    });
+                }
             }
             ModelEvent::Handler(AnsiHandlerEvent::InitShell {
                 pending_session_info,

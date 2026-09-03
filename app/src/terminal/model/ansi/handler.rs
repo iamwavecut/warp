@@ -308,6 +308,8 @@ pub trait Handler {
     /// input buffer (the reporting is itself triggered by Warp).
     fn input_buffer(&mut self, _data: InputBufferValue) {}
 
+    fn external_shell_widget_selection(&mut self, _data: ExternalShellWidgetSelectionValue) {}
+
     /// Callback emitted to notify the app that an assisted auto-update can complete.
     fn finish_update(&mut self, _data: FinishUpdateValue) {}
 

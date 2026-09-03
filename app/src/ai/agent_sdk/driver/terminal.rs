@@ -196,6 +196,12 @@ impl TerminalDriver {
         });
     }
 
+    pub(super) fn send_bare_enter_to_cli(&self, ctx: &mut ModelContext<Self>) {
+        self.terminal_view.update(ctx, |terminal, ctx| {
+            terminal.submit_bare_enter_to_cli_agent_pty(ctx);
+        });
+    }
+
     /// Full visible plaintext of `block_id`'s output grid (no ANSI escape sequences).
     pub fn block_output_plaintext(&self, block_id: &BlockId, ctx: &AppContext) -> Option<String> {
         let terminal = self.terminal_view.as_ref(ctx);

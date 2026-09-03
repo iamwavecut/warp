@@ -710,6 +710,38 @@ if [[ -z $WARP_BOOTSTRAPPED ]]; then
   }
   zle -N warp_report_input
 
+  function warp_run_external_ctrl_r_widget () {
+    local result=""
+    case "$_WARP_EXTERNAL_CTRL_R_WIDGET" in
+      fzf-history-widget)
+        result="$(fc -rl 1 \
+          | command -p awk '{ cmd=$0; sub(/^[ \t]*[0-9]+\**[ \t]+/, "", cmd); if (!seen[cmd]++) print cmd }' \
+          | fzf --scheme=history --tiebreak=index +m)"
+        ;;
+      atuin-search|atuin-search-viins|atuin-search-vicmd|_atuin_search_widget)
+        result="$(ATUIN_SHELL=zsh atuin search -i 3>&1 1>&2 2>&3 3>&-)"
+        result="${result#__atuin_accept__:}"
+        ;;
+    esac
+    local warp_escaped_selection="$(warp_escape_json "$result")"
+    warp_send_json_message "{ \"hook\": \"ExternalShellWidgetSelection\", \"value\": { \"buffer\": \"$warp_escaped_selection\", \"session_id\": $WARP_SESSION_ID } }"
+  }
+
+  function warp_run_external_ctrl_t_widget () {
+    local result=""
+    case "$_WARP_EXTERNAL_CTRL_T_WIDGET" in
+      fzf-file-widget)
+        if (( $+functions[__fzf_select] )); then
+          result="$(__fzf_select)"
+        else
+          result="$(__fsel)"
+        fi
+        ;;
+    esac
+    local warp_escaped_selection="$(warp_escape_json "$result")"
+    warp_send_json_message "{ \"hook\": \"ExternalShellWidgetSelection\", \"value\": { \"buffer\": \"$warp_escaped_selection\", \"session_id\": $WARP_SESSION_ID } }"
+  }
+
   function clear() {
       warp_send_json_message "{\"hook\": \"Clear\", \"value\": {\"session_id\": $WARP_SESSION_ID}}"
   }
@@ -1245,7 +1277,8 @@ esac
   # See https://zsh.sourceforge.io/Doc/Release/Functions.html for more context
   # on the zshaddhistory hook.
   _warp_zshaddhistory() {
-    _is_warp_generator_command "$1"
+    _is_warp_generator_command "$1" && [[ "$1" != *"warp_run_external_ctrl_r_widget"* ]] && \
+      [[ "$1" != *"warp_run_external_ctrl_t_widget"* ]]
   }
 
   # Register this zshaddhistory hook after the user's RC files have been sourced,
@@ -1261,6 +1294,32 @@ esac
   fi
 
   local -a shell_plugins
+
+  _WARP_EXTERNAL_CTRL_R_WIDGET=""
+  warp_ctrl_r_binding="$(bindkey -M main '^R' 2>/dev/null)"
+  if [[ "$warp_ctrl_r_binding" == '"^R" '* ]]; then
+    warp_ctrl_r_widget="${warp_ctrl_r_binding#\"^R\" }"
+    case "$warp_ctrl_r_widget" in
+      fzf-history-widget|atuin-search|atuin-search-viins|atuin-search-vicmd|_atuin_search_widget)
+        _WARP_EXTERNAL_CTRL_R_WIDGET="$warp_ctrl_r_widget"
+        shell_plugins+=(external_ctrl_r_history)
+        ;;
+    esac
+  fi
+
+  _WARP_EXTERNAL_CTRL_T_WIDGET=""
+  warp_ctrl_t_binding="$(bindkey -M main '^T' 2>/dev/null)"
+  if [[ "$warp_ctrl_t_binding" == '"^T" '* ]]; then
+    warp_ctrl_t_widget="${warp_ctrl_t_binding#\"^T\" }"
+    case "$warp_ctrl_t_widget" in
+      fzf-file-widget)
+        if (( $+functions[__fzf_select] )) || (( $+functions[__fsel] )); then
+          _WARP_EXTERNAL_CTRL_T_WIDGET="$warp_ctrl_t_widget"
+          shell_plugins+=(external_ctrl_t_file)
+        fi
+        ;;
+    esac
+  fi
 
   if [[ ${precmd_functions[(I)_p9k_precmd]} != 0 ]]; then
     # The variable P9K_VERSION was added in the first version of p10k that

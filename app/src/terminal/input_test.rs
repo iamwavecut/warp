@@ -9,6 +9,7 @@ use crate::ai::blocklist::{AIQueryHistory, BlocklistAIPermissions};
 use crate::ai::execution_profiles::profiles::AIExecutionProfilesModel;
 use crate::ai::harness_availability::HarnessAvailabilityModel;
 use crate::ai::llms::LLMPreferences;
+use crate::ai::local_agent_registry::LocalAgentRegistry;
 use crate::ai::mcp::gallery::MCPGalleryManager;
 use crate::ai::mcp::templatable_manager::TemplatableMCPServerManager;
 use crate::ai::outline::RepoOutlines;
@@ -85,6 +86,8 @@ use warp_util::standardized_path::StandardizedPath;
 use unindent::Unindent;
 
 #[cfg(feature = "voice_input")]
+use crate::voice::transcriber::VoiceTranscriber;
+#[cfg(feature = "voice_input")]
 use voice_input::VoiceInputToggledFrom;
 use warpui::platform::WindowStyle;
 use warpui::{App, ReadModel, UpdateView, WindowId};
@@ -98,6 +101,98 @@ use crate::context_chips::prompt::Prompt;
 use crate::terminal::general_settings::UserDefaultShellUnsupportedBannerState;
 use crate::terminal::resizable_data::ResizableData;
 use crate::terminal::view::inline_banner::ByoLlmAuthBannerSessionState;
+
+fn pending_ctrl_r_handoff() -> PendingShellWidgetHandoff {
+    PendingShellWidgetHandoff {
+        session_id: SessionId::from(1),
+        original_buffer: "draft".to_string(),
+        selection: None,
+        block_id: BlockId::new(),
+        apply_mode: ShellWidgetApplyMode::Replace,
+        cursor_offset: None,
+    }
+}
+
+#[test]
+fn matching_shell_widget_selection_replaces_ctrl_r_draft() {
+    let mut handoff = pending_ctrl_r_handoff();
+    handoff.maybe_apply_selection(SessionId::from(1), "echo selected");
+    assert_eq!(handoff.restore_text(), "echo selected");
+}
+
+#[test]
+fn stale_or_cancelled_shell_widget_selection_keeps_original_draft() {
+    let mut stale = pending_ctrl_r_handoff();
+    stale.maybe_apply_selection(SessionId::from(2), "echo selected");
+    assert_eq!(stale.restore_text(), "draft");
+
+    let mut cancelled = pending_ctrl_r_handoff();
+    cancelled.maybe_apply_selection(SessionId::from(1), "");
+    assert_eq!(cancelled.restore_text(), "draft");
+}
+
+fn shell_widget_user_block(command: &str) -> BlockType {
+    BlockType::User(UserBlockCompleted {
+        index: BlockIndex::zero(),
+        serialized_block: Arc::new(SerializedBlock::new_for_test(
+            command.as_bytes().to_vec(),
+            vec![],
+        )),
+        command: command.to_owned(),
+        command_with_obfuscated_secrets: command.to_owned(),
+        output_truncated: String::new(),
+        output_truncated_with_obfuscated_secrets: String::new(),
+        was_part_of_agent_interaction: false,
+        started_at: None,
+        num_output_lines: 0,
+        num_output_lines_truncated: 0,
+    })
+}
+
+#[test]
+fn ctrl_t_shell_widget_selection_splices_at_the_original_cursor() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |view, _| view.input().clone());
+        let block_id = BlockId::new();
+
+        input.update(&mut app, |input, ctx| {
+            input.pending_shell_widget_handoff = Some(PendingShellWidgetHandoff {
+                session_id: SessionId::from(1),
+                original_buffer: "echo START END".to_owned(),
+                selection: Some("FILE.txt ".to_owned()),
+                block_id: block_id.clone(),
+                apply_mode: ShellWidgetApplyMode::Splice,
+                cursor_offset: Some(ByteOffset::from(11)),
+            });
+            input.deferred_remote_operations.latest_block_id = BlockId::new();
+            input.handle_block_completed_event(
+                BlockCompletedEvent {
+                    block_latency_data: None,
+                    block_type: shell_widget_user_block(" warp_run_external_ctrl_t_widget"),
+                    num_secrets_obfuscated: 0,
+                    block_index: BlockIndex::zero(),
+                    block_id,
+                    session_id: None,
+                    restored_block_was_local: None,
+                },
+                ctx,
+            );
+        });
+
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "echo START FILE.txt END");
+            assert_eq!(
+                input
+                    .editor()
+                    .as_ref(ctx)
+                    .end_byte_index_of_last_selection(ctx),
+                ByteOffset::from("echo START FILE.txt ".len())
+            );
+        });
+    });
+}
 use crate::terminal::writeable_pty::command_history::update_command_history;
 use crate::{GlobalResourceHandles, GlobalResourceHandlesProvider};
 
@@ -147,6 +242,7 @@ pub fn initialize_app(app: &mut App) {
     });
     app.add_singleton_model(|_| CLIAgentSessionsModel::new());
     app.add_singleton_model(|_| ActiveAgentViewsModel::new());
+    app.add_singleton_model(LocalAgentRegistry::new_registered);
     app.add_singleton_model(AgentNotificationsModel::new);
     app.add_singleton_model(BlocklistAIPermissions::new);
     app.add_singleton_model(|_| AuthStateProvider::new_for_test());
@@ -163,6 +259,8 @@ pub fn initialize_app(app: &mut App) {
     app.add_singleton_model(RepoOutlines::new_for_test);
     #[cfg(feature = "voice_input")]
     app.add_singleton_model(voice_input::VoiceInput::new);
+    #[cfg(feature = "voice_input")]
+    app.add_singleton_model(|_| VoiceTranscriber::disabled());
     app.add_singleton_model(|ctx| {
         CodebaseIndexManager::new_for_test(ServerApiProvider::as_ref(ctx).get(), ctx)
     });

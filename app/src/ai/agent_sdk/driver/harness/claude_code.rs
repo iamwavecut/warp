@@ -300,6 +300,18 @@ impl HarnessRunner for ClaudeHarnessRunner {
             .map_err(|_| anyhow::anyhow!("Agent driver dropped while sending /exit"))
     }
 
+    async fn exit_followup(&self, foreground: &ModelSpawner<AgentDriver>) -> Result<()> {
+        let terminal_driver = self.terminal_driver.clone();
+        foreground
+            .spawn(move |_, ctx| {
+                terminal_driver.update(ctx, |driver, ctx| {
+                    driver.send_bare_enter_to_cli(ctx);
+                });
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("Agent driver dropped while sending exit follow-up"))
+    }
+
     async fn handle_session_update(&self, _foreground: &ModelSpawner<AgentDriver>) -> Result<()> {
         self.persist_local_state(LocalHarnessSavePoint::SessionStart, false)
     }

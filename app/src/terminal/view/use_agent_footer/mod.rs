@@ -684,6 +684,16 @@ impl TerminalView {
         self.write_cli_agent_text_then_submit(text_bytes, strategy, ctx);
     }
 
+    #[cfg(feature = "local_tty")]
+    pub(crate) fn submit_bare_enter_to_cli_agent_pty(&mut self, ctx: &mut ViewContext<Self>) {
+        if CLIAgentSessionsModel::as_ref(ctx)
+            .session(self.view_id)
+            .is_some()
+        {
+            self.write_user_bytes_to_pty(b"\r".to_vec(), ctx);
+        }
+    }
+
     /// Simulates clipboard image paste for each pending image attachment by
     /// writing the image to the system clipboard and sending Ctrl+V to the PTY.
     /// After all images are pasted, the text prompt is sent via the normal

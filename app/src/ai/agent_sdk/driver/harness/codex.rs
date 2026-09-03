@@ -256,6 +256,18 @@ impl HarnessRunner for CodexHarnessRunner {
             .map_err(|_| anyhow::anyhow!("Agent driver dropped while sending /exit"))
     }
 
+    async fn exit_followup(&self, foreground: &ModelSpawner<AgentDriver>) -> Result<()> {
+        let terminal_driver = self.terminal_driver.clone();
+        foreground
+            .spawn(move |_, ctx| {
+                terminal_driver.update(ctx, |driver, ctx| {
+                    driver.send_bare_enter_to_cli(ctx);
+                });
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("Agent driver dropped while sending exit follow-up"))
+    }
+
     /// Capture the codex session ID from the `SessionStart` event picked up by the `CLIAgentSessionsModel`.
     ///
     /// Relies on codex hooks being set up to emit this event correctly.

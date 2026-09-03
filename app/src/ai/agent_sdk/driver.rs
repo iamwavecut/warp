@@ -17,7 +17,7 @@ use anyhow::Context as _;
 use futures::{
     FutureExt as _,
     channel::oneshot,
-    future::{self, Either, join_all},
+    future::{self, Either, FusedFuture, join_all},
 };
 use itertools::Itertools as _;
 use oneshot::{Canceled, Receiver, Sender};
@@ -37,6 +37,9 @@ use warpui::{
 };
 
 use crate::ai::agent::api::direct_openai::{self, CustomProviderRoute};
+use crate::ai::agent_sdk::driver::harness::exit_escalation::{
+    ExitEscalation, ExitEscalationAction, ExitEscalationEvent,
+};
 use crate::ai::document::ai_document_model::{AIDocumentModel, AIDocumentModelEvent};
 use crate::ai::llms::{LLMId, LLMPreferences};
 use crate::ai::local_named_agents::profile_sync_id;
@@ -98,6 +101,8 @@ use terminal::TerminalDriverEvent;
 
 const MCP_SERVER_STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const HARNESS_SAVE_INTERVAL: Duration = Duration::from_secs(30);
+const HARNESS_EXIT_FOLLOWUP_DELAY: Duration = Duration::from_secs(1);
+const HARNESS_EXIT_TIMEOUT_AFTER_FOLLOWUP: Duration = Duration::from_secs(14);
 /// Timeout for individual harness auth preflight commands.
 const PREFLIGHT_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const SETUP_FAILED_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
@@ -378,6 +383,8 @@ pub enum AgentDriverError {
         /// Matching row(s) from the harness block, trimmed and capped.
         excerpt: String,
     },
+    #[error("Harness '{harness}' did not exit within the local graceful shutdown window")]
+    HarnessExitTimedOut { harness: String },
     #[error("Harness '{harness}' final local save failed: {source}")]
     HarnessFinalSaveFailed {
         harness: String,
@@ -1940,11 +1947,13 @@ impl AgentDriver {
                         .context("Failed to save harness conversation (periodic)"));
                 }
                 _ = harness_exit_rx => {
-                    log::debug!("Requesting harness exit");
-                    report_if_error!(runner
-                        .exit(foreground)
-                        .await
-                        .context("Failed to exit harness"));
+                    break Self::exit_harness_bounded(
+                        runner.as_ref(),
+                        &harness_name,
+                        ExitEscalationEvent::ShutdownRequested,
+                        &mut command_handle,
+                        foreground,
+                    ).await;
                 }
                 detected = scanner_fut => {
                     if let Some(error) = detected {
@@ -1976,13 +1985,14 @@ impl AgentDriver {
                                 error.excerpt,
                             );
                         } else {
-                            report_if_error!(runner
-                                .exit(foreground)
-                                .await
-                                .context(
-                                    "Failed to exit harness after runtime failure detection",
-                                ));
                             detected_runtime_failure = Some(error);
+                            break Self::exit_harness_bounded(
+                                runner.as_ref(),
+                                &harness_name,
+                                ExitEscalationEvent::ScannerDetected,
+                                &mut command_handle,
+                                foreground,
+                            ).await;
                         }
                     }
                     // When the schedule exhausts without a hit, the `Fuse`
@@ -2064,6 +2074,70 @@ impl AgentDriver {
                 exit_code: exit_code.value(),
             })
         }
+    }
+
+    async fn exit_harness_bounded(
+        runner: &dyn harness::HarnessRunner,
+        harness_name: &str,
+        start_event: ExitEscalationEvent,
+        mut command_handle: &mut (
+                 impl FusedFuture<Output = Result<warp_core::command::ExitCode, AgentDriverError>>
+                 + Unpin
+             ),
+        foreground: &ModelSpawner<Self>,
+    ) -> Result<warp_core::command::ExitCode, AgentDriverError> {
+        let mut escalation = ExitEscalation::new();
+        if escalation.on_event(start_event) != ExitEscalationAction::SendExit {
+            return Err(AgentDriverError::InvalidRuntimeState);
+        }
+        report_if_error!(
+            runner
+                .exit(foreground)
+                .await
+                .context("Failed to exit harness")
+        );
+
+        let resolved = futures::select! {
+            exit_code = command_handle => Some(exit_code),
+            _ = warpui::r#async::Timer::after(HARNESS_EXIT_FOLLOWUP_DELAY).fuse() => None,
+        };
+        if let Some(exit_code) = resolved {
+            let _ = escalation.on_event(ExitEscalationEvent::CommandExited);
+            return exit_code;
+        }
+
+        if escalation.on_event(ExitEscalationEvent::FollowupDeadlineElapsed)
+            != ExitEscalationAction::SendFollowup
+        {
+            return Err(AgentDriverError::InvalidRuntimeState);
+        }
+        report_if_error!(
+            runner
+                .exit_followup(foreground)
+                .await
+                .context("Failed to send harness exit follow-up")
+        );
+
+        let resolved = futures::select! {
+            exit_code = command_handle => Some(exit_code),
+            _ = warpui::r#async::Timer::after(HARNESS_EXIT_TIMEOUT_AFTER_FOLLOWUP).fuse() => None,
+        };
+        if let Some(exit_code) = resolved {
+            let _ = escalation.on_event(ExitEscalationEvent::CommandExited);
+            return exit_code;
+        }
+
+        if escalation.on_event(ExitEscalationEvent::TimeoutElapsed)
+            != ExitEscalationAction::FinishTimedOut
+        {
+            return Err(AgentDriverError::InvalidRuntimeState);
+        }
+        log::warn!(
+            "Harness '{harness_name}' did not exit after /exit and Enter; ending the local driver without force-killing the process"
+        );
+        Err(AgentDriverError::HarnessExitTimedOut {
+            harness: harness_name.to_owned(),
+        })
     }
 
     /// Configure the active terminal session with the specified profile.

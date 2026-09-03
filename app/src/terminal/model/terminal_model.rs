@@ -51,7 +51,8 @@ use warpui::r#async::executor::Background;
 use warpui::image_cache::ImageType;
 
 use super::ansi::{
-    InputBufferValue, Mode, PendingHook, TmuxInstallFailedInfo, WarpificationUnavailableReason,
+    ExternalShellWidgetSelectionValue, InputBufferValue, Mode, PendingHook, TmuxInstallFailedInfo,
+    WarpificationUnavailableReason,
 };
 use super::block::{
     AgentInteractionMetadata, Block, BlockId, BlockMetadata, BlockSize, BlockState,
@@ -2625,6 +2626,7 @@ pub enum HandlerEvent {
     CommandFinished {
         command_type: CommandType,
     },
+    ExternalShellWidgetSelection(ExternalShellWidgetSelectionValue),
     PromptStart,
     RPromptStart,
     PromptEnd,
@@ -3228,6 +3230,10 @@ impl ansi::Handler for TerminalModel {
 
     fn input_buffer(&mut self, data: InputBufferValue) {
         delegate!(self.input_buffer(data));
+    }
+
+    fn external_shell_widget_selection(&mut self, data: ExternalShellWidgetSelectionValue) {
+        self.emit_handler_event(HandlerEvent::ExternalShellWidgetSelection(data));
     }
 
     fn init_subshell(&mut self, data: InitSubshellValue) {

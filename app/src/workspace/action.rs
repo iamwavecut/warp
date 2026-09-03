@@ -318,6 +318,7 @@ pub enum WorkspaceAction {
     ClickedAIAssistantIcon,
     ToggleKeybindingsPage,
     ShowCommandSearch(CommandSearchOptions),
+    TriggerExternalCtrlTFileSearch,
     CreatePersonalNotebook,
     ImportToPersonalDrive,
     CreatePersonalWorkflow,
@@ -859,6 +860,7 @@ impl WorkspaceAction {
             | ToggleAIAssistant
             | ToggleKeybindingsPage
             | ShowCommandSearch(_)
+            | TriggerExternalCtrlTFileSearch
             | ToggleMouseReporting
             | ToggleScrollReporting
             | ToggleFocusReporting

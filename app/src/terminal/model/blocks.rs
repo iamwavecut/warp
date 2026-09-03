@@ -1406,6 +1406,15 @@ impl BlockList {
         self.is_executing_oz_environment_startup_commands
     }
 
+    pub fn hide_block(&mut self, block_id: &BlockId) {
+        let Some(block) = self.mut_block_from_id(block_id) else {
+            return;
+        };
+        block.hide();
+        self.update_blocks_and_sumtree(None, None, |_| {}, |_| {});
+        self.event_proxy.send_wakeup_event();
+    }
+
     pub fn set_is_executing_oz_environment_startup_commands(
         &mut self,
         is_executing_startup_commands: bool,

@@ -63,6 +63,9 @@ pub(super) enum DProtoHook {
     InputBuffer {
         value: InputBufferValue,
     },
+    ExternalShellWidgetSelection {
+        value: ExternalShellWidgetSelectionValue,
+    },
     Clear {
         value: ClearValue,
     },
@@ -104,6 +107,7 @@ impl DProtoHook {
             DProtoHook::SSH { .. } => "SSH",
             DProtoHook::InitShell { .. } => "InitShell",
             DProtoHook::InputBuffer { .. } => "InputBuffer",
+            DProtoHook::ExternalShellWidgetSelection { .. } => "ExternalShellWidgetSelection",
             DProtoHook::Clear { .. } => "Clear",
             DProtoHook::FinishUpdate { .. } => "FinishUpdate",
             DProtoHook::InitSubshell { .. } => "InitSubshell",
@@ -129,6 +133,9 @@ impl DProtoHook {
             DProtoHook::CommandFinished { value } => value.session_id.map(SessionId::from),
             DProtoHook::Bootstrapped { value } => value.session_id.map(SessionId::from),
             DProtoHook::InputBuffer { value } => value.session_id.map(SessionId::from),
+            DProtoHook::ExternalShellWidgetSelection { value } => {
+                value.session_id.map(SessionId::from)
+            }
             DProtoHook::Clear { value } => value.session_id.map(SessionId::from),
             DProtoHook::FinishUpdate { value } => value.session_id.map(SessionId::from),
             DProtoHook::PreInteractiveSSHSession { value } => value.session_id.map(SessionId::from),
@@ -154,6 +161,7 @@ impl DProtoHook {
             | DProtoHook::SSH { .. }
             | DProtoHook::InitShell { .. }
             | DProtoHook::InputBuffer { .. }
+            | DProtoHook::ExternalShellWidgetSelection { .. }
             | DProtoHook::Clear { .. }
             | DProtoHook::InitSubshell { .. }
             | DProtoHook::InitSsh { .. }
@@ -189,6 +197,9 @@ impl DProtoHook {
                 value: Default::default(),
             }),
             "InputBuffer" => Some(DProtoHook::InputBuffer {
+                value: Default::default(),
+            }),
+            "ExternalShellWidgetSelection" => Some(DProtoHook::ExternalShellWidgetSelection {
                 value: Default::default(),
             }),
             "Clear" => Some(DProtoHook::Clear {
@@ -381,6 +392,11 @@ impl DProtoHook {
                 _ => {
                     log::warn!("Tried to add unknown field {key} to InputBuffer hook");
                 }
+            },
+            DProtoHook::ExternalShellWidgetSelection { value } => match key.as_ref() {
+                "buffer" => value.buffer = v,
+                "session_id" => value.session_id = v.parse::<u64>().ok(),
+                _ => log::warn!("Tried to add unknown field {key} to external widget hook"),
             },
             DProtoHook::InitSubshell { value } => match key.as_ref() {
                 "shell" => value.shell = v,
@@ -874,6 +890,23 @@ pub struct InputBufferValue {
     pub buffer: String,
     #[serde(default)]
     pub session_id: HookSessionId,
+}
+
+/// Selection reported by an external shell widget. An empty buffer means cancellation.
+#[derive(Default, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ExternalShellWidgetSelectionValue {
+    pub buffer: String,
+    #[serde(default)]
+    pub session_id: HookSessionId,
+}
+
+impl std::fmt::Debug for ExternalShellWidgetSelectionValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalShellWidgetSelectionValue")
+            .field("buffer", &"<redacted>")
+            .field("session_id", &self.session_id)
+            .finish()
+    }
 }
 
 /// Received from the pty when the terminal screen should be cleared (e.g. via

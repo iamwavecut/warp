@@ -1,4 +1,5 @@
 use crate::interaction_sources::ImageProtocol;
+use crate::terminal::model::ansi::ExternalShellWidgetSelectionValue;
 use crate::terminal::model::session::Sessions;
 
 use crate::terminal::event::{
@@ -171,6 +172,9 @@ impl ModelEventDispatcher {
                 CommandType::User => ModelEvent::Handler(AnsiHandlerEvent::UserCommandFinished),
                 _ => return,
             },
+            Event::Handler(HandlerEvent::ExternalShellWidgetSelection(data)) => {
+                ModelEvent::ExternalShellWidgetSelection(data)
+            }
             Event::Handler(HandlerEvent::SetMode {
                 mode: ansi::Mode::BracketedPaste,
             }) => ModelEvent::Handler(AnsiHandlerEvent::SetBracketedPaste),
@@ -458,6 +462,7 @@ pub enum ModelEvent {
     /// the running program. The shell stores these characters, inserts them into its internal line
     /// buffer, and re-echoes them after Precmd.
     Typeahead,
+    ExternalShellWidgetSelection(ExternalShellWidgetSelectionValue),
     /// Events that correspond to a specific ansi handler hook while parsing PTY output.
     ///
     /// These events make it possible for other models/views to subscribe to PTY output events that

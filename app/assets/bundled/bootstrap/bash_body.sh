@@ -970,6 +970,32 @@ if [ -z "$WARP_BOOTSTRAPPED" ]; then
         READLINE_LINE=""
     }
 
+    warp_run_external_ctrl_r_widget () {
+        local result=""
+        case "$_WARP_EXTERNAL_CTRL_R_WIDGET" in
+          __fzf_history__)
+            result="$(__fzf_history__)"
+            ;;
+          __atuin_history)
+            result="$(ATUIN_SHELL=bash atuin search -i 3>&1 1>&2 2>&3 3>&-)"
+            result="${result#__atuin_accept__:}"
+            ;;
+        esac
+        local warp_escaped_selection="$(warp_escape_json "$result")"
+        warp_send_json_message "{ \"hook\": \"ExternalShellWidgetSelection\", \"value\": { \"buffer\": \"$warp_escaped_selection\", \"session_id\": $WARP_SESSION_ID } }"
+    }
+
+    warp_run_external_ctrl_t_widget () {
+        local result=""
+        case "$_WARP_EXTERNAL_CTRL_T_WIDGET" in
+          fzf-file-widget)
+            result="$(__fzf_select__)"
+            ;;
+        esac
+        local warp_escaped_selection="$(warp_escape_json "$result")"
+        warp_send_json_message "{ \"hook\": \"ExternalShellWidgetSelection\", \"value\": { \"buffer\": \"$warp_escaped_selection\", \"session_id\": $WARP_SESSION_ID } }"
+    }
+
     # Check whether the prompt-related variables have OSC prompt marker sequences,
     # and if not, wrap them with the appropriate markers so that we can direct the
     # prompt bytes to the appropriate grids.
@@ -1373,13 +1399,13 @@ esac
     # rcfiles.
     USER_HISTCONTROL="$HISTCONTROL"
 
-    # Add a pattern to ignore in-band commands in shell history, while preserving the user's
+    # Add patterns to ignore in-band commands in shell history, while preserving the user's
     # HISTIGNORE value which may been set in an RC file sourced above. It is important to
     # ensure that this happens _after_ the user's RC files have been sourced.
     if [[ ! -z $HISTIGNORE ]]; then
-        HISTIGNORE="*warp_run_generator_command*:$HISTIGNORE"
+        HISTIGNORE="*warp_run_generator_command*:*warp_run_external_ctrl_r_widget*:*warp_run_external_ctrl_t_widget*:$HISTIGNORE"
     else
-        HISTIGNORE="*warp_run_generator_command*"
+        HISTIGNORE="*warp_run_generator_command*:*warp_run_external_ctrl_r_widget*:*warp_run_external_ctrl_t_widget*"
     fi
 
     # If the user has PROMPT_COMMAND set in their bootstrap scripts,
@@ -1493,6 +1519,33 @@ esac
     shopt -s histappend
 
     shell_plugins=()
+
+    _WARP_EXTERNAL_CTRL_R_WIDGET=""
+    if [ "$WARP_IN_MSYS2" = false ]; then
+      warp_ctrl_r_binding="$(bind -X 2>/dev/null | command -p sed -n 's/^"\\C-r"[ :] *"\(.*\)"$/\1/p')"
+      case "$warp_ctrl_r_binding" in
+        __fzf_history__|__atuin_history)
+          _WARP_EXTERNAL_CTRL_R_WIDGET="$warp_ctrl_r_binding"
+          shell_plugins+=(external_ctrl_r_history)
+          ;;
+      esac
+      if [ -z "$_WARP_EXTERNAL_CTRL_R_WIDGET" ] && [ "$__atuin_bind_ctrl_r" = true ] &&
+        declare -F __atuin_history >/dev/null; then
+        _WARP_EXTERNAL_CTRL_R_WIDGET="__atuin_history"
+        shell_plugins+=(external_ctrl_r_history)
+      fi
+
+      _WARP_EXTERNAL_CTRL_T_WIDGET=""
+      warp_ctrl_t_binding="$(bind -X 2>/dev/null | command -p sed -n 's/^"\\C-t"[ :] *"\(.*\)"$/\1/p')"
+      case "$warp_ctrl_t_binding" in
+        fzf-file-widget)
+          if declare -F __fzf_select__ >/dev/null; then
+            _WARP_EXTERNAL_CTRL_T_WIDGET="$warp_ctrl_t_binding"
+            shell_plugins+=(external_ctrl_t_file)
+          fi
+          ;;
+      esac
+    fi
 
     function warp_bootstrapped () {
         local aliases="`alias`"

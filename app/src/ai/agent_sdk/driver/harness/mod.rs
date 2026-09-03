@@ -25,6 +25,7 @@ use super::{AgentDriver, AgentDriverError};
 
 pub(crate) mod claude_code;
 mod codex;
+pub(crate) mod exit_escalation;
 mod gemini;
 mod json_utils;
 mod local_resume;
@@ -309,6 +310,12 @@ pub(crate) trait HarnessRunner: Send + Sync {
 
     /// Gracefully ask the harness to exit.
     async fn exit(&self, foreground: &ModelSpawner<AgentDriver>) -> Result<()>;
+
+    /// Retry a dropped exit write or accept a default confirmation after [`Self::exit`].
+    async fn exit_followup(&self, _foreground: &ModelSpawner<AgentDriver>) -> Result<()> {
+        Ok(())
+    }
+
     /// Handle a CLI session update such as a prompt submit or completed tool use.
     async fn handle_session_update(&self, _foreground: &ModelSpawner<AgentDriver>) -> Result<()> {
         Ok(())
