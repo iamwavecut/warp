@@ -131,6 +131,14 @@ pub struct FileMCPWatcher {
     /// Tracks how many provider config files remain to be parsed for each agent environment repo.
     /// When the count reaches zero, an agent-environment scan-complete event is emitted.
     agent_env_pending: HashMap<PathBuf, usize>,
+    /// Number of global provider config snapshots still being parsed at startup.
+    initial_global_pending: usize,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum PendingScan {
+    AgentEnvRepo(PathBuf),
+    InitialGlobal,
 }
 
 impl FileMCPWatcher {
@@ -181,11 +189,14 @@ impl FileMCPWatcher {
         );
 
         let mut home_provider_watchers = HashMap::new();
+        let mut initial_global_pending = 0;
         if let Some(mcp_config_path) = warp_managed_mcp_config_path() {
+            initial_global_pending += 1;
             Self::spawn_config_parse(
                 mcp_config_path.config_path,
                 mcp_config_path.root_path,
                 MCPProvider::Warp,
+                true,
                 ctx,
             );
         }
@@ -195,15 +206,12 @@ impl FileMCPWatcher {
                 if provider == MCPProvider::Warp {
                     continue;
                 }
+                if let Some(config_path) = home_config_file_path(provider) {
+                    initial_global_pending += 1;
+                    Self::spawn_config_parse(config_path, home_dir.clone(), provider, true, ctx);
+                }
                 match home_subdir_to_watch(provider) {
-                    None => {
-                        // Initial scan of config files for providers whose config lives directly in
-                        // home (i.e. ~/.claude.json). HomeDirectoryWatcher handles incremental updates.
-                        let Some(config_path) = home_config_file_path(provider) else {
-                            continue;
-                        };
-                        Self::spawn_config_parse(config_path, home_dir.clone(), provider, ctx);
-                    }
+                    None => {}
                     Some(subdir) => {
                         // For providers whose home config lives in a subdir (e.g. ~/.codex for Codex)
                         // start watching the subdir for file-based MCP servers, if it exists.
@@ -227,6 +235,7 @@ impl FileMCPWatcher {
             home_provider_watchers,
             project_repo_watchers: HashSet::new(),
             agent_env_pending: HashMap::new(),
+            initial_global_pending,
         }
     }
 
@@ -547,17 +556,26 @@ impl FileMCPWatcher {
         config_path: PathBuf,
         root_path: PathBuf,
         provider: MCPProvider,
+        initial_global: bool,
         ctx: &mut ModelContext<Self>,
     ) {
         let root_path_for_callback = root_path.clone();
         let _ = ctx.spawn(
             async move { parse_mcp_config_file(&config_path, provider).await },
-            move |_me, parsed, ctx| {
+            move |me, parsed, ctx| {
                 ctx.emit(FileMCPWatcherEvent::ConfigParsed {
                     root_path: root_path_for_callback,
                     provider,
                     servers: parsed,
                 });
+                if initial_global {
+                    me.initial_global_pending = me.initial_global_pending.saturating_sub(1);
+                    if me.initial_global_pending == 0 {
+                        ctx.emit(FileMCPWatcherEvent::ScanComplete(
+                            PendingScan::InitialGlobal,
+                        ));
+                    }
+                }
             },
         );
     }
@@ -586,9 +604,9 @@ impl FileMCPWatcher {
                     if *count == 0 {
                         // If we've parsed all MCP config files for the agent environment repo, emit a scan-complete event.
                         me.agent_env_pending.remove(&repo_path_for_countdown);
-                        ctx.emit(FileMCPWatcherEvent::AgentEnvMcpScanComplete {
-                            repo_path: repo_path_for_countdown,
-                        });
+                        ctx.emit(FileMCPWatcherEvent::ScanComplete(
+                            PendingScan::AgentEnvRepo(repo_path_for_countdown),
+                        ));
                     }
                 }
             },
@@ -738,8 +756,8 @@ pub enum FileMCPWatcherEvent {
         root_path: PathBuf,
         provider: MCPProvider,
     },
-    /// All provider config files for an agent environment repo have been parsed.
-    AgentEnvMcpScanComplete { repo_path: PathBuf },
+    /// All config files belonging to a startup or environment scan have been parsed.
+    ScanComplete(PendingScan),
 }
 
 impl Entity for FileMCPWatcher {

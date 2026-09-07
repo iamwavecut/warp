@@ -811,6 +811,14 @@ impl AgentInputFooter {
             .is_some()
     }
 
+    pub(crate) fn select_file(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.is_cli_agent_session_active(ctx) {
+            self.select_cli_file(ctx);
+        } else {
+            ctx.emit(AgentInputFooterEvent::SelectFile);
+        }
+    }
+
     fn select_cli_file(&mut self, ctx: &mut ViewContext<Self>) {
         let window_id = ctx.window_id();
         let view_id = ctx.view_id();
@@ -1896,14 +1904,7 @@ impl TypedActionView for AgentInputFooter {
                 }
             }
             AgentInputFooterAction::SelectFile => {
-                // Fork based on CLI agent session: in CLI mode, open a file
-                // picker and insert/write the path; in normal mode, use the
-                // standard AI file attachment flow.
-                if self.is_cli_agent_session_active(ctx) {
-                    self.select_cli_file(ctx);
-                } else {
-                    ctx.emit(AgentInputFooterEvent::SelectFile);
-                }
+                self.select_file(ctx);
             }
             AgentInputFooterAction::InsertFilePath(path) => {
                 let path_with_space = format!("{path} ");

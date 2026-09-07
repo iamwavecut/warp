@@ -24974,6 +24974,7 @@ impl TypedActionView for TerminalView {
             | LoadAgentModeConversation
             | DeleteAttachment { .. }
             | WriteCodebaseIndex
+            | AttachFile
             | ToggleAutoexecuteMode
             | ToggleQueueNextPrompt
             | ToggleTodoPopup
@@ -25644,6 +25645,20 @@ impl TypedActionView for TerminalView {
             }
             WriteCodebaseIndex => {
                 self.write_codebase_index(ctx);
+            }
+            AttachFile => {
+                let agent_state = self.agent_view_controller.as_ref(ctx).agent_view_state();
+                let is_local_agent = agent_state.is_fullscreen() || agent_state.is_inline();
+                let is_cli_agent = CLIAgentSessionsModel::as_ref(ctx)
+                    .session(self.view_id)
+                    .is_some();
+                let is_not_shared = matches!(
+                    self.model.lock().shared_session_status(),
+                    SharedSessionStatus::NotShared
+                );
+                if (is_local_agent || is_cli_agent) && is_not_shared {
+                    self.input.update(ctx, |input, ctx| input.attach_file(ctx));
+                }
             }
             ToggleAutoexecuteMode => {
                 // Cloud (ambient) agent conversations run with fast-forward conceptually

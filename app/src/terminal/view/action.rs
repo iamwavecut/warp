@@ -368,6 +368,7 @@ pub enum TerminalAction {
         index: usize,
     },
     WriteCodebaseIndex,
+    AttachFile,
     ToggleAutoexecuteMode,
     ToggleQueueNextPrompt,
     CodebaseIndexSpeedbumpBanner(CodebaseIndexSpeedbumpBannerAction),
@@ -681,6 +682,7 @@ impl fmt::Debug for TerminalAction {
             ShowWarpifySettings => write!(f, "ShowWarpifySettings"),
             DeleteAttachment { index } => write!(f, "DeleteAttachment({index:?})"),
             WriteCodebaseIndex => write!(f, "PersistCodebaseIndex"),
+            AttachFile => write!(f, "AttachFile"),
             ToggleAutoexecuteMode => write!(f, "ToggleAutoexecuteMode"),
             ToggleQueueNextPrompt => write!(f, "ToggleQueueNextPrompt"),
             CodebaseIndexSpeedbumpBanner(action) => {

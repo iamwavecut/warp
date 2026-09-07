@@ -2558,6 +2558,9 @@ impl SelectableElement for FormattedTextElement {
                 let line = text_frame.lines().get(text_selection_bound.row_index)?;
                 let first_glyph = line.first_glyph()?;
                 let last_glyph = line.last_glyph()?;
+                if first_glyph.index > last_glyph.index {
+                    return None;
+                }
                 // If we clicked to the right of a line, the text_selection_bound's glyph index would be one larger than the last glyph's index.
                 // Snap it within the line's index range so we do smart selection as if we clicked on the last glyph in the line.
                 let char_offset = text_selection_bound

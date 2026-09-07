@@ -3,6 +3,7 @@ use warpui::keymap::{EditableBinding, Keystroke, Trigger};
 use warpui::platform::OperatingSystem;
 
 use crate::terminal;
+use crate::test_util::settings::initialize_settings_for_tests;
 use crate::util::bindings::{keybinding_name_to_display_string, trigger_to_keystroke};
 use crate::workspace::WorkspaceAction;
 
@@ -136,6 +137,24 @@ fn test_terminal_page_scroll_bindings_are_editable() {
 
             assert_eq!(page_up, Keystroke::parse("pageup").ok());
             assert_eq!(page_down, Keystroke::parse("pagedown").ok());
+        });
+    });
+}
+
+#[test]
+fn attach_file_and_new_window_bindings_are_editable() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        app.update(terminal::init);
+        app.update(crate::workspace::register_new_window_binding);
+
+        app.update(|ctx| {
+            let binding_names = ctx
+                .editable_bindings()
+                .map(|binding| binding.name)
+                .collect::<Vec<_>>();
+            assert!(binding_names.contains(&"terminal:attach_file"));
+            assert!(binding_names.contains(&"workspace:new_window"));
         });
     });
 }

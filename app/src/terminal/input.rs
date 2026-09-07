@@ -5665,6 +5665,12 @@ impl Input {
         self.enter_ai_mode(ctx);
     }
 
+    pub(crate) fn attach_file(&mut self, ctx: &mut ViewContext<Self>) {
+        self.agent_input_footer.update(ctx, |footer, ctx| {
+            footer.select_file(ctx);
+        });
+    }
+
     fn cycle_next_command_suggestion(&mut self, ctx: &mut ViewContext<Self>) {
         self.next_command_model.update(ctx, |model, ctx| {
             model.cycle_next_command_suggestion(ctx);
@@ -14419,6 +14425,14 @@ impl View for Input {
             } else if agent_view_state.is_inline() {
                 ctx.set.insert(flags::ACTIVE_INLINE_AGENT_VIEW);
             }
+        }
+
+        if CLIAgentSessionsModel::as_ref(app)
+            .session(self.terminal_view_id)
+            .is_some()
+        {
+            ctx.set
+                .insert(crate::terminal::view::init::CLI_AGENT_SESSION_ACTIVE_KEY);
         }
 
         if self.buffer_text(app).is_empty() {

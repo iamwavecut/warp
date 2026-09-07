@@ -968,6 +968,45 @@ impl AgentDriver {
         rx
     }
 
+    /// Wait for the startup scan of user-global file-based MCP configs. The result is cached by
+    /// the manager, so drivers created after startup do not miss the completion event.
+    fn wait_for_initial_global_file_based_mcp_scan(
+        &self,
+        ctx: &mut ModelContext<Self>,
+    ) -> impl Future<Output = Vec<Uuid>> + use<> {
+        let manager = FileBasedMCPManager::handle(ctx);
+        if let Some(uuids) = manager.as_ref(ctx).initial_global_scan_result() {
+            return Either::Right(future::ready(uuids));
+        }
+
+        let (tx, rx) = oneshot::channel::<Vec<Uuid>>();
+        let mut tx = Some(tx);
+        ctx.subscribe_to_model(&manager, move |_me, manager, event, ctx| {
+            if let FileBasedMCPManagerEvent::InitialGlobalMcpScanComplete { wait_server_uuids } =
+                event
+            {
+                if let Some(sender) = tx.take() {
+                    let _ = sender.send(wait_server_uuids.clone());
+                }
+                ctx.unsubscribe_from_model(&manager);
+            }
+        });
+
+        Either::Left(async move {
+            match rx.with_timeout(MCP_SERVER_STARTUP_TIMEOUT).await {
+                Ok(Ok(uuids)) => uuids,
+                Ok(Err(Canceled)) => {
+                    log::warn!("Global file-based MCP scan subscription dropped; proceeding");
+                    vec![]
+                }
+                Err(TimeoutError) => {
+                    log::warn!("Timed out waiting for global file-based MCP scan; proceeding");
+                    vec![]
+                }
+            }
+        })
+    }
+
     /// Wait for auto-start-requested file-based MCP servers to reach a terminal state
     /// (`Running` or `FailedToStart`). Non-fatal: always completes without returning an error.
     ///
@@ -1551,6 +1590,21 @@ impl AgentDriver {
             } = global_skill_resolution;
             Self::load_environment_skills(&foreground, environment_skill_repos).await;
             Self::load_global_skills(&foreground, global_skill_specs, global_skill_repos).await;
+        }
+
+        // Direct OpenAI-compatible runs must not race the first global MCP config scan: the
+        // provider's first turn should see all user-configured local tools that finished starting.
+        if matches!(&task.harness, HarnessKind::Oz) && task.local_only {
+            let wait_uuids = foreground
+                .spawn(|me, ctx| me.wait_for_initial_global_file_based_mcp_scan(ctx))
+                .await?
+                .await;
+            if !wait_uuids.is_empty() {
+                foreground
+                    .spawn(move |me, ctx| me.wait_for_file_based_mcps_running(wait_uuids, ctx))
+                    .await?
+                    .await;
+            }
         }
 
         // Run the harness with a prompt.

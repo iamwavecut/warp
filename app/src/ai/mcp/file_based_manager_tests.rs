@@ -1,6 +1,7 @@
 use super::{AgentEnvMcpScanServer, FileBasedMCPManager, FileBasedMCPManagerEvent, MCPProvider};
-use crate::ai::mcp::FileMCPWatcher;
 use crate::ai::mcp::ParsedTemplatableMCPServerResult;
+use crate::ai::mcp::file_mcp_watcher::PendingScan;
+use crate::ai::mcp::{FileMCPWatcher, FileMCPWatcherEvent};
 use crate::auth::AuthStateProvider;
 use crate::settings::{AISettings, FocusedTerminalInfo};
 use crate::warp_managed_paths_watcher::{WarpManagedPathsWatcher, warp_managed_mcp_config_path};
@@ -72,7 +73,8 @@ fn subscribe_events(
                     .extend(installation_uuids.iter().copied());
             }
             FileBasedMCPManagerEvent::PurgeCredentials { .. }
-            | FileBasedMCPManagerEvent::AgentEnvMcpScanComplete { .. } => {}
+            | FileBasedMCPManagerEvent::AgentEnvMcpScanComplete { .. }
+            | FileBasedMCPManagerEvent::InitialGlobalMcpScanComplete { .. } => {}
         });
     });
     events
@@ -130,6 +132,79 @@ fn test_update_file_based_servers_spawns_new_servers() {
                 manager.file_based_servers.contains_key(&hash),
                 "Server hash should exist in file_based_servers"
             );
+        });
+    });
+}
+
+#[test]
+fn initial_global_scan_result_is_cached_for_late_consumers() {
+    let _flag_guard = FeatureFlag::FileBasedMcp.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        let manager = setup_app(&mut app);
+        manager.update(&mut app, |manager, _| {
+            assert_eq!(manager.initial_global_scan_result(), None);
+        });
+        manager.update(&mut app, |manager, ctx| {
+            manager.handle_watcher_event(
+                &FileMCPWatcherEvent::ScanComplete(PendingScan::InitialGlobal),
+                ctx,
+            );
+        });
+        manager.update(&mut app, |manager, _| {
+            assert_eq!(manager.initial_global_scan_result(), Some(Vec::new()));
+        });
+    });
+}
+
+#[test]
+fn initial_global_wait_set_freezes_when_scan_completes() {
+    let _flag_guard = FeatureFlag::FileBasedMcp.override_enabled(true);
+    let Some(config) = warp_managed_mcp_config_path() else {
+        return;
+    };
+    let root = config.root_path;
+
+    App::test((), |mut app| async move {
+        let manager = setup_app(&mut app);
+        let first = parse_mcp_json(r#"{"first": {"command": "first"}}"#);
+        let second =
+            parse_mcp_json(r#"{"first": {"command": "first"}, "second": {"command": "second"}}"#);
+
+        manager.update(&mut app, |manager, ctx| {
+            manager.handle_watcher_event(
+                &FileMCPWatcherEvent::ConfigParsed {
+                    root_path: root.clone(),
+                    provider: MCPProvider::Warp,
+                    servers: first,
+                },
+                ctx,
+            );
+        });
+        let first_uuid = manager.read(&app, |manager, _| {
+            manager
+                .file_based_servers()
+                .into_iter()
+                .find(|server| server.templatable_mcp_server().name == "first")
+                .expect("first server")
+                .uuid()
+        });
+        manager.update(&mut app, |manager, ctx| {
+            manager.handle_watcher_event(
+                &FileMCPWatcherEvent::ScanComplete(PendingScan::InitialGlobal),
+                ctx,
+            );
+            manager.handle_watcher_event(
+                &FileMCPWatcherEvent::ConfigParsed {
+                    root_path: root.clone(),
+                    provider: MCPProvider::Warp,
+                    servers: second,
+                },
+                ctx,
+            );
+        });
+        manager.read(&app, |manager, _| {
+            assert_eq!(manager.initial_global_scan_result(), Some(vec![first_uuid]));
         });
     });
 }

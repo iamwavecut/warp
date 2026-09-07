@@ -9,6 +9,7 @@ use warp_core::features::FeatureFlag;
 use warp_util::local_or_remote_path::LocalOrRemotePath;
 use warpui::{AppContext, Entity, ModelContext, SingletonEntity};
 
+use super::file_mcp_watcher::PendingScan;
 use super::{FileMCPWatcher, FileMCPWatcherEvent, MCPProvider};
 use crate::ai::mcp::ParsedTemplatableMCPServerResult;
 use crate::ai::mcp::templatable_installation::TemplatableMCPServerInstallation;
@@ -28,6 +29,14 @@ pub struct FileBasedMCPManager {
     /// They are temporarily stored here and removed to emit FileBasedMCPManagerEvent::AgentEnvMcpScanComplete
     pending_scan_auto_started_servers_by_root:
         HashMap<PathBuf, HashMap<MCPProvider, HashSet<Uuid>>>,
+    initial_global_scan_state: InitialGlobalMcpScanState,
+}
+
+#[derive(Default)]
+enum InitialGlobalMcpScanState {
+    #[default]
+    Pending,
+    Complete(Vec<Uuid>),
 }
 
 impl FileBasedMCPManager {
@@ -48,6 +57,7 @@ impl FileBasedMCPManager {
             file_based_servers: Default::default(),
             file_based_servers_by_root: Default::default(),
             pending_scan_auto_started_servers_by_root: Default::default(),
+            initial_global_scan_state: Default::default(),
         }
     }
 
@@ -67,10 +77,41 @@ impl FileBasedMCPManager {
             } => {
                 self.remove_servers_for_root_provider(root_path, *provider, ctx);
             }
-            FileMCPWatcherEvent::AgentEnvMcpScanComplete { repo_path } => {
+            FileMCPWatcherEvent::ScanComplete(PendingScan::AgentEnvRepo(repo_path)) => {
                 self.handle_agent_environment_scan_complete(repo_path, ctx);
             }
+            FileMCPWatcherEvent::ScanComplete(PendingScan::InitialGlobal) => {
+                let wait_server_uuids = self.pending_initial_global_wait_uuids(ctx);
+                self.initial_global_scan_state =
+                    InitialGlobalMcpScanState::Complete(wait_server_uuids.clone());
+                ctx.emit(FileBasedMCPManagerEvent::InitialGlobalMcpScanComplete {
+                    wait_server_uuids,
+                });
+            }
         }
+    }
+
+    pub fn initial_global_scan_result(&self) -> Option<Vec<Uuid>> {
+        match &self.initial_global_scan_state {
+            InitialGlobalMcpScanState::Pending => None,
+            InitialGlobalMcpScanState::Complete(uuids) => Some(uuids.clone()),
+        }
+    }
+
+    fn pending_initial_global_wait_uuids(&self, ctx: &AppContext) -> Vec<Uuid> {
+        let mcp_enabled = AISettings::as_ref(ctx).is_file_based_mcp_enabled(ctx);
+        self.file_based_servers
+            .iter()
+            .filter_map(|(hash, installation)| {
+                let decision = self.auto_start_decision(*hash, mcp_enabled);
+                matches!(
+                    decision.server_type,
+                    FileBasedMCPServerType::GlobalWarp | FileBasedMCPServerType::GlobalThirdParty
+                )
+                .then_some(installation.uuid())
+            })
+            .sorted_by_key(|uuid| uuid.to_string())
+            .collect()
     }
 
     /// Get file-based MCP servers in scope for the given current working directory.
@@ -546,6 +587,9 @@ pub enum FileBasedMCPManagerEvent {
         repo_path: PathBuf,
         #[allow(dead_code)]
         detected_servers: Vec<AgentEnvMcpScanServer>,
+        wait_server_uuids: Vec<Uuid>,
+    },
+    InitialGlobalMcpScanComplete {
         wait_server_uuids: Vec<Uuid>,
     },
 }

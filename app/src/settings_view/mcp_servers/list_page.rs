@@ -132,10 +132,10 @@ impl MCPServersListPageView {
                 let file_mcp_watcher = FileMCPWatcher::handle(ctx);
                 ctx.subscribe_to_model(&file_mcp_watcher, |me, _, event, ctx| match event {
                     FileMCPWatcherEvent::ConfigParsed { .. }
-                    | FileMCPWatcherEvent::ConfigRemoved { .. } => {
+                    | FileMCPWatcherEvent::ConfigRemoved { .. }
+                    | FileMCPWatcherEvent::ScanComplete(_) => {
                         me.refresh_file_based_server_cards(ctx);
                     }
-                    _ => {}
                 });
             }
         );
