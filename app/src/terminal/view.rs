@@ -11160,12 +11160,10 @@ impl TerminalView {
                                         },
                                     );
 
-                                    // Codex doesn't use the sentinel-based plugin protocol,
-                                    // so create the listener proactively on command detection
-                                    // (rather than waiting for a SessionStart event).
-                                    if matches!(detection, Some((CLIAgent::Codex, _))) {
+                                    // These agents can emit OSC 9 without a SessionStart hook.
+                                    if let Some((agent @ (CLIAgent::Codex | CLIAgent::Grok), _)) = detection {
                                         me.register_cli_agent_listener_without_session_start_event(
-                                            CLIAgent::Codex,
+                                            agent,
                                             ctx,
                                         );
                                     }
@@ -12045,13 +12043,15 @@ impl TerminalView {
                     return;
                 }
 
-                // Suppress OSC 9 notifications when a Codex listener is active.
-                // The listener's subscription handles these via CodexSessionHandler.
+                // The CLI listener handles OSC 9; avoid a second raw notification.
                 if title.is_none() {
-                    let has_codex_listener = CLIAgentSessionsModel::as_ref(ctx)
+                    let has_cli_listener = CLIAgentSessionsModel::as_ref(ctx)
                         .session(self.view_id)
-                        .is_some_and(|s| s.agent == CLIAgent::Codex && s.listener.is_some());
-                    if has_codex_listener {
+                        .is_some_and(|s| {
+                            matches!(s.agent, CLIAgent::Codex | CLIAgent::Grok)
+                                && s.listener.is_some()
+                        });
+                    if has_cli_listener {
                         return;
                     }
                 }

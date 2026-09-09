@@ -1,4 +1,5 @@
 pub(crate) mod codex;
+pub(crate) mod grok;
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -217,6 +218,7 @@ pub(crate) fn plugin_manager_for_with_shell(
     path_env_var: Option<String>,
 ) -> Option<Box<dyn CliAgentPluginManager>> {
     match agent {
+        CLIAgent::Grok => Some(Box::new(grok::GrokPluginManager)),
         CLIAgent::Codex
             if FeatureFlag::CodexNotifications.is_enabled()
                 && FeatureFlag::HOANotifications.is_enabled() =>

@@ -4150,12 +4150,8 @@ impl Input {
     ) {
         self.close_overlays(false, ctx);
         let has_input = !self.editor.as_ref(ctx).buffer_text(ctx).is_empty();
-        let should_clear_prompt_for_search =
-            has_input && FeatureFlag::RestorePromptOnInlineModelSelectorSearch.is_enabled();
+        let should_clear_prompt_for_search = has_input;
         self.inline_model_selector_view.update(ctx, |view, ctx| {
-            if has_input && !should_clear_prompt_for_search {
-                view.set_filter_results_by_input(false);
-            }
             view.set_prompt_parked_for_search(should_clear_prompt_for_search);
             view.set_active_tab(initial_tab, ctx);
         });

@@ -114,6 +114,31 @@ fn pending_ctrl_r_handoff() -> PendingShellWidgetHandoff {
 }
 
 #[test]
+fn model_selector_restores_prompt_without_rollout_flag() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+        input.update(&mut app, |input, ctx| {
+            input.user_insert("keep my draft", ctx);
+        });
+        input.update(&mut app, |input, ctx| {
+            input.open_model_selector_and_snapshot_prompt(InlineModelSelectorTab::BaseAgent, ctx);
+        });
+        input.update(&mut app, |input, ctx| {
+            assert!(input.buffer_text(ctx).is_empty());
+            input.user_insert("local model", ctx);
+        });
+        input.update(&mut app, |input, ctx| {
+            input.toggle_inline_model_selector_from_chip(InlineModelSelectorTab::BaseAgent, ctx);
+        });
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "keep my draft");
+        });
+    });
+}
+
+#[test]
 fn matching_shell_widget_selection_replaces_ctrl_r_draft() {
     let mut handoff = pending_ctrl_r_handoff();
     handoff.maybe_apply_selection(SessionId::from(1), "echo selected");

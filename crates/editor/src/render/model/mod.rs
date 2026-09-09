@@ -32,7 +32,7 @@ use warpui_core::fonts::{FamilyId, Properties, Weight};
 use warpui_core::geometry::rect::RectF;
 use warpui_core::geometry::vector::{Vector2F, vec2f};
 use warpui_core::platform::LineStyle;
-use warpui_core::text_layout::{CaretPosition, LayoutCache, Line, TextFrame};
+use warpui_core::text_layout::{CaretPosition, Line, TextFrame};
 use warpui_core::text_selection_utils::{
     NewlineTickParams, calculate_tick_width, create_newline_tick_rect,
     selection_crosses_newline_offset_based,
@@ -677,7 +677,7 @@ impl LineCount {
 }
 
 /// A character offset within a [`TextFrame`]. These offsets count characters in the Rust string
-/// passed to [`warpui_core::text_layout::LayoutCache::layout_text()`].
+/// passed to the text layout system.
 ///
 /// Frame offsets often, but not always, correspond to glyph indices and caret positions. However,
 /// they do not line up 1:1 if a glyph or grapheme contains multiple characters
@@ -2534,8 +2534,7 @@ impl RenderState {
     }
 
     fn layout_temporary_blocks(&self, blocks: Vec<TemporaryBlock>, app: &AppContext) {
-        let layout_cache = LayoutCache::new();
-        let layout_context = self.layout_context(&layout_cache, app);
+        let layout_context = self.layout_context(app);
         let laid_out_blocks = layout_temporary_blocks(blocks, &layout_context);
         self.reset_temporary_block(laid_out_blocks);
     }
@@ -2546,8 +2545,7 @@ impl RenderState {
         hidden_ranges: Option<RangeSet<CharOffset>>,
         app: &AppContext,
     ) {
-        let layout_cache = LayoutCache::new();
-        let layout_context = self.layout_context(&layout_cache, app);
+        let layout_context = self.layout_context(app);
         let laid_out_edit = delta.layout_delta(
             &layout_context,
             self.document_path.as_deref(),
@@ -2558,15 +2556,8 @@ impl RenderState {
         self.layout_pending_edit(laid_out_edit, hidden_ranges);
     }
 
-    /// Construct a throwaway layout cache. We only lay out modified text, so in effect,
-    /// the entire RenderState is a cache.
-    fn layout_context<'a>(
-        &'a self,
-        layout_cache: &'a LayoutCache,
-        ctx: &'a AppContext,
-    ) -> TextLayout<'a> {
+    fn layout_context<'a>(&'a self, ctx: &'a AppContext) -> TextLayout<'a> {
         TextLayout::new(
-            layout_cache,
             ctx.font_cache().text_layout_system(),
             &self.styles,
             match self.width_setting {

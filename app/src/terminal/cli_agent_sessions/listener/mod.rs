@@ -50,6 +50,7 @@ pub fn is_agent_supported(agent: &CLIAgent) -> bool {
             | CLIAgent::Droid
             | CLIAgent::Pi
             | CLIAgent::OhMyPi
+            | CLIAgent::Grok
     )
 }
 
@@ -70,6 +71,7 @@ fn create_handler(agent: &CLIAgent) -> Option<Box<dyn CLIAgentSessionHandler>> {
         | CLIAgent::Pi
         | CLIAgent::OhMyPi => Some(Box::new(DefaultSessionListener)),
         CLIAgent::Codex => Some(Box::new(CodexSessionHandler)),
+        CLIAgent::Grok => Some(Box::new(GrokSessionHandler::default())),
         CLIAgent::Hermes
         | CLIAgent::Amp
         | CLIAgent::Copilot
@@ -105,6 +107,34 @@ impl CLIAgentSessionHandler for DefaultSessionListener {
 /// The notification body becomes the event's `query` so it surfaces as the
 /// notification title in the UI.
 struct CodexSessionHandler;
+
+#[derive(Default)]
+struct GrokSessionHandler {
+    rich_events_seen: std::cell::Cell<bool>,
+}
+
+impl CLIAgentSessionHandler for GrokSessionHandler {
+    fn try_parse(&self, title: Option<&str>, body: &str) -> Option<CLIAgentEvent> {
+        if let Some(parsed) = parse_event(title, body) {
+            if parsed.agent != CLIAgent::Grok {
+                return None;
+            }
+            self.rich_events_seen.set(true);
+            return Some(parsed);
+        }
+        // Once hooks report status, OSC 9 would duplicate completion notifications.
+        if title.is_some() || self.rich_events_seen.get() {
+            return None;
+        }
+        let mut event = CodexSessionHandler::parse_osc9_text(body)?;
+        event.agent = CLIAgent::Grok;
+        Some(event)
+    }
+
+    fn handle_event(&mut self, event: CLIAgentEvent) -> Option<CLIAgentEvent> {
+        DefaultSessionListener.handle_event(event)
+    }
+}
 
 impl CodexSessionHandler {
     /// Parse a plain-text OSC 9 notification body into a `CLIAgentEvent`.

@@ -265,6 +265,7 @@ fn test_detect_known_agents() {
                 ("goose", CLIAgent::Goose),
                 ("vibe", CLIAgent::Vibe),
                 ("agy", CLIAgent::Antigravity),
+                ("grok", CLIAgent::Grok),
                 ("omp", CLIAgent::OhMyPi),
             ] {
                 assert_eq!(

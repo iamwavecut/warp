@@ -1,4 +1,36 @@
 use super::*;
+#[test]
+fn grok_prefers_structured_status_over_duplicate_notifications() {
+    let mut handler = create_handler(&CLIAgent::Grok).unwrap();
+    let fallback = handler.try_parse(None, "Done").unwrap();
+    assert_eq!(fallback.agent, CLIAgent::Grok);
+    assert_eq!(fallback.event, CLIAgentEventType::Stop);
+    assert!(
+        handler
+            .try_parse(
+                Some(CLI_AGENT_NOTIFICATION_SENTINEL),
+                r#"{"v":1,"agent":"claude","event":"stop"}"#
+            )
+            .is_none()
+    );
+    for (name, expected) in [
+        ("session_start", CLIAgentEventType::SessionStart),
+        ("prompt_submit", CLIAgentEventType::PromptSubmit),
+        ("stop_failure", CLIAgentEventType::StopFailure),
+    ] {
+        let body = format!(r#"{{"v":1,"agent":"grok","event":"{name}"}}"#);
+        let parsed = handler
+            .try_parse(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &body)
+            .unwrap();
+        assert_eq!(parsed.event, expected);
+        assert_eq!(
+            handler.handle_event(parsed).is_some(),
+            expected != CLIAgentEventType::SessionStart
+        );
+    }
+    assert!(handler.try_parse(None, "Done").is_none());
+    assert!(handler.supports_rich_status());
+}
 use crate::terminal::cli_agent_sessions::event::{
     CLI_AGENT_NOTIFICATION_SENTINEL, CLIAgentEventType,
 };
