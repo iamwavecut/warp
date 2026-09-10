@@ -14556,6 +14556,12 @@ impl Workspace {
             WindowSettingsChangedEvent::BackgroundOpacity { .. } => {
                 ctx.notify();
             }
+            WindowSettingsChangedEvent::BackgroundBackdrop { .. } => {
+                let backdrop = *WindowSettings::as_ref(ctx).background_backdrop;
+                if let Some(window) = ctx.windows().platform_window(ctx.window_id()) {
+                    window.set_background_backdrop(backdrop);
+                }
+            }
             WindowSettingsChangedEvent::LeftPanelVisibilityAcrossTabs { .. } => {
                 if self.left_panel_visibility_across_tabs_enabled(ctx) {
                     self.left_panel_open = self
@@ -18790,10 +18796,6 @@ impl Workspace {
         }
         if *window_settings.open_windows_at_custom_size {
             context.set.insert(flags::OPEN_WINDOWS_AT_CUSTOM_SIZE_FLAG);
-        }
-
-        if *window_settings.background_blur_texture {
-            context.set.insert(flags::WINDOW_BLUR_TEXTURE_FLAG);
         }
 
         if *window_settings.left_panel_visibility_across_tabs {

@@ -254,7 +254,10 @@ impl UndoCloseStack {
         match closed_item {
             ClosedItem::Window(data) => {
                 let window_id = data.window_id;
-                ctx.reopen_closed_window(*data);
+                let settings = crate::window_settings::WindowSettings::as_ref(ctx);
+                let blur = Some(*settings.background_blur_radius);
+                let backdrop = *settings.background_backdrop;
+                ctx.reopen_closed_window(*data, blur, backdrop);
 
                 if let Some(workspace) = window_workspace(window_id, ctx) {
                     workspace.update(ctx, |workspace, ctx| {
