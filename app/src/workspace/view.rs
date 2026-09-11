@@ -1320,10 +1320,11 @@ impl Workspace {
             .is_any_tab_group_being_renamed()
         {
             match event {
-                EditorEvent::Blurred | EditorEvent::Enter => {
+                EditorEvent::Enter => {
                     self.finish_tab_group_rename(ctx);
                 }
-                EditorEvent::Escape => {
+                // Losing focus must not persist an unfinished group name.
+                EditorEvent::Blurred | EditorEvent::Escape => {
                     self.cancel_tab_group_rename(ctx);
                 }
                 _ => {}
@@ -1361,6 +1362,18 @@ impl Workspace {
         self.focus_pane(locator, ctx);
         ctx.dispatch_global_action("workspace:save_app", ());
         ctx.notify();
+    }
+
+    pub(crate) fn is_inline_rename_editor_focused(&self, ctx: &AppContext) -> bool {
+        match ctx.focused_view_id(self.window_id) {
+            Some(id) if id == self.tab_rename_editor.id() => {
+                self.current_workspace_state.is_tab_being_renamed()
+            }
+            Some(id) if id == self.tab_group_rename_editor.id() => self
+                .current_workspace_state
+                .is_any_tab_group_being_renamed(),
+            _ => false,
+        }
     }
 
     fn finish_tab_group_rename(&mut self, ctx: &mut ViewContext<Self>) {
