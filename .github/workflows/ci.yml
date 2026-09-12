@@ -23,7 +23,7 @@ name: Warp CI
 env:
   CARGO_TERM_COLOR: always
   NEXTEST_PROFILE: ci
-  WORKSPACE_TEST_ARGS: --workspace --locked --exclude command-signatures-v2
+  WORKSPACE_TEST_ARGS: --workspace --locked
   # Include only as much debug info as is necessary to see backtraces
   # in test failures.  This should speed up compilation somewhat and
   # reduces the size of built artifacts (which addresses issues with
@@ -104,7 +104,7 @@ jobs:
             runner: windows-latest
             # We don't (yet) have any self-hosted Windows runners.
             is_self_hosted: false
-            extra_test_args: "--exclude command-signatures-v2 --exclude warp_js"
+            extra_test_args: ""
     runs-on: ${{ matrix.runner }}
     needs: params
     permissions:
@@ -362,7 +362,7 @@ jobs:
             # We don't (yet) have any self-hosted Windows runners.
             is_self_hosted: false
             null_device: "NUL"
-            clippy_excludes: "--exclude warp_js --exclude command-signatures-v2"
+            clippy_excludes: ""
     runs-on: ${{ matrix.runner }}
     needs: params
     #    if: ${{ needs.params.outputs.affects-rust-sources == 'true' }}

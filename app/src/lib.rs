@@ -54,8 +54,6 @@ mod notification;
 mod palette;
 mod persistence;
 mod platform;
-#[cfg(feature = "plugin_host")]
-mod plugin;
 mod prefix;
 #[cfg(target_os = "macos")]
 mod preview_config_migration;
@@ -184,8 +182,6 @@ pub use persistence::testing as sqlite_testing;
 
 use ::settings::{Setting, ToggleableSetting};
 
-#[cfg(feature = "plugin_host")]
-pub use plugin::{PLUGIN_HOST_FLAG, run_plugin_host};
 use warp_core::user_preferences::GetUserPreferences as _;
 use warpui::modals::{AlertDialogWithCallbacks, AppModalCallback};
 use warpui::platform::app::{ApproveTerminateResult, TerminationRequestSource};
@@ -587,10 +583,6 @@ pub fn run() -> Result<()> {
                 crate::terminal::local_tty::server::run_terminal_server(args);
                 return Ok(());
             }
-            #[cfg(feature = "plugin_host")]
-            warp_cli::Command::Worker(warp_cli::WorkerCommand::PluginHost { .. }) => {
-                return crate::run_plugin_host();
-            }
             #[cfg(not(target_family = "wasm"))]
             warp_cli::Command::Worker(warp_cli::WorkerCommand::RemoteServerProxy(args)) => {
                 // Proxy is a thin byte bridge (stdin/stdout ↔ Unix socket).
@@ -627,11 +619,7 @@ pub fn run() -> Result<()> {
                 .map_err(|err| anyhow!(err.to_string()))?;
                 return Ok(());
             }
-            #[cfg(not(any(
-                feature = "local_tty",
-                feature = "plugin_host",
-                not(target_family = "wasm")
-            )))]
+            #[cfg(all(target_family = "wasm", not(feature = "local_tty")))]
             warp_cli::Command::Worker(worker) => {
                 // Need this case to handle platforms where there are no enum variants in
                 // warp_cli::WorkerCommand, as we still need to check Command::Worker.
@@ -987,10 +975,6 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
         #[cfg(enable_crash_recovery)]
         ctx.add_singleton_model(move |_ctx| crash_recovery);
 
-        #[cfg(feature = "plugin_host")]
-        ctx.add_singleton_model(move |ctx| {
-            plugin::PluginHost::new(ctx).expect("Could not instantiate PluginHost")
-        });
         let app_state = initialize_app(
             &launch_mode,
             timer,

@@ -226,14 +226,6 @@ pub enum WorkerCommand {
     #[cfg(unix)]
     TerminalServer(TerminalServerArgs),
 
-    /// Run this process as the plugin host rather than the main app.
-    #[cfg(feature = "plugin_host")]
-    #[clap(long_flag = "plugin-host")]
-    PluginHost {
-        #[clap(flatten)]
-        parent: ParentOpts,
-    },
-
     /// Run the remote development server proxy over SSH stdio.
     /// Ensures the daemon is running, then bridges its stdin/stdout
     /// to the daemon via a Unix domain socket.

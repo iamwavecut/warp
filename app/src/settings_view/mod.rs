@@ -1037,7 +1037,7 @@ impl SettingsView {
         });
 
         // About page
-        let about_page_handle = ctx.add_view(AboutPageView::new);
+        let about_page_handle = ctx.add_typed_action_view(AboutPageView::new);
 
         // AI page
         let ai_page_handle = ctx.add_typed_action_view(AISettingsPageView::new);

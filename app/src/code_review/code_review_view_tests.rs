@@ -72,6 +72,8 @@ fn initialize_test_app(app: &mut App) {
     app.add_singleton_model(|_| Appearance::mock());
     app.add_singleton_model(|_| SyncedInputState::mock());
     app.add_singleton_model(|_| VimRegisters::new());
+    #[cfg(feature = "voice_input")]
+    app.add_singleton_model(|_| crate::voice::transcriber::VoiceTranscriber::disabled());
     app.add_singleton_model(|_| KeybindingChangedNotifier::mock());
     app.add_singleton_model(|_| DetectedRepositories::default());
     app.add_singleton_model(|_| GitStatusUpdateModel::new());
@@ -1004,6 +1006,24 @@ fn test_setup_dropdown_without_branches_only_has_uncommitted_changes() {
             target_count, 1,
             "Diff selector should only have 'Uncommitted changes' when no branches are available"
         );
+    });
+}
+
+#[test]
+fn test_duplicate_single_file_discard_confirmation_is_ignored() {
+    App::test((), |mut app| async move {
+        let ctx = TestContext::new(&mut app, "test.txt", "line 1\nline 2\nline 3");
+
+        ctx.code_review_view.update(&mut app, |view, view_ctx| {
+            view.discard_dialog_state.operation_type = DiscardOperationType::FileUncommittedChanges;
+            view.discard_dialog_state.show_discard_confirm_dialog = false;
+            view.discard_dialog_state.discard_file_paths.clear();
+
+            view.handle_action(&CodeReviewAction::ConfirmDiscardFile, view_ctx);
+
+            assert!(!view.discard_dialog_state.show_discard_confirm_dialog);
+            assert!(view.discard_dialog_state.discard_file_paths.is_empty());
+        });
     });
 }
 
