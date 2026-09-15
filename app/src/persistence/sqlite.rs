@@ -2759,6 +2759,7 @@ fn read_sqlite_data(
                         .and_then(|s| serde_json::from_str::<RightPanelSnapshot>(s).ok());
 
                     Some(TabSnapshot {
+                        group_id: None,
                         root,
                         custom_title: tab.custom_title,
                         default_directory_color: None,
@@ -2852,6 +2853,7 @@ fn read_sqlite_data(
             });
 
             WindowSnapshot {
+                tab_groups: Vec::new(),
                 tabs: saved_tabs,
                 active_tab_index: tab_index,
                 quake_mode: window.quake_mode,

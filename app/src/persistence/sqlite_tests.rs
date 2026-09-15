@@ -386,7 +386,9 @@ fn test_deduplicate_no_snapshots() {
 
 fn test_terminal_window_snapshot(vertical_tabs_panel_open: bool) -> WindowSnapshot {
     WindowSnapshot {
+        tab_groups: Vec::new(),
         tabs: vec![TabSnapshot {
+            group_id: None,
             custom_title: None,
             root: PaneNodeSnapshot::Leaf(LeafSnapshot {
                 is_focused: true,
@@ -469,7 +471,9 @@ fn test_sqlite_round_trips_custom_vertical_tabs_title() {
 
     let app_state = AppState {
         windows: vec![WindowSnapshot {
+            tab_groups: Vec::new(),
             tabs: vec![TabSnapshot {
+                group_id: None,
                 custom_title: None,
                 root: PaneNodeSnapshot::Leaf(LeafSnapshot {
                     is_focused: true,
@@ -542,7 +546,9 @@ fn local_saved_prompt_pane_snapshot_round_trips_uuid_for_restart() {
 
     let app_state = AppState {
         windows: vec![WindowSnapshot {
+            tab_groups: Vec::new(),
             tabs: vec![TabSnapshot {
+                group_id: None,
                 custom_title: None,
                 root: PaneNodeSnapshot::Leaf(LeafSnapshot {
                     is_focused: true,
@@ -603,7 +609,9 @@ fn test_sqlite_round_trips_code_pane_with_multiple_tabs() {
 
     let app_state = AppState {
         windows: vec![WindowSnapshot {
+            tab_groups: Vec::new(),
             tabs: vec![TabSnapshot {
+                group_id: None,
                 custom_title: None,
                 root: PaneNodeSnapshot::Leaf(LeafSnapshot {
                     is_focused: true,

@@ -42,6 +42,7 @@ pub struct PersistedAgentManagementFilters {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowSnapshot {
+    pub tab_groups: Vec<TabGroupSnapshot>,
     pub tabs: Vec<TabSnapshot>,
     pub active_tab_index: usize,
     pub bounds: Option<RectF>,
@@ -60,12 +61,22 @@ pub struct WindowSnapshot {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabSnapshot {
+    pub group_id: Option<crate::workspace::tab_group::TabGroupId>,
     pub custom_title: Option<String>,
     pub root: PaneNodeSnapshot,
     pub default_directory_color: Option<AnsiColorIdentifier>,
     pub selected_color: SelectedTabColor,
     pub left_panel: Option<LeftPanelSnapshot>,
     pub right_panel: Option<RightPanelSnapshot>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabGroupSnapshot {
+    pub id: crate::workspace::tab_group::TabGroupId,
+    pub name: Option<String>,
+    pub color: SelectedTabColor,
+    pub collapsed: bool,
+    pub pinned: bool,
 }
 
 impl TabSnapshot {

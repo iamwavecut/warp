@@ -1222,6 +1222,51 @@ fn test_cycle_active_tab_color_mutates_group_color_without_member_overrides() {
 }
 
 #[test]
+fn launch_config_restores_groups_without_splitting_host_group() {
+    for pinned in [false, true] {
+        App::test((), move |mut app| async move {
+            initialize_app(&mut app);
+            let _grouped = FeatureFlag::GroupedTabs.override_enabled(true);
+            let _pinned = FeatureFlag::PinnedTabs.override_enabled(true);
+            let workspace = mock_workspace(&mut app);
+            workspace.update(&mut app, |workspace, ctx| {
+                workspace.add_terminal_tab(false, ctx);
+                workspace.add_terminal_tab(false, ctx);
+                let host = TabGroup::new();
+                let host_id = host.id;
+                workspace.tab_groups.insert(host_id, host);
+                for tab in &mut workspace.tabs { tab.group_id = Some(host_id); }
+                workspace.activate_tab_internal(0, ctx);
+                let config: crate::launch_configs::launch_config::LaunchConfig = serde_yaml::from_str(
+                    &format!("name: grouped\nwindows:\n  - active_tab_index: 1\n    tab_groups:\n      - name: backend\n        color: blue\n        collapsed: true\n        pinned: {pinned}\n      - name: empty\n    tabs:\n      - title: api\n        group: 0\n        layout: {{cwd: /tmp}}\n      - title: worker\n        group: 0\n        layout: {{cwd: /tmp}}\n      - title: scratch\n        layout: {{cwd: /tmp}}\n      - title: stray\n        group: 0\n        layout: {{cwd: /tmp}}\n")
+                ).unwrap();
+                workspace.open_launch_config_window(config.windows[0].clone(), ctx);
+                assert_eq!(workspace.tab_groups.len(), 2);
+                let restored = workspace.tab_groups.values().find(|g| g.id != host_id).unwrap();
+                assert_eq!(restored.name.as_deref(), Some("backend"));
+                assert_eq!(restored.color, SelectedTabColor::Color(AnsiColorIdentifier::Blue));
+                assert_eq!(restored.pinned, pinned);
+                let restored_id = restored.id;
+                assert_eq!(workspace.tabs[workspace.active_tab_index].group_id, Some(restored_id));
+                for id in [host_id, restored_id] {
+                    let indices: Vec<_> = workspace.tabs.iter().enumerate()
+                        .filter_map(|(i, t)| (t.group_id == Some(id)).then_some(i)).collect();
+                    assert_eq!(indices.last().unwrap() - indices[0] + 1, indices.len());
+                }
+                assert_eq!(workspace.tabs.iter().filter(|t| t.group_id.is_none()).count(), 2);
+                if pinned { assert_eq!(workspace.tabs[0].group_id, Some(restored_id)); }
+                let snapshot = workspace.snapshot(ctx.window_id(), false, ctx);
+                let saved = crate::launch_configs::launch_config::WindowTemplate::from(snapshot);
+                assert_eq!(saved.tab_groups.iter().filter(|g| g.name.as_deref() == Some("backend")).count(), 1);
+                let yaml = serde_yaml::to_string(&saved).unwrap();
+                let decoded: crate::launch_configs::launch_config::WindowTemplate = serde_yaml::from_str(&yaml).unwrap();
+                assert_eq!(saved, decoded);
+            });
+        });
+    }
+}
+
+#[test]
 fn test_workspace_sessions_retrieves_tabs() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
