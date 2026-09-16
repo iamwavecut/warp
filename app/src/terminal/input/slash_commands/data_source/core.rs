@@ -76,7 +76,11 @@ pub(super) fn subscribe_to_shared_dependencies<T>(
         }
     });
     ctx.subscribe_to_model(&AISettings::handle(ctx), move |me, _, event, ctx| {
-        if matches!(event, AISettingsChangedEvent::IsAnyAIEnabled { .. }) {
+        if matches!(
+            event,
+            AISettingsChangedEvent::IsAnyAIEnabled { .. }
+                | AISettingsChangedEvent::CustomProviders { .. }
+        ) {
             recompute_active_commands(me, ctx);
         }
     });

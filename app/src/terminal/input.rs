@@ -14271,6 +14271,14 @@ impl TypedActionView for Input {
                 let Some(command) = COMMAND_REGISTRY.get_command_with_name(command_name) else {
                     return;
                 };
+                // A click may have been rendered before the last configured model was removed.
+                if !self
+                    .slash_command_data_source
+                    .as_ref(ctx)
+                    .command_is_active(command, ctx)
+                {
+                    return;
+                }
                 self.select_slash_command(command, SlashCommandTrigger::keybinding(), ctx);
             }
             InputAction::StartNewAgentConversation => {
@@ -14757,3 +14765,7 @@ impl Input {
 #[cfg(test)]
 #[path = "input_test.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "input/local_agent_entry_tests.rs"]
+mod local_agent_entry_tests;

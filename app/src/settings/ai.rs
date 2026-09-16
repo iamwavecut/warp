@@ -1902,6 +1902,19 @@ impl AISettings {
         *self.is_any_ai_enabled && !self.is_ai_disabled_due_to_remote_session_org_policy(app)
     }
 
+    /// Whether the user configured a chat model for the direct provider path. The built-in
+    /// fallback catalog is not evidence of a configured provider; keys remain optional.
+    pub fn has_configured_local_model(&self) -> bool {
+        self.custom_providers.iter().any(|provider| {
+            !provider.name.trim().is_empty()
+                && !provider.base_url.trim().is_empty()
+                && provider.models.iter().any(|model| !model.trim().is_empty())
+                && provider.capabilities.chat
+                && provider.validate().is_ok()
+                && custom_provider_name_is_unique(&provider.name, &self.custom_providers)
+        })
+    }
+
     pub fn default_session_mode(&self, app: &AppContext) -> DefaultSessionMode {
         let mode = *self.default_session_mode_internal.value();
         match mode {

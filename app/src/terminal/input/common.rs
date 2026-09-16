@@ -29,8 +29,8 @@ use warpui::{
 
 /// Whether the terminal input message bar should be shown.
 ///
-/// The message bar is hidden when AI is disabled, the user has turned it off in settings,
-/// or the session is a shared ambient agent session.
+/// The message bar is hidden when no local model is configured, AI is disabled, the user has
+/// turned it off in settings, or the session is a shared ambient agent session.
 pub(super) fn should_show_terminal_input_message_bar(
     model: &TerminalModel,
     app: &AppContext,
@@ -39,6 +39,7 @@ pub(super) fn should_show_terminal_input_message_bar(
         && !FeatureFlag::AgentViewPromptChip.is_enabled()
         && InputSettings::as_ref(app).is_terminal_input_message_bar_enabled()
         && AISettings::as_ref(app).is_any_ai_enabled(app)
+        && AISettings::as_ref(app).has_configured_local_model()
         && !model.is_shared_ambient_agent_session()
 }
 

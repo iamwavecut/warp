@@ -223,6 +223,10 @@ use crate::{GlobalResourceHandles, GlobalResourceHandlesProvider};
 
 pub fn initialize_app(app: &mut App) {
     initialize_settings_for_tests(app);
+    // Input-flow tests do not initialize a local memory repository.
+    AISettings::handle(app).update(app, |settings, ctx| {
+        settings.memory_enabled.set_value(false, ctx).unwrap();
+    });
 
     // Make sure we set up all necessary custom action bindings.
     app.update(init);
@@ -562,13 +566,19 @@ pub fn simulate_directory_for_completion<A, S>(
                 ..Default::default()
             });
 
-        // Normally, the precmd message should be sufficient to also set this block metadata.
-        // However, in unit tests the foreground executor does not relay the event.
-        terminal.input().update(ctx, |input, ctx| {
-            input.set_active_block_metadata(
-                BlockMetadata::new(Some(session_id), Some(directory)),
-                false,
-                ctx,
+        // The test executor does not relay terminal events. Deliver the metadata to every
+        // subscriber so both the input and ActiveSession observe the simulated directory.
+        let block_index = terminal.model.lock().block_list().active_block_index();
+        terminal.model_event_dispatcher().update(ctx, |_, ctx| {
+            ctx.emit(
+                crate::terminal::model_events::ModelEvent::BlockMetadataReceived(
+                    crate::terminal::event::BlockMetadataReceivedEvent {
+                        block_metadata: BlockMetadata::new(Some(session_id), Some(directory)),
+                        block_index,
+                        is_after_in_band_command: false,
+                        is_done_bootstrapping: false,
+                    },
+                ),
             );
         });
     });
@@ -3034,11 +3044,29 @@ fn test_shell_lock_respected_when_slash_command_typed() {
     });
 }
 
+fn configure_model_for_agent_entry(app: &mut App) {
+    AISettings::handle(app).update(app, |settings, ctx| {
+        settings
+            .custom_providers
+            .set_value(
+                vec![crate::settings::CustomProviderConfig {
+                    name: "local-test".to_owned(),
+                    base_url: "http://localhost:1234/v1".to_owned(),
+                    models: vec!["test-model".to_owned()],
+                    ..Default::default()
+                }],
+                ctx,
+            )
+            .unwrap();
+    });
+}
+
 #[test]
 fn test_new_conversation_keybinding_requires_double_press_in_non_empty_agent_view() {
     App::test((), |mut app| async move {
         let _agent_view_flag = FeatureFlag::AgentView.override_enabled(true);
         initialize_app(&mut app);
+        configure_model_for_agent_entry(&mut app);
 
         let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
         let input = terminal.read(&app, |terminal, _| terminal.input().clone());
@@ -3228,6 +3256,7 @@ fn test_new_conversation_keybinding_does_not_require_confirmation_in_empty_agent
     App::test((), |mut app| async move {
         let _agent_view_flag = FeatureFlag::AgentView.override_enabled(true);
         initialize_app(&mut app);
+        configure_model_for_agent_entry(&mut app);
 
         let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
         let input = terminal.read(&app, |terminal, _| terminal.input().clone());
@@ -3278,6 +3307,7 @@ fn test_new_conversation_input_trigger_remains_single_step_in_non_empty_agent_vi
     App::test((), |mut app| async move {
         let _agent_view_flag = FeatureFlag::AgentView.override_enabled(true);
         initialize_app(&mut app);
+        configure_model_for_agent_entry(&mut app);
 
         let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
         let input = terminal.read(&app, |terminal, _| terminal.input().clone());

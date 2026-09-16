@@ -3,7 +3,7 @@ use std::sync::Arc;
 use parking_lot::FairMutex;
 use pathfinder_color::ColorU;
 use warp_core::ui::theme::WarpTheme;
-use warpui::elements::{Container, Element};
+use warpui::elements::{Container, Element, MouseStateHandle};
 use warpui::keymap::Keystroke;
 use warpui::{AppContext, Entity, ModelHandle, SingletonEntity, View, ViewContext};
 
@@ -15,13 +15,13 @@ use crate::ai::blocklist::{
 };
 use crate::appearance::Appearance;
 use crate::search::slash_command_menu::static_commands::commands;
-use crate::terminal::input::SET_INPUT_MODE_TERMINAL_ACTION_NAME;
 use crate::terminal::input::inline_history::{AcceptHistoryItem, HistoryTab};
 use crate::terminal::input::inline_menu::{InlineMenuModel, InlineMenuModelEvent};
 use crate::terminal::input::message_bar::MessageTransformer;
 use crate::terminal::input::suggestions_mode_model::{
     InputSuggestionsModeEvent, InputSuggestionsModeModel,
 };
+use crate::terminal::input::{InputAction, SET_INPUT_MODE_TERMINAL_ACTION_NAME};
 use crate::terminal::model::TerminalModel;
 use crate::terminal::view::init::SELECT_PREVIOUS_BLOCK_ACTION_NAME;
 use crate::util::bindings::keybinding_name_to_keystroke;
@@ -35,6 +35,7 @@ pub struct TerminalInputMessageBar {
     context_model: ModelHandle<BlocklistAIContextModel>,
     suggestions_mode_model: ModelHandle<InputSuggestionsModeModel>,
     inline_history_model: ModelHandle<InlineMenuModel<AcceptHistoryItem, HistoryTab>>,
+    start_conversation_mouse_state: MouseStateHandle,
 }
 
 impl Entity for TerminalInputMessageBar {
@@ -79,6 +80,7 @@ impl TerminalInputMessageBar {
             context_model,
             suggestions_mode_model,
             inline_history_model,
+            start_conversation_mouse_state: Default::default(),
         }
     }
 }
@@ -114,6 +116,7 @@ impl View for TerminalInputMessageBar {
             terminal_model: &terminal_model,
             context_model,
             input_model,
+            start_conversation_mouse_state: &self.start_conversation_mouse_state,
             app,
         };
 
@@ -148,6 +151,7 @@ pub struct TerminalMessageArgs<'a> {
     terminal_model: &'a TerminalModel,
     context_model: &'a BlocklistAIContextModel,
     input_model: &'a BlocklistAIInputModel,
+    start_conversation_mouse_state: &'a MouseStateHandle,
     app: &'a AppContext,
 }
 
@@ -339,16 +343,23 @@ impl MessageProvider<TerminalMessageArgs<'_>> for DefaultMessageProducer {
             keybinding_name_to_keystroke(commands::NEW.name, args.app)
         };
 
-        if let Some(keystroke) = keystroke {
-            Some(Message::new(vec![
+        let items = if let Some(keystroke) = keystroke {
+            vec![
                 MessageItem::keystroke(keystroke),
                 MessageItem::text(" new /agent conversation"),
-            ]))
+            ]
         } else {
-            Some(Message::new(vec![MessageItem::text(
-                "/agent for new conversation",
-            )]))
-        }
+            vec![MessageItem::text("/agent for new conversation")]
+        };
+        Some(Message::new(vec![MessageItem::clickable(
+            items,
+            |ctx| {
+                ctx.dispatch_typed_action(InputAction::TriggerSlashCommandFromKeybinding(
+                    commands::AGENT.name,
+                ));
+            },
+            args.start_conversation_mouse_state.clone(),
+        )]))
     }
 }
 

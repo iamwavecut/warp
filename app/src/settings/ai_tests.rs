@@ -4,6 +4,89 @@ use crate::test_util::settings::initialize_settings_for_tests;
 use warpui::{App, SingletonEntity};
 
 #[test]
+fn local_agent_model_requires_a_configured_unambiguous_chat_provider() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        let provider = CustomProviderConfig {
+            name: "local-test".to_owned(),
+            base_url: "https://user-configured.example/v1".to_owned(),
+            models: vec!["test-model".to_owned()],
+            ..Default::default()
+        };
+        let cases = [
+            ("no configuration", vec![], false),
+            ("keyless configured endpoint", vec![provider.clone()], true),
+            (
+                "empty model list",
+                vec![CustomProviderConfig {
+                    models: vec![],
+                    ..provider.clone()
+                }],
+                false,
+            ),
+            (
+                "blank model ID",
+                vec![CustomProviderConfig {
+                    models: vec!["  ".to_owned()],
+                    ..provider.clone()
+                }],
+                false,
+            ),
+            (
+                "missing endpoint",
+                vec![CustomProviderConfig {
+                    base_url: String::new(),
+                    ..provider.clone()
+                }],
+                false,
+            ),
+            (
+                "ambiguous provider name",
+                vec![provider.clone(), provider.clone()],
+                false,
+            ),
+            (
+                "no chat support",
+                vec![CustomProviderConfig {
+                    capabilities: CustomProviderCapabilities {
+                        chat: false,
+                        ..Default::default()
+                    },
+                    ..provider.clone()
+                }],
+                false,
+            ),
+            (
+                "invalid provider capabilities",
+                vec![CustomProviderConfig {
+                    capabilities: CustomProviderCapabilities {
+                        context_window_tokens: Some(1),
+                        ..Default::default()
+                    },
+                    ..provider.clone()
+                }],
+                false,
+            ),
+            (
+                "valid model after an empty provider",
+                vec![CustomProviderConfig::default(), provider],
+                true,
+            ),
+        ];
+        for (description, providers, expected) in cases {
+            AISettings::handle(&app).update(&mut app, |settings, ctx| {
+                settings.custom_providers.set_value(providers, ctx).unwrap();
+                assert_eq!(
+                    settings.has_configured_local_model(),
+                    expected,
+                    "{description}"
+                );
+            });
+        }
+    });
+}
+
+#[test]
 fn parses_custom_provider_model_input_for_ui() {
     assert_eq!(
         parse_custom_provider_models("qwen3-coder, llama-local\nqwen3-coder\n  gpt-oss "),

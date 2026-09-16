@@ -226,6 +226,11 @@ The model list should come from `AISettings.custom_providers`, not from the Warp
 server. Custom providers should be available without fetching hosted model
 metadata.
 
+Local agent command availability requires at least one configured custom-provider
+chat model. Do not count the fallback model catalog as configured models or
+require an API key or a localhost endpoint. Recompute availability when custom
+providers change, and use the same condition for terminal hints and their actions.
+
 ## Agent Harnesses
 
 Relevant files:

@@ -34,6 +34,7 @@ bitflags! {
         const CODEBASE_CONTEXT = 1 << 6;
         /// Requires AI to be globally enabled.
         const AI_ENABLED = 1 << 7;
+        /// Requires a non-ambient session with at least one configured local provider model.
         const NOT_AMBIENT_AGENT = 1 << 8;
         /// Set on the session context iff the slash command data source was constructed via
         /// `SlashCommandDataSource::for_ambient_agent_v2` *and* `FeatureFlag::CloudModeInputV2`

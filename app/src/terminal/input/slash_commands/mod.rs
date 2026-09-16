@@ -339,6 +339,22 @@ impl Input {
             return true;
         }
 
+        // A detected or selected command can outlive the provider configuration that enabled it.
+        if command
+            .availability
+            .contains(Availability::NOT_AMBIENT_AGENT)
+            && !AISettings::as_ref(ctx).has_configured_local_model()
+        {
+            show_error_toast(
+                format!(
+                    "Configure a chat model in Settings > LLM providers to use {}",
+                    command.name
+                ),
+                ctx,
+            );
+            return true;
+        }
+
         // Handle the slash command action based on its kind
         match command.name {
             _ if command.name == commands::ADD_MCP.name => {
