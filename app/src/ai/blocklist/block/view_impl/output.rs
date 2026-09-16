@@ -18,7 +18,6 @@ use crate::ai::blocklist::block::view_impl::common::{
 use crate::ai::blocklist::inline_action::aws_bedrock_credentials_error::AwsBedrockCredentialsErrorView;
 use crate::ai::blocklist::inline_action::create_or_edit_document::CreateOrEditDocumentAction;
 use crate::ai::blocklist::secret_redaction::SecretRedactionState;
-use crate::ai::blocklist::view_util::format_credits;
 use crate::ai::skills::SkillOpenOrigin;
 use crate::ai::skills::{
     icon_override_for_skill_name, render_skill_button, skill_path_from_file_path,
@@ -3214,7 +3213,10 @@ fn render_response_footer(props: Props, app: &AppContext) -> Option<Box<dyn Elem
         flex.add_child(fork_button);
     }
 
-    flex.add_child(render_usage_button(props, app));
+    flex.add_child(crate::ai::blocklist::usage::local_request::render(
+        props.model,
+        app,
+    ));
 
     // Review changes button.
     if props.has_accepted_edits && !props.shared_session_status.is_viewer() {
@@ -3244,145 +3246,6 @@ fn render_response_footer(props: Props, app: &AppContext) -> Option<Box<dyn Elem
     }
 
     Some(flex.finish().with_content_item_spacing().finish())
-}
-
-/// Renders the usage button that, on click, will expand & collapse the usage summary footer.
-fn render_usage_button(props: Props, app: &AppContext) -> Box<dyn Element> {
-    let Some(conversation) = props.model.conversation(app) else {
-        return Empty::new().finish();
-    };
-
-    // If this conversation has no usage metadata (e.g. a forked conversation from
-    // mid-way through a prior conversation where the server did not send
-    // ConversationUsageMetadata), avoid rendering the usage button entirely.
-    let has_any_usage = conversation.credits_spent() > 0.0
-        || conversation.credits_spent_for_last_block().is_some()
-        || !conversation.token_usage().is_empty()
-        || conversation.tool_usage_metadata().total_tool_calls() > 0;
-    if !has_any_usage {
-        return Empty::new().finish();
-    }
-
-    let appearance = Appearance::as_ref(app);
-    let ui_builder = appearance.ui_builder().clone();
-
-    let expansion_icon = if props.is_usage_footer_expanded {
-        Icon::ChevronDown
-    } else {
-        Icon::ChevronRight
-    };
-
-    let total_credits_spent = conversation.credits_spent();
-    let mut credit_usage_text = format_credits(total_credits_spent);
-    if let Some(credits_spent_for_last_block) = conversation.credits_spent_for_last_block() {
-        // Only show the credits spent for the last block if it is different from the total credits spent
-        // and we spent a non-zero amount of credits for the last block.
-        // Avoid showing the credits spent for the last block if the request failed, as we refund user
-        // credits in that case (so no credits were in fact spent).
-        if credits_spent_for_last_block > 0.0
-            && total_credits_spent != credits_spent_for_last_block
-            && props.model.status(app).error().is_none()
-        {
-            // If the first part of the decimal is 0, we just display the whole number.
-            if credits_spent_for_last_block.fract() < 0.1 {
-                credit_usage_text = format!(
-                    "{credit_usage_text} (+{})",
-                    credits_spent_for_last_block.trunc() as i32
-                );
-            } else {
-                credit_usage_text =
-                    format!("{credit_usage_text} (+{credits_spent_for_last_block:.1})");
-            }
-        }
-    }
-
-    let icon_size = icon_size(app);
-    let button_row = Flex::row()
-        .with_cross_axis_alignment(CrossAxisAlignment::Center)
-        .with_main_axis_size(MainAxisSize::Min)
-        .with_child(
-            Container::new(
-                Text::new_inline(
-                    credit_usage_text,
-                    appearance.ui_font_family(),
-                    appearance.monospace_font_size(),
-                )
-                .with_color(
-                    appearance
-                        .theme()
-                        .sub_text_color(appearance.theme().background())
-                        .into(),
-                )
-                .with_selectable(false)
-                .finish(),
-            )
-            .with_padding_top(2.)
-            .with_margin_left(4.)
-            .finish(),
-        )
-        .with_child(
-            Container::new(
-                // Expansion icon
-                ConstrainedBox::new(
-                    expansion_icon
-                        .to_warpui_icon(
-                            appearance
-                                .theme()
-                                .sub_text_color(appearance.theme().background()),
-                        )
-                        .finish(),
-                )
-                .with_width(icon_size)
-                .with_height(icon_size)
-                .finish(),
-            )
-            .with_margin_top(1.)
-            .finish(),
-        );
-
-    Hoverable::new(
-        props.state_handles.usage_button_handle.clone(),
-        |mouse_state| {
-            let mut content = Container::new(button_row.finish());
-
-            if mouse_state.is_hovered() || mouse_state.is_clicked() {
-                let background = if mouse_state.is_clicked() {
-                    appearance.theme().background()
-                } else {
-                    blended_colors::neutral_4(appearance.theme()).into()
-                };
-
-                content = content
-                    .with_background(background)
-                    .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.)));
-
-                // Show tooltip on hover or while clicked
-                let mut stack = Stack::new().with_child(content.finish());
-                let tooltip = ui_builder
-                    .tool_tip("Show credit usage details".to_string())
-                    .build()
-                    .finish();
-                stack.add_positioned_overlay_child(
-                    tooltip,
-                    OffsetPositioning::offset_from_parent(
-                        vec2f(0., 8.),
-                        ParentOffsetBounds::WindowByPosition,
-                        ParentAnchor::BottomMiddle,
-                        ChildAnchor::TopMiddle,
-                    ),
-                );
-
-                stack.finish()
-            } else {
-                content.finish()
-            }
-        },
-    )
-    .on_click(|ctx, _, _| {
-        ctx.dispatch_typed_action(AIBlockAction::ToggleIsUsageFooterExpanded);
-    })
-    .with_cursor(Cursor::PointingHand)
-    .finish()
 }
 
 pub fn action_icon<V: View>(
