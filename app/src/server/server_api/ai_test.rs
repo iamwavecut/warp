@@ -8,6 +8,8 @@ use crate::workflows::workflow::Workflow;
 
 fn local_provider_route(base_url: String) -> CustomProviderRoute {
     CustomProviderRoute {
+        api_type: Default::default(),
+        prompt_caching: true,
         provider_name: "local".to_string(),
         base_url,
         model: "test-model".to_string(),

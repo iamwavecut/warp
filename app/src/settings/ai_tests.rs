@@ -145,6 +145,7 @@ fn builds_openai_compatible_custom_provider_from_ui_fields() {
             api_key_env_var: Some("LOCAL_OPENAI_API_KEY".to_string()),
             api_type: CustomApiType::OpenAiCompatible,
             capabilities: CustomProviderCapabilities::default(),
+            ..Default::default()
         }
     );
 }
@@ -195,6 +196,7 @@ fn custom_provider_capabilities_round_trip_explicit_values() {
         api_key_env_var: None,
         api_type: CustomApiType::OpenAiCompatible,
         capabilities: capabilities.clone(),
+        ..Default::default()
     };
 
     let encoded = serde_json::to_value(&provider).expect("provider should serialize");
@@ -773,4 +775,79 @@ fn test_toolbar_command_map_matched_agent() {
             assert_eq!(agent, None);
         });
     });
+}
+
+#[test]
+fn custom_provider_protocol_alias_and_caching_round_trip() {
+    for (api_type, serialized) in [
+        (CustomApiType::OpenAiCompatible, "open_ai_compatible"),
+        (CustomApiType::OpenAiResponses, "open_ai_responses"),
+        (CustomApiType::AnthropicMessages, "anthropic_messages"),
+    ] {
+        let source = format!(
+            r#"
+name = "work"
+alias = "Work model pool"
+base_url = "http://localhost:1234/v1"
+models = ["model"]
+api_type = "{serialized}"
+prompt_caching = false
+"#
+        );
+        let config: CustomProviderConfig = toml::from_str(&source).unwrap();
+        assert_eq!(config.api_type, api_type);
+        assert_eq!(config.display_name(), "Work model pool");
+        assert_eq!(config.name, "work");
+        assert!(!config.prompt_caching);
+        let round_trip: CustomProviderConfig =
+            toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(round_trip, config);
+    }
+}
+
+#[test]
+fn legacy_custom_provider_defaults_to_prompt_caching_without_alias() {
+    let config: CustomProviderConfig = toml::from_str(
+        r#"
+name = "legacy"
+base_url = "http://localhost:1234/v1"
+models = ["model"]
+"#,
+    )
+    .unwrap();
+    assert_eq!(config.api_type, CustomApiType::OpenAiCompatible);
+    assert!(config.prompt_caching);
+    assert!(CustomProviderConfig::default().prompt_caching);
+    assert_eq!(config.display_name(), "legacy");
+    let blank_alias = CustomProviderConfig {
+        alias: Some("   ".to_string()),
+        ..config
+    };
+    assert_eq!(blank_alias.display_name(), "legacy");
+}
+
+#[test]
+fn custom_provider_settings_file_loader_keeps_default_caching_and_rejects_invalid_values() {
+    use settings_value::SettingsValue;
+    let legacy = serde_json::json!({"name":"legacy", "base_url":"http://localhost:1234/v1", "models":["model"]});
+    let config = CustomProviderConfig::from_file_value(&legacy).unwrap();
+    assert!(config.prompt_caching);
+    for api_type in CustomApiType::ALL {
+        let explicit = CustomProviderConfig {
+            api_type,
+            prompt_caching: false,
+            alias: Some("My pool".to_string()),
+            ..config.clone()
+        };
+        assert_eq!(
+            CustomProviderConfig::from_file_value(&explicit.to_file_value()),
+            Some(explicit)
+        );
+    }
+    let mut invalid = legacy;
+    invalid["prompt_caching"] = serde_json::json!("false");
+    assert!(CustomProviderConfig::from_file_value(&invalid).is_none());
+    invalid["prompt_caching"] = serde_json::json!(true);
+    invalid["api_type"] = serde_json::json!("unknown_protocol");
+    assert!(CustomProviderConfig::from_file_value(&invalid).is_none());
 }

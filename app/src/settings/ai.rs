@@ -34,7 +34,7 @@ use strum_macros::EnumIter;
 /// provider configuration typo.
 pub const CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS: u32 = 256;
 
-/// Capabilities declared by a user for an OpenAI-compatible provider.
+/// Capabilities declared by a user for a custom provider.
 ///
 /// This is deliberately provider-wide for now. When a single endpoint exposes
 /// models with different capabilities, configure separate provider entries
@@ -54,11 +54,11 @@ pub const CUSTOM_PROVIDER_MIN_CONTEXT_WINDOW_TOKENS: u32 = 256;
 #[serde(default)]
 #[schemars(description = "Capabilities declared for a custom LLM provider.")]
 pub struct CustomProviderCapabilities {
-    /// Whether the endpoint accepts chat completion requests.
+    /// Whether the endpoint accepts chat requests using its selected protocol.
     #[serde(default = "default_custom_provider_capability_enabled")]
     #[schemars(description = "Whether chat completions are supported.")]
     pub chat: bool,
-    /// Whether the endpoint accepts OpenAI function/tool definitions.
+    /// Whether the endpoint accepts function/tool definitions.
     #[serde(default = "default_custom_provider_capability_enabled")]
     #[schemars(description = "Whether tool calling is supported.")]
     pub tools: bool,
@@ -166,16 +166,7 @@ impl std::error::Error for CustomProviderConfigError {}
 /// Configuration for a user-defined custom LLM provider (BYOK).
 /// Stored in the settings file and used to populate the model list
 /// in this local-first build.
-#[derive(
-    Clone,
-    Debug,
-    PartialEq,
-    Serialize,
-    Deserialize,
-    Default,
-    schemars::JsonSchema,
-    settings_value::SettingsValue,
-)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[schemars(description = "Configuration for a custom LLM provider (BYOK).")]
 pub struct CustomProviderConfig {
     /// Opaque local identity used to keep provider editors/actions tied to the
@@ -183,25 +174,35 @@ pub struct CustomProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(description = "Opaque local identity for this provider.")]
     pub local_id: Option<String>,
-    /// Display name for this provider (e.g. "My Local LLM")
-    #[schemars(description = "Display name for this provider.")]
+    /// Stable name used in model IDs and secure key lookup.
+    #[schemars(description = "Stable name used in model IDs and secure key lookup.")]
     pub name: String,
-    /// Base URL for the OpenAI-compatible API endpoint
-    #[schemars(description = "Base URL for the OpenAI-compatible API endpoint.")]
+    /// Optional connection label, independent of model IDs and secure keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Optional display alias for this endpoint and its model pool.")]
+    pub alias: Option<String>,
+    /// Base URL for the selected API protocol.
+    #[schemars(description = "Base URL for the selected API protocol.")]
     pub base_url: String,
     /// List of model IDs available from this provider
     #[schemars(description = "List of model IDs available from this provider.")]
     pub models: Vec<String>,
     /// Optional environment variable containing the API key for this provider.
     /// If omitted, Warp uses the custom key stored in secure storage when present;
-    /// if neither exists, the request is sent without an Authorization header.
+    /// if neither exists, the request is sent without an authentication header.
     #[serde(default)]
     #[schemars(description = "Optional environment variable containing this provider's API key.")]
     pub api_key_env_var: Option<String>,
-    /// The API type protocol to use (currently only OpenAI-compatible)
+    /// The API protocol to use for chat and tool requests.
     #[serde(default = "CustomApiType::default")]
     #[schemars(description = "The API protocol type for this provider.")]
     pub api_type: CustomApiType,
+    /// Request prompt-prefix caching where the endpoint supports it.
+    #[serde(default = "default_custom_provider_capability_enabled")]
+    #[schemars(
+        description = "Enable provider prompt caching by default; disabling depends on protocol support."
+    )]
+    pub prompt_caching: bool,
     /// Provider capability declarations. Absent in legacy settings, in which
     /// case `chat` and `tools` remain enabled for compatibility.
     #[serde(default)]
@@ -209,7 +210,34 @@ pub struct CustomProviderConfig {
     pub capabilities: CustomProviderCapabilities,
 }
 
+// Keep file loading aligned with serde's custom default for prompt_caching.
+impl settings_value::SettingsValue for CustomProviderConfig {}
+
+impl Default for CustomProviderConfig {
+    fn default() -> Self {
+        Self {
+            local_id: None,
+            name: String::new(),
+            alias: None,
+            base_url: String::new(),
+            models: Vec::new(),
+            api_key_env_var: None,
+            api_type: CustomApiType::default(),
+            prompt_caching: true,
+            capabilities: CustomProviderCapabilities::default(),
+        }
+    }
+}
+
 impl CustomProviderConfig {
+    pub fn display_name(&self) -> &str {
+        self.alias
+            .as_deref()
+            .map(str::trim)
+            .filter(|alias| !alias.is_empty())
+            .unwrap_or(&self.name)
+    }
+
     pub fn validate(&self) -> Result<(), CustomProviderConfigError> {
         self.capabilities.validate()
     }
@@ -218,6 +246,7 @@ impl CustomProviderConfig {
 /// The API protocol type for a custom provider.
 #[derive(
     Clone,
+    Copy,
     Debug,
     PartialEq,
     Eq,
@@ -232,6 +261,40 @@ pub enum CustomApiType {
     /// OpenAI-compatible chat completions API (/v1/chat/completions)
     #[default]
     OpenAiCompatible,
+    /// OpenAI Responses API (/v1/responses).
+    OpenAiResponses,
+    /// Anthropic Messages API (/v1/messages).
+    AnthropicMessages,
+}
+
+impl CustomApiType {
+    pub const ALL: [Self; 3] = [
+        Self::OpenAiCompatible,
+        Self::OpenAiResponses,
+        Self::AnthropicMessages,
+    ];
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::OpenAiCompatible => "OpenAI Chat Completions",
+            Self::OpenAiResponses => "OpenAI Responses",
+            Self::AnthropicMessages => "Anthropic Messages",
+        }
+    }
+
+    pub fn caching_description(self) -> &'static str {
+        match self {
+            Self::OpenAiCompatible => {
+                "Managed by the endpoint; Chat Completions has no standard cache-off switch."
+            }
+            Self::OpenAiResponses => {
+                "Reuse prompt prefixes. Turning off requires explicit-only caching support."
+            }
+            Self::AnthropicMessages => {
+                "Automatically cache the growing prompt prefix. Turn off to omit cache requests."
+            }
+        }
+    }
 }
 
 pub fn parse_custom_provider_models(input: &str) -> Vec<String> {
@@ -471,6 +534,7 @@ pub fn custom_provider_config_from_ui(
         api_key_env_var: normalize_custom_provider_env_var(api_key_env_var),
         api_type: CustomApiType::OpenAiCompatible,
         capabilities: CustomProviderCapabilities::default(),
+        ..Default::default()
     })
 }
 

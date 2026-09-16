@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use warp_multi_agent_api as api;
 
-use crate::settings::{CustomProviderCapabilities, CustomProviderConfig};
+use crate::settings::{CustomApiType, CustomProviderCapabilities, CustomProviderConfig};
 
 const LOCAL_COMPACTION_SCHEMA: &str = "warp.local_compaction";
 const LOCAL_COMPACTION_SCHEMA_VERSION: u32 = 1;
@@ -513,12 +513,16 @@ pub(crate) fn route_configuration_fingerprint(
     base_url: &str,
     model: &str,
     capabilities: &CustomProviderCapabilities,
+    api_type: CustomApiType,
+    prompt_caching: bool,
 ) -> String {
     let encoded = serde_json::to_vec(&(
         provider_name,
         base_url.trim_end_matches('/'),
         model,
         capabilities,
+        api_type,
+        prompt_caching,
     ))
     .expect("custom provider route identity is serializable");
     checksum_bytes(&encoded)
@@ -544,6 +548,8 @@ pub(crate) fn configured_route_fingerprint(
         &provider.base_url,
         model,
         &provider.capabilities,
+        provider.api_type,
+        provider.prompt_caching,
     ))
 }
 
@@ -1135,3 +1141,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "local_compaction_protocol_tests.rs"]
+mod protocol_tests;

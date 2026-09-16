@@ -17,6 +17,8 @@ use crate::settings::{CustomApiType, CustomProviderCapabilities, CustomProviderC
 
 fn route(base_url: String, model: &str) -> CustomProviderRoute {
     CustomProviderRoute {
+        api_type: Default::default(),
+        prompt_caching: true,
         provider_name: "local-embeddings".to_string(),
         base_url,
         model: model.to_string(),

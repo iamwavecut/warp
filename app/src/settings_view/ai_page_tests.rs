@@ -48,6 +48,7 @@ fn provider_connection_without_key_is_valid_and_unsigned() {
     assert_eq!(
         signature,
         ProviderConnectionSignature {
+            api_type: Default::default(),
             base_url: "http://localhost:1234/v1".to_string(),
             api_key_fingerprint: None,
         }
@@ -536,4 +537,73 @@ fn team_force_takes_precedence_over_global_ai_disabled() {
             is_disabled: true,
         }
     );
+}
+
+#[test]
+fn stale_custom_provider_editor_preserves_protocol_caching_and_alias() {
+    let initial = CustomProviderConfig {
+        name: "stable-id".to_string(),
+        base_url: "http://localhost:1234/v1".to_string(),
+        models: vec!["model".to_string()],
+        ..Default::default()
+    };
+    let live = CustomProviderConfig {
+        api_type: crate::settings::CustomApiType::AnthropicMessages,
+        prompt_caching: false,
+        alias: Some("Work models".to_string()),
+        ..initial.clone()
+    };
+    let mut edited = initial.clone();
+    edited.base_url = "http://localhost:5678/v1".to_string();
+    let merged = merge_provider_editor_config_with_live(edited, &initial, Some(&live));
+    assert_eq!(merged.api_type, live.api_type);
+    assert!(!merged.prompt_caching);
+    assert_eq!(merged.display_name(), "Work models");
+    assert_eq!(merged.name, "stable-id");
+    assert_eq!(merged.base_url, "http://localhost:5678/v1");
+    let route = super::direct_openai::resolve_custom_provider_route(
+        "custom/stable-id/model",
+        &[merged],
+        &::ai::api_keys::ApiKeys::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        route.api_type,
+        crate::settings::CustomApiType::AnthropicMessages
+    );
+    assert!(!route.prompt_caching);
+}
+
+#[test]
+fn custom_provider_alias_edit_does_not_revert_protocol_or_keys() {
+    let initial = CustomProviderConfig {
+        name: "stable-id".to_string(),
+        ..Default::default()
+    };
+    let live = CustomProviderConfig {
+        api_type: crate::settings::CustomApiType::OpenAiResponses,
+        prompt_caching: false,
+        ..initial.clone()
+    };
+    let edited = CustomProviderConfig {
+        alias: Some("Home GPU".to_string()),
+        ..initial.clone()
+    };
+    let merged = merge_provider_editor_config_with_live(edited, &initial, Some(&live));
+    assert_eq!(merged.name, "stable-id");
+    assert_eq!(merged.display_name(), "Home GPU");
+    assert_eq!(merged.api_type, live.api_type);
+    assert!(!merged.prompt_caching);
+}
+
+#[test]
+fn custom_provider_model_discovery_is_invalidated_by_protocol_change() {
+    let (signature, _, _) =
+        resolve_provider_connection("http://localhost:1234/v1", "", "").unwrap();
+    let validated = ProviderModelsValidationState::Valid(signature.clone());
+    let changed = ProviderConnectionSignature {
+        api_type: crate::settings::CustomApiType::AnthropicMessages,
+        ..signature
+    };
+    assert!(!provider_connection_is_valid(&validated, &changed));
 }

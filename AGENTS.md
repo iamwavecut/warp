@@ -112,8 +112,9 @@ server/API-key management entry points.
 AI provider settings should expose only `LLM providers` for custom/local
 provider configuration:
 
-- provider name;
-- OpenAI-compatible base URL;
+- stable provider name and an optional display alias for the endpoint/model pool;
+- base URL and protocol (OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages);
+- per-endpoint prompt caching, enabled by default;
 - model IDs;
 - optional direct API key stored securely;
 - optional API-key environment variable.
@@ -123,7 +124,8 @@ variable at request time. Do not restore the legacy proprietary key-only
 provider UI.
 
 Compact model selectors should identify custom models by provider and model
-name only, such as `provider / model`. Keep the OpenAI-compatible `base_url` in
+name only, such as `alias / model` (falling back to the provider name). Aliases
+must not change persisted model IDs or secure-key lookup. Keep the OpenAI-compatible `base_url` in
 settings and config surfaces; do not expose it in picker labels or other
 space-constrained AI model UI.
 
@@ -191,14 +193,28 @@ Custom model IDs use:
 custom/<provider-name>/<model-id>
 ```
 
-Custom providers must send requests directly to:
+Custom providers must send requests directly according to `api_type`:
 
-```text
-POST <base_url>/chat/completions
-Authorization: Bearer ***   # only when a key is configured
-```
+- `open_ai_compatible`: `POST <base_url>/chat/completions` (legacy default);
+- `open_ai_responses`: `POST <base_url>/responses`, with `store = false`;
+- `anthropic_messages`: `POST <base_url>/messages`.
 
-This path must bypass Warp cloud/protobuf `/ai/multi-agent`.
+OpenAI protocols use optional Bearer auth. Anthropic uses optional `x-api-key`
+and `anthropic-version`; model discovery must use the selected protocol's auth.
+`prompt_caching` defaults to true for each endpoint. This means provider-side
+prompt-prefix reuse, never local replay of generated answers. Anthropic requests
+automatic ephemeral caching when enabled and omits cache control when disabled.
+Responses uses implicit caching by default; disabling requires support for
+explicit-only cache mode without breakpoints (OpenAI GPT-5.6+). Do not silently
+retry rejected cache-off requests with caching enabled. Chat Completions has no
+standard cache-off control; expose that limitation in settings.
+
+This path must bypass Warp cloud/protobuf `/ai/multi-agent`. Responses history
+must preserve assistant phases and opaque reasoning items locally for tool
+continuation; bind replay to the originating protocol, endpoint and model.
+Preserve Anthropic thinking blocks and signatures unmodified during tool turns.
+Bind their replay to the preceding system/tools/message prefix; omit incompatible
+thinking after local context changes while retaining ordinary text and tool history.
 
 The direct OpenAI-compatible provider path must wait for `run_shell_command`
 results to complete before returning a tool result. Do not send
@@ -210,9 +226,11 @@ Example settings shape:
 ```toml
 [[agents.custom_providers]]
 name = "local-openai-compatible"
+alias = "Home model pool"
 base_url = "http://localhost:1234/v1"
 models = ["qwen3-coder", "llama-local"]
 api_type = "open_ai_compatible"
+prompt_caching = true
 api_key_env_var = "LOCAL_OPENAI_API_KEY"
 ```
 

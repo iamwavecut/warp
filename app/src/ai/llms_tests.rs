@@ -30,6 +30,7 @@ fn startup_loads_existing_custom_provider_models() {
                             api_key_env_var: None,
                             api_type: Default::default(),
                             capabilities: Default::default(),
+                            ..Default::default()
                         },
                         CustomProviderConfig {
                             local_id: None,
@@ -39,6 +40,7 @@ fn startup_loads_existing_custom_provider_models() {
                             api_key_env_var: Some("P0_LOCAL_API_KEY".to_string()),
                             api_type: Default::default(),
                             capabilities: Default::default(),
+                            ..Default::default()
                         },
                     ],
                     ctx,
@@ -202,6 +204,7 @@ fn custom_model_metadata_reports_effective_capabilities_and_context_window() {
                             transcription_model: Some("local-whisper".to_string()),
                             context_window_tokens: Some(32_000),
                         },
+                        ..Default::default()
                     }],
                     ctx,
                 )
@@ -340,4 +343,36 @@ fn llm_info_round_trip_serializes_and_deserializes() {
         serde_json::from_str(&serialized).expect("should deserialize after round trip");
 
     assert_eq!(info, round_tripped);
+}
+
+#[test]
+fn custom_provider_alias_labels_models_without_changing_ids() {
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        AISettings::handle(&app).update(&mut app, |settings, ctx| {
+            settings
+                .custom_providers
+                .set_value(
+                    vec![CustomProviderConfig {
+                        name: "stable-id".to_string(),
+                        alias: Some("Work models".to_string()),
+                        base_url: "http://localhost:1234/v1".to_string(),
+                        models: vec!["model".to_string()],
+                        api_type: crate::settings::CustomApiType::AnthropicMessages,
+                        ..Default::default()
+                    }],
+                    ctx,
+                )
+                .unwrap();
+        });
+        let catalog = app.read(models_by_feature_from_custom_providers);
+        let models = &catalog.agent_mode.choices;
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].display_name, "Work models / model");
+        assert_eq!(models[0].id.as_str(), "custom/stable-id/model");
+        assert_eq!(
+            models[0].provider,
+            LLMProvider::Custom("stable-id".to_string())
+        );
+    });
 }

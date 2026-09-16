@@ -11,6 +11,8 @@ use crate::settings::CustomProviderCapabilities;
 
 fn route(base_url: String, api_key: Option<String>) -> CustomProviderRoute {
     CustomProviderRoute {
+        api_type: Default::default(),
+        prompt_caching: true,
         provider_name: "local".to_string(),
         base_url,
         model: "local-whisper".to_string(),

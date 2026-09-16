@@ -28,8 +28,8 @@ use crate::ai::local_compaction::{
 };
 use crate::server::server_api::AIApiError;
 use crate::settings::{
-    CustomProviderCapabilities, CustomProviderConfig, custom_provider_name_is_unique,
-    normalize_custom_provider_env_var,
+    CustomApiType, CustomProviderCapabilities, CustomProviderConfig,
+    custom_provider_name_is_unique, normalize_custom_provider_env_var,
 };
 use crate::util::image::{
     MAX_IMAGE_COUNT_FOR_QUERY, MAX_IMAGE_SIZE_BYTES, is_supported_image_mime_type,
@@ -38,6 +38,9 @@ use ::ai::api_keys::ApiKeys;
 
 use super::ResponseStream;
 use crate::ai::block_context::BlockContext;
+
+#[path = "direct_openai_protocols.rs"]
+mod protocols;
 
 const CUSTOM_MODEL_PREFIX: &str = "custom/";
 const MAX_CONTEXT_CHARS: usize = 24_000;
@@ -54,6 +57,8 @@ pub(crate) struct CustomProviderRoute {
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
+    pub api_type: CustomApiType,
+    pub prompt_caching: bool,
     pub capabilities: CustomProviderCapabilities,
 }
 
@@ -426,6 +431,8 @@ fn route_for_provider_model(
         base_url: provider.base_url.clone(),
         model,
         api_key,
+        api_type: provider.api_type,
+        prompt_caching: provider.prompt_caching,
         capabilities: provider.capabilities.clone(),
     })
 }
@@ -479,6 +486,8 @@ struct OpenAIImageUrl {
 
 #[derive(Debug, Clone, Serialize)]
 struct ChatMessage {
+    #[serde(skip)]
+    response_history: Option<protocols::ResponseHistory>,
     role: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     content: Option<ChatMessageContent>,
@@ -491,6 +500,7 @@ struct ChatMessage {
 impl ChatMessage {
     fn system(content: String) -> Self {
         Self {
+            response_history: None,
             role: "system",
             content: Some(ChatMessageContent::Text(content)),
             tool_calls: vec![],
@@ -500,6 +510,7 @@ impl ChatMessage {
 
     fn user(content: String) -> Self {
         Self {
+            response_history: None,
             role: "user",
             content: Some(ChatMessageContent::Text(content)),
             tool_calls: vec![],
@@ -509,6 +520,7 @@ impl ChatMessage {
 
     fn assistant(content: String) -> Self {
         Self {
+            response_history: None,
             role: "assistant",
             content: Some(ChatMessageContent::Text(content)),
             tool_calls: vec![],
@@ -522,6 +534,7 @@ impl ChatMessage {
 
     fn assistant_tool_calls(tool_calls: Vec<OpenAIToolCall>) -> Self {
         Self {
+            response_history: None,
             role: "assistant",
             content: None,
             tool_calls,
@@ -531,6 +544,7 @@ impl ChatMessage {
 
     fn tool(tool_call_id: String, content: String) -> Self {
         Self {
+            response_history: None,
             role: "tool",
             content: Some(ChatMessageContent::Text(content)),
             tool_calls: vec![],
@@ -540,6 +554,7 @@ impl ChatMessage {
 
     fn user_parts(parts: Vec<OpenAIContentPart>) -> Self {
         Self {
+            response_history: None,
             role: "user",
             content: Some(ChatMessageContent::Parts(parts)),
             tool_calls: vec![],
@@ -586,6 +601,8 @@ struct OpenAIFunctionCall {
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
+    #[serde(skip)]
+    response_output: Option<protocols::ProviderOutput>,
     choices: Vec<ChatChoice>,
 }
 
@@ -768,6 +785,9 @@ impl StreamCompletionState {
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Vec<ModelEntry>,
+    #[serde(default)]
+    has_more: bool,
+    last_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -779,37 +799,15 @@ pub(crate) async fn fetch_models(
     base_url: &str,
     api_key: Option<&str>,
 ) -> Result<Vec<String>, AIApiError> {
-    let client = reqwest::Client::new();
-    let mut request = client.get(models_url(base_url));
-    if let Some(api_key) = api_key.filter(|key| !key.trim().is_empty()) {
-        request = request.bearer_auth(api_key);
-    }
+    fetch_models_for_protocol(base_url, api_key, CustomApiType::OpenAiCompatible).await
+}
 
-    let response = request.send().await?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|e| format!("(failed to read response body: {e:#})"));
-        return Err(AIApiError::ErrorStatus(status, body));
-    }
-
-    let response: ModelsResponse = response
-        .json()
-        .await
-        .context("failed to decode OpenAI-compatible models response")?;
-    let mut seen = std::collections::HashSet::new();
-    let models = response
-        .data
-        .into_iter()
-        .filter_map(|entry| entry.id)
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty())
-        .filter(|id| seen.insert(id.clone()))
-        .collect();
-
-    Ok(models)
+pub(crate) async fn fetch_models_for_protocol(
+    base_url: &str,
+    api_key: Option<&str>,
+    api_type: CustomApiType,
+) -> Result<Vec<String>, AIApiError> {
+    protocols::fetch_models(base_url, api_key, api_type).await
 }
 
 pub(crate) async fn complete_text(
@@ -847,10 +845,7 @@ async fn complete_chat_messages(
     };
 
     let response = send_chat_completion_request(route, &body).await?;
-    let response: ChatCompletionResponse = response
-        .json()
-        .await
-        .context("failed to decode OpenAI-compatible chat completion response")?;
+    let response = protocols::decode_http_response(route.api_type, response).await?;
     if response.choices.len() != 1 {
         return Err(AIApiError::Other(anyhow::anyhow!(
             "OpenAI-compatible text completion must contain exactly one choice"
@@ -1084,6 +1079,8 @@ fn local_compaction_stream(
             &route.base_url,
             &route.model,
             &route.capabilities,
+            route.api_type,
+            route.prompt_caching,
         ),
     };
     let initial_limits = LocalCompactionLimits::for_context_budget(route.context_char_budget());
@@ -1520,19 +1517,20 @@ fn stream_chat_completion_with_tool_policy(
         .to_ascii_lowercase();
 
     if !content_type.contains("text/event-stream") {
-        let response: ChatCompletionResponse = match response
-            .json()
-            .await
-            .context("failed to decode OpenAI-compatible chat completion response")
-        {
+        let mut response = match protocols::decode_http_response(route.api_type, response).await {
             Ok(response) => response,
             Err(error) => {
-                yield Err(Arc::new(AIApiError::Other(error)));
+                yield Err(Arc::new(error));
                 return;
             }
         };
+        if let Err(error) = protocols::bind_output_to_request(&route, &body, &mut response.response_output) {
+            yield Err(Arc::new(error));
+            return;
+        }
         match events_from_non_streaming_response(
             response,
+            &route,
             &task_id,
             &request_id,
             prefix_actions,
@@ -1552,6 +1550,7 @@ fn stream_chat_completion_with_tool_policy(
     let mut bytes = response.bytes_stream();
     let mut buffer = Vec::new();
     let mut state = StreamCompletionState::default();
+    let mut protocol_stream = protocols::ProtocolStream::new(route.api_type);
 
     while let Some(chunk) = bytes.next().await {
         let chunk = match chunk {
@@ -1577,8 +1576,9 @@ fn stream_chat_completion_with_tool_policy(
                 }
             };
 
-            let events = match apply_openai_sse_event(
+            let events = match apply_protocol_sse_event(
                 &event,
+                &mut protocol_stream,
                 &mut state,
                 &task_id,
                 &request_id,
@@ -1607,8 +1607,9 @@ fn stream_chat_completion_with_tool_policy(
                 return;
             }
         };
-        let events = match apply_openai_sse_event(
+        let events = match apply_protocol_sse_event(
             &residual_event,
+            &mut protocol_stream,
             &mut state,
             &task_id,
             &request_id,
@@ -1625,6 +1626,27 @@ fn stream_chat_completion_with_tool_policy(
         }
     }
 
+    let mut response_output = None;
+    if let Some(protocol_stream) = protocol_stream {
+        match protocol_stream.finish() {
+            Ok((chunk, mut output)) => {
+                if let Err(error) = protocols::bind_output_to_request(&route, &body, &mut output) {
+                    yield Err(Arc::new(error));
+                    return;
+                }
+                response_output = output;
+                for event in state.apply_chunk(chunk, &task_id, &request_id, &mut prefix_actions) {
+                    yield Ok(event);
+                }
+            }
+            Err(error) => {
+                yield Err(Arc::new(error));
+                return;
+            }
+        }
+    }
+
+    let content_message_id = state.content_message_id.clone();
     let StreamCompletionState {
         tool_calls,
         finish_reason,
@@ -1656,6 +1678,9 @@ fn stream_chat_completion_with_tool_policy(
             parsed_events,
             residual_buffer_bytes
         );
+        if let (Some(output), Some(message_id)) = (&response_output, &content_message_id) {
+            prefix_actions.push(protocols::history_update_action(&route, &task_id, message_id, output));
+        }
         if !prefix_actions.is_empty() {
             yield Ok(client_actions_event(take_prefix_actions(&mut prefix_actions)));
         }
@@ -1718,6 +1743,14 @@ fn stream_chat_completion_with_tool_policy(
             }
         }
         let mut actions = take_prefix_actions(&mut prefix_actions);
+        if let Some(output) = &response_output {
+            if let Some(message_id) = &content_message_id {
+                actions.push(protocols::history_update_action(&route, &task_id, message_id, output));
+                protocols::attach_response_history(&route, &mut messages, output, false);
+            } else {
+                protocols::attach_response_history(&route, &mut messages, output, true);
+            }
+        }
         actions.push(add_messages_action(&task_id, messages));
         yield Ok(client_actions_event(actions));
     } else if !prefix_actions.is_empty() {
@@ -1734,29 +1767,33 @@ async fn send_chat_completion_request(
     route: &CustomProviderRoute,
     body: &ChatCompletionRequest,
 ) -> Result<reqwest::Response, AIApiError> {
-    let client = reqwest::Client::new();
-    let mut request = client
-        .post(chat_completions_url(&route.base_url))
-        .json(body);
-    if let Some(api_key) = route.api_key.as_ref().filter(|key| !key.trim().is_empty()) {
-        request = request.bearer_auth(api_key);
-    }
+    protocols::send_request(route, body).await
+}
 
-    let response = request.send().await?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|e| format!("(failed to read response body: {e:#})"));
-        return Err(AIApiError::ErrorStatus(status, body));
-    }
-
-    Ok(response)
+fn apply_protocol_sse_event(
+    event: &str,
+    protocol_stream: &mut Option<protocols::ProtocolStream>,
+    state: &mut StreamCompletionState,
+    task_id: &str,
+    request_id: &str,
+    prefix_actions: &mut Vec<api::ClientAction>,
+) -> Result<Vec<api::ResponseEvent>, AIApiError> {
+    let Some(protocol_stream) = protocol_stream else {
+        return apply_openai_sse_event(event, state, task_id, request_id, prefix_actions);
+    };
+    state.parsed_events += 1;
+    let delta = protocol_stream.apply_event(event)?;
+    Ok(state.apply_chunk(
+        protocols::text_chunk(delta),
+        task_id,
+        request_id,
+        prefix_actions,
+    ))
 }
 
 fn events_from_non_streaming_response(
     response: ChatCompletionResponse,
+    route: &CustomProviderRoute,
     task_id: &str,
     request_id: &str,
     mut prefix_actions: Vec<api::ClientAction>,
@@ -1768,6 +1805,7 @@ fn events_from_non_streaming_response(
             "OpenAI-compatible completion must contain exactly one choice"
         )));
     }
+    let response_output = response.response_output;
     let mut events = Vec::new();
     let choice = response
         .choices
@@ -1801,15 +1839,29 @@ fn events_from_non_streaming_response(
         ));
     }
     for tool_call in message.tool_calls {
-        messages.push(api_tool_call_message_for_supported_tools(
-            task_id,
-            request_id,
-            tool_call,
-            supported_tools,
-            long_running_shell_controls_advertised,
-        )?);
+        messages.push(
+            api_tool_call_message_for_supported_tools(
+                task_id,
+                request_id,
+                tool_call,
+                supported_tools,
+                long_running_shell_controls_advertised,
+            )
+            .map_err(|error| {
+                if route.api_type == CustomApiType::OpenAiCompatible {
+                    error
+                } else {
+                    AIApiError::Other(anyhow::anyhow!(
+                        "Direct provider returned invalid or unavailable tool arguments"
+                    ))
+                }
+            })?,
+        );
     }
 
+    if let Some(output) = &response_output {
+        protocols::attach_response_history(route, &mut messages, output, true);
+    }
     let mut actions = take_prefix_actions(&mut prefix_actions);
     if !messages.is_empty() {
         actions.push(add_messages_action(task_id, messages));
@@ -2019,32 +2071,37 @@ fn openai_messages_from_api_messages_with_tool_policy_and_vision(
         }
 
         let Some(api::message::Message::ToolCall(_)) = messages[index].message.as_ref() else {
-            output.extend(
-                openai_messages_from_api_message_with_tool_policy_and_vision(
-                    &messages[index],
-                    long_running_shell_controls_advertised,
-                    context_char_budget,
-                    vision_enabled,
-                )?,
-            );
+            let mut converted = openai_messages_from_api_message_with_tool_policy_and_vision(
+                &messages[index],
+                long_running_shell_controls_advertised,
+                context_char_budget,
+                vision_enabled,
+            )?;
+            if let Some(first) = converted.first_mut() {
+                first.response_history = protocols::history_from_message(&messages[index])?;
+            }
+            output.extend(converted);
             index += 1;
             continue;
         };
 
         let request_id = &messages[index].request_id;
         if request_id.is_empty() {
-            output.extend(
-                openai_messages_from_api_message_with_tool_policy_and_vision(
-                    &messages[index],
-                    long_running_shell_controls_advertised,
-                    context_char_budget,
-                    vision_enabled,
-                )?,
-            );
+            let mut converted = openai_messages_from_api_message_with_tool_policy_and_vision(
+                &messages[index],
+                long_running_shell_controls_advertised,
+                context_char_budget,
+                vision_enabled,
+            )?;
+            if let Some(first) = converted.first_mut() {
+                first.response_history = protocols::history_from_message(&messages[index])?;
+            }
+            output.extend(converted);
             index += 1;
             continue;
         }
 
+        let response_history = protocols::history_from_message(&messages[index])?;
         let mut tool_calls = Vec::new();
         while index < messages.len() {
             let Some(api::message::Message::ToolCall(tool_call)) = messages[index].message.as_ref()
@@ -2060,7 +2117,9 @@ fn openai_messages_from_api_messages_with_tool_policy_and_vision(
             index += 1;
         }
         if !tool_calls.is_empty() {
-            output.push(ChatMessage::assistant_tool_calls(tool_calls));
+            let mut message = ChatMessage::assistant_tool_calls(tool_calls);
+            message.response_history = response_history;
+            output.push(message);
         }
     }
     Ok(output)
@@ -2641,7 +2700,7 @@ fn system_prompt(
 ) -> String {
     let mut prompt = String::from(
         "You are Warp Agent running inside the Warp terminal app. Warp is a real local harness, not a plain chat. \
-When local tool definitions are enabled, use the provided OpenAI tool-calling interface for shell access, file access, code search, MCP tools, or Warp skills. \
+When local tool definitions are enabled, use the provided tool-calling interface for shell access, file access, code search, MCP tools, or Warp skills. \
 If no tools are listed, do not invent tool calls or claim that an unavailable local tool was run. \
 Do not tell the user that you lack tools if tools are listed. The Warp client executes tool calls and sends their results back to you. \
 After every tool result, inspect the result and continue with another tool call if the user's request is not complete. \
@@ -6851,6 +6910,14 @@ fn json_schema_object<const N: usize, const M: usize>(
 mod local_memory_tests;
 
 #[cfg(test)]
+#[path = "direct_openai_protocols_tests.rs"]
+mod protocol_tests;
+
+#[cfg(test)]
+#[path = "direct_openai_protocol_compaction_tests.rs"]
+mod protocol_compaction_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::ai::agent::{AIAgentExchangeId, AnyFileContent, FileContext, ImageContext};
@@ -6891,6 +6958,8 @@ mod tests {
     #[test]
     fn resolves_default_custom_provider_route_from_local_settings() {
         let providers = vec![CustomProviderConfig {
+            alias: None,
+            prompt_caching: true,
             local_id: None,
             name: "local-openai".to_string(),
             base_url: "http://localhost:1234/v1".to_string(),
@@ -6920,6 +6989,8 @@ mod tests {
     fn duplicate_custom_provider_names_fail_closed_without_route() {
         let providers = vec![
             CustomProviderConfig {
+                alias: None,
+                prompt_caching: true,
                 local_id: Some("first".to_string()),
                 name: "duplicate".to_string(),
                 base_url: "http://localhost:1234/v1".to_string(),
@@ -6927,6 +6998,8 @@ mod tests {
                 ..Default::default()
             },
             CustomProviderConfig {
+                alias: None,
+                prompt_caching: true,
                 local_id: Some("second".to_string()),
                 name: "duplicate".to_string(),
                 base_url: "http://localhost:5678/v1".to_string(),
@@ -6969,6 +7042,8 @@ mod tests {
     fn duplicate_custom_provider_name_blocks_default_route_for_other_providers() {
         let providers = vec![
             CustomProviderConfig {
+                alias: None,
+                prompt_caching: true,
                 local_id: Some("first".to_string()),
                 name: "duplicate".to_string(),
                 base_url: "http://localhost:1234/v1".to_string(),
@@ -6976,6 +7051,8 @@ mod tests {
                 ..Default::default()
             },
             CustomProviderConfig {
+                alias: None,
+                prompt_caching: true,
                 local_id: Some("second".to_string()),
                 name: "duplicate".to_string(),
                 base_url: "http://localhost:1234/v1".to_string(),
@@ -6983,6 +7060,8 @@ mod tests {
                 ..Default::default()
             },
             CustomProviderConfig {
+                alias: None,
+                prompt_caching: true,
                 local_id: Some("unique".to_string()),
                 name: "unique".to_string(),
                 base_url: "http://localhost:1234/v1".to_string(),
@@ -7003,6 +7082,8 @@ mod tests {
     #[test]
     fn custom_provider_route_waits_for_secure_key_hydration() {
         let providers = vec![CustomProviderConfig {
+            alias: None,
+            prompt_caching: true,
             local_id: Some("local".to_string()),
             name: "local".to_string(),
             base_url: "http://localhost:1234/v1".to_string(),
@@ -7260,6 +7341,8 @@ mod tests {
     #[test]
     fn configured_capabilities_are_retained_and_vision_is_enabled_by_the_local_adapter() {
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: "http://localhost:1234/v1".to_string(),
             model: "model".to_string(),
@@ -7304,6 +7387,8 @@ mod tests {
     #[test]
     fn configured_context_window_uses_conservative_character_budget() {
         let mut route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: "http://localhost:1234/v1".to_string(),
             model: "model".to_string(),
@@ -7389,6 +7474,8 @@ mod tests {
 
     fn compaction_test_route(base_url: String) -> CustomProviderRoute {
         CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url,
             model: "model".to_string(),
@@ -7414,6 +7501,8 @@ mod tests {
                 &route.base_url,
                 &route.model,
                 &route.capabilities,
+                route.api_type,
+                route.prompt_caching,
             ),
         };
         let snapshot = crate::ai::local_compaction::LocalCompactionSnapshot::capture(
@@ -7554,6 +7643,8 @@ mod tests {
                         &route.base_url,
                         &route.model,
                         &route.capabilities,
+                        route.api_type,
+                        route.prompt_caching,
                     ),
             },
             crate::ai::local_compaction::LocalCompactionLimits::for_context_budget(
@@ -7612,6 +7703,8 @@ mod tests {
             .create_async()
             .await;
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -7648,6 +7741,8 @@ mod tests {
             .create_async()
             .await;
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -7679,6 +7774,8 @@ mod tests {
             .create_async()
             .await;
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -7712,6 +7809,8 @@ mod tests {
             .create_async()
             .await;
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -7750,6 +7849,8 @@ mod tests {
 
     fn vision_test_route(base_url: String) -> CustomProviderRoute {
         CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local-vision".to_string(),
             base_url,
             model: "vision-model".to_string(),
@@ -8739,6 +8840,8 @@ mod tests {
             .create_async()
             .await;
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -8791,6 +8894,8 @@ mod tests {
             .await;
 
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -8876,6 +8981,8 @@ mod tests {
             .await;
 
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -8930,6 +9037,8 @@ mod tests {
                 .create_async()
                 .await;
             let route = CustomProviderRoute {
+                api_type: CustomApiType::OpenAiCompatible,
+                prompt_caching: true,
                 provider_name: "local".to_string(),
                 base_url: format!("{}/v1", server.url()),
                 model: "model".to_string(),
@@ -9029,6 +9138,8 @@ mod tests {
                 .create_async()
                 .await;
             let route = CustomProviderRoute {
+                api_type: CustomApiType::OpenAiCompatible,
+                prompt_caching: true,
                 provider_name: "local".to_string(),
                 base_url: format!("{}/v1", server.url()),
                 model: "model".to_string(),
@@ -9068,6 +9179,8 @@ mod tests {
             .create_async()
             .await;
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -9116,6 +9229,8 @@ mod tests {
             .create_async()
             .await;
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -9211,6 +9326,8 @@ mod tests {
                 .create_async()
                 .await;
             let route = CustomProviderRoute {
+                api_type: CustomApiType::OpenAiCompatible,
+                prompt_caching: true,
                 provider_name: "local".to_string(),
                 base_url: format!("{}/v1", server.url()),
                 model: "model".to_string(),
@@ -9260,6 +9377,8 @@ mod tests {
                 .create_async()
                 .await;
             let route = CustomProviderRoute {
+                api_type: CustomApiType::OpenAiCompatible,
+                prompt_caching: true,
                 provider_name: "local".to_string(),
                 base_url: format!("{}/v1", server.url()),
                 model: "model".to_string(),
@@ -9290,6 +9409,8 @@ mod tests {
             .create_async()
             .await;
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -9338,6 +9459,8 @@ mod tests {
                 .create_async()
                 .await;
             let route = CustomProviderRoute {
+                api_type: CustomApiType::OpenAiCompatible,
+                prompt_caching: true,
                 provider_name: "local".to_string(),
                 base_url: format!("{}/v1", server.url()),
                 model: "model".to_string(),
@@ -9379,6 +9502,8 @@ mod tests {
             context: std::sync::Arc::from(vec![AIAgentContext::SelectedText("x".repeat(2_000))]),
         }];
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -9447,6 +9572,8 @@ mod tests {
             )]),
         }];
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "legacy".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -9520,6 +9647,8 @@ mod tests {
             .await;
 
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "test-model".to_string(),
@@ -9589,6 +9718,8 @@ mod tests {
                 .create_async()
                 .await;
             let route = CustomProviderRoute {
+                api_type: CustomApiType::OpenAiCompatible,
+                prompt_caching: true,
                 provider_name: "local".to_string(),
                 base_url: format!("{}/v1", server.url()),
                 model: "model".to_string(),
@@ -9621,6 +9752,8 @@ mod tests {
     #[test]
     fn local_model_used_message_names_the_direct_provider_without_hosted_identity() {
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local-lab".to_string(),
             base_url: "http://127.0.0.1:1234/v1".to_string(),
             model: "qwen-local".to_string(),
@@ -10266,6 +10399,8 @@ mod tests {
             .create_async()
             .await;
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -10508,6 +10643,8 @@ mod tests {
             ..super::super::RequestParams::new_for_test()
         };
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "model".to_string(),
@@ -11627,6 +11764,8 @@ data: [DONE]
             .await;
 
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "test-model".to_string(),
@@ -11711,6 +11850,8 @@ data: [DONE]
             .await;
 
         let route = CustomProviderRoute {
+            api_type: CustomApiType::OpenAiCompatible,
+            prompt_caching: true,
             provider_name: "local".to_string(),
             base_url: format!("{}/v1", server.url()),
             model: "test-model".to_string(),

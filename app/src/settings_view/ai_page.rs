@@ -2279,6 +2279,13 @@ pub enum AISettingsPageAction {
     RefreshAwsBedrockCredentials,
     AddLLMProvider,
     RemoveLLMProvider(String),
+    SetLLMProviderProtocol {
+        provider_id: String,
+        api_type: CustomApiType,
+    },
+    ToggleLLMProviderPromptCaching {
+        provider_id: String,
+    },
     ToggleLLMProviderCapability {
         provider_id: String,
         capability: EditableCustomProviderCapability,
@@ -2807,6 +2814,7 @@ impl TypedActionView for AISettingsPageView {
                     api_key_env_var: None,
                     api_type: CustomApiType::OpenAiCompatible,
                     capabilities: Default::default(),
+                    ..Default::default()
                 });
                 if let Err(error) = persist_custom_provider_configs(providers, ctx) {
                     self.provider_editor_error_state
@@ -2864,10 +2872,9 @@ impl TypedActionView for AISettingsPageView {
                     ctx.notify();
                 }
             }
-            AISettingsPageAction::ToggleLLMProviderCapability {
-                provider_id,
-                capability,
-            } => {
+            AISettingsPageAction::ToggleLLMProviderCapability { provider_id, .. }
+            | AISettingsPageAction::SetLLMProviderProtocol { provider_id, .. }
+            | AISettingsPageAction::ToggleLLMProviderPromptCaching { provider_id } => {
                 if !custom_provider_editor_actions_allowed(
                     ApiKeyManager::as_ref(ctx).keys_ready(),
                     custom_provider_ids_are_persisted(&AISettings::as_ref(ctx).custom_providers),
@@ -2880,23 +2887,35 @@ impl TypedActionView for AISettingsPageView {
                     .find(|provider| provider.local_id.as_deref() == Some(provider_id.as_str()))
                 {
                     let provider_name = provider.name.clone();
-                    match capability {
-                        EditableCustomProviderCapability::Chat => {
-                            provider.capabilities.chat = !provider.capabilities.chat;
+                    match action {
+                        AISettingsPageAction::SetLLMProviderProtocol { api_type, .. } => {
+                            provider.api_type = *api_type
                         }
-                        EditableCustomProviderCapability::Tools => {
-                            provider.capabilities.tools = !provider.capabilities.tools;
+                        AISettingsPageAction::ToggleLLMProviderPromptCaching { .. } => {
+                            provider.prompt_caching = !provider.prompt_caching
                         }
-                        EditableCustomProviderCapability::Vision => {
-                            provider.capabilities.vision = !provider.capabilities.vision;
-                        }
-                        EditableCustomProviderCapability::Embeddings => {
-                            provider.capabilities.embeddings = !provider.capabilities.embeddings;
-                        }
-                        EditableCustomProviderCapability::Transcription => {
-                            provider.capabilities.transcription =
-                                !provider.capabilities.transcription;
-                        }
+                        AISettingsPageAction::ToggleLLMProviderCapability {
+                            capability, ..
+                        } => match capability {
+                            EditableCustomProviderCapability::Chat => {
+                                provider.capabilities.chat = !provider.capabilities.chat;
+                            }
+                            EditableCustomProviderCapability::Tools => {
+                                provider.capabilities.tools = !provider.capabilities.tools;
+                            }
+                            EditableCustomProviderCapability::Vision => {
+                                provider.capabilities.vision = !provider.capabilities.vision;
+                            }
+                            EditableCustomProviderCapability::Embeddings => {
+                                provider.capabilities.embeddings =
+                                    !provider.capabilities.embeddings;
+                            }
+                            EditableCustomProviderCapability::Transcription => {
+                                provider.capabilities.transcription =
+                                    !provider.capabilities.transcription;
+                            }
+                        },
+                        _ => unreachable!("provider setting action matched above"),
                     }
                     if let Err(error) = provider.validate() {
                         self.provider_editor_error_state.set(
@@ -5775,6 +5794,9 @@ struct LLMProviderEditorHandles {
     editor_error_state: ProviderEditorErrorState,
     capabilities: CustomProviderCapabilities,
     name_editor: ViewHandle<EditorView>,
+    alias_editor: ViewHandle<EditorView>,
+    protocol_dropdown: ViewHandle<Dropdown<AISettingsPageAction>>,
+    prompt_caching_toggle: SwitchStateHandle,
     base_url_editor: ViewHandle<EditorView>,
     models_picker: ViewHandle<LLMProviderModelsPicker>,
     api_key_editor: ViewHandle<EditorView>,
@@ -5792,6 +5814,7 @@ struct LLMProviderEditorHandles {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ProviderConnectionSignature {
+    api_type: CustomApiType,
     base_url: String,
     api_key_fingerprint: Option<u64>,
 }
@@ -5817,6 +5840,7 @@ enum LLMProviderModelsPickerAction {
 }
 
 struct LLMProviderModelsPicker {
+    api_type: CustomApiType,
     selected_models: Vec<String>,
     available_models: Vec<String>,
     validation_state: ProviderModelsValidationState,
@@ -5884,6 +5908,7 @@ impl TypedActionView for LLMProviderModelsPicker {
 
 impl LLMProviderModelsPicker {
     fn new(
+        api_type: CustomApiType,
         selected_models: Vec<String>,
         base_url_editor: ViewHandle<EditorView>,
         api_key_editor: ViewHandle<EditorView>,
@@ -5914,6 +5939,7 @@ impl LLMProviderModelsPicker {
         });
 
         let picker = Self {
+            api_type,
             selected_models,
             available_models: Vec::new(),
             validation_state: ProviderModelsValidationState::NotChecked,
@@ -6014,8 +6040,12 @@ impl LLMProviderModelsPicker {
         });
         ctx.notify();
 
+        let api_type = self.api_type;
         ctx.spawn(
-            async move { direct_openai::fetch_models(&base_url, api_key.as_deref()).await },
+            async move {
+                direct_openai::fetch_models_for_protocol(&base_url, api_key.as_deref(), api_type)
+                    .await
+            },
             move |me, result, ctx| {
                 if !matches!(
                     &me.validation_state,
@@ -6057,7 +6087,10 @@ impl LLMProviderModelsPicker {
         let base_url = self.base_url_editor.as_ref(ctx).buffer_text(ctx);
         let direct_key = self.api_key_editor.as_ref(ctx).buffer_text(ctx);
         let env_var = self.api_key_env_var_editor.as_ref(ctx).buffer_text(ctx);
-        resolve_provider_connection(&base_url, &direct_key, &env_var)
+        let (mut signature, base_url, api_key) =
+            resolve_provider_connection(&base_url, &direct_key, &env_var)?;
+        signature.api_type = self.api_type;
+        Ok((signature, base_url, api_key))
     }
 
     fn can_add_models(&self, ctx: &AppContext) -> bool {
@@ -6391,6 +6424,7 @@ fn resolve_provider_connection(
     }
 
     let signature = ProviderConnectionSignature {
+        api_type: CustomApiType::default(),
         base_url: base_url.clone(),
         api_key_fingerprint: api_key.as_deref().map(api_key_fingerprint),
     };
@@ -6554,6 +6588,12 @@ fn merge_provider_editor_config_with_live(
     if edited.name == initial.name {
         edited.name = live.name.clone();
     }
+    if edited.alias == initial.alias {
+        edited.alias = live.alias.clone();
+    }
+    if edited.prompt_caching == initial.prompt_caching {
+        edited.prompt_caching = live.prompt_caching;
+    }
     if edited.base_url == initial.base_url {
         edited.base_url = live.base_url.clone();
     }
@@ -6663,7 +6703,7 @@ fn sync_llm_provider_editors_to_settings(
             }
         };
 
-        let config = match custom_provider_config_from_ui_with_capabilities(
+        let mut config = match custom_provider_config_from_ui_with_capabilities(
             &name,
             &base_url,
             &models,
@@ -6680,6 +6720,10 @@ fn sync_llm_provider_editors_to_settings(
                 continue;
             }
         };
+        let alias = provider.alias_editor.as_ref(ctx).buffer_text(ctx);
+        config.alias = (!alias.trim().is_empty()).then(|| alias.trim().to_string());
+        config.api_type = provider.initial_config.api_type;
+        config.prompt_caching = provider.initial_config.prompt_caching;
         let config = merge_provider_editor_config_with_live(
             config,
             &provider.initial_config,
@@ -6765,6 +6809,43 @@ impl LLMProvidersWidget {
             .iter()
             .enumerate()
             .map(|(_, provider)| {
+                let provider_id = provider
+                    .local_id
+                    .clone()
+                    .unwrap_or_else(new_custom_provider_id);
+                let alias_editor = create_llm_provider_editor(
+                    provider.alias.clone().unwrap_or_default(),
+                    "e.g. Home GPU or Work models",
+                    false,
+                    false,
+                    ctx,
+                );
+                let protocol_provider_id = provider_id.clone();
+                let protocol_dropdown = ctx.add_typed_action_view(|ctx| {
+                    let mut dropdown = Dropdown::new(ctx);
+                    dropdown.set_top_bar_max_width(AI_SETTINGS_DROPDOWN_WIDTH);
+                    dropdown.set_menu_width(AI_SETTINGS_DROPDOWN_WIDTH, ctx);
+                    dropdown.set_items(
+                        CustomApiType::ALL
+                            .into_iter()
+                            .map(|api_type| {
+                                DropdownItem::new(
+                                    api_type.display_name(),
+                                    AISettingsPageAction::SetLLMProviderProtocol {
+                                        provider_id: protocol_provider_id.clone(),
+                                        api_type,
+                                    },
+                                )
+                            })
+                            .collect(),
+                        ctx,
+                    );
+                    dropdown.set_selected_by_name(provider.api_type.display_name(), ctx);
+                    if !provider_editing_enabled {
+                        dropdown.set_disabled(ctx);
+                    }
+                    dropdown
+                });
                 let name_editor = create_llm_provider_editor(
                     provider.name.clone(),
                     "local-openai-compatible",
@@ -6828,6 +6909,7 @@ impl LLMProvidersWidget {
                     false,
                     ctx,
                 );
+                let prompt_caching_toggle = SwitchStateHandle::default();
                 let chat_toggle = SwitchStateHandle::default();
                 let tools_toggle = SwitchStateHandle::default();
                 let vision_toggle = SwitchStateHandle::default();
@@ -6840,6 +6922,7 @@ impl LLMProvidersWidget {
                     let selected_models = provider.models.clone();
                     ctx.add_typed_action_view(move |ctx| {
                         LLMProviderModelsPicker::new(
+                            provider.api_type,
                             selected_models,
                             base_url_editor,
                             api_key_editor,
@@ -6849,10 +6932,6 @@ impl LLMProvidersWidget {
                         )
                     })
                 };
-                let provider_id = provider
-                    .local_id
-                    .clone()
-                    .unwrap_or_else(new_custom_provider_id);
                 let remove_provider_id = provider_id.clone();
                 let remove_button = ctx.add_typed_action_view(move |_| {
                     ActionButton::new("Remove", DangerNakedTheme)
@@ -6874,6 +6953,9 @@ impl LLMProvidersWidget {
                     editor_error_state: editor_error_state.clone(),
                     capabilities: provider.capabilities.clone(),
                     name_editor,
+                    alias_editor,
+                    protocol_dropdown,
+                    prompt_caching_toggle,
                     base_url_editor,
                     models_picker,
                     api_key_editor,
@@ -6895,6 +6977,7 @@ impl LLMProvidersWidget {
             for provider in &editor_handles {
                 for editor in [
                     provider.name_editor.clone(),
+                    provider.alias_editor.clone(),
                     provider.base_url_editor.clone(),
                     provider.api_key_editor.clone(),
                     provider.api_key_env_var_editor.clone(),
@@ -6915,6 +6998,7 @@ impl LLMProvidersWidget {
         for provider in editor_handles.clone() {
             for editor in [
                 provider.name_editor.clone(),
+                provider.alias_editor.clone(),
                 provider.base_url_editor.clone(),
                 provider.api_key_editor.clone(),
                 provider.api_key_env_var_editor.clone(),
@@ -7059,7 +7143,12 @@ impl LLMProvidersWidget {
         app: &AppContext,
     ) -> Box<dyn Element> {
         let provider_name = provider.name_editor.as_ref(app).buffer_text(app);
-        let provider_name = provider_name.trim();
+        let alias = provider.alias_editor.as_ref(app).buffer_text(app);
+        let provider_name = if alias.trim().is_empty() {
+            provider_name.trim()
+        } else {
+            alias.trim()
+        };
         let title = if provider_name.is_empty() {
             format!("Provider {}", index + 1)
         } else {
@@ -7076,7 +7165,7 @@ impl LLMProvidersWidget {
             )
             .with_child(
                 Text::new_inline(
-                    "OpenAI-compatible API",
+                    provider.initial_config.api_type.display_name(),
                     appearance.ui_font_family(),
                     CONTENT_FONT_SIZE,
                 )
@@ -7109,8 +7198,23 @@ impl LLMProvidersWidget {
                 .with_child(header)
                 .with_child(Self::render_editor_input(
                     appearance,
-                    "Provider name",
+                    "Connection alias",
+                    provider.alias_editor.clone(),
+                ))
+                .with_child(Self::render_editor_input(
+                    appearance,
+                    "Provider ID",
                     provider.name_editor.clone(),
+                ))
+                .with_child(Text::new_inline("Protocol", appearance.ui_font_family(), CONTENT_FONT_SIZE)
+                    .with_color(appearance.theme().active_ui_text_color().into()).finish())
+                .with_child(ChildView::new(&provider.protocol_dropdown).finish())
+                .with_child(Self::render_capability_toggle(
+                    appearance, "Prompt caching", provider.initial_config.api_type.caching_description(),
+                    provider.initial_config.prompt_caching,
+                    provider.prompt_caching_toggle.clone(),
+                    !self.provider_editing_enabled || provider.initial_config.api_type == CustomApiType::OpenAiCompatible,
+                    AISettingsPageAction::ToggleLLMProviderPromptCaching { provider_id: provider.provider_id.clone() },
                 ))
                 .with_child(Self::render_editor_input(
                     appearance,
@@ -7159,8 +7263,8 @@ impl LLMProvidersWidget {
                 )
                 .with_child(Self::render_capability_toggle(
                     appearance,
-                    "Chat completions",
-                    "Used by the local direct adapter.",
+                    "Chat",
+                    "Uses the selected protocol directly.",
                     provider.capabilities.chat,
                     provider.chat_toggle.clone(),
                     !self.provider_editing_enabled,
@@ -7263,7 +7367,7 @@ impl SettingsWidget for LLMProvidersWidget {
                     .finish(),
             )
             .with_child(render_ai_setting_description(
-                "Configure local or BYOK OpenAI-compatible model providers. Direct API keys are stored locally; environment variables are resolved at request time.",
+                "Configure named model connections using OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages. API keys stay in secure storage; environment variables are resolved at request time.",
                 true,
                 app,
             ));
