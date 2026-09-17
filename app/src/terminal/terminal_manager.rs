@@ -50,7 +50,7 @@ pub(super) fn compute_block_size(initial_size: Vector2F, ctx: &mut AppContext) -
     let appearance = Appearance::as_ref(ctx);
     let terminal_spacing =
         TerminalSettings::as_ref(ctx).terminal_spacing(appearance.line_height_ratio(), ctx);
-    let size_info = if ctx.is_headless() {
+    let size_info = if !ctx.is_gui() {
         // In headless mode, we don't actually have a font since we aren't rendering anything.
         // We skip the font-based size computation and hardcode a terminal size, so that
         // viewers of the shared session see a reasonable terminal width.

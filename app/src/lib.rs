@@ -433,15 +433,15 @@ impl LaunchMode {
         }
     }
 
-    /// Returns `true` if Warp should run headlessly, without a visible UI.
-    fn is_headless(&self) -> bool {
+    /// Whether this launch uses the native GUI backend.
+    fn is_gui(&self) -> bool {
         match self {
             LaunchMode::CommandLine { command, .. } => match command {
-                CliCommand::Agent(AgentCommand::Run(args)) => !args.gui,
-                _ => true,
+                CliCommand::Agent(AgentCommand::Run(args)) => args.gui,
+                _ => false,
             },
-            LaunchMode::RemoteServerProxy | LaunchMode::RemoteServerDaemon { .. } => true,
-            LaunchMode::App { .. } | LaunchMode::Test { .. } => false,
+            LaunchMode::RemoteServerProxy | LaunchMode::RemoteServerDaemon { .. } => false,
+            LaunchMode::App { .. } | LaunchMode::Test { .. } => true,
         }
     }
 
@@ -451,7 +451,7 @@ impl LaunchMode {
     /// processes (daemon, CLI, proxy) would otherwise contend for the fixed port.
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
     fn should_start_local_http_server(&self) -> bool {
-        !self.is_headless()
+        self.is_gui()
     }
 
     /// Returns `true` if this process can build and sync codebase indices.
@@ -736,7 +736,7 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
     // Claim a background-only process type before anything else can reach
     // AppKit, so a headless launch never acquires a Dock tile.
     #[cfg(target_os = "macos")]
-    if launch_mode.is_headless()
+    if !launch_mode.is_gui()
         && let Err(err) = platform::mac::mark_process_as_background_only()
     {
         log::warn!("Failed to mark process as background-only: {err:#}");
@@ -863,8 +863,8 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
     let pty_spawner =
         terminal::local_tty::spawner::PtySpawner::new().context("Failed to create pty spawner")?;
 
-    let mut app_builder = if launch_mode.is_headless() {
-        warpui::platform::AppBuilder::new_headless(
+    let mut app_builder = if !launch_mode.is_gui() {
+        warpui::platform::AppBuilder::new_windowless(
             app_callbacks(launch_mode.is_integration_test()),
             Box::new(ASSETS),
             launch_mode.take_test_driver(),
@@ -878,7 +878,7 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
     };
 
     #[cfg(target_os = "macos")]
-    if !launch_mode.is_headless() {
+    if launch_mode.is_gui() {
         use warpui::AssetProvider as _;
         use warpui::platform::mac::AppExt;
 
@@ -1344,7 +1344,7 @@ pub(crate) fn initialize_app(
     ctx.add_singleton_model(|_| NetworkLogPaneManager::default());
 
     #[cfg(target_os = "macos")]
-    if !launch_mode.is_headless() {
+    if launch_mode.is_gui() {
         AppearanceManager::as_ref(ctx).set_app_icon(ctx);
     }
 

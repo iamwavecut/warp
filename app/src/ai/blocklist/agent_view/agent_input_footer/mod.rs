@@ -57,6 +57,7 @@ use std::sync::Arc;
 
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::ShellLaunchData;
+use crate::terminal::input::MenuPositioning;
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::local_shell::LocalShellState;
 #[cfg(feature = "voice_input")]
@@ -66,7 +67,7 @@ use crate::voice::transcriber::{VoiceTranscriber, VoiceTranscriberEvent};
 use ai::document::{AIDocumentId, AIDocumentVersion};
 use parking_lot::FairMutex;
 use pathfinder_color::ColorU;
-use pathfinder_geometry::vector::Vector2F;
+use pathfinder_geometry::vector::{Vector2F, vec2f};
 use settings::{Setting as _, ToggleableSetting};
 #[cfg(not(target_family = "wasm"))]
 use std::env;
@@ -78,6 +79,10 @@ use std::time::Duration;
 use tokio::fs;
 #[cfg(feature = "voice_input")]
 use voice_input::{StartListeningError, VoiceSessionResult};
+use warpui::elements::{
+    ChildAnchor, Dismiss, OffsetPositioning, PositionedElementAnchor,
+    PositionedElementOffsetBounds, SavePosition, Stack,
+};
 
 use warp_core::ui::{
     color::{ContrastingColor, blend::Blend, contrast::MinimumAllowedContrast},
@@ -167,6 +172,8 @@ pub struct AgentInputFooter {
     nld_button: ViewHandle<ActionButton>,
     file_button: ViewHandle<ActionButton>,
     context_window_button: ViewHandle<ActionButton>,
+    usage_popover_open: bool,
+    menu_positioning_provider: Arc<dyn MenuPositioningProvider>,
     model_selector: ViewHandle<ProfileModelSelector>,
     prompt_alert: ViewHandle<PromptAlertView>,
     ambient_agent_view_model: Option<ModelHandle<AmbientAgentViewModel>>,
@@ -532,6 +539,9 @@ impl AgentInputFooter {
                 .with_tooltip("Context window usage")
                 .with_size(button_size)
                 .with_tooltip_alignment(TooltipAlignment::Left)
+                .on_click(|ctx| {
+                    ctx.dispatch_typed_action(AgentInputFooterAction::ToggleUsagePopover)
+                })
         });
 
         let profile_model_selector_full = ctx.add_typed_action_view(|ctx| {
@@ -683,6 +693,8 @@ impl AgentInputFooter {
             plugin_operation_in_progress: false,
             plugin_chip_ready: false,
             context_window_button,
+            usage_popover_open: false,
+            menu_positioning_provider,
             model_selector: profile_model_selector_full,
             prompt_alert,
             terminal_model,
@@ -1661,7 +1673,9 @@ impl AgentInputFooter {
             let usage = conversation.context_window_usage();
             let icon = icon_for_context_window_usage(usage);
             let remaining_pct = ((1.0 - usage) * 100.0).round() as i32;
-            let tooltip = format!("{remaining_pct}% context remaining");
+            let tooltip = format!(
+                "{remaining_pct}% context remaining · Click for local conversation details"
+            );
 
             self.context_window_button.update(ctx, |button, ctx| {
                 button.set_icon(Some(icon), ctx);
@@ -1723,11 +1737,56 @@ impl AgentInputFooter {
             }
             AgentToolbarItemKind::FileAttach => Some(ChildView::new(&self.file_button).finish()),
             AgentToolbarItemKind::ContextWindowUsage => {
-                let has_conversation = FeatureFlag::ContextWindowUsageV2.is_enabled()
-                    && BlocklistAIHistoryModel::as_ref(app)
-                        .active_conversation(self.terminal_view_id)
-                        .is_some();
-                has_conversation.then(|| ChildView::new(&self.context_window_button).finish())
+                let conversation = BlocklistAIHistoryModel::as_ref(app)
+                    .active_conversation(self.terminal_view_id)?;
+                let anchor = format!(
+                    "local-conversation-usage-{:?}",
+                    self.context_window_button.id()
+                );
+                let mut stack = Stack::new().with_child(
+                    SavePosition::new(
+                        ChildView::new(&self.context_window_button).finish(),
+                        &anchor,
+                    )
+                    .finish(),
+                );
+                if self.usage_popover_open {
+                    let (offset, parent, child) =
+                        match self.menu_positioning_provider.menu_position(app) {
+                            MenuPositioning::AboveInputBox => (
+                                vec2f(0., -4.),
+                                PositionedElementAnchor::TopRight,
+                                ChildAnchor::BottomRight,
+                            ),
+                            MenuPositioning::BelowInputBox => (
+                                vec2f(0., 4.),
+                                PositionedElementAnchor::BottomRight,
+                                ChildAnchor::TopRight,
+                            ),
+                        };
+                    let content =
+                        crate::ai::blocklist::usage::local_conversation::render(conversation, app);
+                    let content = EventHandler::new(content)
+                        .on_left_mouse_down(|_, _, _| DispatchEventResult::StopPropagation)
+                        .finish();
+                    let popover = Dismiss::new(content)
+                        .prevent_interaction_with_other_elements()
+                        .on_dismiss(|ctx, _| {
+                            ctx.dispatch_typed_action(AgentInputFooterAction::CloseUsagePopover)
+                        })
+                        .finish();
+                    stack.add_positioned_overlay_child(
+                        popover,
+                        OffsetPositioning::offset_from_save_position_element(
+                            anchor,
+                            offset,
+                            PositionedElementOffsetBounds::WindowByPosition,
+                            parent,
+                            child,
+                        ),
+                    );
+                }
+                Some(stack.finish())
             }
             AgentToolbarItemKind::ShareSession => {
                 let _ = shared_status;
@@ -1809,6 +1868,11 @@ impl View for AgentInputFooter {
             &terminal_model,
         );
 
+        // Popover positioning reads this model again; release the non-reentrant lock first.
+        let shared_status = shared_status.clone();
+        drop(terminal_model);
+        let shared_status = &shared_status;
+
         for item in &left_items {
             if let Some(element) =
                 self.render_toolbar_item(item, shared_status, is_cloud_context, app)
@@ -1867,6 +1931,8 @@ impl View for AgentInputFooter {
 
 #[derive(Debug, Clone)]
 pub enum AgentInputFooterAction {
+    ToggleUsagePopover,
+    CloseUsagePopover,
     #[cfg(feature = "voice_input")]
     ToggleVoiceInput,
     SelectFile,
@@ -1891,6 +1957,17 @@ impl TypedActionView for AgentInputFooter {
 
     fn handle_action(&mut self, action: &Self::Action, ctx: &mut warpui::ViewContext<Self>) {
         match action {
+            AgentInputFooterAction::ToggleUsagePopover => {
+                self.usage_popover_open = !self.usage_popover_open
+                    && BlocklistAIHistoryModel::as_ref(ctx)
+                        .active_conversation(self.terminal_view_id)
+                        .is_some();
+                ctx.notify();
+            }
+            AgentInputFooterAction::CloseUsagePopover => {
+                self.usage_popover_open = false;
+                ctx.notify();
+            }
             #[cfg(feature = "voice_input")]
             AgentInputFooterAction::ToggleVoiceInput => {
                 // In CLI agent mode, handle voice recording/transcription

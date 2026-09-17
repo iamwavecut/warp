@@ -71,7 +71,7 @@ pub(super) fn run_daemon_app(
     use warpui::platform::AppBuilder;
     use warpui::platform::app::AppCallbacks;
 
-    AppBuilder::new_headless(AppCallbacks::default(), Box::new(()), None).run(|ctx| {
+    AppBuilder::new_windowless(AppCallbacks::default(), Box::new(()), None).run(|ctx| {
         // Rotate log files from the previous daemon invocation in the background.
         ctx.background_executor()
             .spawn(warp_logging::rotate_log_files())
