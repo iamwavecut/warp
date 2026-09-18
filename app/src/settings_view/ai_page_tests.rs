@@ -540,7 +540,7 @@ fn team_force_takes_precedence_over_global_ai_disabled() {
 }
 
 #[test]
-fn stale_custom_provider_editor_preserves_protocol_caching_and_alias() {
+fn stale_custom_provider_editor_preserves_protocol_and_caching() {
     let initial = CustomProviderConfig {
         name: "stable-id".to_string(),
         base_url: "http://localhost:1234/v1".to_string(),
@@ -550,7 +550,6 @@ fn stale_custom_provider_editor_preserves_protocol_caching_and_alias() {
     let live = CustomProviderConfig {
         api_type: crate::settings::CustomApiType::AnthropicMessages,
         prompt_caching: false,
-        alias: Some("Work models".to_string()),
         ..initial.clone()
     };
     let mut edited = initial.clone();
@@ -558,7 +557,6 @@ fn stale_custom_provider_editor_preserves_protocol_caching_and_alias() {
     let merged = merge_provider_editor_config_with_live(edited, &initial, Some(&live));
     assert_eq!(merged.api_type, live.api_type);
     assert!(!merged.prompt_caching);
-    assert_eq!(merged.display_name(), "Work models");
     assert_eq!(merged.name, "stable-id");
     assert_eq!(merged.base_url, "http://localhost:5678/v1");
     let route = super::direct_openai::resolve_custom_provider_route(
@@ -572,28 +570,6 @@ fn stale_custom_provider_editor_preserves_protocol_caching_and_alias() {
         crate::settings::CustomApiType::AnthropicMessages
     );
     assert!(!route.prompt_caching);
-}
-
-#[test]
-fn custom_provider_alias_edit_does_not_revert_protocol_or_keys() {
-    let initial = CustomProviderConfig {
-        name: "stable-id".to_string(),
-        ..Default::default()
-    };
-    let live = CustomProviderConfig {
-        api_type: crate::settings::CustomApiType::OpenAiResponses,
-        prompt_caching: false,
-        ..initial.clone()
-    };
-    let edited = CustomProviderConfig {
-        alias: Some("Home GPU".to_string()),
-        ..initial.clone()
-    };
-    let merged = merge_provider_editor_config_with_live(edited, &initial, Some(&live));
-    assert_eq!(merged.name, "stable-id");
-    assert_eq!(merged.display_name(), "Home GPU");
-    assert_eq!(merged.api_type, live.api_type);
-    assert!(!merged.prompt_caching);
 }
 
 #[test]

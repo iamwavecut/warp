@@ -778,7 +778,7 @@ fn test_toolbar_command_map_matched_agent() {
 }
 
 #[test]
-fn custom_provider_protocol_alias_and_caching_round_trip() {
+fn custom_provider_protocol_and_caching_round_trip() {
     for (api_type, serialized) in [
         (CustomApiType::OpenAiCompatible, "open_ai_compatible"),
         (CustomApiType::OpenAiResponses, "open_ai_responses"),
@@ -787,7 +787,6 @@ fn custom_provider_protocol_alias_and_caching_round_trip() {
         let source = format!(
             r#"
 name = "work"
-alias = "Work model pool"
 base_url = "http://localhost:1234/v1"
 models = ["model"]
 api_type = "{serialized}"
@@ -796,7 +795,6 @@ prompt_caching = false
         );
         let config: CustomProviderConfig = toml::from_str(&source).unwrap();
         assert_eq!(config.api_type, api_type);
-        assert_eq!(config.display_name(), "Work model pool");
         assert_eq!(config.name, "work");
         assert!(!config.prompt_caching);
         let round_trip: CustomProviderConfig =
@@ -806,7 +804,7 @@ prompt_caching = false
 }
 
 #[test]
-fn legacy_custom_provider_defaults_to_prompt_caching_without_alias() {
+fn legacy_custom_provider_defaults_to_prompt_caching() {
     let config: CustomProviderConfig = toml::from_str(
         r#"
 name = "legacy"
@@ -818,12 +816,7 @@ models = ["model"]
     assert_eq!(config.api_type, CustomApiType::OpenAiCompatible);
     assert!(config.prompt_caching);
     assert!(CustomProviderConfig::default().prompt_caching);
-    assert_eq!(config.display_name(), "legacy");
-    let blank_alias = CustomProviderConfig {
-        alias: Some("   ".to_string()),
-        ..config
-    };
-    assert_eq!(blank_alias.display_name(), "legacy");
+    assert_eq!(config.name, "legacy");
 }
 
 #[test]
@@ -836,7 +829,6 @@ fn custom_provider_settings_file_loader_keeps_default_caching_and_rejects_invali
         let explicit = CustomProviderConfig {
             api_type,
             prompt_caching: false,
-            alias: Some("My pool".to_string()),
             ..config.clone()
         };
         assert_eq!(

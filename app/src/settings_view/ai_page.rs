@@ -5794,7 +5794,6 @@ struct LLMProviderEditorHandles {
     editor_error_state: ProviderEditorErrorState,
     capabilities: CustomProviderCapabilities,
     name_editor: ViewHandle<EditorView>,
-    alias_editor: ViewHandle<EditorView>,
     protocol_dropdown: ViewHandle<Dropdown<AISettingsPageAction>>,
     prompt_caching_toggle: SwitchStateHandle,
     base_url_editor: ViewHandle<EditorView>,
@@ -6588,9 +6587,6 @@ fn merge_provider_editor_config_with_live(
     if edited.name == initial.name {
         edited.name = live.name.clone();
     }
-    if edited.alias == initial.alias {
-        edited.alias = live.alias.clone();
-    }
     if edited.prompt_caching == initial.prompt_caching {
         edited.prompt_caching = live.prompt_caching;
     }
@@ -6720,8 +6716,6 @@ fn sync_llm_provider_editors_to_settings(
                 continue;
             }
         };
-        let alias = provider.alias_editor.as_ref(ctx).buffer_text(ctx);
-        config.alias = (!alias.trim().is_empty()).then(|| alias.trim().to_string());
         config.api_type = provider.initial_config.api_type;
         config.prompt_caching = provider.initial_config.prompt_caching;
         let config = merge_provider_editor_config_with_live(
@@ -6813,13 +6807,6 @@ impl LLMProvidersWidget {
                     .local_id
                     .clone()
                     .unwrap_or_else(new_custom_provider_id);
-                let alias_editor = create_llm_provider_editor(
-                    provider.alias.clone().unwrap_or_default(),
-                    "e.g. Home GPU or Work models",
-                    false,
-                    false,
-                    ctx,
-                );
                 let protocol_provider_id = provider_id.clone();
                 let protocol_dropdown = ctx.add_typed_action_view(|ctx| {
                     let mut dropdown = Dropdown::new(ctx);
@@ -6953,7 +6940,6 @@ impl LLMProvidersWidget {
                     editor_error_state: editor_error_state.clone(),
                     capabilities: provider.capabilities.clone(),
                     name_editor,
-                    alias_editor,
                     protocol_dropdown,
                     prompt_caching_toggle,
                     base_url_editor,
@@ -6977,7 +6963,6 @@ impl LLMProvidersWidget {
             for provider in &editor_handles {
                 for editor in [
                     provider.name_editor.clone(),
-                    provider.alias_editor.clone(),
                     provider.base_url_editor.clone(),
                     provider.api_key_editor.clone(),
                     provider.api_key_env_var_editor.clone(),
@@ -6998,7 +6983,6 @@ impl LLMProvidersWidget {
         for provider in editor_handles.clone() {
             for editor in [
                 provider.name_editor.clone(),
-                provider.alias_editor.clone(),
                 provider.base_url_editor.clone(),
                 provider.api_key_editor.clone(),
                 provider.api_key_env_var_editor.clone(),
@@ -7143,12 +7127,7 @@ impl LLMProvidersWidget {
         app: &AppContext,
     ) -> Box<dyn Element> {
         let provider_name = provider.name_editor.as_ref(app).buffer_text(app);
-        let alias = provider.alias_editor.as_ref(app).buffer_text(app);
-        let provider_name = if alias.trim().is_empty() {
-            provider_name.trim()
-        } else {
-            alias.trim()
-        };
+        let provider_name = provider_name.trim();
         let title = if provider_name.is_empty() {
             format!("Provider {}", index + 1)
         } else {
@@ -7196,11 +7175,6 @@ impl LLMProvidersWidget {
             Flex::column()
                 .with_spacing(16.)
                 .with_child(header)
-                .with_child(Self::render_editor_input(
-                    appearance,
-                    "Connection alias",
-                    provider.alias_editor.clone(),
-                ))
                 .with_child(Self::render_editor_input(
                     appearance,
                     "Provider ID",

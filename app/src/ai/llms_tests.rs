@@ -346,29 +346,40 @@ fn llm_info_round_trip_serializes_and_deserializes() {
 }
 
 #[test]
-fn custom_provider_alias_labels_models_without_changing_ids() {
+fn custom_provider_legacy_alias_uses_provider_name_without_changing_ids() {
+    use settings_value::SettingsValue;
+
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
+        let config = CustomProviderConfig::from_file_value(&serde_json::json!({
+            "local_id": "connection-id",
+            "name": "stable-id",
+            "alias": "Work models",
+            "base_url": "http://localhost:1234/v1",
+            "models": ["model"],
+            "api_type": "anthropic_messages",
+            "api_key_env_var": "LOCAL_MODEL_KEY",
+            "prompt_caching": false
+        }))
+        .unwrap();
+        assert_eq!(config.local_id.as_deref(), Some("connection-id"));
+        assert_eq!(config.api_key_env_var.as_deref(), Some("LOCAL_MODEL_KEY"));
+        assert!(!config.prompt_caching);
+        assert_eq!(
+            config.api_type,
+            crate::settings::CustomApiType::AnthropicMessages
+        );
+        assert!(config.to_file_value().get("alias").is_none());
         AISettings::handle(&app).update(&mut app, |settings, ctx| {
             settings
                 .custom_providers
-                .set_value(
-                    vec![CustomProviderConfig {
-                        name: "stable-id".to_string(),
-                        alias: Some("Work models".to_string()),
-                        base_url: "http://localhost:1234/v1".to_string(),
-                        models: vec!["model".to_string()],
-                        api_type: crate::settings::CustomApiType::AnthropicMessages,
-                        ..Default::default()
-                    }],
-                    ctx,
-                )
+                .set_value(vec![config], ctx)
                 .unwrap();
         });
         let catalog = app.read(models_by_feature_from_custom_providers);
         let models = &catalog.agent_mode.choices;
         assert_eq!(models.len(), 1);
-        assert_eq!(models[0].display_name, "Work models / model");
+        assert_eq!(models[0].display_name, "stable-id / model");
         assert_eq!(models[0].id.as_str(), "custom/stable-id/model");
         assert_eq!(
             models[0].provider,

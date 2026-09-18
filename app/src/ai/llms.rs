@@ -1322,7 +1322,7 @@ fn models_by_feature_from_custom_providers(app: &AppContext) -> ModelsByFeature 
 
         for model_id in &provider_config.models {
             all_llms.push(LLMInfo {
-                display_name: format!("{} / {}", provider_config.display_name(), model_id),
+                display_name: format!("{} / {}", provider_name, model_id),
                 base_model_name: model_id.clone(),
                 id: format!("custom/{}/{}", provider_name, model_id).into(),
                 reasoning_level: None,

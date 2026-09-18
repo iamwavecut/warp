@@ -112,7 +112,7 @@ server/API-key management entry points.
 AI provider settings should expose only `LLM providers` for custom/local
 provider configuration:
 
-- stable provider name and an optional display alias for the endpoint/model pool;
+- one provider name (`Provider ID`) for the endpoint/model pool; no separate title or alias;
 - base URL and protocol (OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages);
 - per-endpoint prompt caching, enabled by default;
 - model IDs;
@@ -124,8 +124,9 @@ variable at request time. Do not restore the legacy proprietary key-only
 provider UI.
 
 Compact model selectors should identify custom models by provider and model
-name only, such as `alias / model` (falling back to the provider name). Aliases
-must not change persisted model IDs or secure-key lookup. Keep the OpenAI-compatible `base_url` in
+name only, such as `provider / model`. The provider name is also used in persisted
+model IDs and secure-key lookup. Ignore legacy `alias` settings without renaming
+the provider. Keep the OpenAI-compatible `base_url` in
 settings and config surfaces; do not expose it in picker labels or other
 space-constrained AI model UI.
 
@@ -226,7 +227,6 @@ Example settings shape:
 ```toml
 [[agents.custom_providers]]
 name = "local-openai-compatible"
-alias = "Home model pool"
 base_url = "http://localhost:1234/v1"
 models = ["qwen3-coder", "llama-local"]
 api_type = "open_ai_compatible"

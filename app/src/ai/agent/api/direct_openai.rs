@@ -6958,7 +6958,6 @@ mod tests {
     #[test]
     fn resolves_default_custom_provider_route_from_local_settings() {
         let providers = vec![CustomProviderConfig {
-            alias: None,
             prompt_caching: true,
             local_id: None,
             name: "local-openai".to_string(),
@@ -6989,7 +6988,6 @@ mod tests {
     fn duplicate_custom_provider_names_fail_closed_without_route() {
         let providers = vec![
             CustomProviderConfig {
-                alias: None,
                 prompt_caching: true,
                 local_id: Some("first".to_string()),
                 name: "duplicate".to_string(),
@@ -6998,7 +6996,6 @@ mod tests {
                 ..Default::default()
             },
             CustomProviderConfig {
-                alias: None,
                 prompt_caching: true,
                 local_id: Some("second".to_string()),
                 name: "duplicate".to_string(),
@@ -7042,7 +7039,6 @@ mod tests {
     fn duplicate_custom_provider_name_blocks_default_route_for_other_providers() {
         let providers = vec![
             CustomProviderConfig {
-                alias: None,
                 prompt_caching: true,
                 local_id: Some("first".to_string()),
                 name: "duplicate".to_string(),
@@ -7051,7 +7047,6 @@ mod tests {
                 ..Default::default()
             },
             CustomProviderConfig {
-                alias: None,
                 prompt_caching: true,
                 local_id: Some("second".to_string()),
                 name: "duplicate".to_string(),
@@ -7060,7 +7055,6 @@ mod tests {
                 ..Default::default()
             },
             CustomProviderConfig {
-                alias: None,
                 prompt_caching: true,
                 local_id: Some("unique".to_string()),
                 name: "unique".to_string(),
@@ -7082,7 +7076,6 @@ mod tests {
     #[test]
     fn custom_provider_route_waits_for_secure_key_hydration() {
         let providers = vec![CustomProviderConfig {
-            alias: None,
             prompt_caching: true,
             local_id: Some("local".to_string()),
             name: "local".to_string(),

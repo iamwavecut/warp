@@ -2,8 +2,7 @@
 
 Open **Settings → AI → LLM providers** to configure each connection separately:
 
-- **Connection alias**: the label shown in the model picker, for example `Work models / model-id`.
-- **Provider ID**: the existing unique provider name used by saved model selections and secure keys. Changing the alias leaves these references intact.
+- **Provider ID**: the unique name of the connection, shown in its settings card and in the model picker as `provider / model-id`. Saved model selections and secure keys also use this name.
 - **Protocol**: OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages.
 - **Base URL**: the API root, usually ending in `/v1`; omit `/chat/completions`, `/responses`, or `/messages`.
 - **Prompt caching**: enabled by default for new and existing connections. See the protocol differences below.
@@ -12,12 +11,11 @@ API keys remain in secure storage. Alternatively, configure an API-key environme
 
 ## Configuration
 
-Each entry under `agents.custom_providers` represents one connection. Multiple entries can share a URL while using different names, aliases, protocols, model lists and caching settings.
+Each entry under `agents.custom_providers` represents one connection. Multiple entries can share a URL while using different names, protocols, model lists and caching settings.
 
 ```toml
 [[agents.custom_providers]]
 name = "work-responses"
-alias = "Work models"
 base_url = "https://api.openai.com/v1"
 models = ["your-model-id"]
 api_type = "open_ai_responses"
@@ -26,7 +24,6 @@ api_key_env_var = "OPENAI_API_KEY"
 
 [[agents.custom_providers]]
 name = "anthropic"
-alias = "Claude models"
 base_url = "https://api.anthropic.com/v1"
 models = ["your-claude-model-id"]
 api_type = "anthropic_messages"
@@ -34,7 +31,7 @@ prompt_caching = true
 api_key_env_var = "ANTHROPIC_API_KEY"
 ```
 
-Omitting `api_type` preserves the legacy `open_ai_compatible` protocol. Omitting `alias` displays `name`. Model IDs remain `custom/<name>/<model-id>` regardless of alias.
+Omitting `api_type` preserves the legacy `open_ai_compatible` protocol. Model IDs remain `custom/<name>/<model-id>`. Older settings with an `alias` field still load; that field is ignored, and the existing provider name, model selections and secure-key lookup remain unchanged.
 
 ## Prompt caching
 

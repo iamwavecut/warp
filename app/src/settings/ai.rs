@@ -174,13 +174,11 @@ pub struct CustomProviderConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(description = "Opaque local identity for this provider.")]
     pub local_id: Option<String>,
-    /// Stable name used in model IDs and secure key lookup.
-    #[schemars(description = "Stable name used in model IDs and secure key lookup.")]
+    /// Provider name shown in the UI and used in model IDs and secure key lookup.
+    #[schemars(
+        description = "Provider name shown in the UI and used in model IDs and secure key lookup."
+    )]
     pub name: String,
-    /// Optional connection label, independent of model IDs and secure keys.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(description = "Optional display alias for this endpoint and its model pool.")]
-    pub alias: Option<String>,
     /// Base URL for the selected API protocol.
     #[schemars(description = "Base URL for the selected API protocol.")]
     pub base_url: String,
@@ -218,7 +216,6 @@ impl Default for CustomProviderConfig {
         Self {
             local_id: None,
             name: String::new(),
-            alias: None,
             base_url: String::new(),
             models: Vec::new(),
             api_key_env_var: None,
@@ -230,14 +227,6 @@ impl Default for CustomProviderConfig {
 }
 
 impl CustomProviderConfig {
-    pub fn display_name(&self) -> &str {
-        self.alias
-            .as_deref()
-            .map(str::trim)
-            .filter(|alias| !alias.is_empty())
-            .unwrap_or(&self.name)
-    }
-
     pub fn validate(&self) -> Result<(), CustomProviderConfigError> {
         self.capabilities.validate()
     }

@@ -5,7 +5,6 @@ use warpui::{AppContext, Element, SingletonEntity};
 
 use crate::ai::agent::conversation::AIConversation;
 use crate::appearance::Appearance;
-use crate::settings::AISettings;
 
 #[derive(Default)]
 struct Summary {
@@ -48,15 +47,7 @@ pub(crate) fn render(conversation: &AIConversation, app: &AppContext) -> Box<dyn
         let label = model
             .strip_prefix("custom/")
             .and_then(|id| id.split_once('/'))
-            .map(|(provider, model)| {
-                let provider = AISettings::as_ref(app)
-                    .custom_providers
-                    .iter()
-                    .find(|config| config.name == provider)
-                    .map(|config| config.display_name())
-                    .unwrap_or(provider);
-                format!("{provider} / {model}")
-            })
+            .map(|(provider, model)| format!("{provider} / {model}"))
             .unwrap_or_else(|| model.clone());
         rows.push(format!("{label}: {count}"));
     }

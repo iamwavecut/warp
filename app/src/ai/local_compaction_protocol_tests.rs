@@ -10,11 +10,6 @@ fn custom_provider_compaction_fingerprint_tracks_protocol_and_cache_policy() {
     };
     let fingerprint = |provider| configured_route_fingerprint("custom/local/model", &[provider]);
     let original = fingerprint(initial.clone()).unwrap();
-    let renamed = CustomProviderConfig {
-        alias: Some("New label".to_string()),
-        ..initial.clone()
-    };
-    assert_eq!(fingerprint(renamed).unwrap(), original);
     for api_type in [
         CustomApiType::OpenAiResponses,
         CustomApiType::AnthropicMessages,

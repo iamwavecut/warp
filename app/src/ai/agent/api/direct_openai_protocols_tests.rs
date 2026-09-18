@@ -193,7 +193,6 @@ fn direct_protocol_route_keeps_identity_protocol_and_cache_preference() {
     for api_type in new_protocols() {
         let provider = CustomProviderConfig {
             name: "identity".into(),
-            alias: Some("Display alias".into()),
             base_url: "http://localhost:1234/v1".into(),
             models: vec!["model".into()],
             api_type,
