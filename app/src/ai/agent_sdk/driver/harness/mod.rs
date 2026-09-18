@@ -29,6 +29,7 @@ pub(crate) mod exit_escalation;
 mod gemini;
 mod json_utils;
 mod local_resume;
+pub(super) mod save_coordinator;
 pub(crate) use claude_code::ClaudeHarness;
 use codex::CodexHarness;
 use gemini::GeminiHarness;

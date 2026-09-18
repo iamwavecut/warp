@@ -40,6 +40,9 @@ use crate::ai::agent::api::direct_openai::{self, CustomProviderRoute};
 use crate::ai::agent_sdk::driver::harness::exit_escalation::{
     ExitEscalation, ExitEscalationAction, ExitEscalationEvent,
 };
+use crate::ai::agent_sdk::driver::harness::save_coordinator::{
+    SaveCoordinator, save_after_session_update,
+};
 use crate::ai::document::ai_document_model::{AIDocumentModel, AIDocumentModelEvent};
 use crate::ai::llms::{LLMId, LLMPreferences};
 use crate::ai::local_named_agents::profile_sync_id;
@@ -174,6 +177,10 @@ impl<T: Send + 'static> IdleTimeoutSender<T> {
 
     fn complete_with_optional_idle(&self, idle_timeout: Option<Duration>, value: T) {
         match idle_timeout {
+            Some(Duration::ZERO) => {
+                self.cancel_idle_timeout();
+                self.end_run_now(value);
+            }
             Some(timeout) => self.end_run_after(timeout, value),
             None => self.end_run_now(value),
         }
@@ -241,6 +248,7 @@ pub struct AgentDriver {
     /// - We're using a third-party harness.
     /// In the future, we _may_ use the harness abstraction for the Oz agent as well.
     harness: Option<Arc<dyn HarnessRunner>>,
+    harness_saves: Arc<SaveCoordinator>,
 
     // Optional idle timeout after completion. If set, the process will stay alive for follow-ups
     // and exit after this period of inactivity.
@@ -487,6 +495,7 @@ impl AgentDriver {
             output_format: OutputFormat::default(),
             task_id,
             harness: None,
+            harness_saves: Arc::new(SaveCoordinator::default()),
             idle_on_complete,
             environment,
             run_conversation_id: None,
@@ -522,6 +531,7 @@ impl AgentDriver {
             output_format: OutputFormat::default(),
             task_id: None,
             harness: None,
+            harness_saves: Arc::new(SaveCoordinator::default()),
             idle_on_complete: None,
             environment: None,
             run_conversation_id: None,
@@ -1995,10 +2005,9 @@ impl AgentDriver {
                 exit_code = command_handle => break exit_code,
                 _ = warpui::r#async::Timer::after(HARNESS_SAVE_INTERVAL).fuse() => {
                     log::debug!("Triggering periodic save of harness conversation data");
-                    report_if_error!(runner
-                        .save_conversation(SavePoint::Periodic, foreground)
-                        .await
-                        .context("Failed to save harness conversation (periodic)"));
+                    foreground.spawn(|me, ctx| {
+                        me.request_harness_save(SavePoint::Periodic, ctx);
+                    }).await?;
                 }
                 _ = harness_exit_rx => {
                     break Self::exit_harness_bounded(
@@ -2058,8 +2067,15 @@ impl AgentDriver {
 
         // Final save after the command finishes.
         log::debug!("Triggering final save of harness conversation data");
-        let final_save_error = match runner
-            .save_conversation(SavePoint::Final, foreground)
+        let saves = foreground.spawn(|me, _| me.harness_saves.clone()).await?;
+        let final_save_error = match saves
+            .finish(
+                save_after_session_update(
+                    runner.handle_session_update(foreground),
+                    runner.save_conversation(SavePoint::Final, foreground),
+                ),
+                Duration::from_secs(30),
+            )
             .await
             .context("Failed to save harness conversation (final)")
         {
@@ -2397,7 +2413,7 @@ impl AgentDriver {
                                         "Ambient agent idle lifecycle: event=idle_timeout_scheduled task_id={:?} terminal_view_id={terminal_id:?} timeout={idle_timeout:?} outcome=non_error_completion",
                                         me.task_id
                                     );
-                                    run_exit.end_run_after(idle_timeout, output_status);
+                                    run_exit.complete_with_optional_idle(Some(idle_timeout), output_status);
                                 } else {
                                     log::info!(
                                         "Ambient agent idle lifecycle: event=run_completion_immediate task_id={:?} terminal_view_id={terminal_id:?} outcome=non_error_completion",
@@ -2593,12 +2609,13 @@ impl AgentDriver {
                         | CLIAgentSessionStatus::Failed { .. }
                         | CLIAgentSessionStatus::Blocked { .. }
                         | CLIAgentSessionStatus::Cancelled => {
+                            me.request_harness_save(SavePoint::PostTurn, ctx);
                             if let Some(idle_timeout) = me.idle_on_complete {
                                 log::info!(
                                     "Ambient agent CLI lifecycle: event=idle_timeout_scheduled task_id={:?} terminal_view_id={terminal_view_id:?} timeout={idle_timeout:?}",
                                     me.task_id
                                 );
-                                harness_exit.end_run_after(idle_timeout, ());
+                                harness_exit.complete_with_optional_idle(Some(idle_timeout), ());
                             } else {
                                 log::info!(
                                     "Ambient agent CLI lifecycle: event=run_completion_immediate task_id={:?} terminal_view_id={terminal_view_id:?}",
@@ -2624,32 +2641,39 @@ impl AgentDriver {
                         return;
                     }
 
-                    let Some(runner) = me.harness.clone() else {
-                        return;
-                    };
-                    let spawner = ctx.spawner();
-                    ctx.spawn(
-                        async move {
-                            log::debug!(
-                                "Triggering post-turn harness session update from CLI agent event"
-                            );
-                            report_if_error!(runner
-                                .handle_session_update(&spawner)
-                                .await
-                                .context("Failed to update harness state from CLI session event"));
-                            log::debug!("Triggering post-turn save of harness conversation data");
-                            report_if_error!(runner
-                                .save_conversation(SavePoint::PostTurn, &spawner)
-                                .await
-                                .context("Failed to save harness conversation (post-turn)"));
-                        },
-                        |_, _, _| {},
-                    );
+                    me.request_harness_save(SavePoint::PostTurn, ctx);
                 }
                 CLIAgentSessionsModelEvent::Started { .. }
                 | CLIAgentSessionsModelEvent::InputSessionChanged { .. }
                 | CLIAgentSessionsModelEvent::Ended { .. } => {}
             },
+        );
+    }
+
+    /// Serialize local resume-state saves without blocking terminal event handling.
+    fn request_harness_save(&self, point: SavePoint, ctx: &mut ModelContext<Self>) {
+        let Some(runner) = self.harness.clone() else {
+            return;
+        };
+        let foreground = ctx.spawner();
+        self.harness_saves.request(
+            point,
+            Arc::new(move |point| {
+                let runner = runner.clone();
+                let foreground = foreground.clone();
+                Box::pin(async move {
+                    if matches!(point, SavePoint::PostTurn) {
+                        save_after_session_update(
+                            runner.handle_session_update(&foreground),
+                            runner.save_conversation(point, &foreground),
+                        )
+                        .await
+                    } else {
+                        runner.save_conversation(point, &foreground).await
+                    }
+                })
+            }),
+            &ctx.background_executor(),
         );
     }
 
