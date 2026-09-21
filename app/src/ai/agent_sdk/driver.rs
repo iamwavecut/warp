@@ -95,6 +95,7 @@ use crate::{
 pub(crate) mod environment;
 mod error_classification;
 pub(crate) mod harness;
+mod harness_failure;
 mod harness_output_monitor;
 pub(super) mod output;
 pub(crate) mod terminal;
@@ -367,8 +368,11 @@ pub enum AgentDriverError {
     ConfigBuildFailed(#[source] anyhow::Error),
     #[error("Local provider execution failed: {0}")]
     LocalProviderFailed(String),
-    #[error("Harness command exited with code {exit_code}")]
-    HarnessCommandFailed { exit_code: i32 },
+    #[error("Harness command exited with code {exit_code}{output}")]
+    HarnessCommandFailed {
+        exit_code: i32,
+        output: harness_failure::HarnessFailureOutput,
+    },
     #[error("Harness '{harness}' setup failed: {reason}")]
     HarnessSetupFailed { harness: String, reason: String },
     #[error("Harness '{harness}' config setup failed")]
@@ -1986,7 +1990,7 @@ impl AgentDriver {
         let mut harness_exit_rx = harness_exit_rx.fuse();
 
         let scanner_fut = harness_output_monitor::watch_block_for_errors(
-            block_id,
+            block_id.clone(),
             runtime_error_patterns,
             foreground,
         )
@@ -2063,6 +2067,13 @@ impl AgentDriver {
                     // we don't busy-loop.
                 }
             }
+        };
+
+        let failure_output = match command_result.as_ref() {
+            Ok(exit_code) if !exit_code.was_successful() => {
+                Self::fetch_harness_failure_output(&block_id, foreground).await
+            }
+            Ok(_) | Err(_) => harness_failure::HarnessFailureOutput::default(),
         };
 
         // Final save after the command finishes.
@@ -2142,7 +2153,62 @@ impl AgentDriver {
         } else {
             Err(AgentDriverError::HarnessCommandFailed {
                 exit_code: exit_code.value(),
+                output: failure_output,
             })
+        }
+    }
+
+    async fn fetch_harness_failure_output(
+        block_id: &BlockId,
+        foreground: &ModelSpawner<Self>,
+    ) -> harness_failure::HarnessFailureOutput {
+        let block_id = block_id.clone();
+        let captured = foreground
+            .spawn(move |me, ctx| {
+                let text = me
+                    .terminal_driver
+                    .as_ref(ctx)
+                    .block_output_plaintext(&block_id, ctx)?;
+                // Include injected values even when their names use a custom convention.
+                let mut secrets: Vec<String> = me
+                    .secrets
+                    .values()
+                    .flat_map(|secret| match secret {
+                        ManagedSecretValue::RawValue { value } => vec![value.as_str()],
+                        secret => typed_secret_entries(secret)
+                            .into_iter()
+                            .filter(|(name, _)| {
+                                !matches!(*name, "AWS_REGION" | "CLAUDE_CODE_USE_BEDROCK")
+                            })
+                            .map(|(_, value)| value)
+                            .collect(),
+                    })
+                    .map(str::to_owned)
+                    .collect();
+                secrets.extend(std::env::vars_os().filter_map(|(name, value)| {
+                    let name = name.to_str()?.to_ascii_uppercase();
+                    ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"]
+                        .iter()
+                        .any(|part| name.contains(part))
+                        .then(|| value.to_str().map(str::to_owned))
+                        .flatten()
+                }));
+                let privacy = crate::settings::PrivacySettings::as_ref(ctx);
+                let patterns = privacy
+                    .user_secret_regex_list
+                    .iter()
+                    .chain(privacy.enterprise_secret_regex_list.iter())
+                    .map(|entry| entry.pattern.clone())
+                    .collect::<Vec<_>>();
+                Some((text, secrets, patterns))
+            })
+            .await;
+        match captured {
+            Ok(Some((text, secrets, patterns))) => {
+                let secrets: Vec<_> = secrets.iter().map(String::as_str).collect();
+                harness_failure::HarnessFailureOutput::from_plaintext(text, &secrets, &patterns)
+            }
+            Ok(None) | Err(_) => harness_failure::HarnessFailureOutput::default(),
         }
     }
 
