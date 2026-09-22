@@ -11,6 +11,7 @@ use warpui::windowing::WindowManager;
 use warpui::{AddSingletonModel, App, UpdateModel, UpdateView};
 
 use super::*;
+use crate::ai::local_agent_registry::LocalAgentRegistry;
 use crate::auth::AuthStateProvider;
 use crate::editor::EditorView;
 use crate::editor::soft_wrap::FrameLayouts;
@@ -19,6 +20,7 @@ use crate::server::server_api::team::MockTeamClient;
 use crate::server::server_api::workspace::MockWorkspaceClient;
 use crate::settings_view::keybindings::KeybindingChangedNotifier;
 use crate::test_util::settings::initialize_settings_for_tests;
+use crate::voice::transcriber::VoiceTranscriber;
 use crate::workspace::ToastStack;
 use crate::workspace::sync_inputs::SyncedInputState;
 use crate::workspaces::user_workspaces::UserWorkspaces;
@@ -49,6 +51,11 @@ fn initialize_app(app: &mut App) {
     app.add_singleton_model(|_ctx| VimRegisters::new());
     app.add_singleton_model(|_| KeybindingChangedNotifier::mock());
     app.add_singleton_model(|_| AuthStateProvider::new_for_test());
+    app.add_singleton_model(|_| VoiceTranscriber::disabled());
+    app.add_singleton_model(|_| {
+        crate::ai::blocklist::history_model::BlocklistAIHistoryModel::new_for_test()
+    });
+    app.add_singleton_model(LocalAgentRegistry::new_registered);
     #[cfg(feature = "voice_input")]
     app.add_singleton_model(voice_input::VoiceInput::new);
 

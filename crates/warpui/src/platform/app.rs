@@ -76,6 +76,16 @@ impl AppBuilder {
         }
     }
 
+    /// Disables the default Ctrl-C handler used by the windowless backend.
+    ///
+    /// This is intended for standalone command-line workflows that install a more specific
+    /// signal policy. Native GUI backends and other application backends are unaffected.
+    pub fn disable_headless_signal_handler(&mut self) {
+        if let AppBackend::Windowless(app) = &mut self.inner {
+            app.set_signal_handler_enabled(false);
+        }
+    }
+
     /// Converts any [`crate::keymap::Trigger::Custom`]-based binding to a traditional
     /// [`Keystroke`]-based binding using the provided `custom_tag_to_keystroke` function.
     ///
@@ -139,5 +149,28 @@ impl AppBuilder {
 impl AsInnerMut<AppBackend> for AppBuilder {
     fn as_inner_mut(&mut self) -> &mut AppBackend {
         &mut self.inner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppBackend, AppBuilder};
+    use warpui_core::platform::app::AppCallbacks;
+
+    #[test]
+    fn headless_signal_handler_defaults_enabled_and_can_be_disabled() {
+        let mut builder = AppBuilder::new_windowless(AppCallbacks::default(), Box::new(()), None);
+
+        let AppBackend::Windowless(app) = &builder.inner else {
+            panic!("new_windowless must use the windowless backend");
+        };
+        assert!(app.signal_handler_enabled());
+
+        builder.disable_headless_signal_handler();
+
+        let AppBackend::Windowless(app) = &builder.inner else {
+            panic!("new_windowless must use the windowless backend");
+        };
+        assert!(!app.signal_handler_enabled());
     }
 }

@@ -49,6 +49,11 @@ impl AppExecutionMode {
         matches!(self.mode, ExecutionMode::App)
     }
 
+    /// Whether this process executes a standalone CLI command, irrespective of UI backend.
+    pub fn is_sdk(&self) -> bool {
+        matches!(self.mode, ExecutionMode::Sdk)
+    }
+
     /// Whether Active AI features are allowed in this execution mode.
     ///
     /// Active AI should only run in the desktop app, where there's a user

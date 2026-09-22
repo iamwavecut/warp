@@ -877,6 +877,17 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
         )
     };
 
+    #[cfg(unix)]
+    if matches!(
+        &launch_mode,
+        LaunchMode::CommandLine {
+            command: CliCommand::Agent(AgentCommand::Run(_)),
+            ..
+        }
+    ) {
+        app_builder.disable_headless_signal_handler();
+    }
+
     #[cfg(target_os = "macos")]
     if launch_mode.is_gui() {
         use warpui::AssetProvider as _;

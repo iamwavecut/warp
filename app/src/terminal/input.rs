@@ -1491,6 +1491,44 @@ fn native_shell_suggestion_results(
     }
 }
 
+async fn native_only_suggestion_results<T: CompletionContext>(
+    native_results: Option<(Vec<ShellCompletion>, Option<Span>)>,
+    before_cursor_text: &str,
+    cursor_position: usize,
+    session_env_vars: Option<&HashMap<String, String>>,
+    matcher: MatchStrategy,
+    completion_context: &T,
+    buffer_text: &str,
+) -> Option<SuggestionResults> {
+    let native_suggestions = native_results.map(|(results, shell_replacement_span)| {
+        native_shell_suggestion_results(
+            results,
+            shell_replacement_span,
+            buffer_text,
+            cursor_position,
+        )
+    });
+
+    match native_suggestions {
+        Some(suggestions) if suggestions.suggestions.is_empty() => {
+            completer::suggestions(
+                before_cursor_text,
+                cursor_position,
+                session_env_vars,
+                CompleterOptions {
+                    match_strategy: matcher,
+                    fallback_strategy: CompletionsFallbackStrategy::FilePaths,
+                    suggest_file_path_completions_only: true,
+                    parse_quotes_as_literals: false,
+                },
+                completion_context,
+            )
+            .await
+        }
+        suggestions => suggestions,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DenyExecutionReason {
     /// Can't execute command because shell bootstrapping is still underway; shell isn't ready to
@@ -10821,6 +10859,20 @@ impl Input {
         let abort_handle = ctx
             .spawn_abortable(
                 async move {
+                    if comp_sources == CompletionSources::NativeOnly {
+                        let suggestions = native_only_suggestion_results(
+                            native_results_fut.await,
+                            before_cursor_text.as_str(),
+                            cursor_position,
+                            session_env_vars.as_ref(),
+                            matcher,
+                            &completion_context,
+                            &buffer_text,
+                        )
+                        .await;
+                        return (suggestions, completions_trigger, editor_snapshot);
+                    }
+
                     let suggestions = completer::suggestions(
                         before_cursor_text.as_str(),
                         cursor_position,
@@ -10836,12 +10888,7 @@ impl Input {
                     .await;
 
                     let suggestions = match suggestions {
-                        Some(s)
-                            if !s.suggestions.is_empty()
-                                && comp_sources != CompletionSources::NativeOnly =>
-                        {
-                            Some(s)
-                        }
+                        Some(s) if !s.suggestions.is_empty() => Some(s),
                         _ => native_results_fut
                             .await
                             .map(|(results, shell_replacement_span)| {

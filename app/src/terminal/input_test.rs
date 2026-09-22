@@ -56,6 +56,7 @@ use crate::terminal::local_tty::shell::ShellStarter;
 use crate::terminal::model::ansi::{Handler, PromptMetadata};
 use crate::terminal::model::block::SerializedBlock;
 use crate::terminal::model::blocks::{BlockListPoint, insert_block};
+use crate::terminal::model::completions::ShellCompletion;
 use crate::terminal::model::grid::Dimensions as _;
 use crate::terminal::model::index::Side;
 use crate::terminal::model::session::{BootstrapSessionType, SessionInfo};
@@ -582,6 +583,99 @@ pub fn simulate_directory_for_completion<A, S>(
             );
         });
     });
+}
+
+#[test]
+fn native_only_empty_response_shows_file_path_suggestions() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let temp_dir = tempfile::tempdir().expect("temp dir should be created");
+        let source_dir = temp_dir.path().join("src");
+        std::fs::create_dir(&source_dir).expect("source directory should be created");
+        std::fs::write(source_dir.join("alpha.ts"), "").expect("alpha fixture should be created");
+        std::fs::write(source_dir.join("beta.ts"), "").expect("beta fixture should be created");
+
+        let session_info = SessionInfo::new_for_test();
+        let session_id = session_info.session_id;
+        let terminal =
+            add_window_with_bootstrapped_terminal(&mut app, None, Some(session_info)).await;
+        simulate_directory_for_completion(
+            session_id,
+            &terminal,
+            &mut app,
+            temp_dir.path().to_string_lossy().into_owned(),
+        );
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+        let completion_context = input
+            .read(&app, |input, ctx| input.completion_session_context(ctx))
+            .expect("a bootstrapped session should provide completion context");
+        let line = "npx ts-node ./src/";
+
+        let results = native_only_suggestion_results(
+            Some((Vec::new(), None)),
+            line,
+            line.len(),
+            None,
+            MatchStrategy::Fuzzy,
+            &completion_context,
+            line,
+        )
+        .await
+        .expect("file-path fallback should produce suggestions");
+
+        let mut displays: Vec<_> = results
+            .suggestions
+            .iter()
+            .map(|suggestion| suggestion.display())
+            .collect();
+        displays.sort();
+        assert_eq!(displays, vec!["alpha.ts", "beta.ts"]);
+    });
+}
+
+#[test]
+fn native_only_non_empty_response_preserves_native_suggestions() {
+    let completion_context = crate::completer::EmptyCompletionContext::new();
+    let line = "warptool a";
+
+    let results = warpui::r#async::block_on(native_only_suggestion_results(
+        Some((vec![ShellCompletion::new("native-option".to_owned())], None)),
+        line,
+        line.len(),
+        None,
+        MatchStrategy::Fuzzy,
+        &completion_context,
+        line,
+    ))
+    .expect("native suggestions should be preserved");
+
+    assert_eq!(
+        results
+            .suggestions
+            .iter()
+            .map(|suggestion| suggestion.display())
+            .collect::<Vec<_>>(),
+        vec!["native-option"]
+    );
+}
+
+#[test]
+fn native_only_unavailable_response_does_not_fall_back_to_file_paths() {
+    let completion_context = crate::completer::EmptyCompletionContext::new();
+    let line = "warptool ./src/";
+
+    let results = warpui::r#async::block_on(native_only_suggestion_results(
+        None,
+        line,
+        line.len(),
+        None,
+        MatchStrategy::Fuzzy,
+        &completion_context,
+        line,
+    ));
+
+    assert_eq!(results, None);
 }
 
 fn argument_suggestion(name: impl Into<SmolStr>) -> MatchedSuggestion {

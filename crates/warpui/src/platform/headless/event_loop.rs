@@ -142,9 +142,12 @@ pub(super) fn run(
     init_fn: platform::app::AppInitCallbackFn,
     receiver: EventReceiver,
     sender: EventSender,
+    signal_handler_enabled: bool,
 ) -> TerminationResult {
     // Set up the Ctrl-C handler to gracefully terminate the app.
-    setup_signal_handler(sender);
+    if signal_handler_enabled {
+        setup_signal_handler(sender);
+    }
 
     // Initialize the app before processing events.
     callbacks.initialize_app(init_fn);

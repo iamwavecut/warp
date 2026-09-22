@@ -12,6 +12,7 @@ use crate::{AppContext, AssetProvider};
 pub struct App {
     callbacks: platform::app::AppCallbacks,
     assets: Box<dyn AssetProvider>,
+    signal_handler_enabled: bool,
 }
 
 impl App {
@@ -23,14 +24,31 @@ impl App {
         // Other platforms use the test_driver parameter to enable an alternative platform delegate implementation
         // in integration tests - that doesn't apply here.
         let _ = test_driver;
-        Self { callbacks, assets }
+        Self {
+            callbacks,
+            assets,
+            signal_handler_enabled: true,
+        }
+    }
+
+    pub(in crate::platform) fn set_signal_handler_enabled(&mut self, enabled: bool) {
+        self.signal_handler_enabled = enabled;
+    }
+
+    #[cfg(test)]
+    pub(in crate::platform) fn signal_handler_enabled(&self) -> bool {
+        self.signal_handler_enabled
     }
 
     pub(in crate::platform) fn run(
         self,
         init_fn: impl FnOnce(&mut AppContext, LocalBoxFuture<'static, crate::App>) + 'static,
     ) -> TerminationResult {
-        let App { callbacks, assets } = self;
+        let App {
+            callbacks,
+            assets,
+            signal_handler_enabled,
+        } = self;
 
         // Mark this thread as the main thread for DispatchDelegate checks.
         delegate::mark_current_thread_as_main();
@@ -48,6 +66,13 @@ impl App {
             warpui_core::platform::app::AppCallbackDispatcher::new(callbacks, ui_app.clone());
 
         // Run the event loop until the app terminates.
-        event_loop::run(ui_app, &mut callbacks, Box::new(init_fn), receiver, sender)
+        event_loop::run(
+            ui_app,
+            &mut callbacks,
+            Box::new(init_fn),
+            receiver,
+            sender,
+            signal_handler_enabled,
+        )
     }
 }

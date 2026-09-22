@@ -99,12 +99,15 @@ mod harness_failure;
 mod harness_output_monitor;
 pub(super) mod output;
 pub(crate) mod terminal;
+mod termination;
 
 use environment::PrepareEnvironmentError;
 use terminal::TerminalDriverEvent;
+use termination::InterruptWatch;
 
 const MCP_SERVER_STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 const HARNESS_SAVE_INTERVAL: Duration = Duration::from_secs(30);
+const HARNESS_FINAL_SAVE_BUDGET: Duration = Duration::from_secs(30);
 const HARNESS_EXIT_FOLLOWUP_DELAY: Duration = Duration::from_secs(1);
 const HARNESS_EXIT_TIMEOUT_AFTER_FOLLOWUP: Duration = Duration::from_secs(14);
 /// Timeout for individual harness auth preflight commands.
@@ -560,13 +563,53 @@ impl AgentDriver {
         let foreground = ctx.spawner();
         let task_id = self.task_id;
         let idle_on_complete = self.idle_on_complete;
+        let mut interrupt_watch = if warp_core::execution_mode::AppExecutionMode::as_ref(ctx)
+            .is_sdk()
+        {
+            match InterruptWatch::register() {
+                Ok(watch) => watch,
+                Err(error) => {
+                    log::warn!(
+                        "Unable to register standalone SDK signal handlers; continuing without signal checkpointing: {error}"
+                    );
+                    InterruptWatch::noop()
+                }
+            }
+        } else {
+            InterruptWatch::noop()
+        };
 
         ctx.spawn(
             async move {
-                let result = Self::run_internal(task, foreground.clone()).await;
+                let run = Self::run_internal(task, foreground.clone()).fuse();
+                let interrupt = interrupt_watch.wait().fuse();
+                // Keep the selected future scope separate from watch teardown and signal save.
+                // In particular, dropping `run` before the checkpoint lets an in-flight normal
+                // finalizer relinquish the coordinator before we join it below.
+                let outcome = {
+                    futures::pin_mut!(run, interrupt);
+                    futures::select_biased! {
+                        result = run => Ok(result),
+                        interrupt = interrupt => Err(interrupt),
+                    }
+                };
 
-                if tx.send(result).is_err() {
-                    report_error!("Caller did not wait for agent driver to finish");
+                match outcome {
+                    Ok(result) => {
+                        interrupt_watch.disarm();
+                        if tx.send(result).is_err() {
+                            report_error!("Caller did not wait for agent driver to finish");
+                        }
+                    }
+                    Err(interrupt) => {
+                        log::warn!("Standalone SDK run interrupted by {interrupt:?}");
+                        if let Err(error) = Self::save_harness_checkpoint(&foreground).await {
+                            report_error!(
+                                error.context("Failed to save local harness state after signal")
+                            );
+                        }
+                        interrupt_watch.terminate(interrupt);
+                    }
                 }
             },
             |_, _, _| {},
@@ -2079,20 +2122,14 @@ impl AgentDriver {
         // Final save after the command finishes.
         log::debug!("Triggering final save of harness conversation data");
         let saves = foreground.spawn(|me, _| me.harness_saves.clone()).await?;
-        let final_save_error = match saves
-            .finish(
-                save_after_session_update(
-                    runner.handle_session_update(foreground),
-                    runner.save_conversation(SavePoint::Final, foreground),
-                ),
-                Duration::from_secs(30),
-            )
-            .await
-            .context("Failed to save harness conversation (final)")
-        {
-            Ok(()) => None,
-            Err(err) => Some(err),
-        };
+        let final_save_error =
+            match Self::finish_harness_final_save(Arc::clone(&runner), saves, foreground)
+                .await
+                .context("Failed to save harness conversation (final)")
+            {
+                Ok(()) => None,
+                Err(err) => Some(err),
+            };
         let final_cli_status = foreground
             .spawn(|me, ctx| {
                 let view_id = me.terminal_driver.as_ref(ctx).terminal_view().id();
@@ -2156,6 +2193,60 @@ impl AgentDriver {
                 output: failure_output,
             })
         }
+    }
+
+    /// Finish the same local final-save transaction used by normal harness completion. Keeping
+    /// this path shared makes an interrupt during normal finalization idempotent through the
+    /// coordinator instead of starting a second, competing save.
+    async fn finish_harness_final_save(
+        runner: Arc<dyn harness::HarnessRunner>,
+        saves: Arc<SaveCoordinator>,
+        foreground: &ModelSpawner<Self>,
+    ) -> anyhow::Result<()> {
+        Self::finish_harness_save(runner, saves, SavePoint::Final, foreground).await
+    }
+
+    /// Finish a local harness save through the per-run coordinator. Interrupted runs use
+    /// `PostTurn`, whose runner implementations preserve a resumable, nonterminal record;
+    /// normal completion alone uses `Final` and marks the record complete.
+    async fn finish_harness_save(
+        runner: Arc<dyn harness::HarnessRunner>,
+        saves: Arc<SaveCoordinator>,
+        save_point: SavePoint,
+        foreground: &ModelSpawner<Self>,
+    ) -> anyhow::Result<()> {
+        Self::finish_harness_save_with_budget(
+            &saves,
+            save_after_session_update(
+                runner.handle_session_update(foreground),
+                runner.save_conversation(save_point, foreground),
+            ),
+        )
+        .await
+    }
+
+    async fn finish_harness_save_with_budget(
+        saves: &SaveCoordinator,
+        final_save: impl Future<Output = anyhow::Result<()>>,
+    ) -> anyhow::Result<()> {
+        saves.finish(final_save, HARNESS_FINAL_SAVE_BUDGET).await
+    }
+
+    /// Checkpoint local harness state after the run future has been interrupted. No cleanup or
+    /// process-wide app termination is performed here; the caller restores the signal default
+    /// action only after this bounded local transaction completes.
+    async fn save_harness_checkpoint(foreground: &ModelSpawner<Self>) -> anyhow::Result<()> {
+        let (runner, saves) = foreground
+            .spawn(|me, _| (me.harness.clone(), me.harness_saves.clone()))
+            .await?;
+        let Some(runner) = runner else {
+            log::debug!("Signal arrived before a local harness runner was ready");
+            return Ok(());
+        };
+
+        Self::finish_harness_save(runner, saves, SavePoint::PostTurn, foreground)
+            .await
+            .context("Failed to save resumable local harness state after signal")
     }
 
     async fn fetch_harness_failure_output(
@@ -2895,3 +2986,51 @@ impl SingletonEntity for AgentDriver {}
 #[cfg(test)]
 #[path = "driver_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod signal_save_tests {
+    use std::sync::Arc;
+
+    use parking_lot::Mutex;
+    use warpui::r#async::executor::Background;
+
+    use super::{AgentDriver, SaveCoordinator, SavePoint};
+
+    #[tokio::test]
+    async fn signal_checkpoint_follows_existing_save_without_marking_final() {
+        let background = Background::default();
+        let coordinator = SaveCoordinator::default();
+        let saved = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&saved);
+        let (started_tx, started_rx) = futures::channel::oneshot::channel();
+        let started_tx = Arc::new(Mutex::new(Some(started_tx)));
+
+        coordinator.request(
+            SavePoint::Periodic,
+            Arc::new(move |point| {
+                let recorded = Arc::clone(&recorded);
+                let started_tx = Arc::clone(&started_tx);
+                Box::pin(async move {
+                    recorded.lock().push(point);
+                    if let Some(started) = started_tx.lock().take() {
+                        let _ = started.send(());
+                    }
+                    Ok::<(), anyhow::Error>(())
+                })
+            }),
+            &background,
+        );
+
+        started_rx.await.unwrap();
+
+        let recorded = Arc::clone(&saved);
+        AgentDriver::finish_harness_save_with_budget(&coordinator, async move {
+            recorded.lock().push(SavePoint::PostTurn);
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(*saved.lock(), [SavePoint::Periodic, SavePoint::PostTurn]);
+    }
+}
