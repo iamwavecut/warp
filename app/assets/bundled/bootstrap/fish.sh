@@ -613,6 +613,18 @@ function warp_run_external_ctrl_t_widget
   warp_send_json_message "{ \"hook\": \"ExternalShellWidgetSelection\", \"value\": { \"buffer\": \"$warp_escaped_selection\", \"session_id\": $WARP_SESSION_ID } }"
 end
 
+function warp_run_external_alt_c_widget
+  set -l warp_alt_c_parts (string split -m 1 -- ':' "$argv[1]")
+  set -l char_cursor $warp_alt_c_parts[1]
+  set -l original_line (warp_hex_decode_string $warp_alt_c_parts[2] | string collect --no-trim-newlines --allow-empty)
+  commandline -r -- $original_line
+  commandline -C -- $char_cursor
+  if functions -q fzf-cd-widget
+    fzf-cd-widget
+  end
+  commandline -r ''
+end
+
 if functions -q fish_should_add_to_history
   and not functions fish_should_add_to_history | string match --quiet -- '*warp_run_external_ctrl_r_widget*'
   functions -q warp_original_fish_should_add_to_history; and functions -e warp_original_fish_should_add_to_history
@@ -625,6 +637,7 @@ end
 function fish_should_add_to_history
   string match --quiet -- '*warp_run_external_ctrl_r_widget*' $argv[1]; and return 1
   string match --quiet -- '*warp_run_external_ctrl_t_widget*' $argv[1]; and return 1
+  string match --quiet -- '*warp_run_external_alt_c_widget*' $argv[1]; and return 1
   warp_original_fish_should_add_to_history $argv
 end
 
@@ -660,6 +673,9 @@ function warp_bootstrapped
         set -g _WARP_EXTERNAL_CTRL_T_WIDGET "$warp_ctrl_t_widget"
         set -a shell_plugins external_ctrl_t_file
       end
+  end
+  if functions -q fzf-cd-widget
+    set -a shell_plugins external_alt_c_directory
   end
   set -l escaped_shell_plugins (warp_escape_json $shell_plugins)
 

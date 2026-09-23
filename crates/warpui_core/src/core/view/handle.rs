@@ -4,6 +4,8 @@ use std::marker::PhantomData;
 use std::sync::{Arc, Weak};
 
 use parking_lot::Mutex;
+use thiserror::Error;
+use warp_errors::{ErrorExt, register_error};
 
 use super::context::ViewContext;
 use crate::core::RefCounts;
@@ -71,6 +73,19 @@ impl<T: Entity> ViewHandle<T> {
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
     {
         app.update_view(self, update)
+    }
+
+    /// Updates this view when its owning window is still open.
+    ///
+    /// A strong view handle does not keep its window open, so asynchronous work can outlive the
+    /// view's registration. This method distinguishes that expected teardown race from a genuine
+    /// nested update of the same view.
+    pub fn try_update<A, F, S>(&self, app: &mut A, update: F) -> Result<S, ViewUpdateError>
+    where
+        A: UpdateView,
+        F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
+    {
+        app.try_update_view(self, update)
     }
 
     pub fn is_focused(&self, app: &AppContext) -> bool {
@@ -319,11 +334,39 @@ pub trait ReadView: ViewAsRef {
         F: FnOnce(&T, &AppContext) -> S;
 }
 
+/// Why a view could not be checked out for an update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum ViewUpdateError {
+    /// The view's owning window has been closed.
+    #[error("the view's window no longer exists")]
+    WindowClosed,
+    /// The view is already checked out by an update higher in the call stack.
+    #[error("the view is already being updated")]
+    CircularUpdate,
+}
+
+impl ErrorExt for ViewUpdateError {
+    fn is_actionable(&self) -> bool {
+        matches!(self, ViewUpdateError::CircularUpdate)
+    }
+}
+
+register_error!(ViewUpdateError);
+
 pub trait UpdateView: ReadView {
     // `update_view` keeps the `Entity` bound because it hands the closure a
     // `&mut ViewContext<T>`, which exposes `emit(T::Event)` and therefore needs
     // `T: Entity`.
     fn update_view<T, F, S>(&mut self, handle: &ViewHandle<T>, update: F) -> S
+    where
+        T: Entity,
+        F: FnOnce(&mut T, &mut ViewContext<T>) -> S;
+
+    fn try_update_view<T, F, S>(
+        &mut self,
+        handle: &ViewHandle<T>,
+        update: F,
+    ) -> Result<S, ViewUpdateError>
     where
         T: Entity,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S;

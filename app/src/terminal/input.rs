@@ -259,7 +259,7 @@ use warp_editor::editor::NavigationKey;
 use warp_util::path::ShellFamily;
 use warpui::{
     AppContext, Entity, EntityId, FocusContext, ModelAsRef, ModelHandle, SingletonEntity,
-    TypedActionView, View, ViewContext, ViewHandle, WeakViewHandle,
+    TypedActionView, View, ViewContext, ViewHandle, ViewUpdateError, WeakViewHandle,
     accessibility::{AccessibilityContent, ActionAccessibilityContent, WarpA11yRole},
     r#async::SpawnedFutureHandle,
     clipboard::{ClipboardContent, ImageData},
@@ -399,6 +399,7 @@ pub fn get_input_box_top_border_width() -> f32 {
 
 pub const COMPLETIONS_MENU_WIDTH: f32 = 330.;
 pub const OPEN_COMPLETIONS_KEYBINDING_NAME: &str = "input:open_completion_suggestions";
+pub(crate) const EXTERNAL_ALT_C_BINDING_CONTEXT: &str = "ExternalAltCDirectorySearch";
 pub const INPUT_A11Y_LABEL: &str = "Command Input.";
 pub const INPUT_A11Y_HELPER: &str = "Input your shell command, press enter to execute. Press cmd-up to navigate to output of previously executed commands. Press cmd-l to re-focus command input.";
 pub const AI_COMMAND_SEARCH_HINT_TEXT: &str = "Type '#' for AI command suggestions";
@@ -1990,6 +1991,18 @@ pub fn init(app: &mut AppContext) {
         )
         .with_context_predicate(id!("Input") & !id!("VoltronActive") & !id!("LongRunningCommand"))
         .with_key_binding("ctrl-t"),
+        EditableBinding::new(
+            "workspace:trigger_external_alt_c_directory_search",
+            "External Directory Search",
+            WorkspaceAction::TriggerExternalAltCDirectorySearch,
+        )
+        .with_context_predicate(
+            id!("Input")
+                & !id!("VoltronActive")
+                & !id!("LongRunningCommand")
+                & id!(EXTERNAL_ALT_C_BINDING_CONTEXT),
+        )
+        .with_key_binding("alt-c"),
     ]);
 
     if let Some(custom_action) = workflows::CategoriesView::custom_action() {
@@ -4189,10 +4202,16 @@ impl Input {
         self.close_overlays(false, ctx);
         let has_input = !self.editor.as_ref(ctx).buffer_text(ctx).is_empty();
         let should_clear_prompt_for_search = has_input;
-        self.inline_model_selector_view.update(ctx, |view, ctx| {
-            view.set_prompt_parked_for_search(should_clear_prompt_for_search);
-            view.set_active_tab(initial_tab, ctx);
-        });
+        match self
+            .inline_model_selector_view
+            .try_update(ctx, |view, ctx| {
+                view.set_prompt_parked_for_search(should_clear_prompt_for_search);
+                view.set_active_tab(initial_tab, ctx);
+            }) {
+            Ok(()) => {}
+            Err(ViewUpdateError::WindowClosed) => return,
+            Err(ViewUpdateError::CircularUpdate) => panic!("Circular view update"),
+        }
         self.suggestions_mode_model.update(ctx, |model, ctx| {
             model.set_mode(InputSuggestionsMode::ModelSelector, ctx);
         });
@@ -14164,6 +14183,10 @@ impl Input {
 
     pub fn should_show_universal_developer_input(&self, app: &AppContext) -> bool {
         InputSettings::as_ref(app).is_universal_developer_input_enabled(app)
+    }
+
+    pub(crate) fn is_voltron_open(&self) -> bool {
+        self.is_voltron_open
     }
 
     fn handle_prompt_suggestions_event(

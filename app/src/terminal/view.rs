@@ -711,8 +711,10 @@ pub const DEFAULT_ASK_AI_AUTOSUGGESTION_TEXT: &str = "What happened here?";
 const WARP_MD_PATH: &str = "WARP.md";
 const EXTERNAL_CTRL_R_HISTORY_PLUGIN_TAG: &str = "external_ctrl_r_history";
 const EXTERNAL_CTRL_T_FILE_PLUGIN_TAG: &str = "external_ctrl_t_file";
+const EXTERNAL_ALT_C_DIRECTORY_PLUGIN_TAG: &str = "external_alt_c_directory";
 const EXTERNAL_CTRL_R_HELPER_COMMAND: &str = "warp_run_external_ctrl_r_widget";
 const EXTERNAL_CTRL_T_HELPER_COMMAND: &str = "warp_run_external_ctrl_t_widget";
+const EXTERNAL_ALT_C_HELPER_COMMAND: &str = "warp_run_external_alt_c_widget";
 
 pub const LONG_RUNNING_AGENT_REQUESTED_COMMAND_CONTEXT_KEY: &str = "LongRunningRequestedCommand";
 pub const LONG_RUNNING_AGENT_REQUESTED_COMMAND_USER_TOOK_OVER_CONTEXT_KEY: &str =
@@ -7284,6 +7286,43 @@ impl TerminalView {
                 ctx,
             )
         })
+    }
+
+    /// Runs fzf's directory picker at an idle prompt when the shell bootstrap detected support.
+    pub fn maybe_trigger_external_alt_c_directory_search(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) -> bool {
+        if !self.external_alt_c_binding_eligible(ctx) {
+            return false;
+        }
+
+        self.input.update(ctx, |input, ctx| {
+            input.trigger_external_shell_widget_handoff(
+                EXTERNAL_ALT_C_HELPER_COMMAND,
+                ShellWidgetApplyMode::Replace,
+                true,
+                ctx,
+            )
+        })
+    }
+
+    pub(crate) fn external_alt_c_binding_eligible(&self, app: &AppContext) -> bool {
+        if self.is_long_running()
+            || self.input.as_ref(app).is_voltron_open()
+            || self.model.lock().is_alt_screen_active()
+        {
+            return false;
+        }
+
+        self.active_block_session_id()
+            .and_then(|session_id| self.sessions.as_ref(app).get(session_id))
+            .is_some_and(|session| {
+                session
+                    .shell()
+                    .plugins()
+                    .contains(EXTERNAL_ALT_C_DIRECTORY_PLUGIN_TAG)
+            })
     }
 
     pub fn active_session_path_if_local<C: ModelAsRef>(&self, ctx: &C) -> Option<PathBuf> {

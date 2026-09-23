@@ -219,6 +219,33 @@ fn ctrl_t_shell_widget_selection_splices_at_the_original_cursor() {
         });
     });
 }
+
+#[test]
+fn external_alt_c_directory_search_requires_detected_fzf_support() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let terminal_without_fzf =
+            add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        assert!(!terminal_without_fzf.read(&app, |view, ctx| {
+            view.external_alt_c_binding_eligible(ctx)
+        }));
+
+        let session_info = SessionInfo::new_for_test()
+            .with_shell_plugins(HashSet::from(["external_alt_c_directory".to_owned()]));
+        let session_id = session_info.session_id;
+        let terminal =
+            add_window_with_bootstrapped_terminal(&mut app, None, Some(session_info)).await;
+        simulate_directory_for_completion(session_id, &terminal, &mut app, "/tmp");
+        assert!(terminal.read(&app, |view, ctx| {
+            view.external_alt_c_binding_eligible(ctx)
+        }));
+
+        assert!(terminal.update(&mut app, |view, ctx| {
+            view.maybe_trigger_external_alt_c_directory_search(ctx)
+        }));
+    });
+}
+
 use crate::terminal::writeable_pty::command_history::update_command_history;
 use crate::{GlobalResourceHandles, GlobalResourceHandlesProvider};
 
@@ -5111,6 +5138,41 @@ fn test_alias_expansion() {
         input.update(&mut app, |input, ctx| {
             input.run_expansion_on_space(ctx);
             assert_eq!(input.buffer_text(ctx), "git checkout test");
+        });
+    });
+}
+
+#[test]
+fn model_selector_keybinding_ignores_closed_selector_window() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let (closed_window_id, closed_terminal) =
+            add_window_with_bootstrapped_terminal_and_window_id(&mut app, None, None).await;
+        let closed_selector = closed_terminal.read(&app, |terminal, ctx| {
+            terminal
+                .input()
+                .as_ref(ctx)
+                .inline_model_selector_view
+                .clone()
+        });
+
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+        input.update(&mut app, |input, _| {
+            input.inline_model_selector_view = closed_selector;
+        });
+        app.update(|ctx| ctx.simulate_window_closed(closed_window_id));
+
+        input.update(&mut app, |input, ctx| {
+            input.handle_action(
+                &InputAction::TriggerSlashCommandFromKeybinding(commands::MODEL.name),
+                ctx,
+            );
+        });
+
+        input.read(&app, |input, ctx| {
+            assert!(input.suggestions_mode_model.as_ref(ctx).is_closed());
         });
     });
 }

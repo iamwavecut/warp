@@ -742,6 +742,18 @@ if [[ -z $WARP_BOOTSTRAPPED ]]; then
     warp_send_json_message "{ \"hook\": \"ExternalShellWidgetSelection\", \"value\": { \"buffer\": \"$warp_escaped_selection\", \"session_id\": $WARP_SESSION_ID } }"
   }
 
+  function warp_run_external_alt_c_widget () {
+    setopt localoptions pipefail no_aliases 2>/dev/null
+    local dir="$(
+      FZF_DEFAULT_COMMAND=${FZF_ALT_C_COMMAND:-} \
+      FZF_DEFAULT_OPTS=$(__fzf_defaults "--reverse --walker=dir,follow,hidden --scheme=path" "${FZF_ALT_C_OPTS-} +m") \
+      FZF_DEFAULT_OPTS_FILE='' $(__fzfcmd) < /dev/tty
+    )"
+    [[ -n "$dir" ]] || return 0
+    dir=$(builtin cd -q >/dev/null -- "$dir" && echo "$PWD" || echo "$dir")
+    builtin cd -- "$dir"
+  }
+
   function clear() {
       warp_send_json_message "{\"hook\": \"Clear\", \"value\": {\"session_id\": $WARP_SESSION_ID}}"
   }
@@ -1278,7 +1290,8 @@ esac
   # on the zshaddhistory hook.
   _warp_zshaddhistory() {
     _is_warp_generator_command "$1" && [[ "$1" != *"warp_run_external_ctrl_r_widget"* ]] && \
-      [[ "$1" != *"warp_run_external_ctrl_t_widget"* ]]
+      [[ "$1" != *"warp_run_external_ctrl_t_widget"* ]] && \
+      [[ "$1" != *"warp_run_external_alt_c_widget"* ]]
   }
 
   # Register this zshaddhistory hook after the user's RC files have been sourced,
@@ -1319,6 +1332,10 @@ esac
         fi
         ;;
     esac
+  fi
+
+  if (( $+functions[__fzfcmd] )) && (( $+functions[__fzf_defaults] )); then
+    shell_plugins+=(external_alt_c_directory)
   fi
 
   if [[ ${precmd_functions[(I)_p9k_precmd]} != 0 ]]; then
