@@ -573,28 +573,20 @@ impl ShellCommandExecutor {
         // Create a channel so the `Check now` affordance can short-circuit the timeout
         // and deliver the agent a fresh snapshot immediately.
         let (force_refresh_tx, force_refresh_rx) = oneshot::channel();
-        self.force_refresh_senders
-            .insert(block_selector.clone(), force_refresh_tx);
+        if wait_policy.timeout_duration().is_some() {
+            self.force_refresh_senders
+                .insert(block_selector.clone(), force_refresh_tx);
+        }
 
         // Create a future that resolves when we should send a result to the agent.
         let terminal_model = self.terminal_model.clone();
 
-        #[derive(Debug, Clone, Copy)]
-        enum WakeReason {
-            BlockFinished,
-            Timeout,
-            /// User clicked `Check now` in the warping indicator, short-circuiting
-            /// the agent-set poll timer. Treated as a preemption so the server does
-            /// not interpret the early snapshot as a completion.
-            ForceRefresh,
-        }
-
         async move {
             let _monitoring = monitoring;
-            pin!(block_metadata_received_rx);
-            pin!(force_refresh_rx);
 
             let wake_reason = if let Some(timeout_duration) = wait_policy.timeout_duration() {
+                pin!(block_metadata_received_rx);
+                pin!(force_refresh_rx);
                 let mut timeout = Timer::after(timeout_duration).fuse();
                 select! {
                     val = block_metadata_received_rx => match val {
@@ -612,15 +604,22 @@ impl ShellCommandExecutor {
                     _ = timeout => WakeReason::Timeout,
                 }
             } else {
-                select! {
-                    val = block_metadata_received_rx => match val {
-                        Ok(_) => WakeReason::BlockFinished,
-                        Err(_) => return ActionResult::Cancelled,
+                drop(force_refresh_rx);
+                if wait_for_command_completion(
+                    block_metadata_received_rx,
+                    ShellCommandExecutor::MAX_WAIT_DURATION,
+                    || {
+                        let model = terminal_model.lock();
+                        block_selector
+                            .get_block(&model)
+                            .is_some_and(Block::finished)
                     },
-                    val = force_refresh_rx => match val {
-                        Ok(_) => WakeReason::ForceRefresh,
-                        Err(_) => return ActionResult::Cancelled,
-                    },
+                )
+                .await
+                {
+                    WakeReason::BlockFinished
+                } else {
+                    return ActionResult::Cancelled;
                 }
             };
 
@@ -630,7 +629,7 @@ impl ShellCommandExecutor {
                 || (matches!(wake_reason, WakeReason::Timeout)
                     && wait_policy.timeout_preempts_completion());
 
-            // At this point, we've either received block metadata or we've timed out.
+            // Completion was observed, or a timed wait was preempted or expired.
             // Check the current state of the block and produce a result accordingly.
             let model = terminal_model.lock();
 
@@ -755,6 +754,39 @@ enum ShellCommandWaitPolicy {
     UntilCompletion,
     /// Use the agent/client requested delay semantics, where timeout returns a snapshot.
     AgentDelay(Option<ShellCommandDelay>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WakeReason {
+    BlockFinished,
+    Timeout,
+    /// User clicked `Check now` in the warping indicator.
+    ForceRefresh,
+}
+
+async fn wait_for_command_completion(
+    block_metadata_received_rx: oneshot::Receiver<()>,
+    poll_interval: Duration,
+    is_finished: impl Fn() -> bool,
+) -> bool {
+    pin!(block_metadata_received_rx);
+
+    loop {
+        // Fast commands can finish before their metadata notification is observed.
+        // Recheck the block without returning a long-running snapshot.
+        if is_finished() {
+            return true;
+        }
+
+        let timeout = Timer::after(poll_interval).fuse();
+        pin!(timeout);
+        select! {
+            result = block_metadata_received_rx => {
+                return result.is_ok();
+            },
+            _ = timeout => {},
+        }
+    }
 }
 
 impl ShellCommandWaitPolicy {
@@ -988,21 +1020,8 @@ impl Entity for ShellCommandExecutor {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn requested_command_wait_until_completion_uses_completion_wait_policy() {
-        assert_eq!(
-            wait_policy_for_requested_command(true),
-            ShellCommandWaitPolicy::UntilCompletion
-        );
-        assert_eq!(
-            wait_policy_for_requested_command(false),
-            ShellCommandWaitPolicy::AgentDelay(None)
-        );
-    }
-}
+#[path = "shell_command_tests.rs"]
+mod tests;
 
 /// Result from waiting for control transfer.
 #[derive(Debug, Clone)]

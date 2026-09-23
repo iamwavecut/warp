@@ -1477,6 +1477,12 @@ fn test_find_by_token_after_initialize_output_for_response_stream() {
             history_model.start_new_conversation(terminal_view_id, false, false, false, ctx)
         });
 
+        let local_run_id = history_model
+            .update(&mut app, |history_model, ctx| {
+                history_model.ensure_local_run_id_for_conversation(conversation_id, ctx)
+            })
+            .expect("local run ID should be assigned");
+
         // Prime a pending request so StreamInit can install the token.
         let stream_id = ResponseStreamId::new_for_test();
         history_model.update(&mut app, |history_model, ctx| {
@@ -1528,6 +1534,13 @@ fn test_find_by_token_after_initialize_output_for_response_stream() {
             assert_eq!(
                 model.find_conversation_id_by_server_token(&token),
                 Some(conversation_id),
+            );
+            assert_eq!(
+                model
+                    .conversation(&conversation_id)
+                    .and_then(|c| c.run_id()),
+                Some(local_run_id),
+                "an empty provider run ID must not erase the local agent identity"
             );
         });
     });

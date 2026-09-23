@@ -1752,8 +1752,11 @@ impl AIConversation {
 
         self.server_conversation_token =
             Some(ServerConversationToken::new(init_event.conversation_id));
-        let run_id = Some(init_event.run_id).filter(|s| !s.is_empty());
-        self.task_id = run_id.as_deref().and_then(|id| id.parse().ok());
+        // Direct providers have no server run ID. Keep the locally allocated ID
+        // so follow-up requests attach to the same registered agent run.
+        if !init_event.run_id.is_empty() {
+            self.task_id = init_event.run_id.parse().ok();
+        }
         Ok(())
     }
 
