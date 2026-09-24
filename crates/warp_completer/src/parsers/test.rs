@@ -5,7 +5,9 @@ use super::*;
 use crate::parsers::hir::{CommandCallInfo, Flag, FlagType, Flags, ShellCommand};
 use crate::parsers::simple::parse_for_completions;
 use crate::parsers::{ClassifiedCommand, classify_command};
-use crate::signatures::testing::{create_test_command_registry, test_signature};
+use crate::signatures::testing::{
+    add_content_signature, create_test_command_registry, git_signature, test_signature,
+};
 
 #[test]
 pub fn test_classify_command_classifies_known_command() {
@@ -38,6 +40,7 @@ pub fn test_classify_command_classifies_known_command() {
                     },
                     positionals: None,
                     flags: Some(Flags::new()),
+                    options_terminated: false,
                     ending_whitespace: Some(Span::from((4, 5))),
                     span: Span::from((0, 5))
                 }
@@ -45,6 +48,63 @@ pub fn test_classify_command_classifies_known_command() {
             error: None,
         })
     )
+}
+
+#[test]
+fn classifies_dash_prefixed_tokens_after_end_of_options_as_positionals() {
+    let registry = create_test_command_registry([git_signature()]);
+    let lite_command = parse_for_completions("git -- -operand", EscapeChar::Backslash, false)
+        .expect("Should be able to parse input into LiteCommand");
+    let mut tokens = lite_command.parts.iter().map(|s| s.as_str()).collect_vec();
+
+    let classified_command = classify_command(
+        lite_command.clone(),
+        &mut tokens,
+        &registry,
+        TopLevelCommandCaseSensitivity::CaseSensitive,
+    )
+    .expect("command should be classified");
+    let Command::Classified(command) = classified_command.command else {
+        panic!("command should use the registered signature");
+    };
+
+    assert_eq!(command.args.flags, Some(Flags::new()));
+    assert_eq!(
+        command
+            .args
+            .positionals
+            .expect("operand should be positional")
+            .iter()
+            .map(|positional| positional.item.value().as_str())
+            .collect_vec(),
+        vec!["-operand"]
+    );
+}
+
+#[test]
+fn posix_noncompliant_commands_continue_parsing_flags_after_double_dash() {
+    let registry = create_test_command_registry([add_content_signature()]);
+    let lite_command = parse_for_completions("Add-Content -- -Force", EscapeChar::Backslash, false)
+        .expect("Should be able to parse input into LiteCommand");
+    let mut tokens = lite_command.parts.iter().map(|s| s.as_str()).collect_vec();
+
+    let classified_command = classify_command(
+        lite_command.clone(),
+        &mut tokens,
+        &registry,
+        TopLevelCommandCaseSensitivity::CaseSensitive,
+    )
+    .expect("command should be classified");
+    let Command::Classified(command) = classified_command.command else {
+        panic!("command should use the registered signature");
+    };
+
+    let flags = command
+        .args
+        .flags
+        .expect("PowerShell flag should be parsed");
+    assert_eq!(flags.flags.len(), 1);
+    assert_eq!(flags.flags[0].name, "-Force");
 }
 
 /// TODO(CORE-2797)
@@ -100,6 +160,7 @@ pub fn test_classify_command_classifies_known_command_with_flags() {
                             },
                         ]
                     }),
+                    options_terminated: false,
                     ending_whitespace: None,
                     span: Span::from((0, 18))
                 }
@@ -160,6 +221,7 @@ pub fn test_classify_command_classifies_known_command_with_subcommand() {
                         },
                     ]),
                     flags: Some(Flags::new()),
+                    options_terminated: false,
                     ending_whitespace: None,
                     span: Span::from((0, 19))
                 }
@@ -200,6 +262,7 @@ pub fn test_classify_command_classifies_unknown_command() {
                     },
                     positionals: None,
                     flags: None,
+                    options_terminated: false,
                     ending_whitespace: Some(Span::from((4, 5))),
                     span: Span::from((0, 5))
                 }
@@ -262,6 +325,7 @@ pub fn test_classify_command_classifies_unknown_command_with_flags() {
                         },
                     ]),
                     flags: None,
+                    options_terminated: false,
                     ending_whitespace: None,
                     span: Span::from((0, 18)),
                 },
@@ -331,6 +395,7 @@ pub fn test_classify_command_classifies_unknown_command_with_subcommand() {
                         },
                     ]),
                     flags: None,
+                    options_terminated: false,
                     ending_whitespace: None,
                     span: Span::from((0, 19)),
                 },
@@ -372,6 +437,7 @@ fn test_classify_command_case_sensitive() {
                     },
                     positionals: None,
                     flags: None,
+                    options_terminated: false,
                     ending_whitespace: Some(Span::from((4, 5))),
                     span: Span::from((0, 5))
                 }
@@ -414,6 +480,7 @@ fn test_classify_command_case_insensitive() {
                     },
                     positionals: None,
                     flags: Some(Flags::new()),
+                    options_terminated: false,
                     ending_whitespace: Some(Span::from((4, 5))),
                     span: Span::from((0, 5))
                 }

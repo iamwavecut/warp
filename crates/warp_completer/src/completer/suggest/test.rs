@@ -1887,6 +1887,23 @@ fn test_completes_flags() {
         vec!["--bare", "--help", "--version",]
     );
 
+    assert_eq!(
+        complete_at_end_of_line_with_options(
+            "ls -la; git -- ",
+            MatchStrategy::CaseInsensitive,
+            &ctx
+        ),
+        vec!["add", "branch", "checkout", "clone"]
+    );
+    assert_eq!(
+        complete_at_end_of_line_with_options(
+            "ls -la; git -- branch -",
+            MatchStrategy::CaseInsensitive,
+            &ctx
+        ),
+        Vec::<String>::new()
+    );
+
     // Should complete long hand flags only (that begin with "v")
     assert_eq!(
         complete_at_end_of_line_with_options(
@@ -2357,5 +2374,9 @@ fn test_powershell_parser_directives_for_case_insensitivity() {
             &ctx
         ),
         vec!["-Force"]
+    );
+    assert_eq!(
+        complete_at_end_of_line("Add-Content -- ", &ctx),
+        vec!["bar", "foo/", "-Encoding", "-Exclude", "-Force"]
     );
 }

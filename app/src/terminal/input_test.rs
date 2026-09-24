@@ -246,6 +246,43 @@ fn external_alt_c_directory_search_requires_detected_fzf_support() {
     });
 }
 
+#[test]
+fn external_ctrl_r_history_search_captures_the_typed_query_at_the_cursor() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let session_info = SessionInfo::new_for_test()
+            .with_shell_plugins(HashSet::from(["external_ctrl_r_history".to_owned()]));
+        let session_id = session_info.session_id;
+        let terminal =
+            add_window_with_bootstrapped_terminal(&mut app, None, Some(session_info)).await;
+        simulate_directory_for_completion(session_id, &terminal, &mut app, "/tmp");
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+
+        input.update(&mut app, |input, ctx| {
+            input.user_insert("git status --short", ctx);
+            input.editor().update(ctx, |editor, ctx| {
+                editor.select_ranges_by_byte_offset(
+                    [ByteOffset::from(10)..ByteOffset::from(10)],
+                    ctx,
+                );
+            });
+        });
+
+        assert!(terminal.update(&mut app, |view, ctx| {
+            view.maybe_trigger_external_ctrl_r_history_search(ctx)
+        }));
+
+        input.read(&app, |input, _| {
+            let handoff = input
+                .pending_shell_widget_handoff
+                .as_ref()
+                .expect("history search should create a shell-widget handoff");
+            assert_eq!(handoff.cursor_offset, Some(ByteOffset::from(10)));
+            assert_eq!(handoff.original_buffer, "git status --short");
+        });
+    });
+}
+
 use crate::terminal::writeable_pty::command_history::update_command_history;
 use crate::{GlobalResourceHandles, GlobalResourceHandlesProvider};
 
