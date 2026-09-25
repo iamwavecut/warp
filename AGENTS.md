@@ -435,6 +435,10 @@ Bundle path:
 target/debug/bundle/osx/WarpOss.app
 ```
 
+When explicitly requesting common-skill installation with `script/run` or
+`script/bootstrap`, set `WARP_SKIP_COMMON_SKILLS_INSTALL=1` to skip that
+optional install/update step.
+
 Launch:
 
 ```sh
