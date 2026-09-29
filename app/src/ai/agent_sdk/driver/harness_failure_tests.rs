@@ -18,6 +18,30 @@ fn harness_failure_shows_local_diagnostic_and_exit_code() {
     assert_eq!(message(" \n\t", &[]), "Harness command exited with code 7");
 }
 
+#[cfg(unix)]
+#[test]
+fn harness_exit_137_explains_sigkill_as_a_possible_oom_cause() {
+    let error = AgentDriverError::HarnessCommandFailed {
+        exit_code: 137,
+        output: HarnessFailureOutput::from_plaintext("worker stopped".to_string(), &[], &[])
+            .with_exit_code_hint(137),
+    };
+
+    let message = error.to_string();
+    assert!(message.contains("may have been killed by SIGKILL"));
+    assert!(message.contains("out-of-memory termination is one possible cause"));
+    assert!(!message.contains("was killed by the OOM killer"));
+}
+
+#[cfg(unix)]
+#[test]
+fn other_harness_exit_codes_do_not_claim_memory_pressure() {
+    let output = HarnessFailureOutput::from_plaintext("worker stopped".to_string(), &[], &[])
+        .with_exit_code_hint(143);
+
+    assert_eq!(output.to_string(), "\nworker stopped");
+}
+
 #[test]
 fn harness_failure_bounds_output_without_losing_start_or_end() {
     for size in [4095, 4096, 4097, 10000] {
@@ -92,7 +116,7 @@ fn harness_failure_custom_patterns_apply_without_visual_safe_mode() {
 }
 
 #[test]
-fn harness_failure_missing_terminal_block_keeps_exit_code() {
+fn harness_failure_missing_terminal_block_keeps_exit_code_and_local_hint() {
     use crate::ai::agent_sdk::driver::{AgentDriver, terminal::TerminalDriver};
     use crate::terminal::model::BlockId;
     use crate::test_util::terminal::{add_window_with_terminal, initialize_app_for_terminal_view};
@@ -110,19 +134,38 @@ fn harness_failure_missing_terminal_block_keeps_exit_code() {
             ctx.spawn(
                 async move {
                     let output =
-                        AgentDriver::fetch_harness_failure_output(&BlockId::new(), &foreground)
+                        AgentDriver::fetch_harness_failure_output(&BlockId::new(), &foreground, 7)
                             .await;
-                    let _ = tx.send(
-                        AgentDriverError::HarnessCommandFailed {
-                            exit_code: 7,
-                            output,
-                        }
-                        .to_string(),
-                    );
+                    let ordinary_failure = AgentDriverError::HarnessCommandFailed {
+                        exit_code: 7,
+                        output,
+                    }
+                    .to_string();
+                    let oom_output = AgentDriver::fetch_harness_failure_output(
+                        &BlockId::new(),
+                        &foreground,
+                        137,
+                    )
+                    .await;
+                    let possible_oom = AgentDriverError::HarnessCommandFailed {
+                        exit_code: 137,
+                        output: oom_output,
+                    }
+                    .to_string();
+                    let _ = tx.send((ordinary_failure, possible_oom));
                 },
                 |_, _, _| {},
             );
         });
-        assert_eq!(rx.await.unwrap(), "Harness command exited with code 7");
+        let (ordinary_failure, possible_oom) = rx.await.unwrap();
+        assert_eq!(ordinary_failure, "Harness command exited with code 7");
+        if cfg!(unix) {
+            assert_eq!(
+                possible_oom,
+                "Harness command exited with code 137\nThe process may have been killed by SIGKILL; out-of-memory termination is one possible cause."
+            );
+        } else {
+            assert_eq!(possible_oom, "Harness command exited with code 137");
+        }
     });
 }

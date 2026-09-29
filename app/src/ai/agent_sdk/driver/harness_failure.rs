@@ -60,6 +60,21 @@ impl HarnessFailureOutput {
         }
         Self(format!("{}{MARKER}{}", &text[..head], &text[tail..]))
     }
+
+    pub(super) fn with_exit_code_hint(self, exit_code: i32) -> Self {
+        #[cfg(unix)]
+        if exit_code == 137 {
+            const HINT: &str = "The process may have been killed by SIGKILL; out-of-memory termination is one possible cause.";
+            let text = if self.0.is_empty() {
+                HINT.to_owned()
+            } else {
+                format!("{}\n{HINT}", self.0)
+            };
+            return Self::from_plaintext(text, &[], &[]);
+        }
+
+        self
+    }
 }
 
 impl fmt::Display for HarnessFailureOutput {

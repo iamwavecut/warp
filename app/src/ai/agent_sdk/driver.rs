@@ -2114,7 +2114,7 @@ impl AgentDriver {
 
         let failure_output = match command_result.as_ref() {
             Ok(exit_code) if !exit_code.was_successful() => {
-                Self::fetch_harness_failure_output(&block_id, foreground).await
+                Self::fetch_harness_failure_output(&block_id, foreground, exit_code.value()).await
             }
             Ok(_) | Err(_) => harness_failure::HarnessFailureOutput::default(),
         };
@@ -2252,6 +2252,7 @@ impl AgentDriver {
     async fn fetch_harness_failure_output(
         block_id: &BlockId,
         foreground: &ModelSpawner<Self>,
+        exit_code: i32,
     ) -> harness_failure::HarnessFailureOutput {
         let block_id = block_id.clone();
         let captured = foreground
@@ -2294,13 +2295,14 @@ impl AgentDriver {
                 Some((text, secrets, patterns))
             })
             .await;
-        match captured {
+        let output = match captured {
             Ok(Some((text, secrets, patterns))) => {
                 let secrets: Vec<_> = secrets.iter().map(String::as_str).collect();
                 harness_failure::HarnessFailureOutput::from_plaintext(text, &secrets, &patterns)
             }
             Ok(None) | Err(_) => harness_failure::HarnessFailureOutput::default(),
-        }
+        };
+        output.with_exit_code_hint(exit_code)
     }
 
     async fn exit_harness_bounded(
