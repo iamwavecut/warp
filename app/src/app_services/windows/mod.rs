@@ -20,6 +20,8 @@ mod single_instance_manager;
 pub enum StartupArgsForwardingError {
     #[error("there is no other instance of Warp")]
     NoExistingInstance,
+    #[error("should not forward arguments from the crash recovery process")]
+    IgnoredForCrashRecoveryProcess,
     #[error("failed to construct url")]
     CouldNotCreateUrl(#[from] url::ParseError),
     #[error("IPC Client failed to send message")]
@@ -32,6 +34,9 @@ pub enum StartupArgsForwardingError {
 pub fn pass_startup_args_to_existing_instance(
     args: &warp_cli::AppArgs,
 ) -> Result<(), StartupArgsForwardingError> {
+    if !super::should_forward_startup_args(crate::crash_recovery::is_crash_recovery_process(args)) {
+        return Err(StartupArgsForwardingError::IgnoredForCrashRecoveryProcess);
+    }
     if SingleInstanceManager::is_sole_running_instance()? {
         return Err(StartupArgsForwardingError::NoExistingInstance);
     }

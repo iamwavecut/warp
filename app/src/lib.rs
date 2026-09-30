@@ -791,6 +791,10 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
             Ok(_) => std::process::exit(0),
             // If Warp isn't already running, we're good to go.
             Err(app_services::linux::StartupArgsForwardingError::NoExistingInstance) => {}
+            // Crash-recovery watcher processes must continue monitoring their parent.
+            Err(
+                app_services::linux::StartupArgsForwardingError::IgnoredForCrashRecoveryProcess,
+            ) => {}
             // If we were unable to perform the forwarding for an unknown reason,
             // it's better to run a second instance than potentially end up in a
             // state where Warp refuses to run even a first instance.
@@ -812,6 +816,10 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
             Ok(_) => std::process::exit(0),
             // If Warp isn't already running, we're good to go.
             Err(app_services::windows::StartupArgsForwardingError::NoExistingInstance) => {}
+            // Crash-recovery watcher processes must continue monitoring their parent.
+            Err(
+                app_services::windows::StartupArgsForwardingError::IgnoredForCrashRecoveryProcess,
+            ) => {}
             // If we were unable to perform the forwarding for an unknown reason,
             // it's better to run a second instance than potentially end up in a
             // state where Warp refuses to run even a first instance.

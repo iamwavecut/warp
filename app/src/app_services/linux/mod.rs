@@ -29,6 +29,12 @@ pub fn teardown(ctx: &mut AppContext) {
 pub fn pass_startup_args_to_existing_instance(
     args: &warp_cli::AppArgs,
 ) -> Result<(), StartupArgsForwardingError> {
+    // This module also compiles on FreeBSD, where crash recovery is not enabled.
+    #[cfg(target_os = "linux")]
+    if !super::should_forward_startup_args(crate::crash_recovery::is_crash_recovery_process(args)) {
+        return Err(StartupArgsForwardingError::IgnoredForCrashRecoveryProcess);
+    }
+
     warpui::r#async::block_on(async {
         let conn = zbus::Connection::session().await?;
         let proxy = ExistingApplicationProxy::builder(&conn)
@@ -64,6 +70,8 @@ pub enum StartupArgsForwardingError {
     /// There's no instance of Warp already running.
     #[error("no existing instance found to forward args to")]
     NoExistingInstance,
+    #[error("should not forward arguments from the crash recovery process")]
+    IgnoredForCrashRecoveryProcess,
     /// An unknown D-Bus error occurred.
     #[error("unknown dbus error")]
     Unknown(zbus::Error),
