@@ -1,4 +1,12 @@
+use std::cell::RefCell;
 use std::collections::HashSet;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use crate::terminal::model::session::command_executor::{CommandExecutor, ExecuteCommandOptions};
+use crate::terminal::shell::Shell;
+use crate::terminal::view::Event as TerminalViewEvent;
+use crate::test_util::assert_eventually;
 
 use super::*;
 use crate::ImportedConfigModel;
@@ -740,6 +748,229 @@ fn native_only_unavailable_response_does_not_fall_back_to_file_paths() {
     ));
 
     assert_eq!(results, None);
+}
+
+#[derive(Debug)]
+struct CancellationTrackingExecutor(Arc<AtomicUsize>);
+
+#[async_trait::async_trait]
+impl CommandExecutor for CancellationTrackingExecutor {
+    async fn execute_command(
+        &self,
+        _command: &str,
+        _shell: &Shell,
+        _current_directory_path: Option<&str>,
+        _environment_variables: Option<HashMap<String, String>>,
+        _execute_command_options: ExecuteCommandOptions,
+    ) -> anyhow::Result<warp_completer::completer::CommandOutput> {
+        anyhow::bail!("no executor command expected")
+    }
+
+    fn cancel_active_commands(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn supports_parallel_command_execution(&self) -> bool {
+        false
+    }
+}
+
+#[test]
+fn aborting_native_completions_after_empty_specs_cancels_session_commands() {
+    let _native_completions_flag = FeatureFlag::NativeShellCompletions.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let session_info = SessionInfo::new_for_test();
+        let session_id = session_info.session_id;
+        let terminal =
+            add_window_with_bootstrapped_terminal(&mut app, None, Some(session_info.clone())).await;
+        let cancellations = Arc::new(AtomicUsize::new(0));
+        let executor = Arc::new(CancellationTrackingExecutor(cancellations.clone()));
+        let sessions = terminal.read(&app, |terminal, _| terminal.sessions_model().clone());
+        sessions.update(&mut app, |sessions, ctx| {
+            *sessions = Sessions::new_for_test().with_command_executor(executor);
+            sessions.initialize_bootstrapped_session(
+                session_info,
+                "test command".to_string(),
+                Vec::new(),
+                None,
+                ctx,
+            );
+        });
+        simulate_directory_for_completion(session_id, &terminal, &mut app, "/usr/bin");
+
+        let native_reply = Rc::new(RefCell::new(None));
+        let native_reply_for_subscription = native_reply.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event: &TerminalViewEvent, _| {
+                if let TerminalViewEvent::RunNativeShellCompletions { results_tx, .. } = event {
+                    *native_reply_for_subscription.borrow_mut() = Some(results_tx.clone());
+                }
+            });
+        });
+
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+        input.update(&mut app, |input, ctx| {
+            input.clear_buffer_and_reset_undo_stack(ctx);
+            input.user_insert("warptool ./src/", ctx);
+            input.input_tab(ctx);
+        });
+        assert_eventually!(
+            600 => native_reply.borrow().is_some(),
+            "gave up waiting for phase-two native shell dispatch"
+        );
+
+        let cancellations_before_abort = cancellations.load(Ordering::SeqCst);
+        input.update(&mut app, |input, _| {
+            input.completions_abort_handle.take().unwrap().abort();
+        });
+        assert_eventually!(
+            600 => cancellations.load(Ordering::SeqCst) > cancellations_before_abort,
+            "aborting phase-two completions must cancel the session's active commands"
+        );
+    });
+}
+
+fn respond_to_native_shell_completions(
+    app: &mut App,
+    terminal: &ViewHandle<TerminalView>,
+    completions: Vec<ShellCompletion>,
+) {
+    app.update(|ctx| {
+        ctx.subscribe_to_view(terminal, move |_, event: &TerminalViewEvent, _| {
+            if let TerminalViewEvent::RunNativeShellCompletions { results_tx, .. } = event {
+                results_tx
+                    .try_send((completions.clone(), None))
+                    .expect("native completion response receiver must remain open");
+            }
+        });
+    });
+}
+
+#[test]
+fn combined_completions_show_file_paths_after_empty_native_results() {
+    let _native_completions_flag = FeatureFlag::NativeShellCompletions.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        app.update(|ctx| {
+            InputSettings::handle(ctx).update(ctx, |settings, ctx| {
+                settings
+                    .warp_completions_enabled
+                    .set_value(true, ctx)
+                    .expect("Warp completions setting must update");
+                settings
+                    .native_shell_completions_enabled
+                    .set_value(true, ctx)
+                    .expect("native completions setting must update");
+            });
+        });
+
+        let working_directory = tempfile::TempDir::new().expect("completion working directory");
+        let source_directory = working_directory.path().join("src");
+        std::fs::create_dir(&source_directory).expect("source directory must be created");
+        std::fs::write(source_directory.join("alpha.rs"), "")
+            .expect("alpha fixture must be created");
+        std::fs::write(source_directory.join("beta.rs"), "").expect("beta fixture must be created");
+
+        let session_info = SessionInfo::new_for_test();
+        let session_id = session_info.session_id;
+        let terminal =
+            add_window_with_bootstrapped_terminal(&mut app, None, Some(session_info)).await;
+        simulate_directory_for_completion(
+            session_id,
+            &terminal,
+            &mut app,
+            working_directory.path().to_string_lossy(),
+        );
+        respond_to_native_shell_completions(&mut app, &terminal, Vec::new());
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+
+        input.update(&mut app, |input, ctx| {
+            input.clear_buffer_and_reset_undo_stack(ctx);
+            input.user_insert("warptool ./src/", ctx);
+            input.input_tab(ctx);
+        });
+
+        assert_eventually!(
+            600 => input.read(&app, |input, _| {
+                input.input_suggestions.read(&app, |suggestions, _| {
+                    let items = suggestions.items().iter().map(|item| item.text()).collect_vec();
+                    items.iter().any(|item| item.ends_with("alpha.rs"))
+                        && items.iter().any(|item| item.ends_with("beta.rs"))
+                })
+            }),
+            "gave up waiting for file paths after empty bundled and native completions"
+        );
+    });
+}
+
+#[test]
+fn combined_completions_preserve_nonempty_native_results() {
+    let _native_completions_flag = FeatureFlag::NativeShellCompletions.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        app.update(|ctx| {
+            InputSettings::handle(ctx).update(ctx, |settings, ctx| {
+                settings
+                    .warp_completions_enabled
+                    .set_value(true, ctx)
+                    .expect("Warp completions setting must update");
+                settings
+                    .native_shell_completions_enabled
+                    .set_value(true, ctx)
+                    .expect("native completions setting must update");
+            });
+        });
+
+        let working_directory = tempfile::TempDir::new().expect("completion working directory");
+        std::fs::write(working_directory.path().join("native-file"), "")
+            .expect("file fallback fixture must be created");
+
+        let session_info = SessionInfo::new_for_test();
+        let session_id = session_info.session_id;
+        let terminal =
+            add_window_with_bootstrapped_terminal(&mut app, None, Some(session_info)).await;
+        simulate_directory_for_completion(
+            session_id,
+            &terminal,
+            &mut app,
+            working_directory.path().to_string_lossy(),
+        );
+        respond_to_native_shell_completions(
+            &mut app,
+            &terminal,
+            vec![
+                ShellCompletion::new("native-shell-alpha".to_string()),
+                ShellCompletion::new("native-shell-beta".to_string()),
+            ],
+        );
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+
+        input.update(&mut app, |input, ctx| {
+            input.clear_buffer_and_reset_undo_stack(ctx);
+            input.user_insert("warptool n", ctx);
+            input.input_tab(ctx);
+        });
+
+        assert_eventually!(
+            600 => input.read(&app, |input, _| {
+                input.input_suggestions.read(&app, |suggestions, _| {
+                    let items = suggestions.items().iter().map(|item| item.text()).collect_vec();
+                    items.contains(&"native-shell-alpha")
+                        && items.contains(&"native-shell-beta")
+                        && !items.contains(&"native-file")
+                })
+            }),
+            "gave up waiting for nonempty native suggestions"
+        );
+    });
 }
 
 fn argument_suggestion(name: impl Into<SmolStr>) -> MatchedSuggestion {

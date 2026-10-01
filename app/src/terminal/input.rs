@@ -10822,9 +10822,23 @@ impl Input {
                             &completion_context,
                         )
                         .await;
-                        (spec_suggestions, completions_trigger, editor_snapshot)
+                        (
+                            spec_suggestions,
+                            completions_trigger,
+                            editor_snapshot,
+                            completion_context,
+                            session_env_vars,
+                        )
                     },
-                    move |input, (spec_suggestions, completions_trigger, editor_snapshot), ctx| {
+                    move |input,
+                          (
+                        spec_suggestions,
+                        completions_trigger,
+                        editor_snapshot,
+                        completion_context,
+                        session_env_vars,
+                    ),
+                          ctx| {
                         let bundled_specs_empty = match &spec_suggestions {
                             Some(spec_suggestions) => spec_suggestions.suggestions.is_empty(),
                             None => true,
@@ -10834,6 +10848,9 @@ impl Input {
                             input.dispatch_native_shell_completions(
                                 buffer_text,
                                 cursor_position,
+                                matcher,
+                                completion_context,
+                                session_env_vars,
                                 completions_trigger,
                                 editor_snapshot,
                                 ctx,
@@ -10939,10 +10956,14 @@ impl Input {
         self.completions_abort_handle = Some(abort_handle);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_native_shell_completions(
         &mut self,
         buffer_text: String,
         cursor_position: usize,
+        matcher: MatchStrategy,
+        completion_context: SessionContext,
+        session_env_vars: Option<HashMap<String, String>>,
         completions_trigger: CompletionsTrigger,
         editor_snapshot: EditorSnapshot,
         ctx: &mut ViewContext<Self>,
@@ -10964,17 +10985,20 @@ impl Input {
             results_tx,
         });
 
+        let completion_session = completion_context.session.clone();
         let abort_handle = ctx
-            .spawn(
+            .spawn_abortable(
                 async move {
-                    let suggestions = results_rx.recv().await.ok().map(|(results, span)| {
-                        native_shell_suggestion_results(
-                            results,
-                            span,
-                            &buffer_text,
-                            cursor_position,
-                        )
-                    });
+                    let suggestions = native_only_suggestion_results(
+                        results_rx.recv().await.ok(),
+                        &buffer_text[..cursor_position],
+                        cursor_position,
+                        session_env_vars.as_ref(),
+                        matcher,
+                        &completion_context,
+                        &buffer_text,
+                    )
+                    .await;
                     (suggestions, completions_trigger, editor_snapshot)
                 },
                 |input, (suggestions, completions_trigger, editor_model), ctx| {
@@ -10984,6 +11008,9 @@ impl Input {
                         editor_model,
                         ctx,
                     );
+                },
+                move |_, _| {
+                    completion_session.cancel_active_commands();
                 },
             )
             .abort_handle();

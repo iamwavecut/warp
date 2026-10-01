@@ -1,9 +1,39 @@
 use super::slash_command_is_submitted_as_prompt;
 use crate::features::FeatureFlag;
-use crate::search::slash_command_menu::static_commands::{commands, Availability};
+use crate::search::slash_command_menu::static_commands::{Availability, commands};
 const BASELINE_AVAILABILITY: Availability = Availability::AGENT_VIEW
     .union(Availability::AI_ENABLED)
     .union(Availability::NO_LRC_CONTROL);
+
+#[cfg(all(feature = "local_fs", unix))]
+#[test]
+fn open_file_command_uses_session_home_instead_of_host_home() {
+    use std::sync::Arc;
+
+    use super::open_file_command_path;
+    use crate::terminal::model::session::command_executor::testing::TestCommandExecutor;
+    use crate::terminal::model::session::{Session, SessionInfo};
+    use crate::terminal::shell::ShellType;
+
+    let session = Session::new(
+        SessionInfo::new_for_test()
+            .with_shell_type(ShellType::Bash)
+            .with_home_dir("/home/session-user".to_owned()),
+        Arc::new(TestCommandExecutor::default()),
+    );
+    let (path, line_col) = open_file_command_path(&session, "/work", "~/file\\ name.rs:4:2");
+    assert_eq!(
+        path,
+        std::path::PathBuf::from("/home/session-user/file name.rs")
+    );
+    assert_eq!(
+        line_col,
+        Some(warp_util::path::LineAndColumnArg {
+            line_num: 4,
+            column_num: Some(2)
+        })
+    );
+}
 
 /// The centralized classifier must mark only the prompt-submitting commands (/compact, /plan,
 /// /orchestrate) as "submitted as a prompt". Every other slash command emits an immediate action
@@ -21,9 +51,6 @@ fn slash_command_is_submitted_as_prompt_only_for_prompt_commands() {
         &commands::FORK_AND_COMPACT
     ));
     assert!(!slash_command_is_submitted_as_prompt(&commands::FORK_FROM));
-    assert!(!slash_command_is_submitted_as_prompt(
-        &commands::CONTINUE_LOCALLY
-    ));
     assert!(!slash_command_is_submitted_as_prompt(
         &commands::COMPACT_AND
     ));
@@ -68,14 +95,16 @@ mod windows {
     use std::sync::Arc;
 
     use super::super::*;
-    use crate::terminal::model::session::command_executor::testing::TestCommandExecutor;
-    use crate::terminal::model::session::SessionInfo;
-    use crate::terminal::shell::ShellType;
     use crate::terminal::ShellLaunchData;
+    use crate::terminal::model::session::SessionInfo;
+    use crate::terminal::model::session::command_executor::testing::TestCommandExecutor;
+    use crate::terminal::shell::ShellType;
 
     fn wsl_session() -> Session {
         Session::new(
-            SessionInfo::new_for_test().with_shell_type(ShellType::Bash),
+            SessionInfo::new_for_test()
+                .with_shell_type(ShellType::Bash)
+                .with_home_dir("/home/ubuntu".to_owned()),
             Arc::new(TestCommandExecutor::default()),
         )
         .with_shell_launch_data(ShellLaunchData::WSL {
@@ -109,6 +138,15 @@ mod windows {
                 "/home/ubuntu",
                 "subdir/test.txt:4:2",
                 r"\\WSL$\Ubuntu\home\ubuntu\subdir\test.txt",
+                Some(LineAndColumnArg {
+                    line_num: 4,
+                    column_num: Some(2),
+                }),
+            ),
+            (
+                "/tmp",
+                "~/subdir/file\\ name.txt:4:2",
+                r"\\WSL$\Ubuntu\home\ubuntu\subdir\file name.txt",
                 Some(LineAndColumnArg {
                     line_num: 4,
                     column_num: Some(2),

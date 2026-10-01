@@ -1,5 +1,57 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn directory_chip_uses_session_home_and_refreshes_contents() {
+    use std::sync::Arc;
+
+    use typed_path::TypedPathBuf;
+    use warp_completer::signatures::CommandRegistry;
+    use warpui::App;
+
+    use crate::terminal::model::session::command_executor::testing::TestCommandExecutor;
+    use crate::terminal::model::session::{Session, SessionInfo};
+
+    let _aliases = warp_core::features::FeatureFlag::WorkflowAliases.override_enabled(false);
+    App::test((), |app| async move {
+        let home = tempfile::tempdir().expect("session home must be created");
+        let directory = home.path().join("project");
+        std::fs::create_dir(&directory).expect("project directory must be created");
+        std::fs::write(directory.join("alpha.rs"), "").expect("first fixture must be created");
+        std::fs::write(directory.join(".hidden"), "").expect("hidden fixture must be created");
+        let session = Session::new(
+            SessionInfo::new_for_test().with_home_dir(home.path().to_string_lossy().into_owned()),
+            Arc::new(TestCommandExecutor::default()),
+        );
+        let context = app.read(|ctx| {
+            SessionContext::new(
+                session,
+                Arc::new(CommandRegistry::default()),
+                TypedPathBuf::from("/work"),
+                ctx,
+            )
+        });
+
+        let first = DirectoryFetcher::fetch_files_async(&context, "~/project").await;
+        assert_eq!(
+            first
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha.rs"]
+        );
+        std::fs::write(directory.join("beta.rs"), "").expect("second fixture must be created");
+        let refreshed = DirectoryFetcher::fetch_files_async(&context, "~/project").await;
+        assert_eq!(
+            refreshed
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha.rs", "beta.rs"]
+        );
+    });
+}
+
 fn create_directory_item(name: &str, directory_type: DirectoryType) -> DirectoryItem {
     DirectoryItem {
         name: name.to_string(),

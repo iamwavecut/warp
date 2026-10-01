@@ -44,7 +44,7 @@ fn minimum_version() {
     let _guard = FeatureFlag::CodexPlugin.override_enabled(true);
     assert_eq!(
         CodexPluginManager::new(None, None, None).minimum_plugin_version(),
-        "0.4.0"
+        "0.4.2"
     );
 }
 
@@ -230,7 +230,7 @@ fn does_not_need_update_via_trait_when_version_current() {
     let _guard = FeatureFlag::CodexPlugin.override_enabled(true);
     let dir = tempfile::tempdir().unwrap();
     write_enabled_config(dir.path());
-    write_manifest(dir.path(), "0.4.0");
+    write_manifest(dir.path(), super::MINIMUM_PLUGIN_VERSION);
 
     unsafe { std::env::set_var("CODEX_HOME", dir.path()) };
     let result = CodexPluginManager::new(None, None, None).needs_update();
