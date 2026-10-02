@@ -73,6 +73,7 @@ fn create_handler(agent: &CLIAgent) -> Option<Box<dyn CLIAgentSessionHandler>> {
         CLIAgent::Codex => Some(Box::new(CodexSessionHandler)),
         CLIAgent::Grok => Some(Box::new(GrokSessionHandler::default())),
         CLIAgent::Hermes
+        | CLIAgent::Kiro
         | CLIAgent::Amp
         | CLIAgent::Copilot
         | CLIAgent::CursorCli

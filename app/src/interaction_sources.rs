@@ -81,40 +81,6 @@ pub enum CodePanelsFileOpenEntrypoint {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum CLIAgentType {
-    Claude,
-    Gemini,
-    Codex,
-    Amp,
-    Droid,
-    OpenCode,
-    Copilot,
-    Pi,
-    OhMyPi,
-    Auggie,
-    Cursor,
-    Goose,
-    Hermes,
-    Vibe,
-    Antigravity,
-    Grok,
-    Unknown,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentNotificationVariant {
-    Oz,
-    CLIAgent(CLIAgentType),
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub enum NotificationAgentVariant {
-    Oz,
-    CLIAgent(CLIAgentType),
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum WarpDriveSource {
     Legacy,
     LeftPanelToolbelt,

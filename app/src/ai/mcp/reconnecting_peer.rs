@@ -9,9 +9,8 @@ use super::TemplatableMCPServerManager;
 
 /// A wrapper around an MCP server connection that transparently handles reconnection.
 ///
-/// When making requests (e.g., `call_tool` or `read_resource`), this type checks if the
-/// underlying transport is closed and automatically triggers reconnection before retrying
-/// the request.
+/// Reconnects before dispatch. Only resource reads may be retried after transport failure;
+/// a tool may already have executed, so it must never be replayed automatically.
 #[derive(Clone)]
 pub struct ReconnectingPeer {
     installation_uuid: Uuid,
@@ -122,8 +121,10 @@ impl ReconnectingPeer {
         &self,
         params: rmcp::model::CallToolRequestParams,
     ) -> Result<rmcp::model::CallToolResult, rmcp::ServiceError> {
-        self.with_reconnect_retry(params, |peer, p| async move { peer.call_tool(p).await })
-            .await
+        mcp::tool_call::call_tool_with_deadline(params, async {
+            self.get_connected_peer().await.map_err(Into::into)
+        })
+        .await
     }
 
     /// Reads a resource from the MCP server.

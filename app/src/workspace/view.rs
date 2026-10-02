@@ -2440,7 +2440,7 @@ impl Workspace {
     fn sync_settings_error_state_into_settings_pane(&mut self, ctx: &mut ViewContext<Self>) {
         let error = self.settings_file_error.clone();
         let dismissed = self.settings_error_banner_dismissed;
-        self.settings_pane.update(ctx, |view, ctx| {
+        let _ = self.settings_pane.try_update(ctx, |view, ctx| {
             view.set_settings_error_state(error, dismissed, ctx);
         });
     }

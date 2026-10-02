@@ -443,8 +443,8 @@ use crate::banner::{
 use crate::editor::{AutosuggestionType, CrdtOperation, EditorAction};
 use crate::features::FeatureFlag;
 use crate::interaction_sources::{
-    AgentModeRewindEntrypoint, InteractionSource, LinkOpenMethod, NotificationAgentVariant,
-    PaletteSource, PromptSuggestionViewType, SaveAsWorkflowModalSource, ToggleBlockFilterSource,
+    AgentModeRewindEntrypoint, InteractionSource, LinkOpenMethod, PaletteSource,
+    PromptSuggestionViewType, SaveAsWorkflowModalSource, ToggleBlockFilterSource,
 };
 use crate::pane_group::SplitPaneState;
 use crate::pane_group::{
@@ -12777,13 +12777,7 @@ impl TerminalView {
         } else {
             NotificationsTrigger::AgentTaskCompleted(true)
         };
-        self.send_agent_desktop_notification_or_show_banner(
-            trigger,
-            title,
-            description,
-            Some(NotificationAgentVariant::CLIAgent((*agent).into())),
-            ctx,
-        );
+        self.send_agent_desktop_notification_or_show_banner(trigger, title, description, ctx);
     }
 
     /// Handles the initialization of a session within this terminal pane.
@@ -14585,7 +14579,6 @@ impl TerminalView {
             trigger,
             block_summary.title,
             block_summary.description,
-            Some(NotificationAgentVariant::Oz),
             ctx,
         );
     }
@@ -14597,7 +14590,6 @@ impl TerminalView {
         trigger: NotificationsTrigger,
         title: String,
         description: String,
-        _agent_variant: Option<NotificationAgentVariant>,
         ctx: &mut ViewContext<Self>,
     ) {
         let notification_settings = SessionSettings::as_ref(ctx).notifications.value().clone();
@@ -24819,11 +24811,7 @@ impl TerminalView {
         });
     }
 
-    pub(super) fn toggle_file_tree(
-        &mut self,
-        _cli_agent: Option<crate::interaction_sources::CLIAgentType>,
-        ctx: &mut ViewContext<Self>,
-    ) {
+    pub(super) fn toggle_file_tree(&mut self, ctx: &mut ViewContext<Self>) {
         self.toggle_left_panel_file_tree(false, ctx);
     }
 }

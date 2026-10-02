@@ -23,7 +23,6 @@ use crate::ai::agent::{AgentReviewCommentBatch, DiffSetHunk};
 use crate::ai::blocklist::CLAUDE_ORANGE;
 use crate::code::editor::line::EditorLineLocation;
 use crate::code_review::comments::AttachedReviewCommentTarget;
-use crate::interaction_sources::CLIAgentType;
 use crate::ui_components::icons::Icon;
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
@@ -135,6 +134,13 @@ const MISTRAL_ORANGE: ColorU = ColorU {
     a: 255,
 };
 
+const KIRO_PURPLE: ColorU = ColorU {
+    r: 144,
+    g: 70,
+    b: 255,
+    a: 255,
+};
+
 /// Represents a CLI agent (e.g., Claude Code, Gemini CLI, Codex, Amp, Droid, OpenCode, Copilot, Pi, Auggie, Cursor, Goose, Hermes, Mistral Vibe)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Sequence, Serialize, Deserialize)]
 pub enum CLIAgent {
@@ -154,6 +160,7 @@ pub enum CLIAgent {
     Vibe,
     Antigravity,
     Grok,
+    Kiro,
     /// Represents an unknown/custom CLI agent matched by user-configured regex patterns.
     Unknown,
 }
@@ -178,6 +185,7 @@ impl CLIAgent {
             CLIAgent::Vibe => "vibe",
             CLIAgent::Antigravity => "agy",
             CLIAgent::Grok => "grok",
+            CLIAgent::Kiro => "kiro-cli",
             CLIAgent::Unknown => "",
         }
     }
@@ -228,6 +236,7 @@ impl CLIAgent {
             CLIAgent::Vibe => "Mistral Vibe",
             CLIAgent::Antigravity => "Antigravity",
             CLIAgent::Grok => "Grok Build",
+            CLIAgent::Kiro => "Kiro CLI",
             CLIAgent::Unknown => "CLI Agent",
         }
     }
@@ -254,6 +263,7 @@ impl CLIAgent {
             CLIAgent::Vibe => None,
             CLIAgent::Antigravity => Some(Icon::AntigravityLogo),
             CLIAgent::Grok => Some(Icon::GrokLogo),
+            CLIAgent::Kiro => Some(Icon::KiroLogo),
             CLIAgent::Unknown => None,
         }
     }
@@ -287,6 +297,7 @@ impl CLIAgent {
             CLIAgent::Vibe => &[SkillProvider::Agents],
             CLIAgent::Antigravity => &[],
             CLIAgent::Grok => &[SkillProvider::Agents],
+            CLIAgent::Kiro => &[],
             CLIAgent::Unknown => &[],
         }
     }
@@ -314,6 +325,7 @@ impl CLIAgent {
                 | CLIAgent::OpenCode
                 | CLIAgent::OhMyPi
                 | CLIAgent::Grok
+                | CLIAgent::Kiro
         )
     }
 
@@ -344,6 +356,7 @@ impl CLIAgent {
             CLIAgent::Vibe => Some(MISTRAL_ORANGE),
             CLIAgent::Antigravity => Some(ANTIGRAVITY_COLOR),
             CLIAgent::Grok => Some(ColorU::new(16, 16, 16, 255)),
+            CLIAgent::Kiro => Some(KIRO_PURPLE),
             CLIAgent::Unknown => None,
         }
     }
@@ -419,6 +432,7 @@ impl CLIAgent {
                     || (matches!(agent, CLIAgent::Claude)
                         && Self::is_aifx_agent_run_claude(&resolved_command, ctx))
                     || (matches!(agent, CLIAgent::Vibe) && resolved_first_word == "vibe-acp")
+                    || (matches!(agent, CLIAgent::Kiro) && resolved_first_word == "kiro")
             })
     }
 
@@ -594,30 +608,6 @@ pub fn build_selection_line_range_prompt(
     end_line: usize,
 ) -> String {
     format!("{file_path} L{start_line}-L{end_line}")
-}
-
-impl From<CLIAgent> for CLIAgentType {
-    fn from(agent: CLIAgent) -> Self {
-        match agent {
-            CLIAgent::Claude => CLIAgentType::Claude,
-            CLIAgent::Gemini => CLIAgentType::Gemini,
-            CLIAgent::Codex => CLIAgentType::Codex,
-            CLIAgent::Amp => CLIAgentType::Amp,
-            CLIAgent::Droid => CLIAgentType::Droid,
-            CLIAgent::OpenCode => CLIAgentType::OpenCode,
-            CLIAgent::Copilot => CLIAgentType::Copilot,
-            CLIAgent::Pi => CLIAgentType::Pi,
-            CLIAgent::OhMyPi => CLIAgentType::OhMyPi,
-            CLIAgent::Auggie => CLIAgentType::Auggie,
-            CLIAgent::CursorCli => CLIAgentType::Cursor,
-            CLIAgent::Goose => CLIAgentType::Goose,
-            CLIAgent::Hermes => CLIAgentType::Hermes,
-            CLIAgent::Vibe => CLIAgentType::Vibe,
-            CLIAgent::Antigravity => CLIAgentType::Antigravity,
-            CLIAgent::Grok => CLIAgentType::Grok,
-            CLIAgent::Unknown => CLIAgentType::Unknown,
-        }
-    }
 }
 
 #[cfg(test)]

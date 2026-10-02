@@ -32,6 +32,22 @@ fn aliases(pairs: &[(&str, &str)]) -> HashMap<SmolStr, String> {
         .collect()
 }
 
+#[test]
+fn kiro_commands_use_local_rich_input() {
+    App::test((), |mut app| async move {
+        app.update(|ctx| {
+            for command in ["kiro-cli chat", "kiro chat"] {
+                let agent = CLIAgent::detect(command, None, None, ctx);
+                assert_eq!(agent, Some(CLIAgent::Kiro));
+                assert!(agent.unwrap().supports_cli_agent_footer());
+                assert!(agent.unwrap().supports_bash_mode());
+            }
+            assert_eq!(CLIAgent::detect("kiro-other", None, None, ctx), None);
+            assert_eq!(CLIAgent::from_serialized_name("Kiro"), CLIAgent::Kiro);
+        });
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Helpers for prompt-building tests
 // ---------------------------------------------------------------------------

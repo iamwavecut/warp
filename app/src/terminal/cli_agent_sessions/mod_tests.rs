@@ -1,7 +1,7 @@
 use super::event::{CLIAgentEvent, CLIAgentEventPayload, CLIAgentEventType, parse_event};
 use super::{
     CLIAgentInputEntrypoint, CLIAgentInputState, CLIAgentSession, CLIAgentSessionContext,
-    CLIAgentSessionStatus, CLIAgentSessionsModel,
+    CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
 use crate::ai::blocklist::{InputConfig, InputType};
 use crate::terminal::CLIAgent;
@@ -652,6 +652,73 @@ fn tracked_cli_agent_session(status: CLIAgentSessionStatus) -> CLIAgentSession {
         plugin_version: None,
         draft_text: None,
         custom_command_prefix: None,
+    }
+}
+
+#[test]
+fn local_follow_up_prompts_resume_claude_and_codex_progress() {
+    for agent in [CLIAgent::Claude, CLIAgent::Codex] {
+        App::test((), |mut app| async move {
+            let model = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+            let view_id = EntityId::new();
+            let mut session = tracked_cli_agent_session(CLIAgentSessionStatus::Success);
+            session.agent = agent;
+            session.session_context.response = Some("Previous answer".into());
+            model.update(&mut app, |model, ctx| {
+                model.set_session(view_id, session, ctx)
+            });
+
+            let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            app.update(|ctx| {
+                let events = events.clone();
+                ctx.subscribe_to_model(&model, move |_, event, _| {
+                    events.borrow_mut().push(event.clone());
+                });
+            });
+
+            for query in ["Continue locally", "Continue again"] {
+                let mut event = cli_agent_event(CLIAgentEventType::PromptSubmit);
+                event.agent = agent;
+                event.payload.query = Some(query.into());
+                model.update(&mut app, |model, ctx| {
+                    model.update_from_event(view_id, &event, ctx);
+                });
+                model.read(&app, |model, _| {
+                    let session = model.session(view_id).unwrap();
+                    assert_eq!(session.status, CLIAgentSessionStatus::InProgress);
+                    assert_eq!(session.session_context.query.as_deref(), Some(query));
+                    assert_eq!(session.session_context.response, None);
+                });
+            }
+
+            let events = events.borrow();
+            assert_eq!(events.len(), 4);
+            for (pair, query) in events
+                .chunks_exact(2)
+                .zip(["Continue locally", "Continue again"])
+            {
+                match &pair[0] {
+                    CLIAgentSessionsModelEvent::StatusChanged {
+                        terminal_view_id,
+                        agent: event_agent,
+                        status,
+                        session_context,
+                    } => {
+                        assert_eq!(*terminal_view_id, view_id);
+                        assert_eq!(*event_agent, agent);
+                        assert_eq!(*status, CLIAgentSessionStatus::InProgress);
+                        assert_eq!(session_context.query.as_deref(), Some(query));
+                        assert_eq!(session_context.response, None);
+                    }
+                    event => panic!("Expected local progress notification, got {event:?}"),
+                }
+                assert!(matches!(
+                    &pair[1],
+                    CLIAgentSessionsModelEvent::SessionUpdated { terminal_view_id, agent: event_agent }
+                        if *terminal_view_id == view_id && *event_agent == agent
+                ));
+            }
+        });
     }
 }
 

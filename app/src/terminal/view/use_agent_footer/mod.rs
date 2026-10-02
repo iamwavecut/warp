@@ -53,7 +53,6 @@ use warpui::{
 use crate::{
     ai::blocklist::block::cli_controller::CLISubagentEvent,
     cmd_or_ctrl_shift,
-    interaction_sources::CLIAgentType,
     settings::{
         AISettings, AISettingsChangedEvent, CompiledCommandsForCodingAgentToolbar,
         InputModeSettings,
@@ -142,6 +141,7 @@ fn rich_input_submit_strategy(agent: CLIAgent) -> RichInputSubmitStrategy {
         | CLIAgent::CursorCli => RichInputSubmitStrategy::DelayedEnter,
         CLIAgent::Hermes => RichInputSubmitStrategy::BracketedPaste,
         CLIAgent::Amp
+        | CLIAgent::Kiro
         | CLIAgent::Droid
         | CLIAgent::Pi
         | CLIAgent::Goose
@@ -246,8 +246,8 @@ impl TerminalView {
                     ctx,
                 );
             }
-            UseAgentToolbarEvent::ToggleFileExplorer(cli_agent) => {
-                self.toggle_file_tree(cli_agent.map(Into::into), ctx);
+            UseAgentToolbarEvent::ToggleFileExplorer(_) => {
+                self.toggle_file_tree(ctx);
             }
             UseAgentToolbarEvent::OpenRichInput => {
                 if self.has_active_cli_agent_input_session(ctx) {
@@ -495,11 +495,6 @@ impl TerminalView {
         }
 
         let should_insert_after_block = !InputModeSettings::as_ref(ctx).is_pinned_to_top();
-
-        // Send diagnostics when showing CLI agent footer
-        if let Some(session) = CLIAgentSessionsModel::as_ref(ctx).session(self.view_id) {
-            let _cli_agent_type: CLIAgentType = session.agent.into();
-        }
 
         self.insert_rich_content(
             None,

@@ -1622,11 +1622,11 @@ async fn send_initialize_request(
     })
 }
 
-/// Creates a [`ClientInfo`] for the MCP client.
+/// Creates a [`rmcp::model::ClientConfig`] for the MCP client.
 ///
 /// This tells the MCP server who we are and what capabilities we have.
-fn make_client_info() -> rmcp::model::ClientInfo {
-    rmcp::model::ClientInfo::new(
+fn make_client_info() -> rmcp::model::ClientConfig {
+    rmcp::model::ClientConfig::new(
         Default::default(),
         rmcp::model::Implementation::new(
             warp_core::channel::ChannelState::app_id().to_string(),

@@ -16,3 +16,9 @@ sse-stream = "0.2.6"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync", "macros", "rt", "time"] }
 tracing.workspace = true
+warpui.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+rmcp = { workspace = true, features = ["transport-streamable-http-client-reqwest"] }
+tokio = { workspace = true, features = ["net"] }

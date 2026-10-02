@@ -248,6 +248,22 @@ pub(crate) fn mock_workspace(app: &mut App) -> ViewHandle<Workspace> {
     workspace
 }
 
+#[test]
+fn settings_error_sync_skips_an_unavailable_pane() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let closing_workspace = mock_workspace(&mut app);
+        let pane = closing_workspace.read(&app, |workspace, _| workspace.settings_pane.clone());
+        let window_id = app.read(|ctx| closing_workspace.window_id(ctx));
+        app.update(|ctx| ctx.simulate_window_closed(window_id));
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.settings_pane = pane;
+            workspace.sync_settings_error_state_into_settings_pane(ctx);
+        });
+    });
+}
+
 fn restored_workspace(
     app: &mut App,
     window_snapshot: crate::app_state::WindowSnapshot,
