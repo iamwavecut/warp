@@ -1602,6 +1602,7 @@ esac
 
   # The main logic for generating completions.
   function warp_main_completer () {
+    (( ${+functions[_generic]} )) || return 0
     # We want all the results listed.
     compstate[list_max]=-1
 
@@ -1657,24 +1658,22 @@ esac
         return 0
       fi
       _WARP_NATIVE_COMPLETIONS_ARMED=0
-
-      BUFFER=$_WARP_NATIVE_COMPLETIONS_LINE
-      CURSOR=${#BUFFER}
-
-      # Chain to whatever was bound to zle-line-init before we took it over, if anything.
-      (( ${+widgets[_warp_saved_zle_line_init]} )) && zle _warp_saved_zle_line_init
-
-      compprefuncs=( warp_mark_start_of_completions_for_compadd_override )
-      comppostfuncs=( warp_mark_end_of_completions )
-      COMPADD_OVERRIDE=true
-      zle warp_complete_via_compadd_override_internal
-      unset COMPADD_OVERRIDE
-
-      # A single-space throwaway buffer (rather than an empty one) is what `select`
-      # reliably accepts as ending its one read iteration without re-prompting.
-      BUFFER=' '
-      CURSOR=1
-      zle accept-line
+      # The widget owns framing even when completion hooks are unavailable or fail.
+      warp_mark_start_of_completions_for_compadd_override
+      {
+        BUFFER=$_WARP_NATIVE_COMPLETIONS_LINE
+        CURSOR=${#BUFFER}
+        (( ${+widgets[_warp_saved_zle_line_init]} )) && zle _warp_saved_zle_line_init
+        local -a compprefuncs=() comppostfuncs=()
+        COMPADD_OVERRIDE=true
+        zle warp_complete_via_compadd_override_internal
+      } always {
+        unset COMPADD_OVERRIDE
+        warp_mark_end_of_completions
+        BUFFER=' '
+        CURSOR=1
+        zle accept-line
+      }
     } always {
       _WARP_NATIVE_COMPLETIONS_ZLE_LINE_INIT_RUNNING=0
     }

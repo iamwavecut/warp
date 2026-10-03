@@ -405,6 +405,20 @@ Warnings from disabled hosted auth/cloud paths may appear while those upstream
 modules still exist. Treat build failures as blockers; evaluate warnings case
 by case and remove them when deleting the underlying hosted code is safe.
 
+For native shell completion changes, also run the focused real-shell suite:
+
+```sh
+WARP_SHELL_PATH=/bin/zsh CARGO_INCREMENTAL=0 cargo test -p integration \
+  --features native_shell_completions_suite --test native_shell_completions \
+  -- --test-threads=1
+```
+
+This Cargo feature selects only integration-test modules and registrations; it
+does not change application behavior. The suite reuses the regular test runner,
+hermetic home directory, app startup and PTY path. Do not restore hosted fixtures
+to compile unrelated legacy integration suites, or claim this focused suite
+verifies those suites.
+
 ## macOS Bundle
 
 If `cargo-bundle` is missing:

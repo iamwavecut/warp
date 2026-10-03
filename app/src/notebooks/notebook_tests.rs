@@ -88,6 +88,8 @@ fn initialize_app(app: &mut App) {
     app.add_singleton_model(AuthManager::new_for_test);
     #[cfg(feature = "voice_input")]
     app.add_singleton_model(voice_input::VoiceInput::new);
+    #[cfg(feature = "voice_input")]
+    app.add_singleton_model(|_| crate::voice::transcriber::VoiceTranscriber::disabled());
 }
 
 /// Container so that [`NotebookView`] can be registered as a typed action view.
@@ -235,6 +237,19 @@ echo hello
         .await;
 
         // First, make sure the editor is focused.
+        notebook
+            .read(&app, |notebook, ctx| {
+                notebook
+                    .input
+                    .as_ref(ctx)
+                    .model()
+                    .as_ref(ctx)
+                    .render_state()
+                    .as_ref(ctx)
+                    .layout_complete()
+            })
+            .await;
+
         notebook.update(&mut app, |notebook, ctx| {
             notebook.focus_input(ctx);
         });

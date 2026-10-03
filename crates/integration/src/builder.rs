@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::time::Duration;
 
-use warpui_core::integration::{self, PersistedDataMap, TestDriver, TestSetupUtils, TestStep};
-use warpui_core::{App, WindowId};
+use warpui::integration::{self, PersistedDataMap, TestDriver, TestSetupUtils, TestStep};
+use warpui::{App, WindowId};
 use warpui_extras::user_preferences::UserPreferences;
 use warpui_extras::user_preferences::file_backed::FileBackedUserPreferences;
 

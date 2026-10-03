@@ -11,21 +11,23 @@ use std::time::Duration;
 
 use settings::Setting as _;
 use warp::features::FeatureFlag;
+use warp::integration_testing::agent_mode::AgentViewState;
 use warp::integration_testing::input::{input_is_empty, tab_completions_menu_is_open};
 use warp::integration_testing::step::new_step_with_default_assertions;
-use warp::integration_testing::terminal::util::current_shell_starter_and_version;
+use warp::integration_testing::terminal::util::{
+    ExpectedExitStatus, current_shell_starter_and_version,
+};
 use warp::integration_testing::terminal::{
-    clear_blocklist_to_remove_bootstrapped_blocks, execute_echo,
-    wait_until_bootstrapped_single_pane_for_tab,
+    clear_blocklist_to_remove_bootstrapped_blocks, execute_command_for_single_terminal_in_tab,
+    execute_echo, wait_until_bootstrapped_single_pane_for_tab,
 };
 use warp::integration_testing::view_getters::{
     single_input_suggestions_view_for_tab, single_input_view_for_tab, single_terminal_view_for_tab,
 };
 use warp::settings::{NativeShellCompletionsEnabled, WarpCompletionsEnabled};
-use warp::terminal::model::block::TranscriptScope;
 use warp::terminal::shell::ShellType;
-use warpui_core::async_assert;
-use warpui_core::units::Lines;
+use warpui::async_assert;
+use warpui::units::Lines;
 
 use super::new_builder;
 use crate::Builder;
@@ -39,6 +41,87 @@ const SHELL_ASKED_MARKER_FILE: &str = "native_completions_shell_asked_marker";
 fn shell_asked_marker_path() -> PathBuf {
     let home = std::env::var("HOME").expect("HOME is set for the duration of the integration test");
     Path::new(&home).join(SHELL_ASKED_MARKER_FILE)
+}
+
+pub fn test_zsh_native_completions_without_compinit_use_filepaths() -> Builder {
+    enable_native_shell_completions_feature();
+    new_builder()
+        .set_should_run_test(|| {
+            let (starter, _version) = current_shell_starter_and_version();
+            matches!(starter.shell_type(), ShellType::Zsh)
+        })
+        .with_user_defaults(specs_first_completion_defaults())
+        .with_setup(|utils| {
+            let dir = utils.test_dir();
+            write_rc_files_for_test(&dir, "cd -- \"$HOME\"", [ShellRcType::Zsh]);
+            std::fs::write(dir.join("native_apple.txt"), "")
+                .expect("should create the first completion fixture");
+            std::fs::write(dir.join("native_avocado.txt"), "")
+                .expect("should create the second completion fixture");
+        })
+        .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
+        .with_step(execute_command_for_single_terminal_in_tab(
+            0,
+            "print -- ${+functions[_generic]}".to_string(),
+            ExpectedExitStatus::Success,
+            "0",
+        ))
+        .with_step(
+            new_step_with_default_assertions(
+                "Request filepaths without zsh completion initialization",
+            )
+            .with_typed_characters(&["warptool ./native_a"])
+            .with_keystrokes(&["tab"])
+            .set_timeout(Duration::from_secs(30))
+            .add_named_assertion(
+                "filepath fallback appears after an empty native response",
+                |app, window_id| {
+                    let suggestions = single_input_suggestions_view_for_tab(app, window_id, 0);
+                    suggestions.read(app, |view, _ctx| {
+                        let has = |filename: &str| {
+                            view.items()
+                                .iter()
+                                .any(|item| item.text().ends_with(filename))
+                        };
+                        let texts: Vec<_> = view.items().iter().map(|item| item.text()).collect();
+                        async_assert!(
+                            has("native_apple.txt") && has("native_avocado.txt"),
+                            "expected both filepath suggestions without compinit, got {texts:?}"
+                        )
+                    })
+                },
+            ),
+        )
+}
+
+pub fn test_zsh_native_completions_preserve_candidates_on_error() -> Builder {
+    enable_native_shell_completions_feature();
+    new_builder()
+        .set_should_run_test(|| {
+            let (starter, _) = current_shell_starter_and_version();
+            matches!(starter.shell_type(), ShellType::Zsh)
+        })
+        .with_user_defaults(native_only_completion_defaults())
+        .with_setup(|utils| {
+            write_rc_files_for_test(
+                &utils.test_dir(),
+                "autoload -Uz compinit; compinit -D\nfunction _warp_test_completion_failure() { compadd -- failed_one failed_two; return 1; }\ncompdef _warp_test_completion_failure warptool",
+                [ShellRcType::Zsh],
+            );
+        })
+        .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
+        .with_step(
+            new_step_with_default_assertions("Completion error still returns captured candidates")
+                .with_typed_characters(&["warptool failed_"])
+                .with_keystrokes(&["tab"])
+                .set_timeout(Duration::from_secs(30))
+                .add_named_assertion("both error-path candidates appear", |app, window_id| {
+                    single_input_suggestions_view_for_tab(app, window_id, 0).read(app, |view, _| {
+                        let has = |candidate: &str| view.items().iter().any(|item| item.text().ends_with(candidate));
+                        async_assert!(has("failed_one") && has("failed_two"))
+                    })
+                }),
+        )
 }
 
 /// Enables the `NativeShellCompletions` gate for the whole app run. Process-global, which is safe
@@ -214,8 +297,7 @@ fn write_spec_command_marker_override_rc_files(dir: impl AsRef<Path>) {
 /// height), so a non-zero-height block carrying it is the ghost block this guards against. The name
 /// is normalized to match both `warp_run_generator_command*` and `Warp-Run-GeneratorCommand*`.
 fn assert_no_visible_generator_block()
--> impl Fn(&mut warpui_core::App, warpui_core::WindowId) -> warpui_core::integration::AssertionOutcome
-{
+-> impl Fn(&mut warpui::App, warpui::WindowId) -> warpui::integration::AssertionOutcome {
     move |app, window_id| {
         let terminal_view = single_terminal_view_for_tab(app, window_id, 0);
         terminal_view.read(app, |view, _ctx| {
@@ -225,7 +307,7 @@ fn assert_no_visible_generator_block()
                 .block_list()
                 .blocks()
                 .iter()
-                .filter(|block| block.height(&TranscriptScope::Terminal) != Lines::zero())
+                .filter(|block| block.height(&AgentViewState::Inactive) != Lines::zero())
                 .map(|block| block.command_with_secrets_unobfuscated(false))
                 .filter(|command| {
                     command

@@ -101,6 +101,25 @@ pub fn main() -> Result<()> {
 /// Type of a function that produces an integration test builder.
 type BoxedBuilderFn = Box<dyn Fn() -> Builder>;
 
+#[cfg(feature = "native_shell_completions_suite")]
+fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
+    let mut tests: HashMap<&str, BoxedBuilderFn> = HashMap::new();
+    tests.insert(
+        "test_zsh_native_completions_without_compinit_use_filepaths",
+        Box::new(test_zsh_native_completions_without_compinit_use_filepaths),
+    );
+    tests.insert(
+        "test_zsh_native_completions_preserve_candidates_on_error",
+        Box::new(test_zsh_native_completions_preserve_candidates_on_error),
+    );
+    tests.insert(
+        "test_native_shell_completions_menu",
+        Box::new(test_native_shell_completions_menu),
+    );
+    tests
+}
+
+#[cfg(not(feature = "native_shell_completions_suite"))]
 fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
     let mut tests: HashMap<&str, BoxedBuilderFn> = HashMap::new();
 
@@ -205,6 +224,8 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
     register_test!(test_builtin_completions);
     register_test!(test_keyword_completions);
     register_test!(test_native_shell_completions_menu);
+    register_test!(test_zsh_native_completions_without_compinit_use_filepaths);
+    register_test!(test_zsh_native_completions_preserve_candidates_on_error);
     register_test!(test_command_runs_cleanly_after_native_shell_completion);
     register_test!(test_native_shell_completions_used_when_no_bundled_spec);
     register_test!(test_native_shell_completions_skipped_when_a_bundled_spec_answers);

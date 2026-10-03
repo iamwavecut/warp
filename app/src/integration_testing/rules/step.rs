@@ -5,7 +5,7 @@ use std::sync::{Mutex, OnceLock};
 
 use ai::project_context::local_rule_repository::{LocalRuleRepository, ProjectRuleFile};
 use uuid::Uuid;
-use warpui::{WindowId, integration::TestStep, windowing::WindowManager};
+use warpui::{SingletonEntity, WindowId, integration::TestStep, windowing::WindowManager};
 
 use crate::{ai::facts::view::AIFactPage, integration_testing::view_getters::workspace_view};
 

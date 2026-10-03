@@ -261,6 +261,37 @@ pub fn test_find() {
 }
 
 #[test]
+fn right_prompt_offset_respects_shell_margin() {
+    for (shell, expected_cells) in [
+        (Some(ShellType::Fish), 19.0),
+        (Some(ShellType::PowerShell), 19.0),
+        (Some(ShellType::Zsh), 18.0),
+        (Some(ShellType::Bash), 18.0),
+        (None, 18.0),
+    ] {
+        let size = SizeInfo::new_without_font_metrics(10, 20);
+        let mut block = TestBlockBuilder::new()
+            .with_size_info(size)
+            .with_honor_ps1(true)
+            .build();
+        block.prompt_only_precmd(PromptMetadata::default());
+        block.init_rprompt_grid(&hex::encode("R"));
+        if let Some(shell_type) = shell {
+            block.set_shell_host(ShellHost {
+                shell_type,
+                user: "local".into(),
+                hostname: "localhost".into(),
+            });
+        }
+        assert_approx_eq!(
+            f32,
+            block.rprompt_render_offset(&size).x() / size.cell_width_px().as_f32(),
+            expected_cells
+        );
+    }
+}
+
+#[test]
 pub fn test_long_running_block_bottom_padding() {
     warpui::r#async::block_on(async {
         let mut block = TestBlockBuilder::new().build();

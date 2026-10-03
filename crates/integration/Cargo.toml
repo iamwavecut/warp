@@ -11,6 +11,11 @@ path = "src/bin/integration.rs"
 # The integration test binary does not, itself, have any tests.
 test = false
 
+[[test]]
+name = "native_shell_completions"
+path = "tests/native_shell_completions.rs"
+required-features = ["native_shell_completions_suite"]
+
 [dependencies]
 anyhow = "1.0"
 cfg-if.workspace = true
@@ -55,6 +60,7 @@ sysinfo.workspace = true
 nix = { workspace = true, features = ["user", "signal"] }
 
 [features]
+native_shell_completions_suite = []
 run_on_linux = []
 drag_tabs_to_windows = ["warp/drag_tabs_to_windows"]
 default = ["run_on_linux"]

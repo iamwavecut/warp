@@ -111,6 +111,7 @@ pub fn filter_tool_call_result(result: &message::ToolCallResult) -> message::Too
                     Some(ReadResult::TextFilesSuccess(
                         read_files_result::TextFilesSuccess {
                             files: filtered_files,
+                            failed_reads: success.failed_reads.clone(),
                         },
                     ))
                 }
@@ -149,6 +150,7 @@ pub fn filter_tool_call_result(result: &message::ToolCallResult) -> message::Too
                     Some(ReadResult::AnyFilesSuccess(
                         read_files_result::AnyFilesSuccess {
                             files: filtered_files,
+                            failed_reads: success.failed_reads.clone(),
                         },
                     ))
                 }
@@ -261,7 +263,7 @@ pub fn filter_tool_call_results_from_messages<'a>(
     messages
         .map(|msg| {
             let mut filtered_msg = msg.clone();
-            if let Some(message::Message::ToolCallResult(ref tool_result)) = &msg.message {
+            if let Some(message::Message::ToolCallResult(tool_result)) = &msg.message {
                 filtered_msg.message = Some(message::Message::ToolCallResult(
                     filter_tool_call_result(tool_result),
                 ));
