@@ -10,6 +10,7 @@ pub(crate) enum ExitEscalationPhase {
 pub(crate) enum ExitEscalationEvent {
     CommandExited,
     ShutdownRequested,
+    ShutdownAwaitingInput,
     ScannerDetected,
     FollowupDeadlineElapsed,
     TimeoutElapsed,
@@ -20,6 +21,7 @@ pub(crate) enum ExitEscalationAction {
     SendExit,
     SendFollowup,
     FinishTimedOut,
+    FinishBlocked,
     Finish,
     Ignore,
 }
@@ -51,6 +53,10 @@ impl ExitEscalation {
             ) => {
                 self.phase = ExitEscalationPhase::Done;
                 ExitEscalationAction::Finish
+            }
+            (ExitEscalationPhase::Running, ExitEscalationEvent::ShutdownAwaitingInput) => {
+                self.phase = ExitEscalationPhase::Done;
+                ExitEscalationAction::FinishBlocked
             }
             (
                 ExitEscalationPhase::Running,

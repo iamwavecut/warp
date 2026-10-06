@@ -6,6 +6,7 @@ use super::{
 use crate::ai::blocklist::{InputConfig, InputType};
 use crate::terminal::CLIAgent;
 use std::time::Duration;
+use warp_core::execution_mode::{AppExecutionMode, ExecutionMode};
 use warpui::{App, EntityId, r#async::Timer};
 
 #[test]
@@ -105,6 +106,17 @@ fn parse_idle_prompt_notification() {
         notif.payload.summary.as_deref(),
         Some("Claude is waiting for your input")
     );
+}
+
+#[test]
+fn parse_agent_needs_input_notification() {
+    let event = parse_event(
+        Some("warp://cli-agent"),
+        r#"{"v":1,"agent":"claude","event":"agent_needs_input","summary":"Choose a workspace"}"#,
+    )
+    .unwrap();
+    assert_eq!(event.event, CLIAgentEventType::NeedsInput);
+    assert_eq!(event.payload.summary.as_deref(), Some("Choose a workspace"));
 }
 
 #[test]
@@ -447,6 +459,7 @@ fn blocked_claude_session_with_permission_state() -> CLIAgentSession {
         agent: CLIAgent::Claude,
         status: CLIAgentSessionStatus::Blocked {
             message: Some("Wants to run bash: rm -rf /tmp".to_owned()),
+            source: super::BlockedSource::PermissionRequest,
         },
         session_context: CLIAgentSessionContext {
             summary: Some("Wants to run bash: rm -rf /tmp".to_owned()),
@@ -652,6 +665,86 @@ fn tracked_cli_agent_session(status: CLIAgentSessionStatus) -> CLIAgentSession {
         plugin_version: None,
         draft_text: None,
         custom_command_prefix: None,
+    }
+}
+
+#[test]
+fn needs_input_reports_local_blocking_and_resumes_after_tool_completion() {
+    for summary in [Some("Choose a workspace"), None] {
+        let mut session = tracked_cli_agent_session(CLIAgentSessionStatus::InProgress);
+        let mut event = cli_agent_event(CLIAgentEventType::NeedsInput);
+        event.payload.summary = summary.map(str::to_owned);
+        assert_eq!(
+            session.apply_event(&event),
+            Some(CLIAgentSessionStatus::Blocked {
+                message: Some(summary.unwrap_or("Agent requires user input").to_owned()),
+                source: super::BlockedSource::NeedsInput,
+            })
+        );
+        assert!(session.is_blocked_on_needs_input());
+        assert_eq!(
+            session.apply_event(&cli_agent_event(CLIAgentEventType::IdlePrompt)),
+            None
+        );
+        assert!(session.is_blocked_on_needs_input());
+        session.apply_event(&cli_agent_event(CLIAgentEventType::ToolComplete));
+        assert_eq!(session.status, CLIAgentSessionStatus::InProgress);
+        assert!(!session.is_blocked_on_needs_input());
+    }
+}
+
+#[test]
+fn needs_input_does_not_confuse_questions_or_permission_requests() {
+    for event in [
+        CLIAgentEventType::PermissionRequest,
+        CLIAgentEventType::QuestionAsked,
+    ] {
+        let mut session = tracked_cli_agent_session(CLIAgentSessionStatus::InProgress);
+        session.apply_event(&cli_agent_event(CLIAgentEventType::NeedsInput));
+        session.apply_event(&cli_agent_event(event));
+        assert!(matches!(
+            session.status,
+            CLIAgentSessionStatus::Blocked { .. }
+        ));
+        assert!(!session.is_blocked_on_needs_input());
+    }
+}
+
+#[test]
+fn needs_input_blocks_only_unattended_local_sessions_and_disarms_cancellation() {
+    for mode in [ExecutionMode::Sdk, ExecutionMode::App] {
+        App::test((), |mut app| async move {
+            app.add_singleton_model(|ctx| AppExecutionMode::new(mode, false, ctx));
+            let model = app.add_singleton_model(|_| CLIAgentSessionsModel::new());
+            let view_id = EntityId::new();
+            model.update(&mut app, |model, ctx| {
+                model.set_session(
+                    view_id,
+                    tracked_cli_agent_session(CLIAgentSessionStatus::InProgress),
+                    ctx,
+                );
+                model.update_from_event(
+                    view_id,
+                    &cli_agent_event(CLIAgentEventType::PromptSubmit),
+                    ctx,
+                );
+                model.observe_ctrl_c_write_with_window(view_id, CTRL_C_TEST_WINDOW, ctx);
+                model.update_from_event(
+                    view_id,
+                    &cli_agent_event(CLIAgentEventType::NeedsInput),
+                    ctx,
+                );
+            });
+            Timer::after(CTRL_C_TEST_WINDOW + CTRL_C_TEST_BUFFER).await;
+            model.read(&app, |model, _| {
+                let session = model.session(view_id).unwrap();
+                if mode == ExecutionMode::Sdk {
+                    assert!(session.is_blocked_on_needs_input());
+                } else {
+                    assert_eq!(session.status, CLIAgentSessionStatus::InProgress);
+                }
+            });
+        });
     }
 }
 

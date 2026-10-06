@@ -2057,10 +2057,15 @@ impl AgentDriver {
                     }).await?;
                 }
                 _ = harness_exit_rx => {
+                    let awaiting_input = foreground.spawn(|me, ctx| {
+                        let view_id = me.terminal_driver.as_ref(ctx).terminal_view().id();
+                        CLIAgentSessionsModel::handle(ctx).as_ref(ctx).session(view_id)
+                            .is_some_and(|session| session.is_blocked_on_needs_input())
+                    }).await?;
                     break Self::exit_harness_bounded(
                         runner.as_ref(),
                         &harness_name,
-                        ExitEscalationEvent::ShutdownRequested,
+                        if awaiting_input { ExitEscalationEvent::ShutdownAwaitingInput } else { ExitEscalationEvent::ShutdownRequested },
                         &mut command_handle,
                         foreground,
                     ).await;
@@ -2144,6 +2149,10 @@ impl AgentDriver {
         let cleanup_disposition = if final_save_error.is_none()
             && detected_runtime_failure.is_none()
             && (matches!(command_result.as_ref(), Ok(exit_code) if exit_code.was_successful())
+                || matches!(
+                    command_result.as_ref(),
+                    Err(AgentDriverError::ConversationBlocked { .. })
+                )
                 || matches!(final_cli_status, Some(CLIAgentSessionStatus::Cancelled)))
         {
             HarnessCleanupDisposition::PreserveResumptionStateIfSupported
@@ -2316,8 +2325,27 @@ impl AgentDriver {
         foreground: &ModelSpawner<Self>,
     ) -> Result<warp_core::command::ExitCode, AgentDriverError> {
         let mut escalation = ExitEscalation::new();
-        if escalation.on_event(start_event) != ExitEscalationAction::SendExit {
-            return Err(AgentDriverError::InvalidRuntimeState);
+        match escalation.on_event(start_event) {
+            ExitEscalationAction::SendExit => {}
+            ExitEscalationAction::FinishBlocked => {
+                // Do not answer an open prompt with /exit or kill a user-owned local CLI.
+                let blocked_action = foreground
+                    .spawn(|me, ctx| {
+                        let view_id = me.terminal_driver.as_ref(ctx).terminal_view().id();
+                        match CLIAgentSessionsModel::handle(ctx)
+                            .as_ref(ctx)
+                            .session(view_id)
+                            .map(|s| s.status.clone())
+                        {
+                            Some(CLIAgentSessionStatus::Blocked { message, .. }) => message,
+                            _ => None,
+                        }
+                        .unwrap_or_else(|| "Agent requires user input".to_owned())
+                    })
+                    .await?;
+                return Err(AgentDriverError::ConversationBlocked { blocked_action });
+            }
+            _ => return Err(AgentDriverError::InvalidRuntimeState),
         }
         report_if_error!(
             runner

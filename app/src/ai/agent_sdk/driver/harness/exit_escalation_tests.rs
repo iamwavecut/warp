@@ -58,3 +58,37 @@ fn scanner_detection_uses_the_same_shutdown_ladder() {
 
     assert_eq!(scanner_actions, shutdown_actions);
 }
+
+#[test]
+fn needs_input_shutdown_finishes_without_typing_into_the_open_prompt() {
+    let (escalation, actions) = actions_for(&[
+        ExitEscalationEvent::ShutdownAwaitingInput,
+        ExitEscalationEvent::FollowupDeadlineElapsed,
+        ExitEscalationEvent::TimeoutElapsed,
+    ]);
+    assert_eq!(
+        actions,
+        vec![
+            ExitEscalationAction::FinishBlocked,
+            ExitEscalationAction::Ignore,
+            ExitEscalationAction::Ignore
+        ]
+    );
+    assert_eq!(escalation.phase(), ExitEscalationPhase::Done);
+}
+
+#[test]
+fn needs_input_shutdown_does_not_restart_a_graceful_exit() {
+    let (escalation, actions) = actions_for(&[
+        ExitEscalationEvent::ShutdownRequested,
+        ExitEscalationEvent::ShutdownAwaitingInput,
+    ]);
+    assert_eq!(
+        actions,
+        vec![ExitEscalationAction::SendExit, ExitEscalationAction::Ignore]
+    );
+    assert_eq!(
+        escalation.phase(),
+        ExitEscalationPhase::AwaitingGracefulExit
+    );
+}

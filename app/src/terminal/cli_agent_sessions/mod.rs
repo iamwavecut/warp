@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use event::{CLIAgentEvent, CLIAgentEventType};
+use warp_core::execution_mode::AppExecutionMode;
 use warpui::r#async::SpawnedFutureHandle;
 use warpui::{Entity, EntityId, ModelContext, ModelHandle, SingletonEntity};
 
@@ -15,6 +16,13 @@ use super::CLIAgent;
 use crate::ai::blocklist::InputConfig;
 
 const CTRL_C_CANCEL_WINDOW: Duration = Duration::from_secs(2);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockedSource {
+    PermissionRequest,
+    QuestionAsked,
+    NeedsInput,
+}
 
 /// Status of a tracked CLI agent session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +35,7 @@ pub enum CLIAgentSessionStatus {
     },
     Blocked {
         message: Option<String>,
+        source: BlockedSource,
     },
     Cancelled,
 }
@@ -38,7 +47,7 @@ impl CLIAgentSessionStatus {
             CLIAgentSessionStatus::InProgress => ConversationStatus::InProgress,
             CLIAgentSessionStatus::Success => ConversationStatus::Success,
             CLIAgentSessionStatus::Failed { .. } => ConversationStatus::Error,
-            CLIAgentSessionStatus::Blocked { message } => ConversationStatus::Blocked {
+            CLIAgentSessionStatus::Blocked { message, .. } => ConversationStatus::Blocked {
                 blocked_action: message.clone().unwrap_or_default(),
             },
             CLIAgentSessionStatus::Cancelled => ConversationStatus::Cancelled,
@@ -158,6 +167,16 @@ impl CLIAgentSession {
         self.remote_host.is_some()
     }
 
+    pub fn is_blocked_on_needs_input(&self) -> bool {
+        matches!(
+            self.status,
+            CLIAgentSessionStatus::Blocked {
+                source: BlockedSource::NeedsInput,
+                ..
+            }
+        )
+    }
+
     /// Clears state populated by `PermissionRequest`. Called whenever the
     /// session leaves the permission flow (the user replied, a blocking tool
     /// completed, a new prompt is submitted, or the session ends successfully)
@@ -218,6 +237,7 @@ impl CLIAgentSession {
                 self.session_context.tool_input_preview = event.payload.tool_input_preview.clone();
                 CLIAgentSessionStatus::Blocked {
                     message: event.payload.summary.clone(),
+                    source: BlockedSource::PermissionRequest,
                 }
             }
             CLIAgentEventType::QuestionAsked => CLIAgentSessionStatus::Blocked {
@@ -226,6 +246,15 @@ impl CLIAgentSession {
                     .summary
                     .clone()
                     .or_else(|| Some("Waiting for your answer".to_owned())),
+                source: BlockedSource::QuestionAsked,
+            },
+            CLIAgentEventType::NeedsInput => CLIAgentSessionStatus::Blocked {
+                message: event
+                    .payload
+                    .summary
+                    .clone()
+                    .or_else(|| Some("Agent requires user input".to_owned())),
+                source: BlockedSource::NeedsInput,
             },
             CLIAgentEventType::PermissionReplied => {
                 if !matches!(self.status, CLIAgentSessionStatus::Blocked { .. }) {
@@ -453,7 +482,15 @@ impl CLIAgentSessionsModel {
             .expect("session presence checked above");
 
         let event_type = &event.event;
-        if let Some(new_status) = session.apply_event(event) {
+        // Desktop users can answer the CLI directly; unattended runs need a blocking result.
+        let new_status = if matches!(event.event, CLIAgentEventType::NeedsInput)
+            && !AppExecutionMode::as_ref(ctx).is_autonomous()
+        {
+            None
+        } else {
+            session.apply_event(event)
+        };
+        if let Some(new_status) = new_status {
             let agent = session.agent;
             ctx.emit(CLIAgentSessionsModelEvent::StatusChanged {
                 terminal_view_id,

@@ -260,6 +260,12 @@ only. They must not create external conversations, upload block snapshots, or
 depend on Warp hosted `/harness_support` APIs. Save/resume behavior should be
 local, or a no-op until local persistence exists.
 
+An unattended local CLI `agent_needs_input` event should end the driver with a
+blocked result and retain local resumption state. Never type `/exit` or a
+confirmation into that open prompt, or force-kill the user-owned CLI. Desktop
+sessions leave this event to the user; permission and question events retain
+their existing behavior.
+
 ## Usage, Paywall, And Entitlements
 
 Relevant files:
