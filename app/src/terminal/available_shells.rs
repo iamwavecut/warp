@@ -519,10 +519,21 @@ impl AvailableShells {
     ///    that for whatever reason is no longer valid. An invalid Custom or KnownLocal
     ///    will still be validated before launching a shell (and fall back to default),
     ///    so it is fine to return a Custom here.
+    /// 4. Docker sandbox descriptors retain their launcher and image without host-shell discovery.
     ///
     /// See [`AvailableShell::get_valid_shell_path_and_type`] for more information on how
     /// we generate these launch configs in the other direction.
     pub fn get_from_shell_launch_data(&self, config: &ShellLaunchData) -> Option<AvailableShell> {
+        if let ShellLaunchData::DockerSandbox {
+            sbx_path,
+            base_image,
+        } = config
+        {
+            return Some(AvailableShell::new_docker_sandbox_shell(
+                sbx_path.clone(),
+                base_image.clone(),
+            ));
+        }
         self.shells
             .iter()
             .find(|shell| match (shell.state.as_ref(), config) {

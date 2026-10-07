@@ -58,9 +58,7 @@ use crate::ai::{
         SavePoint, ThirdPartyHarness, harness_model_env_vars, task_env_vars,
     },
 };
-use crate::terminal::cli_agent_sessions::plugin_manager::{
-    CliAgentPluginManager, plugin_manager_for,
-};
+use crate::terminal::cli_agent_sessions::plugin_manager::plugin_manager_for_with_shell;
 use crate::terminal::cli_agent_sessions::{
     CLIAgentSessionStatus, CLIAgentSessionsModel, CLIAgentSessionsModelEvent,
 };
@@ -1870,10 +1868,18 @@ impl AgentDriver {
             .spawn(move |me, ctx| me.subscribe_to_cli_agent_session_events(harness_exit, ctx))
             .await?;
 
-        // Enable local notification integration before running the harness command.
-        let plugin_manager: Option<Box<dyn CliAgentPluginManager>> =
-            plugin_manager_for(harness.cli_agent());
-        if let Some(manager) = plugin_manager
+        // Auto-install only into a resolved host shell. Container/WSL sessions retain
+        // their in-session manual installation workflow instead of changing host profiles.
+        let launch_data = foreground
+            .spawn(|me, ctx| me.terminal_driver.as_ref(ctx).active_shell_launch_data(ctx))
+            .await?;
+        if let Some((shell_path, shell_type)) = harness_plugin_shell(launch_data)
+            && let Some(manager) = plugin_manager_for_with_shell(
+                harness.cli_agent(),
+                Some(shell_path),
+                Some(shell_type),
+                None,
+            )
             && let Err(e) = manager.install().await
         {
             log::warn!("Plugin installation failed (continuing): {e}");
@@ -3012,6 +3018,25 @@ impl Entity for AgentDriver {
 /// The only reason that `AgentDriver` is a singleton entity is to ensure the UI framework
 /// doesn't drop it. Generally, we should not assume there's only one running agent.
 impl SingletonEntity for AgentDriver {}
+
+fn harness_plugin_shell(
+    launch_data: Option<crate::terminal::ShellLaunchData>,
+) -> Option<(PathBuf, crate::terminal::shell::ShellType)> {
+    use crate::terminal::ShellLaunchData;
+    match launch_data {
+        Some(ShellLaunchData::Executable {
+            executable_path,
+            shell_type,
+        })
+        | Some(ShellLaunchData::MSYS2 {
+            executable_path,
+            shell_type,
+        }) => Some((executable_path, shell_type)),
+        Some(ShellLaunchData::WSL { .. }) | Some(ShellLaunchData::DockerSandbox { .. }) | None => {
+            None
+        }
+    }
+}
 
 #[cfg(test)]
 #[path = "driver_tests.rs"]

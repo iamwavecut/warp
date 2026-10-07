@@ -16,6 +16,26 @@ fn make_available_shells(shells: Vec<AvailableShell>) -> AvailableShells {
 }
 
 #[test]
+fn restored_docker_sandbox_preserves_launcher_and_image_without_host_shell_fallback() {
+    let shells = make_available_shells(vec![AvailableShell::new_local_executable(
+        "zsh".to_string(),
+        PathBuf::from("/bin/zsh"),
+        ShellType::Zsh,
+    )]);
+    for base_image in [None, Some("local-sandbox-image".to_string())] {
+        let original = ShellLaunchData::DockerSandbox {
+            sbx_path: PathBuf::from("/local/bin/sbx"),
+            base_image,
+        };
+        let saved = serde_json::to_string(&original).unwrap();
+        let restored: ShellLaunchData = serde_json::from_str(&saved).unwrap();
+        let shell = shells.get_from_shell_launch_data(&restored).unwrap();
+        assert!(shell.is_docker_sandbox());
+        assert_eq!(shell.get_valid_shell_path_and_type(), Some(original));
+    }
+}
+
+#[test]
 fn test_load_known_shells_with_empty_path_var() {
     FeatureFlag::ShellSelector.set_enabled(true);
 

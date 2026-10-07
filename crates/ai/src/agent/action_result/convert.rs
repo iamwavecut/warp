@@ -74,9 +74,10 @@ impl TryFrom<RequestCommandOutputResult> for api::request::input::tool_call_resu
                     },
                 ),
             ),
-            RequestCommandOutputResult::CancelledBeforeExecution => {
-                Err(ConvertToAPITypeError::Ignore)
-            }
+            // Busy-terminal errors use the direct provider's local JSON adapter, not a
+            // hosted protocol extension. The legacy hosted serializer cannot route them.
+            RequestCommandOutputResult::CancelledBeforeExecution
+            | RequestCommandOutputResult::TerminalBusy { .. } => Err(ConvertToAPITypeError::Ignore),
             RequestCommandOutputResult::Denylisted { command } =>
             {
                 #[allow(deprecated)]

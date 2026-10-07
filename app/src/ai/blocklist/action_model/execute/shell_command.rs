@@ -253,16 +253,6 @@ impl ShellCommandExecutor {
                 wait_until_completion,
                 ..
             } => {
-                if model
-                    .block_list()
-                    .active_block()
-                    .is_active_and_long_running()
-                {
-                    // If there is an active block, we can't execute another command.
-                    return ActionExecution::Sync(AIAgentActionResultType::RequestCommandOutput(
-                        RequestCommandOutputResult::CancelledBeforeExecution,
-                    ));
-                }
                 // If another conversation has taken over the agent view since this command
                 // was requested, cancel instead of executing.
                 let is_displaced_by_other_conversation = model
@@ -273,6 +263,18 @@ impl ShellCommandExecutor {
                 if is_displaced_by_other_conversation {
                     return ActionExecution::Sync(AIAgentActionResultType::RequestCommandOutput(
                         RequestCommandOutputResult::CancelledBeforeExecution,
+                    ));
+                }
+                if model
+                    .block_list()
+                    .active_block()
+                    .is_active_and_long_running()
+                {
+                    return ActionExecution::Sync(AIAgentActionResultType::RequestCommandOutput(
+                        RequestCommandOutputResult::TerminalBusy {
+                            command: command.clone(),
+                            block_id: model.block_list().active_block().id().clone(),
+                        },
                     ));
                 }
                 // If the command might use pager and can't be interacted with,

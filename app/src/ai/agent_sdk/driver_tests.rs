@@ -21,6 +21,50 @@ use crate::{
 use warp_managed_secrets::ManagedSecretValue;
 
 #[test]
+fn harness_plugin_shell_uses_explicit_session_shell_without_executing_sandbox_cli() {
+    use crate::terminal::{ShellLaunchData, shell::ShellType};
+    for (shell, expected_path, expected_type) in [
+        (
+            ShellLaunchData::Executable {
+                executable_path: "/bin/zsh".into(),
+                shell_type: ShellType::Zsh,
+            },
+            "/bin/zsh",
+            ShellType::Zsh,
+        ),
+        (
+            ShellLaunchData::MSYS2 {
+                executable_path: "C:/Git/bin/bash.exe".into(),
+                shell_type: ShellType::Bash,
+            },
+            "C:/Git/bin/bash.exe",
+            ShellType::Bash,
+        ),
+    ] {
+        assert_eq!(
+            super::harness_plugin_shell(Some(shell)),
+            Some((expected_path.into(), expected_type))
+        );
+    }
+    for shell in [
+        None,
+        Some(ShellLaunchData::WSL {
+            distro: "Ubuntu".into(),
+        }),
+        Some(ShellLaunchData::DockerSandbox {
+            sbx_path: "/bin/sbx".into(),
+            base_image: Some("local-image".into()),
+        }),
+        Some(ShellLaunchData::DockerSandbox {
+            sbx_path: "/bin/sbx".into(),
+            base_image: None,
+        }),
+    ] {
+        assert_eq!(super::harness_plugin_shell(shell), None);
+    }
+}
+
+#[test]
 fn test_normalize_single_cli_server() {
     let input = r#"{"command": "npx", "args": ["-y", "mcp-server"]}"#;
     let result = normalize_mcp_json(input).unwrap();

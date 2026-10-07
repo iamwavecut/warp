@@ -3344,6 +3344,32 @@ fn api_tool_call_result_from_action_result(
     result: &AIAgentActionResult,
     context: &[AIAgentContext],
 ) -> Result<Option<api::message::ToolCallResult>, anyhow::Error> {
+    if let AIAgentActionResultType::RequestCommandOutput(
+        crate::ai::agent::RequestCommandOutputResult::TerminalBusy { command, block_id },
+    ) = &result.result
+    {
+        // The existing opaque message field preserves local history without upgrading
+        // or calling a hosted AI protocol. Providers receive the JSON payload itself.
+        let payload = json!({
+            "schema": "warp.direct_openai.tool_result",
+            "version": 1,
+            "tool_call_id": result.id.to_string(),
+            "result_type": "run_shell_command",
+            "status": "terminal_busy",
+            "command": command,
+            "running_command_id": block_id.to_string(),
+            "message": result.result.to_string(),
+        });
+        return Ok(Some(api::message::ToolCallResult {
+            tool_call_id: result.id.to_string(),
+            context: api_input_context_from_agent_context(context)?,
+            result: Some(api::message::tool_call_result::Result::Server(
+                api::message::tool_call_result::ServerResult {
+                    serialized_result: serde_json::to_string(&payload)?,
+                },
+            )),
+        }));
+    }
     let Some(result) = request_tool_call_result_from_action_result(result) else {
         return Ok(None);
     };
@@ -3355,6 +3381,28 @@ fn api_tool_call_result_from_action_result(
             .result
             .map(request_tool_result_to_message_tool_result),
     }))
+}
+
+pub(super) fn local_terminal_busy_result(
+    result: &api::message::tool_call_result::ServerResult,
+) -> Option<crate::ai::agent::RequestCommandOutputResult> {
+    let value: Value = serde_json::from_str(&result.serialized_result).ok()?;
+    if value["schema"] != "warp.direct_openai.tool_result"
+        || value["version"] != 1
+        || value["result_type"] != "run_shell_command"
+        || value["status"] != "terminal_busy"
+    {
+        return None;
+    }
+    let command = value["command"].as_str()?;
+    let block_id = value["running_command_id"].as_str()?;
+    if block_id.is_empty() {
+        return None;
+    }
+    Some(crate::ai::agent::RequestCommandOutputResult::TerminalBusy {
+        command: command.into(),
+        block_id: block_id.to_owned().into(),
+    })
 }
 
 fn api_user_query_mode(value: UserQueryMode) -> api::UserQueryMode {
@@ -5851,6 +5899,11 @@ fn tool_call_result_to_text_with_tool_policy(
     result: &api::message::ToolCallResult,
     long_running_shell_controls_advertised: bool,
 ) -> String {
+    if let Some(api::message::tool_call_result::Result::Server(local)) = &result.result
+        && local_terminal_busy_result(local).is_some()
+    {
+        return local.serialized_result.clone();
+    }
     if !long_running_shell_controls_advertised
         && result
             .result
@@ -7882,6 +7935,56 @@ mod tests {
             id: id.to_string().into(),
             task_id: crate::ai::agent::task::TaskId::new("task-1".to_string()),
             result: AIAgentActionResultType::OpenCodeReview,
+        }
+    }
+
+    #[test]
+    fn terminal_busy_returns_local_tool_error_and_restores_history() {
+        let mut action = test_action_result("busy-call");
+        action.result = AIAgentActionResultType::RequestCommandOutput(
+            crate::ai::agent::RequestCommandOutputResult::TerminalBusy {
+                command: "ls".into(),
+                block_id: "running-command".to_owned().into(),
+            },
+        );
+        assert!(action.result.is_failed());
+        assert!(!action.result.is_cancelled());
+        assert!(action.result.should_trigger_request_upon_completion());
+        let result = api_tool_call_result_from_action_result(&action, &[])
+            .unwrap()
+            .unwrap();
+        let stored =
+            api::message::ToolCallResult::decode(result.encode_to_vec().as_slice()).unwrap();
+        let value: Value =
+            serde_json::from_str(&tool_call_result_to_text_with_tool_policy(&stored, false))
+                .unwrap();
+        assert_eq!(value["tool_call_id"], "busy-call");
+        assert_eq!(value["result_type"], "run_shell_command");
+        assert_eq!(value["status"], "terminal_busy");
+        assert_eq!(value["command"], "ls");
+        assert_eq!(value["running_command_id"], "running-command");
+        assert!(value.get("protobuf_base64").is_none());
+        let restored = super::super::convert_conversation::convert_tool_call_result_to_input(
+            &action.task_id,
+            &stored,
+            &std::collections::HashMap::new(),
+            &mut std::collections::HashMap::new(),
+        )
+        .unwrap();
+        let AIAgentInput::ActionResult { result, .. } = restored else {
+            panic!("expected restored tool result")
+        };
+        assert_eq!(result.id, action.id);
+        assert_eq!(result.result, action.result);
+        for invalid in [
+            "{}",
+            r#"{"schema":"other","status":"terminal_busy"}"#,
+            r#"{"schema":"warp.direct_openai.tool_result","version":1,"status":"terminal_busy","result_type":"run_shell_command","command":"ls"}"#,
+        ] {
+            let invalid = api::message::tool_call_result::ServerResult {
+                serialized_result: invalid.into(),
+            };
+            assert!(local_terminal_busy_result(&invalid).is_none());
         }
     }
 

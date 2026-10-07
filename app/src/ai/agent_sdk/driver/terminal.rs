@@ -322,6 +322,15 @@ impl TerminalDriver {
             .read(ctx, |terminal, app| terminal.active_session_shell_type(app))
     }
 
+    /// Resolved shell launch descriptor for local plugin execution.
+    pub(super) fn active_shell_launch_data(
+        &self,
+        ctx: &AppContext,
+    ) -> Option<crate::terminal::ShellLaunchData> {
+        let terminal = self.terminal_view.as_ref(ctx);
+        terminal.model.lock().active_shell_launch_data().cloned()
+    }
+
     /// Build the shell-aware `cd <escaped>` command for the active session.
     ///
     /// Shared between [`Self::cd`] and [`Self::cd_silent`] so both paths use

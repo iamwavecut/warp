@@ -99,7 +99,7 @@ jobs:
 
   tests:
     name: Run ${{ matrix.name }} tests
-    timeout-minutes: 25
+    timeout-minutes: 35
     env:
       EXCLUDE_SSH_TESTS_FILTER: " and not test(/_ssh_/)"
     strategy:

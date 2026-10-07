@@ -211,6 +211,8 @@ pub enum RequestCommandOutputResult {
     CancelledBeforeExecution,
     /// The command was denied because it was present on the denylist.
     Denylisted { command: String },
+    /// The command was not started because another command owns the local terminal.
+    TerminalBusy { command: String, block_id: BlockId },
 }
 
 impl RequestCommandOutputResult {
@@ -218,14 +220,16 @@ impl RequestCommandOutputResult {
         match self {
             Self::Completed { exit_code, .. } => exit_code.was_successful(),
             Self::LongRunningCommandSnapshot { .. } => true,
-            Self::CancelledBeforeExecution | Self::Denylisted { .. } => false,
+            Self::CancelledBeforeExecution
+            | Self::Denylisted { .. }
+            | Self::TerminalBusy { .. } => false,
         }
     }
 
     pub fn failed(&self) -> bool {
         match self {
             Self::Completed { exit_code, .. } => !exit_code.was_successful(),
-            Self::Denylisted { .. } => true,
+            Self::Denylisted { .. } | Self::TerminalBusy { .. } => true,
             Self::CancelledBeforeExecution | Self::LongRunningCommandSnapshot { .. } => false,
         }
     }
@@ -256,6 +260,12 @@ impl Display for RequestCommandOutputResult {
             }
             RequestCommandOutputResult::Denylisted { .. } => {
                 write!(f, "Command output was on denylist")
+            }
+            RequestCommandOutputResult::TerminalBusy { block_id, .. } => {
+                write!(
+                    f,
+                    "Command was not started: terminal is busy running command {block_id}"
+                )
             }
         }
     }

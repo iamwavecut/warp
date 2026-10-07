@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use futures_util::stream::AbortHandle;
+use url::Url;
 use uuid::Uuid;
 use warpui::App;
 
@@ -8,6 +9,74 @@ use super::{SpawnedServerInfo, TemplatableMCPServerManager};
 use crate::ai::mcp::{JsonTemplate, TemplatableMCPServer, TemplatableMCPServerInstallation};
 use crate::test_util::settings::initialize_settings_for_tests;
 use crate::{GlobalResourceHandles, GlobalResourceHandlesProvider};
+
+#[test]
+fn oauth_callback_preserves_decoded_issuer_and_state() {
+    use super::oauth::CallbackResult;
+    for issuer in [Some("https://mcp.example/issuer"), None] {
+        let mut manager = TemplatableMCPServerManager::default();
+        let uuid = Uuid::new_v4();
+        let (abort_handle, _) = AbortHandle::new_pair();
+        let (tx, rx) = async_channel::unbounded();
+        manager.spawned_servers.insert(
+            uuid,
+            SpawnedServerInfo {
+                abort_handle,
+                oauth_result_tx: tx,
+            },
+        );
+        manager.pending_oauth_csrf.insert("test-state".into(), uuid);
+        let mut url =
+            Url::parse("warposs://mcp/oauth2callback?code=test-code&state=test-state").unwrap();
+        if let Some(issuer) = issuer {
+            url.query_pairs_mut().append_pair("iss", issuer);
+        }
+        manager.handle_oauth_callback(&url).unwrap();
+        match rx.try_recv().unwrap() {
+            CallbackResult::Success {
+                code,
+                csrf_token,
+                issuer: actual,
+            } => {
+                assert_eq!(code, "test-code");
+                assert_eq!(csrf_token, "test-state");
+                assert_eq!(actual.as_deref(), issuer);
+            }
+            other => panic!("unexpected callback: {other:?}"),
+        }
+        assert!(!manager.pending_oauth_csrf.contains_key("test-state"));
+    }
+}
+
+#[test]
+fn oauth_callback_rejects_unknown_state_and_preserves_error() {
+    use super::oauth::CallbackResult;
+    let mut manager = TemplatableMCPServerManager::default();
+    let uuid = Uuid::new_v4();
+    let (abort_handle, _) = AbortHandle::new_pair();
+    let (tx, rx) = async_channel::unbounded();
+    manager.spawned_servers.insert(
+        uuid,
+        SpawnedServerInfo {
+            abort_handle,
+            oauth_result_tx: tx,
+        },
+    );
+    manager.pending_oauth_csrf.insert("test-state".into(), uuid);
+    let url = Url::parse(
+        "warposs://mcp/oauth2callback?code=test-code&state=unknown&iss=https%3A%2F%2Fmcp.example",
+    )
+    .unwrap();
+    assert!(manager.handle_oauth_callback(&url).is_err());
+    assert!(rx.try_recv().is_err());
+    assert!(manager.pending_oauth_csrf.contains_key("test-state"));
+    let url =
+        Url::parse("warposs://mcp/oauth2callback?error=access_denied&state=test-state").unwrap();
+    manager.handle_oauth_callback(&url).unwrap();
+    assert!(
+        matches!(rx.try_recv().unwrap(), CallbackResult::Error { error } if error.as_deref() == Some("access_denied"))
+    );
+}
 
 fn local_test_installation(
     installation_uuid: Uuid,

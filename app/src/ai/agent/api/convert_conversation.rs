@@ -472,7 +472,7 @@ impl ConvertToExchanges for &api::Task {
 }
 
 /// Convert a ToolCallResult to an AIAgentInput::ActionResult
-/// Returns None if the tool call result is a ServerToolCallResult
+/// Opaque hosted results are ignored; the fork's local shell error envelope is restored.
 /// `document_versions` tracks the latest version per document for CreateDocuments and EditDocuments results.
 /// Each new document (CreateDocuments) starts at the default version; edits increment the specific document's version.
 #[allow(clippy::single_range_in_vec_init)]
@@ -1336,9 +1336,16 @@ pub(crate) fn convert_tool_call_result_to_input(
                 context,
             })
         }
-        Some(ToolCallResultType::Server(_)) => {
-            // Server results should not create exchanges - return None
-            None
+        Some(ToolCallResultType::Server(result)) => {
+            let result = super::direct_openai::local_terminal_busy_result(result)?;
+            Some(AIAgentInput::ActionResult {
+                result: AIAgentActionResult {
+                    id: tool_call_id.into(),
+                    task_id: task_id.clone(),
+                    result: AIAgentActionResultType::RequestCommandOutput(result),
+                },
+                context,
+            })
         }
         Some(ToolCallResultType::Cancel(_)) => {
             // Cancel results indicate the tool call was explicitly cancelled
