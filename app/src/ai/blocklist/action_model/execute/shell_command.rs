@@ -27,7 +27,7 @@ use crate::ai::blocklist::permissions::CommandExecutionPermission;
 use crate::ai::execution_profiles::WriteToPtyPermission;
 use crate::terminal::event::BlockMetadataReceivedEvent;
 use crate::terminal::model::block::{
-    Block, BlockId, CURSOR_MARKER, formatted_terminal_contents_for_input,
+    Block, BlockId, BlockState, CURSOR_MARKER, formatted_terminal_contents_for_input,
 };
 use crate::terminal::model::session::SessionType;
 use crate::terminal::shell::ShellType;
@@ -505,6 +505,13 @@ impl ShellCommandExecutor {
                                                     None,
                                                     CURSOR_MARKER,
                                                 )
+                                            } else if block.state() == BlockState::BeforeExecution {
+                                                // Continuation prompts arrive in the header before preexec.
+                                                formatted_terminal_contents_for_input(
+                                                    block.prompt_and_command_grid().grid_handler(),
+                                                    Some(1000),
+                                                    CURSOR_MARKER,
+                                                )
                                             } else {
                                                 formatted_terminal_contents_for_input(
                                                     block.output_grid().grid_handler(),
@@ -651,6 +658,13 @@ impl ShellCommandExecutor {
                             formatted_terminal_contents_for_input(
                                 model.alt_screen().grid_handler(),
                                 None,
+                                CURSOR_MARKER,
+                            )
+                        } else if block.state() == BlockState::BeforeExecution {
+                            // Continuation prompts arrive in the header before preexec.
+                            formatted_terminal_contents_for_input(
+                                block.prompt_and_command_grid().grid_handler(),
+                                Some(1000),
                                 CURSOR_MARKER,
                             )
                         } else {

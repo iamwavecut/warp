@@ -15,8 +15,12 @@ use warp_util::{path::ShellFamily, sync::Condition};
 use warpui::{AppContext, Entity, ModelContext, ModelHandle, ViewHandle, r#async::FutureExt};
 
 use crate::terminal::model::{
-    RespectObfuscatedSecrets, block::BlockId, find::RegexDFAs, grid::RespectDisplayedOutput,
-    index::Point, session::ExecuteCommandOptions,
+    RespectObfuscatedSecrets,
+    block::{BlockId, BlockState},
+    find::RegexDFAs,
+    grid::RespectDisplayedOutput,
+    index::Point,
+    session::ExecuteCommandOptions,
 };
 use warp_terminal::model::grid::Dimensions;
 
@@ -202,12 +206,18 @@ impl TerminalDriver {
         });
     }
 
-    /// Full visible plaintext of `block_id`'s output grid (no ANSI escape sequences).
+    /// Visible plaintext for local harness diagnostics. Before preexec, the shell
+    /// writes continuation prompts into the command/header grid rather than output.
     pub fn block_output_plaintext(&self, block_id: &BlockId, ctx: &AppContext) -> Option<String> {
         let terminal = self.terminal_view.as_ref(ctx);
         let model = terminal.model.lock();
         let block = model.block_list().block_with_id(block_id)?;
-        Some(block.output_grid().contents_to_string(
+        let grid = if block.state() == BlockState::BeforeExecution {
+            block.prompt_and_command_grid()
+        } else {
+            block.output_grid()
+        };
+        Some(grid.contents_to_string(
             false, // include_escape_sequences
             None,  // max_rows: full visible output
         ))
@@ -406,6 +416,10 @@ impl TerminalDriver {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "terminal_tests.rs"]
+mod tests;
 
 /// The first DFA match returned by
 /// [`TerminalDriver::find_first_match_in_block_output`].
