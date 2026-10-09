@@ -585,6 +585,18 @@ impl BlocklistAIPermissions {
         ctx: &AppContext,
         terminal_view_id: Option<EntityId>,
     ) -> crate::ai::execution_profiles::ComputerUsePermission {
+        if let Some(policy) = Self::workspace_autonomy_settings(ctx).computer_use_setting {
+            return policy;
+        }
+        if let Some(enabled) = terminal_view_id
+            .and_then(|id| AIExecutionProfilesModel::as_ref(ctx).session_computer_use(id))
+        {
+            return if enabled {
+                crate::ai::execution_profiles::ComputerUsePermission::AlwaysAllow
+            } else {
+                crate::ai::execution_profiles::ComputerUsePermission::Never
+            };
+        }
         let active_profile =
             AIExecutionProfilesModel::as_ref(ctx).active_profile(terminal_view_id, ctx);
         self.get_computer_use_setting_for_profile(ctx, *active_profile.id())

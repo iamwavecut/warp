@@ -298,6 +298,8 @@ impl SDKConversationOutputStatus {
 /// Task configuration for running an agent.
 #[derive(Debug)]
 pub struct Task {
+    /// Local permission override for this run, without changing its profile.
+    pub computer_use_enabled: Option<bool>,
     /// The prompt for the agent.
     pub prompt: AgentRunPrompt,
     pub model: Option<LLMId>,
@@ -1515,8 +1517,20 @@ impl AgentDriver {
                     .await?;
             }
             let profile = task.profile.clone();
+            let computer_use_enabled = task.computer_use_enabled;
             foreground
-                .spawn(move |me, ctx| me.configure_terminal(profile, ctx))
+                .spawn(move |me, ctx| {
+                    me.configure_terminal(profile, ctx)?;
+                    let terminal_id = me.terminal_driver.as_ref(ctx).terminal_view().id();
+                    AIExecutionProfilesModel::handle(ctx).update(ctx, |model, ctx| {
+                        if let Some(enabled) = computer_use_enabled {
+                            model.set_session_computer_use(terminal_id, enabled, ctx);
+                        } else {
+                            model.clear_session_computer_use(terminal_id, ctx);
+                        }
+                    });
+                    Ok::<(), AgentDriverError>(())
+                })
                 .await??;
 
             if let Some(model_id) = task.model.clone() {

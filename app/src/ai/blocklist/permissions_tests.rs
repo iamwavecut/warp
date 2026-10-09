@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use warp_util::path::EscapeChar;
-use warpui::{App, EntityId, ModelHandle};
+use warpui::{App, EntityId, ModelHandle, SingletonEntity};
 
 use warp_core::execution_mode::ExecutionMode;
 
@@ -38,6 +38,52 @@ use crate::{
 
 use super::{BlocklistAIHistoryModel, BlocklistAIPermissions};
 
+#[test]
+fn session_computer_use_override_is_isolated_and_clear_restores_profile() {
+    App::test((), |mut app| async move {
+        crate::test_util::terminal::initialize_app_for_terminal_view(&mut app);
+        let first = EntityId::new();
+        let second = EntityId::new();
+        let permissions = BlocklistAIPermissions::handle(&app);
+        let baseline = permissions.read(&app, |model, ctx| {
+            model.get_computer_use_setting(ctx, Some(second))
+        });
+        let profiles = AIExecutionProfilesModel::handle(&app);
+        for (enabled, expected) in [
+            (
+                true,
+                crate::ai::execution_profiles::ComputerUsePermission::AlwaysAllow,
+            ),
+            (
+                false,
+                crate::ai::execution_profiles::ComputerUsePermission::Never,
+            ),
+        ] {
+            profiles.update(&mut app, |model, ctx| {
+                model.set_session_computer_use(first, enabled, ctx)
+            });
+            assert_eq!(
+                permissions.read(&app, |model, ctx| model
+                    .get_computer_use_setting(ctx, Some(first))),
+                expected
+            );
+            assert_eq!(
+                permissions.read(&app, |model, ctx| model
+                    .get_computer_use_setting(ctx, Some(second))),
+                baseline
+            );
+        }
+        profiles.update(&mut app, |model, ctx| {
+            model.clear_session_computer_use(first, ctx)
+        });
+        assert_eq!(
+            permissions.read(&app, |model, ctx| model
+                .get_computer_use_setting(ctx, Some(first))),
+            baseline
+        );
+    });
+}
+
 struct PermissionsTestState {
     convo_id: AIConversationId,
     permissions: ModelHandle<BlocklistAIPermissions>,
@@ -45,6 +91,32 @@ struct PermissionsTestState {
     terminal_view_id: EntityId,
     user_workspaces: ModelHandle<UserWorkspaces>,
     profile_model: ModelHandle<AIExecutionProfilesModel>,
+}
+
+#[test]
+fn workspace_computer_use_policy_overrides_session_selection() {
+    App::test((), |mut app| async move {
+        let state = initialize_permissions_test(&mut app);
+        let terminal_id = state.terminal_view_id;
+        state.profile_model.update(&mut app, |model, ctx| {
+            model.set_session_computer_use(terminal_id, true, ctx)
+        });
+        state.user_workspaces.update(&mut app, |model, ctx| {
+            model.setup_test_workspace(ctx);
+            model.update_ai_autonomy_settings(
+                |settings| {
+                    settings.computer_use_setting =
+                        Some(crate::ai::execution_profiles::ComputerUsePermission::Never)
+                },
+                ctx,
+            );
+        });
+        assert_eq!(
+            state.permissions.read(&app, |model, ctx| model
+                .get_computer_use_setting(ctx, Some(terminal_id))),
+            crate::ai::execution_profiles::ComputerUsePermission::Never
+        );
+    });
 }
 
 fn initialize_permissions_test(app: &mut App) -> PermissionsTestState {

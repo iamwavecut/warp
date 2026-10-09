@@ -56,12 +56,19 @@ pub(super) fn parse(body: &str) -> Option<CLIAgentEvent> {
             tool_input_preview,
             plugin_version: raw.plugin_version,
             error_type: raw.error_type,
+            pending_background_work_count: match (raw.background_task_count, raw.session_cron_count)
+            {
+                (None, None) => None,
+                (tasks, crons) => Some(tasks.unwrap_or(0).saturating_add(crons.unwrap_or(0))),
+            },
         },
     })
 }
 
 #[derive(Deserialize)]
 struct RawEvent {
+    background_task_count: Option<u32>,
+    session_cron_count: Option<u32>,
     v: Option<u32>,
     agent: Option<String>,
     event: String,

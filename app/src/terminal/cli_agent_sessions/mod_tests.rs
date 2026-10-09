@@ -29,6 +29,54 @@ fn parse_stop_notification() {
 }
 
 #[test]
+fn stop_with_background_work_remains_active_until_final_stop() {
+    let mut session = tracked_cli_agent_session(CLIAgentSessionStatus::InProgress);
+    for counts in [
+        r#""background_task_count":1"#,
+        r#""session_cron_count":2"#,
+        r#""background_task_count":4294967295,"session_cron_count":1"#,
+    ] {
+        let body = format!(
+            r#"{{"v":1,"agent":"claude","event":"stop","response":"Still working",{counts}}}"#
+        );
+        let event = parse_event(Some("warp://cli-agent"), &body).unwrap();
+        assert_eq!(session.apply_event(&event), None);
+        assert_eq!(session.status, CLIAgentSessionStatus::InProgress);
+        assert_eq!(
+            session.session_context.response.as_deref(),
+            Some("Still working")
+        );
+    }
+    let event = parse_event(Some("warp://cli-agent"), r#"{"v":1,"agent":"claude","event":"stop","background_task_count":0,"session_cron_count":0}"#).unwrap();
+    assert_eq!(
+        session.apply_event(&event),
+        Some(CLIAgentSessionStatus::Success)
+    );
+}
+
+#[test]
+fn legacy_stop_succeeds_and_background_failure_is_not_hidden() {
+    let mut session = tracked_cli_agent_session(CLIAgentSessionStatus::InProgress);
+    let legacy = parse_event(
+        Some("warp://cli-agent"),
+        r#"{"v":1,"agent":"claude","event":"stop"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        session.apply_event(&legacy),
+        Some(CLIAgentSessionStatus::Success)
+    );
+    let failed = parse_event(Some("warp://cli-agent"), r#"{"v":1,"agent":"claude","event":"stop_failure","background_task_count":1,"error_type":"rate_limit"}"#).unwrap();
+    assert_eq!(
+        session.apply_event(&failed),
+        Some(CLIAgentSessionStatus::Failed {
+            error_type: Some("rate_limit".to_owned()),
+            message: None
+        })
+    );
+}
+
+#[test]
 fn cli_agent_session_context_title_like_text_uses_trimmed_summary() {
     let context = CLIAgentSessionContext {
         summary: Some("  Reviewing changes  ".to_string()),

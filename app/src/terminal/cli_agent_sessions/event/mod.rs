@@ -42,6 +42,8 @@ pub struct CLIAgentEventPayload {
     /// On Claude Code, this comes from the `StopFailure` hook (e.g. `"rate_limit"`).
     /// Not implemented for Codex.
     pub error_type: Option<String>,
+    /// Work that can resume the local CLI session without another user prompt.
+    pub pending_background_work_count: Option<u32>,
 }
 
 /// A parsed event from a CLI agent plugin.

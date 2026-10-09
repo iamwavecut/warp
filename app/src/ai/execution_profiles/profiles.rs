@@ -126,6 +126,7 @@ pub struct AIExecutionProfilesModel {
     profile_id_to_profile: HashMap<ClientProfileId, AIExecutionProfile>,
     /// Only contains entries for non-default profiles.
     active_profiles_per_session: HashMap<EntityId, ClientProfileId>,
+    session_computer_use: HashMap<EntityId, bool>,
 }
 
 impl AIExecutionProfilesModel {
@@ -188,6 +189,7 @@ impl AIExecutionProfilesModel {
             profile_id_to_sync_id,
             profile_id_to_profile,
             active_profiles_per_session,
+            session_computer_use: HashMap::new(),
         };
 
         model.maybe_inherit_from_legacy_settings(ctx);
@@ -373,6 +375,7 @@ impl AIExecutionProfilesModel {
         self.profile_id_to_sync_id.clear();
         self.profile_id_to_profile.clear();
         self.active_profiles_per_session.clear();
+        self.session_computer_use.clear();
     }
 
     /// Returns the active permissions profile for a specific terminal view.
@@ -423,6 +426,35 @@ impl AIExecutionProfilesModel {
         self.active_profiles_per_session
             .insert(terminal_view_id, profile_id);
         ctx.emit(AIExecutionProfilesModelEvent::UpdatedActiveProfile { terminal_view_id });
+    }
+
+    /// Returns the permission override for one local terminal session.
+    pub(crate) fn session_computer_use(&self, terminal_view_id: EntityId) -> Option<bool> {
+        self.session_computer_use.get(&terminal_view_id).copied()
+    }
+
+    pub(crate) fn set_session_computer_use(
+        &mut self,
+        terminal_view_id: EntityId,
+        enabled: bool,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        self.session_computer_use.insert(terminal_view_id, enabled);
+        ctx.emit(AIExecutionProfilesModelEvent::UpdatedActiveProfile { terminal_view_id });
+    }
+
+    pub(crate) fn clear_session_computer_use(
+        &mut self,
+        terminal_view_id: EntityId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        if self
+            .session_computer_use
+            .remove(&terminal_view_id)
+            .is_some()
+        {
+            ctx.emit(AIExecutionProfilesModelEvent::UpdatedActiveProfile { terminal_view_id });
+        }
     }
 
     /// Returns a profile by its client ID.

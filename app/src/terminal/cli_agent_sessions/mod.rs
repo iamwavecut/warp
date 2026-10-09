@@ -220,6 +220,13 @@ impl CLIAgentSession {
                 self.session_context.query = event.payload.query.clone();
                 self.session_context.response = event.payload.response.clone();
                 self.clear_permission_scoped_state();
+                if event
+                    .payload
+                    .pending_background_work_count
+                    .is_some_and(|count| count > 0)
+                {
+                    return None;
+                }
                 CLIAgentSessionStatus::Success
             }
             CLIAgentEventType::StopFailure => {

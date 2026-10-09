@@ -293,6 +293,7 @@ fn build_merged_config_and_task(
     };
 
     let task = Task {
+        computer_use_enabled: merged_config.computer_use_enabled,
         prompt: AgentRunPrompt::Local(resolve_prompt(&local_prompt, ctx)?),
         model: model_override,
         profile: merged_config.profile_id.clone(),
@@ -321,6 +322,9 @@ fn preflight_named_execution(
     task: &Task,
     ctx: &AppContext,
 ) -> anyhow::Result<CustomProviderRoute> {
+    if config.computer_use_enabled == Some(true) && task.local_only {
+        anyhow::bail!("Warp computer-use overrides are unavailable for local named-agent runs");
+    }
     let model_id = config
         .model_id
         .as_deref()
@@ -968,6 +972,10 @@ fn launch_command(
 }
 
 /// Report a fatal error and terminate the app.
+#[cfg(test)]
+#[path = "computer_use_tests.rs"]
+mod computer_use_tests;
+
 fn report_fatal_error(err: anyhow::Error, ctx: &mut AppContext) {
     let mut message = err.to_string();
     for cause in err.chain().skip(1) {
