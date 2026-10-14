@@ -445,19 +445,26 @@ verifies those suites.
 
 ## macOS Bundle
 
+Use the verified `cargo-bundle` 0.11.0 revision below. Version 0.5.1 can ignore
+`CARGO_TARGET_DIR` while packaging and silently copy a stale executable from
+the default target. For an incompatible installed tool, use a temporary
+`cargo install --root` location and prepend its `bin` directory to PATH; do not
+replace a global tool incidentally. Check `cargo bundle --help` after selecting
+the tool. Use `--format osx` to avoid an unrequested DMG build.
+
 If `cargo-bundle` is missing:
 
 ```sh
 cargo install cargo-bundle \
   --git=https://github.com/burtonageo/cargo-bundle \
-  --rev ae4c76e92c08774bf54ff077b1c52e3d1cd6c16d
+  --rev 739f92c37c789b5511a448a389cbc76fcebd99df --locked
 ```
 
 Build the bundle:
 
 ```sh
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
-TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open
+TERM=xterm-256color NO_COLOR=1 CLICOLOR=0 ./script/run --features local_only --dont-open --format osx
 ```
 
 The `TERM`, `NO_COLOR`, and `CLICOLOR` environment variables avoid an older
@@ -472,6 +479,11 @@ Bundle path:
 ```text
 target/debug/bundle/osx/WarpOss.app
 ```
+
+When building in an isolated target, verify that its compiled executable and
+the packaged executable have the same Mach-O UUID before removing intermediates.
+Codesigning or rpath changes can alter byte hashes without changing that UUID.
+Verify the final source/installed byte hashes and signatures separately.
 
 When explicitly requesting common-skill installation with `script/run` or
 `script/bootstrap`, set `WARP_SKIP_COMMON_SKILLS_INSTALL=1` to skip that

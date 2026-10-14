@@ -98,3 +98,13 @@ removed; explicit `aarch64`/`arm64` support and the unsupported-architecture
 checks remain. No new hosted transport or binary-download fallback is added.
 Unused diagnostics output-ID plumbing and upload-event comments in the modified
 diff view are removed. Its local edit-state and navigation events remain.
+
+## Packaging repair
+
+Installed cargo-bundle 0.5.1 compiled into the isolated target but packaged a
+stale executable from the default target. The unfinished source bundle was
+restored from the untouched signed installation. A temporary cargo-bundle 0.11.0
+at revision `739f92c37c789b5511a448a389cbc76fcebd99df` passed an isolated-target
+smoke build with matching compiled/bundled Mach-O UUIDs. Use explicit `--format
+osx`, compare those UUIDs before cleanup, and verify final signatures and source/
+installed hashes independently. The global bundler is not replaced.
