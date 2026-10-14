@@ -394,6 +394,12 @@ made local-first.
 
 ## Verification Commands
 
+Accepted file diffs must persist their requested operation, including empty
+deletions and moves. Destructive operations preserve the requested directory
+entry instead of resolving symlinks. Reject hard-link aliases before writing.
+Undo marks an action reverted only after persistence succeeds and remains
+retryable after failure. Keep ordinary canonicalized open/save behavior.
+
 Run commands from the repository root.
 
 Minimal useful check:

@@ -75,8 +75,7 @@ impl TryFrom<RequestCommandOutputResult> for api::request::input::tool_call_resu
                     },
                 ),
             ),
-            // Busy-terminal errors use the direct provider's local JSON adapter, not a
-            // hosted protocol extension. The legacy hosted serializer cannot route them.
+            // Busy-terminal results are local protocol data, not hosted routing.
             RequestCommandOutputResult::CancelledBeforeExecution => {
                 Err(ConvertToAPITypeError::Ignore)
             }

@@ -74,3 +74,27 @@ business changes. New tests cover ACP framing/mapping/socket authentication, loc
 ownership, metadata, Git mirrors, Markdown focus routing, Muse, transcript paths and pointer
 coordinates. Build success alone does not establish Windows/Linux execution or live-provider
 GUI behavior. Preserve release and installed bundles during mandatory cleanup.
+
+## Late upstream delta
+
+`5ca78a44d5644d86793ba58a827baed2888b9a66` arrived during verification.
+Its independent local consumer is accepted agent file edits and their undo.
+The fork's older persistence API is retained for ordinary callers; new completion
+methods back operation-aware inline diffs. Deletes preserve requested entries,
+moves use native save-then-rename, and hard-link aliases fail before writing.
+Undo waits for persistence before changing action state and shares concurrent
+completion. Cached accepted contents use the actual destination path.
+The existing host-scoped file protocol gains only typed RenameFile dispatch and
+completion parsing, not hosted agent, auth, tracing or cloud transport.
+The upstream TUI modules are absent here; desktop GUI and filesystem consumers
+receive the operation fixes without importing a separate product surface.
+Deletion undo retains content-only restoration; original permissions/ACLs are
+not reconstructed, as in the existing fork and the upstream regression scope.
+
+The full host-protocol suite exposed a pre-existing `armv8l` mapping conflict:
+the parser selected AArch64 while its regression required UnsupportedArch.
+Only X86_64 and AArch64 daemon variants exist here. The unverified alias is
+removed; explicit `aarch64`/`arm64` support and the unsupported-architecture
+checks remain. No new hosted transport or binary-download fallback is added.
+Unused diagnostics output-ID plumbing and upload-event comments in the modified
+diff view are removed. Its local edit-state and navigation events remain.

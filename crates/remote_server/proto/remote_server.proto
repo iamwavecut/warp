@@ -42,6 +42,7 @@ message HostScopedRequest {
     GetFragmentMetadataFromHash get_fragment_metadata_from_hash = 11;
     GetBranches get_branches = 12;
     ResyncCodebase resync_codebase = 13;
+    RenameFile rename_file = 22;
   }
 }
 
@@ -103,6 +104,7 @@ message ServerMessage {
     BufferConflictDetected buffer_conflict_detected = 23;
     GetFragmentMetadataFromHashResponse get_fragment_metadata_from_hash_response = 24;
     GetBranchesResponse get_branches_response = 25;
+    RenameFileResponse rename_file_response = 38;
   }
 }
 
@@ -314,6 +316,21 @@ message WriteFileResponse {
 }
 
 message WriteFileSuccess {}
+
+message RenameFile {
+  string path = 1;
+  string new_path = 2;
+  string content = 3;
+}
+
+message RenameFileResponse {
+  oneof result {
+    RenameFileSuccess success = 1;
+    FileOperationError error = 2;
+  }
+}
+
+message RenameFileSuccess {}
 
 // Client → server: delete a file.
 message DeleteFile {

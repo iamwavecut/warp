@@ -779,6 +779,25 @@ impl HostRequestHandle {
         crate::host_response::delete_file_result(&msg).map_err(HostRequestError::OperationFailed)
     }
 
+    /// Saves edited content and renames the entry on the connected host.
+    pub async fn rename_file(
+        &self,
+        path: String,
+        new_path: String,
+        content: String,
+    ) -> Result<(), HostRequestError> {
+        let msg = self
+            .send(crate::proto::host_scoped_request::Message::RenameFile(
+                crate::proto::RenameFile {
+                    path,
+                    new_path,
+                    content,
+                },
+            ))
+            .await?;
+        crate::host_response::rename_file_result(&msg).map_err(HostRequestError::OperationFailed)
+    }
+
     /// Saves a remote buffer to disk on the host.
     pub async fn save_buffer(&self, path: String) -> Result<(), HostRequestError> {
         let msg = self

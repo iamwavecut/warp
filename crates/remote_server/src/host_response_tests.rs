@@ -149,6 +149,7 @@ fn every_host_scoped_request_has_a_response_disposition() {
         match m {
             // Parsed via the helpers in this module.
             M::WriteFile(_) => "host_response::write_file_result",
+            M::RenameFile(_) => "host_response::rename_file_result",
             M::SaveBuffer(_) => "host_response::save_buffer_result",
             M::DeleteFile(_) => "host_response::delete_file_result",
             M::DiscardFiles(_) => "host_response::discard_files_result",
@@ -165,4 +166,33 @@ fn every_host_scoped_request_has_a_response_disposition() {
 
     // Referenced so the exhaustive match is compiled and checked.
     let _ = disposition;
+}
+
+#[test]
+fn rename_file_rejects_empty_wrong_and_failed_results() {
+    use crate::proto::{RenameFileResponse, RenameFileSuccess, rename_file_response};
+    let empty = msg(server_message::Message::RenameFileResponse(
+        RenameFileResponse { result: None },
+    ));
+    assert!(rename_file_result(&empty).is_err());
+    let wrong = msg(server_message::Message::WriteFileResponse(
+        WriteFileResponse {
+            result: Some(write_file_response::Result::Success(WriteFileSuccess {})),
+        },
+    ));
+    assert!(rename_file_result(&wrong).is_err());
+    let failed = msg(server_message::Message::RenameFileResponse(
+        RenameFileResponse {
+            result: Some(rename_file_response::Result::Error(FileOperationError {
+                message: "rename failed".to_owned(),
+            })),
+        },
+    ));
+    assert_eq!(rename_file_result(&failed), Err("rename failed".to_owned()));
+    let success = msg(server_message::Message::RenameFileResponse(
+        RenameFileResponse {
+            result: Some(rename_file_response::Result::Success(RenameFileSuccess {})),
+        },
+    ));
+    assert!(rename_file_result(&success).is_ok());
 }

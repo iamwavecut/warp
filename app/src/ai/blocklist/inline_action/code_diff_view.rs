@@ -1,5 +1,7 @@
 use crate::ai::blocklist::view_util::render_provider_icon_button;
+use crate::code::inline_diff::SaveFuture;
 use anyhow::Result;
+use futures::{FutureExt, channel::oneshot, future::Shared};
 use lazy_static::lazy_static;
 use markdown_parser::{FormattedText, FormattedTextFragment, FormattedTextLine};
 use pathfinder_geometry::vector::vec2f;
@@ -55,7 +57,7 @@ use crate::view_components::action_button::{ActionButton, NakedTheme};
 use crate::{
     ai::{
         agent::{
-            AIAgentActionId, AIIdentifiers, FileEdit, FileLocations, ServerOutputId,
+            AIAgentActionId, AIIdentifiers, FileEdit, FileLocations,
             icons::{self, yellow_stop_icon},
         },
         blocklist::{
@@ -482,6 +484,7 @@ pub struct CodeDiffView {
     expansion_button_collapsed: ViewHandle<ActionButton>,
     expansion_button_expanded: ViewHandle<ActionButton>,
     state: CodeDiffState,
+    undo_completion: Option<Shared<SaveFuture>>,
     should_expand_when_complete: bool,
     selected_tab: usize,
     display_mode: DisplayMode,
@@ -658,12 +661,6 @@ impl CodeDiffView {
                     return;
                 }
                 me.user_edited_file_contents = true;
-
-                let Some(_output_id) = me.server_output_id() else {
-                    return;
-                };
-
-
             }
         });
     }
@@ -890,6 +887,7 @@ impl CodeDiffView {
             expansion_button_collapsed,
             expansion_button_expanded,
             state: initial_state,
+            undo_completion: None,
             should_expand_when_complete: false,
             selected_tab: 0,
             display_mode,
@@ -995,16 +993,21 @@ impl CodeDiffView {
     /// Save the file and mark the diff as accepted.
     pub fn accept_and_save(&mut self, ctx: &mut ViewContext<Self>) {
         // Don't let users save an old diff while in view-only mode.
-        if matches!(self.state, CodeDiffState::ViewOnly { .. }) {
+        if matches!(
+            self.state,
+            CodeDiffState::ViewOnly { .. } | CodeDiffState::Accepted(_)
+        ) || self.undo_completion.is_some()
+        {
             return;
         }
 
-        // Todo:   kc INT-328 Handle error in save
+        self.state = CodeDiffState::Accepted(Some(SavingDiffs::new(self.pending_diffs.len())));
         for diff in &self.pending_diffs {
-            diff.diff_view
+            let _ = diff
+                .diff_view
                 .update(ctx, |v, ctx| v.accept_and_save_diff(ctx));
         }
-        self.state = CodeDiffState::Accepted(Some(SavingDiffs::new(self.pending_diffs.len())));
+        self.try_emit_diffs_saved(ctx);
         ctx.notify();
 
         self.minimize(ctx);
@@ -1044,6 +1047,9 @@ impl CodeDiffView {
 
     /// Mark the diff as rejected.
     pub fn reject(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.undo_completion.is_some() {
+            return;
+        }
         // Don't let users reject an old diff while in view-only mode.
         if matches!(self.state, CodeDiffState::ViewOnly { .. }) {
             report_error!("Attempted to reject diff in view-only mode");
@@ -1069,42 +1075,66 @@ impl CodeDiffView {
         // This isn't emitted in the executor because rejected diffs aren't executed.
     }
 
-    /// Revert all changes by replacing file contents with the base version.
-    /// For newly created files, this deletes them instead.
-    fn revert_changes(&mut self, ctx: &mut ViewContext<Self>) {
-        if !matches!(self.state, CodeDiffState::Accepted(None)) {
-            log::warn!(
-                "Attempted to revert changes when not in Accepted(None) state - actual state: {:?}",
-                self.state
-            );
-            return;
+    /// Marks undo complete only after persistence succeeds; failures remain retryable.
+    fn revert_changes(&mut self, ctx: &mut ViewContext<Self>) -> Option<SaveFuture> {
+        if let Some(completion) = &self.undo_completion {
+            return Some(completion.clone().boxed());
         }
-
+        if matches!(self.state, CodeDiffState::Reverted) {
+            return Some(futures::future::ready(Ok(())).boxed());
+        }
+        if !matches!(self.state, CodeDiffState::Accepted(None)) {
+            return None;
+        }
+        let operations: Vec<_> = self
+            .pending_diffs
+            .iter()
+            .map(|diff| {
+                diff.diff_view
+                    .update(ctx, |view, ctx| view.restore_and_save_diff(ctx))
+                    .unwrap_or_else(|error| futures::future::ready(Err(error)).boxed())
+            })
+            .collect();
+        let operation = async move {
+            let failures: Vec<_> = futures::future::join_all(operations)
+                .await
+                .into_iter()
+                .filter_map(|result| result.err())
+                .collect();
+            if failures.is_empty() {
+                Ok(())
+            } else {
+                Err(failures.join("\n"))
+            }
+        };
+        let (tx, rx) = oneshot::channel();
+        let completion = async move {
+            rx.await
+                .unwrap_or_else(|_| Err("Undo completion was cancelled".to_owned()))
+        }
+        .boxed()
+        .shared();
+        self.undo_completion = Some(completion.clone());
         let window_id = ctx.window_id();
-        for diff in &self.pending_diffs {
-            if let Err(err) = diff
-                .diff_view
-                .update(ctx, |v, ctx| v.restore_diff_base(ctx))
-            {
-                report_error!(anyhow::anyhow!("{err}").context("Failed to restore diff base"));
-                let file_name = diff
-                    .diff_view
-                    .as_ref(ctx)
-                    .file_name()
-                    .unwrap_or_else(|| "file".to_string());
-                ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
-                    toast_stack.add_ephemeral_toast(
-                        DismissibleToast::error(format!("Failed to revert changes to {file_name}")),
+        ctx.spawn(operation, move |me, result, ctx| {
+            me.undo_completion = None;
+            match &result {
+                Ok(()) => {
+                    me.state = CodeDiffState::Reverted;
+                    me.mark_action_as_reverted(ctx);
+                }
+                Err(error) => ToastStack::handle(ctx).update(ctx, |toasts, ctx| {
+                    toasts.add_ephemeral_toast(
+                        DismissibleToast::error(format!("Failed to revert changes: {error}")),
                         window_id,
                         ctx,
                     );
-                });
+                }),
             }
-        }
-
-        self.state = CodeDiffState::Reverted;
-        self.mark_action_as_reverted(ctx);
-        ctx.notify();
+            ctx.notify();
+            let _ = tx.send(result);
+        });
+        Some(completion.boxed())
     }
 
     fn mark_action_as_reverted(&self, ctx: &mut ViewContext<Self>) {
@@ -2175,13 +2205,6 @@ impl CodeDiffView {
         }
     }
 
-    fn server_output_id(&self) -> Option<ServerOutputId> {
-        self.identifiers.server_output_id.clone()
-    }
-
-    /// Helper function to send diagnostics for edit resolution.
-    /// Consolidates the common diagnostics logic for reject operations.
-
     /// We are processing unified diff and saving files concurrently. That's why
     /// we need to have separate handlers for diff calculation and save completed.
     ///
@@ -2234,11 +2257,18 @@ impl CodeDiffView {
 
             if is_complete {
                 let replaced_state = state.take().expect("Checked above");
+                let saved: Vec<_> = replaced_state
+                    .pending_diffs
+                    .iter()
+                    .map(|diff| matches!(diff.save_status, SaveStatus::Success))
+                    .collect();
 
                 let mut combined_diff = DiffResult::default();
                 let mut save_errors = Vec::new();
                 for diff_state in replaced_state.pending_diffs {
-                    if let Some(diff) = diff_state.computed_diff {
+                    if matches!(diff_state.save_status, SaveStatus::Success)
+                        && let Some(diff) = diff_state.computed_diff
+                    {
                         combined_diff += diff.as_ref();
                     }
                     if let SaveStatus::Failed(error) = diff_state.save_status {
@@ -2249,7 +2279,10 @@ impl CodeDiffView {
                 let mut updated_files = Vec::new();
                 let mut deleted_files = Vec::new();
 
-                for diff in self.pending_diffs.iter() {
+                for (index, diff) in self.pending_diffs.iter().enumerate() {
+                    if !saved[index] {
+                        continue;
+                    }
                     let Some(path) = diff.diff_view.as_ref(ctx).file_path() else {
                         continue;
                     };
@@ -2266,6 +2299,7 @@ impl CodeDiffView {
                             rename: Some(rename),
                             ..
                         }) = diff.diff_view.as_ref(ctx).diff()
+                            && diff.diff_view.as_ref(ctx).is_move()
                         {
                             deleted_files.push(file_path_str);
                             file_path_str = rename.to_string_lossy().to_string();
@@ -2287,8 +2321,12 @@ impl CodeDiffView {
                 let file_contents: Vec<(String, String)> = self
                     .pending_diffs
                     .iter()
-                    .filter_map(|diff| {
-                        let path = diff.diff_view.as_ref(ctx).file_path()?.to_string();
+                    .enumerate()
+                    .filter_map(|(index, diff)| {
+                        if !saved[index] {
+                            return None;
+                        }
+                        let path = diff.diff_view.as_ref(ctx).persisted_file_path()?;
                         // Skip deleted files — they have no meaningful content.
                         if matches!(
                             diff.diff_view.as_ref(ctx).diff(),
@@ -2681,15 +2719,13 @@ impl TypedActionView for CodeDiffView {
                 ctx.notify();
             }
             CodeDiffViewAction::RevertChanges => {
-                self.revert_changes(ctx);
+                let _ = self.revert_changes(ctx);
             }
             CodeDiffViewAction::OpenSkill {
                 reference,
                 path,
                 mouse_state,
             } => {
-                // Sends a diagnostics event when a skill is opened from a code diff view
-
                 // Resets the interaction state of the skill button to avoid an immediate re-hover
                 if let Ok(mut state) = mouse_state.lock() {
                     state.reset_interaction_state();
@@ -3051,3 +3087,7 @@ fn editor_range_to_file_context_range(range: Range<usize>) -> Range<usize> {
 fn file_context_range_to_editor_range(range: Range<usize>) -> Range<usize> {
     range.start.saturating_sub(1)..range.end.saturating_sub(1)
 }
+
+#[cfg(all(test, not(target_family = "wasm")))]
+#[path = "code_diff_persistence_tests.rs"]
+mod persistence_tests;

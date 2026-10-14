@@ -12,8 +12,10 @@ use std::rc::Rc;
 use std::time::{Duration, SystemTime};
 
 use async_channel::Sender;
-use futures::StreamExt;
+use futures::channel::oneshot;
+use futures::future::BoxFuture;
 use futures::io::{AsyncBufReadExt, BufReader};
+use futures::{FutureExt, StreamExt};
 use notify_debouncer_full::notify::{RecursiveMode, WatchFilter};
 use remote_server::manager::RemoteServerManager;
 use repo_metadata::repositories::DetectedRepositories;
@@ -29,6 +31,9 @@ use watcher::{BulkFilesystemWatcher, BulkFilesystemWatcherEvent};
 
 pub mod text_file_reader;
 pub use text_file_reader::{TextFileReadResult, TextFileSegment};
+
+/// Completes after persistence and the corresponding model event.
+pub type SaveCompletion = BoxFuture<'static, Result<(), String>>;
 
 #[derive(Debug)]
 pub enum FileModelEvent {
@@ -136,6 +141,7 @@ impl FileBackend {
 #[derive(Default)]
 struct LocalFile {
     path: Option<PathBuf>,
+    entry_path: Option<PathBuf>,
     version: Option<ContentVersion>,
     /// How this file is being watched for changes.
     watcher_type: WatcherType,
@@ -160,9 +166,10 @@ impl LocalFile {
         // In this case, keep its original input path.
         let canonicalized_path = CanonicalizedPath::try_from(&path)
             .map(|path| path.as_path_buf().to_path_buf())
-            .unwrap_or(path);
+            .unwrap_or_else(|_| path.clone());
         Self {
             path: Some(canonicalized_path),
+            entry_path: Some(path),
             version: None,
             watcher_type: WatcherType::None,
         }
@@ -360,6 +367,13 @@ impl FileModel {
         self.file_state
             .get_local(file_id)
             .and_then(|x| x.path.clone())
+    }
+
+    /// The requested directory entry, before canonicalization resolves symlinks.
+    pub fn entry_path(&self, file_id: FileId) -> Option<PathBuf> {
+        self.file_state
+            .get_local(file_id)
+            .and_then(|file| file.entry_path.clone())
     }
 
     /// Register a remote file path and return a `FileId`.
@@ -720,78 +734,55 @@ impl FileModel {
         version: ContentVersion,
         ctx: &mut ModelContext<Self>,
     ) -> Result<(), FileSaveError> {
+        self.save_with_completion(file_id, content, version, ctx)
+            .map(|_| ())
+    }
+
+    pub fn save_with_completion(
+        &mut self,
+        file_id: FileId,
+        content: String,
+        version: ContentVersion,
+        ctx: &mut ModelContext<Self>,
+    ) -> Result<SaveCompletion, FileSaveError> {
         let backend = self
             .file_state
             .get(file_id)
             .ok_or(FileSaveError::NoFilePath(file_id))?;
-
-        match backend {
+        let operation: BoxFuture<'static, Result<(), FileSaveError>> = match backend {
             FileBackend::Local(_) => {
-                let file_path = self
+                let path = self
                     .file_path(file_id)
                     .ok_or(FileSaveError::NoFilePath(file_id))?;
-
-                ctx.spawn(
-                    async move {
-                        if let Err(err) = Self::ensure_parent_directories(&file_path).await {
-                            return Err(FileSaveError::IOError {
-                                error: err,
-                                path: file_path,
-                            });
-                        }
-                        async_fs::write(&file_path, content).await.map_err(|err| {
-                            FileSaveError::IOError {
-                                error: err,
-                                path: file_path,
-                            }
-                        })
-                    },
-                    move |me, write_result: Result<(), FileSaveError>, ctx| {
-                        match write_result {
-                            Ok(_) => {
-                                me.set_version(file_id, version);
-                                ctx.emit(FileModelEvent::FileSaved {
-                                    id: file_id,
-                                    version,
-                                })
-                            }
-                            Err(err) => ctx.emit(FileModelEvent::FailedToSave {
-                                id: file_id,
-                                error: Rc::new(err),
-                            }),
-                        };
-                    },
-                );
+                async move {
+                    Self::ensure_parent_directories(&path)
+                        .await
+                        .map_err(|error| FileSaveError::IOError {
+                            error,
+                            path: path.clone(),
+                        })?;
+                    async_fs::write(&path, content)
+                        .await
+                        .map_err(|error| FileSaveError::IOError { error, path })
+                }
+                .boxed()
             }
             FileBackend::Remote { host_id, path } => {
                 let handle = RemoteServerManager::as_ref(ctx).host_request_handle(host_id);
-                let path = path.as_str().to_string();
-                ctx.spawn(
-                    async move { handle.write_file(path, content).await },
-                    move |me, result, ctx| match result {
-                        Ok(()) => {
-                            me.set_version(file_id, version);
-                            ctx.emit(FileModelEvent::FileSaved {
-                                id: file_id,
-                                version,
-                            });
-                        }
-                        Err(e) => {
-                            ctx.emit(FileModelEvent::FailedToSave {
-                                id: file_id,
-                                error: Rc::new(FileSaveError::RemoteError(e.to_string())),
-                            });
-                        }
-                    },
-                );
+                let path = path.as_str().to_owned();
+                async move {
+                    handle
+                        .write_file(path, content)
+                        .await
+                        .map_err(|error| FileSaveError::RemoteError(error.to_string()))
+                }
+                .boxed()
             }
-        }
-
-        Ok(())
+        };
+        Ok(self.spawn_save_operation(file_id, version, operation, ctx))
     }
 
-    /// Renames a file and also saves its content.
-    // TODO: refactor this against [`FileModel::save`].
+    /// Renames a requested directory entry after saving its edited content.
     pub fn rename_and_save(
         &mut self,
         file_id: FileId,
@@ -800,139 +791,145 @@ impl FileModel {
         version: ContentVersion,
         ctx: &mut ModelContext<Self>,
     ) -> Result<(), FileSaveError> {
-        let file_path = self
-            .file_path(file_id)
-            .ok_or(FileSaveError::NoFilePath(file_id))?;
-
-        ctx.spawn(
-            async move {
-                // Make sure the file we're renaming exists.
-                if let Err(err) = async_fs::metadata(&file_path).await {
-                    return Err(FileSaveError::IOError {
-                        error: err,
-                        path: file_path,
-                    });
-                }
-
-                // Make sure the components of the path we're moving to exists.
-                if let Err(err) = Self::ensure_parent_directories(&new_path).await {
-                    return Err(FileSaveError::IOError {
-                        error: err,
-                        path: new_path,
-                    });
-                }
-
-                // Write the updated contents to the old path first.
-                async_fs::write(&file_path, content).await.map_err(|err| {
-                    FileSaveError::IOError {
-                        error: err,
-                        path: file_path.clone(),
-                    }
-                })?;
-
-                // Now rename.
-                async_fs::rename(&file_path, &new_path)
-                    .await
-                    .map_err(|err| FileSaveError::IOError {
-                        error: err,
-                        path: file_path.clone(),
-                    })
-            },
-            move |me, write_result: Result<(), FileSaveError>, ctx| {
-                match write_result {
-                    Ok(_) => {
-                        me.set_version(file_id, version);
-                        ctx.emit(FileModelEvent::FileSaved {
-                            id: file_id,
-                            version,
-                        })
-                    }
-                    Err(err) => ctx.emit(FileModelEvent::FailedToSave {
-                        id: file_id,
-                        error: Rc::new(err),
-                    }),
-                };
-            },
-        );
-
-        Ok(())
+        self.rename_and_save_with_completion(file_id, new_path, content, version, ctx)
+            .map(|_| ())
     }
 
-    /// Deletes the specified file.
+    pub fn rename_and_save_with_completion(
+        &mut self,
+        file_id: FileId,
+        new_path: PathBuf,
+        content: String,
+        version: ContentVersion,
+        ctx: &mut ModelContext<Self>,
+    ) -> Result<SaveCompletion, FileSaveError> {
+        let backend = self
+            .file_state
+            .get(file_id)
+            .ok_or(FileSaveError::NoFilePath(file_id))?;
+        let operation: BoxFuture<'static, Result<(), FileSaveError>> = match backend {
+            FileBackend::Local(_) => {
+                let path = self
+                    .entry_path(file_id)
+                    .ok_or(FileSaveError::NoFilePath(file_id))?;
+                if new_path == path {
+                    return self.save_with_completion(file_id, content, version, ctx);
+                }
+                async move {
+                    async_fs::metadata(&path).await.map_err(|error| FileSaveError::IOError { error, path: path.clone() })?;
+                    match same_file::is_same_file(&path, &new_path) {
+                        Ok(true) => return Err(FileSaveError::Other(format!("Cannot move {path:?} to {new_path:?}: both entries refer to the same file"))),
+                        Ok(false) => {},
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {},
+                        Err(error) => return Err(FileSaveError::IOError { error, path: new_path }),
+                    }
+                    Self::ensure_parent_directories(&new_path).await.map_err(|error| FileSaveError::IOError { error, path: new_path.clone() })?;
+                    async_fs::write(&path, content).await.map_err(|error| FileSaveError::IOError { error, path: path.clone() })?;
+                    async_fs::rename(&path, &new_path).await.map_err(|error| FileSaveError::Other(format!("Saved content at {path:?}, but failed to rename to {new_path:?}: {error}")))
+                }.boxed()
+            }
+            FileBackend::Remote { host_id, path } => {
+                let destination = StandardizedPath::try_new(&new_path.to_string_lossy())
+                    .map_err(|error| FileSaveError::Other(error.to_string()))?;
+                if &destination == path {
+                    return self.save_with_completion(file_id, content, version, ctx);
+                }
+                let handle = RemoteServerManager::as_ref(ctx).host_request_handle(host_id);
+                let path = path.as_str().to_owned();
+                let destination = destination.to_string();
+                async move {
+                    handle
+                        .rename_file(path, destination, content)
+                        .await
+                        .map_err(|error| FileSaveError::RemoteError(error.to_string()))
+                }
+                .boxed()
+            }
+        };
+        Ok(self.spawn_save_operation(file_id, version, operation, ctx))
+    }
+
+    /// Deletes the requested entry without resolving a symlink to its referent.
     pub fn delete(
         &mut self,
         file_id: FileId,
         version: ContentVersion,
         ctx: &mut ModelContext<Self>,
     ) -> Result<(), FileSaveError> {
+        self.delete_with_completion(file_id, version, ctx)
+            .map(|_| ())
+    }
+
+    pub fn delete_with_completion(
+        &mut self,
+        file_id: FileId,
+        version: ContentVersion,
+        ctx: &mut ModelContext<Self>,
+    ) -> Result<SaveCompletion, FileSaveError> {
         let backend = self
             .file_state
             .get(file_id)
             .ok_or(FileSaveError::NoFilePath(file_id))?;
-
-        match backend {
+        let operation: BoxFuture<'static, Result<(), FileSaveError>> = match backend {
             FileBackend::Local(_) => {
-                let file_path = self
-                    .file_path(file_id)
+                let path = self
+                    .entry_path(file_id)
                     .ok_or(FileSaveError::NoFilePath(file_id))?;
-
-                ctx.spawn(
-                    async move {
-                        if let Err(err) = Self::ensure_parent_directories(&file_path).await {
-                            return Err(FileSaveError::IOError {
-                                error: err,
-                                path: file_path,
-                            });
-                        }
-                        async_fs::remove_file(&file_path).await.map_err(|err| {
-                            FileSaveError::IOError {
-                                error: err,
-                                path: file_path,
-                            }
-                        })
-                    },
-                    move |me, delete_result: Result<(), FileSaveError>, ctx| {
-                        match delete_result {
-                            Ok(_) => {
-                                me.set_version(file_id, version);
-                                ctx.emit(FileModelEvent::FileSaved {
-                                    id: file_id,
-                                    version,
-                                })
-                            }
-                            Err(err) => ctx.emit(FileModelEvent::FailedToSave {
-                                id: file_id,
-                                error: Rc::new(err),
-                            }),
-                        };
-                    },
-                );
+                async move {
+                    async_fs::remove_file(&path)
+                        .await
+                        .map_err(|error| FileSaveError::IOError { error, path })
+                }
+                .boxed()
             }
             FileBackend::Remote { host_id, path } => {
                 let handle = RemoteServerManager::as_ref(ctx).host_request_handle(host_id);
-                let path = path.as_str().to_string();
-                ctx.spawn(
-                    async move { handle.delete_file(path).await },
-                    move |me, result, ctx| match result {
-                        Ok(()) => {
-                            me.set_version(file_id, version);
-                            ctx.emit(FileModelEvent::FileSaved {
-                                id: file_id,
-                                version,
-                            });
-                        }
-                        Err(e) => {
-                            ctx.emit(FileModelEvent::FailedToSave {
-                                id: file_id,
-                                error: Rc::new(FileSaveError::RemoteError(e.to_string())),
-                            });
-                        }
-                    },
-                );
+                let path = path.as_str().to_owned();
+                async move {
+                    handle
+                        .delete_file(path)
+                        .await
+                        .map_err(|error| FileSaveError::RemoteError(error.to_string()))
+                }
+                .boxed()
             }
-        }
+        };
+        Ok(self.spawn_save_operation(file_id, version, operation, ctx))
+    }
 
-        Ok(())
+    fn spawn_save_operation(
+        &mut self,
+        file_id: FileId,
+        version: ContentVersion,
+        operation: BoxFuture<'static, Result<(), FileSaveError>>,
+        ctx: &mut ModelContext<Self>,
+    ) -> SaveCompletion {
+        let (tx, rx) = oneshot::channel();
+        ctx.spawn(operation, move |me, result, ctx| {
+            let completion = result
+                .as_ref()
+                .map(|_| ())
+                .map_err(|error| format!("{error:?}"));
+            match result {
+                Ok(()) => {
+                    me.set_version(file_id, version);
+                    ctx.emit(FileModelEvent::FileSaved {
+                        id: file_id,
+                        version,
+                    });
+                }
+                Err(error) => ctx.emit(FileModelEvent::FailedToSave {
+                    id: file_id,
+                    error: Rc::new(error),
+                }),
+            }
+            let _ = tx.send(completion);
+        });
+        async move {
+            rx.await
+                .unwrap_or_else(|_| Err("File operation completion was cancelled".to_owned()))
+        }
+        .boxed()
     }
 
     pub fn set_version(&mut self, file_id: FileId, version: ContentVersion) {

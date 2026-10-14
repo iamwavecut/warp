@@ -14501,6 +14501,7 @@ dependencies = [
  "notify-debouncer-full",
  "remote_server",
  "repo_metadata",
+ "same-file",
  "tempfile",
  "thiserror 2.0.17",
  "warp_core",

@@ -117,11 +117,12 @@ enum CodebaseIndexRequestPathKind {
     Requested,
 }
 
-/// Tracks an in-flight file write or delete so the async completion
+/// Tracks an in-flight file write, deletion or rename so the async completion
 /// event can be correlated back to the originating client request.
 enum FileOpKind {
     Write,
     Delete,
+    Rename,
 }
 
 struct PendingFileOp {
@@ -284,6 +285,17 @@ impl ServerModel {
                             )),
                         })
                     }
+                    (FileModelEvent::FileSaved { .. }, FileOpKind::Rename) => {
+                        server_message::Message::RenameFileResponse(
+                            remote_server::proto::RenameFileResponse {
+                                result: Some(
+                                    remote_server::proto::rename_file_response::Result::Success(
+                                        remote_server::proto::RenameFileSuccess {},
+                                    ),
+                                ),
+                            },
+                        )
+                    }
                     (FileModelEvent::FailedToSave { error, .. }, FileOpKind::Write) => {
                         server_message::Message::WriteFileResponse(WriteFileResponse {
                             result: Some(write_file_response::Result::Error(FileOperationError {
@@ -297,6 +309,19 @@ impl ServerModel {
                                 message: format!("{error}"),
                             })),
                         })
+                    }
+                    (FileModelEvent::FailedToSave { error, .. }, FileOpKind::Rename) => {
+                        server_message::Message::RenameFileResponse(
+                            remote_server::proto::RenameFileResponse {
+                                result: Some(
+                                    remote_server::proto::rename_file_response::Result::Error(
+                                        FileOperationError {
+                                            message: format!("{error}"),
+                                        },
+                                    ),
+                                ),
+                            },
+                        )
                     }
                     (FileModelEvent::FileLoaded { .. }, _)
                     | (FileModelEvent::FailedToLoad { .. }, _)
@@ -709,6 +734,9 @@ impl ServerModel {
                     }
                     Some(host_scoped_request::Message::DeleteFile(m)) => {
                         self.handle_delete_file(m, &request_id, conn_id, ctx)
+                    }
+                    Some(host_scoped_request::Message::RenameFile(m)) => {
+                        self.handle_rename_file(m, &request_id, conn_id, ctx)
                     }
                     Some(host_scoped_request::Message::ReadFileContext(m)) => {
                         self.handle_read_file_context(m, &request_id, conn_id, ctx)
@@ -2056,6 +2084,38 @@ impl ServerModel {
         HandlerOutcome::Async(None)
     }
 
+    fn handle_rename_file(
+        &mut self,
+        msg: remote_server::proto::RenameFile,
+        request_id: &RequestId,
+        conn_id: ConnectionId,
+        ctx: &mut ModelContext<Self>,
+    ) -> HandlerOutcome {
+        let (file_id, version) = self.pending_file_ops.insert(
+            Path::new(&msg.path),
+            request_id.clone(),
+            conn_id,
+            FileOpKind::Rename,
+            ctx,
+        );
+        let result = FileModel::handle(ctx).update(ctx, |model, ctx| {
+            model.rename_and_save(file_id, msg.new_path.into(), msg.content, version, ctx)
+        });
+        if let Err(error) = result {
+            self.pending_file_ops.remove(file_id, ctx);
+            return HandlerOutcome::Sync(server_message::Message::RenameFileResponse(
+                remote_server::proto::RenameFileResponse {
+                    result: Some(remote_server::proto::rename_file_response::Result::Error(
+                        FileOperationError {
+                            message: format!("Failed to initiate rename: {error}"),
+                        },
+                    )),
+                },
+            ));
+        }
+        HandlerOutcome::Async(None)
+    }
+
     /// Handles `ReadFileContext` by spawning an async batch file read on the
     /// background executor. Returns `HandlerOutcome::Async` with the spawned
     /// handle so the request can be cancelled via `Abort`.
@@ -2891,3 +2951,7 @@ fn file_context_result_to_proto(result: ReadFileContextResult) -> ReadFileContex
 #[cfg(test)]
 #[path = "server_model_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "file_operation_tests.rs"]
+mod file_operation_tests;
