@@ -54,6 +54,7 @@ impl StartAgentRequestId {
 
 #[derive(Clone)]
 pub struct StartAgentRequest {
+    pub metadata: HashMap<String, String>,
     pub id: StartAgentRequestId,
     pub name: String,
     pub prompt: String,
@@ -71,6 +72,7 @@ pub struct StartAgentDispatch {
 }
 
 struct PendingStartAgent {
+    metadata: HashMap<String, String>,
     /// Set once the child conversation is synchronously created.
     child_conversation_id: Option<AIConversationId>,
     action_id: Option<AIAgentActionId>,
@@ -119,6 +121,16 @@ impl StartAgentExecutor {
             return;
         };
         pending.child_conversation_id = Some(child_conversation_id);
+        let metadata = pending.metadata.clone();
+        LocalAgentRegistry::handle(ctx).update(ctx, |registry, _| {
+            registry.set_local_metadata(child_conversation_id, metadata.clone())
+        });
+        BlocklistAIHistoryModel::handle(ctx).update(ctx, |history, ctx| {
+            if let Some(conversation) = history.conversation_mut(&child_conversation_id) {
+                conversation.set_local_child_metadata(metadata);
+                conversation.write_updated_conversation_state(ctx);
+            }
+        });
         self.maybe_complete_pending_for_child_state(request_id, child_conversation_id, ctx);
     }
 
@@ -448,6 +460,7 @@ impl StartAgentExecutor {
             PendingStartAgent {
                 child_conversation_id: None,
                 action_id: Some(action_id.clone()),
+                metadata: HashMap::new(),
                 parent_action_id: None,
                 cancellation: cancellation.clone(),
                 senders: vec![sender],
@@ -458,6 +471,7 @@ impl StartAgentExecutor {
         ctx.emit(StartAgentExecutorEvent::CreateAgent(StartAgentRequest {
             id: request_id,
             name: name.clone(),
+            metadata: HashMap::new(),
             prompt,
             execution_mode,
             lifecycle_subscription: lifecycle_subscription.clone(),
@@ -477,6 +491,32 @@ impl StartAgentExecutor {
         name: String,
         prompt: String,
         execution_mode: StartAgentExecutionMode,
+        lifecycle_subscription: Option<Vec<LifecycleEventType>>,
+        parent_conversation_id: AIConversationId,
+        parent_run_id: Option<String>,
+        parent_action_id: Option<AIAgentActionId>,
+        ctx: &mut ModelContext<Self>,
+    ) -> StartAgentDispatch {
+        self.dispatch_with_metadata(
+            name,
+            prompt,
+            execution_mode,
+            HashMap::new(),
+            lifecycle_subscription,
+            parent_conversation_id,
+            parent_run_id,
+            parent_action_id,
+            ctx,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn dispatch_with_metadata(
+        &mut self,
+        name: String,
+        prompt: String,
+        execution_mode: StartAgentExecutionMode,
+        metadata: HashMap<String, String>,
         lifecycle_subscription: Option<Vec<LifecycleEventType>>,
         parent_conversation_id: AIConversationId,
         parent_run_id: Option<String>,
@@ -519,6 +559,7 @@ impl StartAgentExecutor {
             PendingStartAgent {
                 child_conversation_id: None,
                 action_id: None,
+                metadata: metadata.clone(),
                 parent_action_id,
                 cancellation: cancellation.clone(),
                 senders: vec![sender],
@@ -526,6 +567,7 @@ impl StartAgentExecutor {
         );
         ctx.emit(StartAgentExecutorEvent::CreateAgent(StartAgentRequest {
             id: request_id,
+            metadata,
             name,
             prompt,
             execution_mode,

@@ -221,6 +221,12 @@ impl Args {
 /// These subcommands run those worker processes, which are bundled into the Warp binary.
 #[derive(Debug, Clone, Subcommand)]
 pub enum WorkerCommand {
+    /// Bridge a host-local ACP adapter to the local desktop client.
+    #[clap(hide = true)]
+    AcpBridge {
+        #[arg(long)]
+        launch_file: std::path::PathBuf,
+    },
     /// Run the terminal server.
     #[clap(hide = true)]
     #[cfg(unix)]

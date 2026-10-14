@@ -915,6 +915,9 @@ fn test_shared_followup_on_existing_conversation_converts_user_query_input() {
                                         citations: vec![],
                                         message: Some(api::message::Message::UserQuery(
                                             api::message::UserQuery {
+                                                author: Default::default(),
+                                                origin: Default::default(),
+                                                source_message: Default::default(),
                                                 query: followup_query.to_string(),
                                                 context: None,
                                                 referenced_attachments: HashMap::new(),

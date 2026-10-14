@@ -43,7 +43,6 @@ use crate::ai::agent_sdk::driver::harness::exit_escalation::{
 use crate::ai::agent_sdk::driver::harness::save_coordinator::{
     SaveCoordinator, save_after_session_update,
 };
-use crate::ai::document::ai_document_model::{AIDocumentModel, AIDocumentModelEvent};
 use crate::ai::llms::{LLMId, LLMPreferences};
 use crate::ai::local_named_agents::profile_sync_id;
 use crate::ai::mcp::{JSONMCPServer, MCPServerState};
@@ -1878,6 +1877,22 @@ impl AgentDriver {
 
         // Subscribe to CLI agent session events so we can update the task
         // state as the harness emits stop/blocked notifications.
+        if !harness.drives_cli_agent_session() {
+            let completion = foreground
+                .spawn(|me, ctx| me.observe_native_run(ctx))
+                .await?;
+            foreground
+                .spawn(move |_, ctx| {
+                    ctx.background_executor()
+                        .spawn(async move {
+                            let _ = completion.await;
+                            harness_exit.end_run_now(());
+                        })
+                        .detach();
+                })
+                .await?;
+            return Ok(exit_rx);
+        }
         foreground
             .spawn(move |me, ctx| me.subscribe_to_cli_agent_session_events(harness_exit, ctx))
             .await?;
@@ -2024,7 +2039,9 @@ impl AgentDriver {
                     .map(|resume| (resume.run_id, resume.is_resume))
             })
             .await?;
-        if let Some((run_id, is_resume)) = local_run {
+        if let Some((run_id, is_resume)) =
+            local_run.filter(|_| !runner.drives_native_conversation())
+        {
             let output_format = foreground.spawn(|me, _| me.output_format).await?;
             report_if_error!(
                 output::with_stdout_buffered(|buf| match output_format {
@@ -2211,6 +2228,36 @@ impl AgentDriver {
             });
         }
 
+        if runner.drives_native_conversation() {
+            let native_result = foreground
+                .spawn(|me, ctx| {
+                    let terminal = me.terminal_driver.as_ref(ctx).terminal_view();
+                    let controller = terminal.as_ref(ctx).ai_controller();
+                    controller
+                        .as_ref(ctx)
+                        .native_prompt_conversation_id()
+                        .and_then(|id| {
+                            BlocklistAIHistoryModel::as_ref(ctx)
+                                .conversation(&id)
+                                .and_then(conversation_output_status_from_conversation)
+                        })
+                })
+                .await?;
+            if let Some(status) = native_result {
+                return match status {
+                    AmbientConversationStatus::Success => Ok(()),
+                    AmbientConversationStatus::Blocked { blocked_action } => {
+                        Err(AgentDriverError::ConversationBlocked { blocked_action })
+                    }
+                    AmbientConversationStatus::Cancelled { reason } => {
+                        Err(AgentDriverError::ConversationCancelled { reason })
+                    }
+                    AmbientConversationStatus::Error { error } => {
+                        SDKConversationOutputStatus::Error { error }.into_result()
+                    }
+                };
+            }
+        }
         let exit_code = command_result?;
         log::debug!("Agent harness exited with status {exit_code}");
 
@@ -2463,6 +2510,33 @@ impl AgentDriver {
         task_prompt: AgentRunPrompt,
         ctx: &mut ModelContext<Self>,
     ) -> Receiver<SDKConversationOutputStatus> {
+        let rx = self.observe_native_run(ctx);
+        self.terminal_driver.update(ctx, |td, ctx| {
+            td.with_terminal_view(ctx, |terminal, ctx| {
+                let AgentRunPrompt::Local(prompt_str) = task_prompt;
+                if FeatureFlag::AgentView.is_enabled() {
+                    terminal.enter_agent_view(
+                        Some(prompt_str),
+                        None,
+                        AgentViewEntryOrigin::Cli,
+                        ctx,
+                    );
+                } else {
+                    terminal.set_ai_input_mode_with_query(Some(&prompt_str), ctx);
+                    terminal
+                        .input()
+                        .update(ctx, |input, ctx| input.input_enter(ctx));
+                }
+            })
+        });
+
+        rx
+    }
+
+    fn observe_native_run(
+        &self,
+        ctx: &mut ModelContext<Self>,
+    ) -> Receiver<SDKConversationOutputStatus> {
         // Create a oneshot channel to signal task completion.
         let (tx, rx) = oneshot::channel();
         let run_exit = IdleTimeoutSender::new(tx);
@@ -2677,77 +2751,6 @@ impl AgentDriver {
                 | BlocklistAIHistoryEvent::NewConversationRequestComplete { .. }
                 | BlocklistAIHistoryEvent::OrchestrationConfigUpdated { .. } => (),
             }
-        });
-
-        // Subscribe to document model events to emit artifact_created when plans are saved locally.
-        ctx.subscribe_to_model(&AIDocumentModel::handle(ctx), move |me, _, event, ctx| {
-            let AIDocumentModelEvent::DocumentSaveStatusUpdated(document_id) = event else {
-                return;
-            };
-
-            let doc_model = AIDocumentModel::as_ref(ctx);
-
-            // Only emit when the document transitions to "Saved" (has a ServerId)
-            if !doc_model.get_document_save_status(document_id).is_saved() {
-                return;
-            }
-
-            // Get the document to extract the notebook link
-            let Some(document) = doc_model.get_current_document(document_id) else {
-                return;
-            };
-
-            // Get the notebook link from the document model
-            let Some(notebook_link) =
-                doc_model.get_document_warp_drive_object_link(document_id, ctx)
-            else {
-                return;
-            };
-
-            let document_id_str = document_id.to_string();
-
-            report_if_error!(
-                output::with_stdout_buffered(|buf| {
-                    match me.output_format {
-                        OutputFormat::Json | OutputFormat::Ndjson => {
-                            output::json::plan_artifact_created(
-                                &document_id_str,
-                                &notebook_link,
-                                &document.title,
-                                buf,
-                            )
-                        }
-                        OutputFormat::Text | OutputFormat::Pretty => {
-                            output::text::plan_artifact_created(
-                                &document_id_str,
-                                &notebook_link,
-                                &document.title,
-                                buf,
-                            )
-                        }
-                    }
-                })
-                .context("Failed to write artifact_created")
-            );
-        });
-
-        self.terminal_driver.update(ctx, |td, ctx| {
-            td.with_terminal_view(ctx, |terminal, ctx| {
-                let AgentRunPrompt::Local(prompt_str) = task_prompt;
-                if FeatureFlag::AgentView.is_enabled() {
-                    terminal.enter_agent_view(
-                        Some(prompt_str),
-                        None,
-                        AgentViewEntryOrigin::Cli,
-                        ctx,
-                    );
-                } else {
-                    terminal.set_ai_input_mode_with_query(Some(&prompt_str), ctx);
-                    terminal
-                        .input()
-                        .update(ctx, |input, ctx| input.input_enter(ctx));
-                }
-            })
         });
 
         rx

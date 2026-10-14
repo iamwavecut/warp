@@ -177,6 +177,8 @@ fn local_conversation_rename_refreshes_conversation_list_entry_title() {
             conversation_id,
             "local-rename-root",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -321,6 +323,8 @@ fn test_display_status_uses_matching_conversation_for_in_progress_task() {
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -378,6 +382,8 @@ fn test_display_status_uses_active_execution_over_previous_conversation_status()
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -442,6 +448,8 @@ fn test_display_status_updates_when_blocked_conversation_resumes() {
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -522,6 +530,8 @@ fn test_display_status_terminal_task_state_overrides_matching_conversation() {
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -578,6 +588,8 @@ fn test_status_filter_uses_display_status_for_task_backed_conversations() {
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -782,6 +794,8 @@ fn test_get_entries_merges_task_and_local_conversation_by_run_id() {
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -837,6 +851,8 @@ fn test_get_entries_merges_task_and_local_conversation_by_server_token() {
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: Some(server_token.to_string()),
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -1003,6 +1019,8 @@ fn test_resolve_open_action_falls_back_to_local_conversation_for_invalid_session
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -1231,6 +1249,8 @@ fn test_server_token_assignment_updates_copy_link_resolution() {
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -1383,6 +1403,8 @@ fn test_resolve_copy_link_ignores_attached_synced_conversation_token_for_task_wi
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: Some(token.to_string()),
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -1507,6 +1529,8 @@ fn test_get_entries_prefers_task_when_task_id_matches_conversation_run_id() {
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -1568,6 +1592,8 @@ fn test_get_entries_prefers_task_when_server_token_matches() {
             conversation_id,
             "root-task",
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: Some(server_token.to_string()),
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,

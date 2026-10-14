@@ -28,6 +28,9 @@ fn conversation_for_filtered_rename(
                 server_message_data: String::new(),
                 citations: vec![],
                 message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                    author: Default::default(),
+                    origin: Default::default(),
+                    source_message: Default::default(),
                     query: "Original prompt".to_owned(),
                     context: None,
                     referenced_attachments: HashMap::new(),

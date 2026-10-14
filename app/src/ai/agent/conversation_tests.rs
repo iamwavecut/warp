@@ -13,6 +13,36 @@ use crate::ai::blocklist::ResponseStreamId;
 use crate::ai::blocklist::history_model::BlocklistAIHistoryModel;
 use crate::persistence::model::AgentConversationData;
 
+#[test]
+fn local_external_harness_identity_survives_persistence_and_prevents_tool_reexecution() {
+    let mut conversation = AIConversation::new(false, false);
+    conversation.set_driver(super::ConversationDriver::ExternalHarness);
+    conversation.set_local_child_metadata(HashMap::from([("group".into(), "local".into())]));
+    let crate::persistence::ModelEvent::UpdateMultiAgentConversation {
+        conversation_data, ..
+    } = conversation.updated_conversation_event(None, None)
+    else {
+        panic!("expected local persistence event")
+    };
+    let json = serde_json::to_string(&conversation_data).unwrap();
+    let restored = restored_conversation(Some(serde_json::from_str(&json).unwrap()));
+    assert_eq!(
+        restored.driver(),
+        super::ConversationDriver::ExternalHarness
+    );
+    assert_eq!(restored.local_child_metadata()["group"], "local");
+    assert!(!restored.driver().executes_tool_calls_locally());
+    assert!(!restored.driver().owns_turn_lifecycle());
+    assert!(restored.driver().is_persisted_locally());
+    assert!(!restored.is_viewing_shared_session());
+    let legacy: AgentConversationData =
+        serde_json::from_str(r#"{"server_conversation_token":null}"#).unwrap();
+    assert_eq!(
+        restored_conversation(Some(legacy)).driver(),
+        super::ConversationDriver::Native
+    );
+}
+
 fn restored_conversation(conversation_data: Option<AgentConversationData>) -> AIConversation {
     AIConversation::new_restored(
         AIConversationId::new(),
@@ -37,6 +67,9 @@ fn user_query_message(id: &str, request_id: &str, query: &str) -> api::Message {
         server_message_data: String::new(),
         citations: vec![],
         message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+            author: Default::default(),
+            origin: Default::default(),
+            source_message: Default::default(),
             query: query.to_string(),
             context: None,
             referenced_attachments: HashMap::new(),

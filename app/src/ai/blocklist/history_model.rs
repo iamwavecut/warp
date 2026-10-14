@@ -1401,6 +1401,8 @@ impl BlocklistAIHistoryModel {
         };
 
         let conversation_data = AgentConversationData {
+            is_external_harness: false,
+            local_child_metadata: std::collections::HashMap::new(),
             server_conversation_token: None,
             conversation_usage_metadata: Some(source_conversation.usage_metadata()),
             reverted_action_ids,
@@ -1561,6 +1563,8 @@ impl BlocklistAIHistoryModel {
         // Start forked conversations without usage metadata for now; this can
         // be recomputed based on the retained exchanges in a follow-up.
         let conversation_data = AgentConversationData {
+            is_external_harness: false,
+            local_child_metadata: std::collections::HashMap::new(),
             server_conversation_token: None,
             conversation_usage_metadata: None,
             reverted_action_ids,

@@ -976,6 +976,8 @@ impl TerminalView {
         let conversation_id = AIConversationId::new();
 
         let conversation_data = AgentConversationData {
+            is_external_harness: false,
+            local_child_metadata: std::collections::HashMap::new(),
             server_conversation_token: None,
             conversation_usage_metadata: None,
             reverted_action_ids: None,

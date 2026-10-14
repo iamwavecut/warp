@@ -1,5 +1,20 @@
 use super::*;
 #[test]
+fn muse_structured_events_update_local_sessions_without_osc9_fallback() {
+    assert!(is_agent_supported(&CLIAgent::Muse));
+    let mut handler = create_handler(&CLIAgent::Muse).unwrap();
+    let event = handler
+        .try_parse(
+            Some(CLI_AGENT_NOTIFICATION_SENTINEL),
+            r#"{"v":1,"agent":"muse","event":"stop"}"#,
+        )
+        .unwrap();
+    assert_eq!(event.agent, CLIAgent::Muse);
+    assert_eq!(event.event, CLIAgentEventType::Stop);
+    assert!(handler.handle_event(event).is_some());
+    assert!(handler.try_parse(None, "Turn complete").is_none());
+}
+#[test]
 fn grok_prefers_structured_status_over_duplicate_notifications() {
     let mut handler = create_handler(&CLIAgent::Grok).unwrap();
     let fallback = handler.try_parse(None, "Done").unwrap();

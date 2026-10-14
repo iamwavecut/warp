@@ -9,7 +9,7 @@ use futures::future::{AbortHandle, Abortable, Shared};
 use instant::Instant;
 use parking_lot::Mutex;
 use warpui::r#async::executor::Background;
-use warpui::r#async::{BoxFuture, FutureExt as _};
+use warpui::r#async::{BoxFuture, FutureExt as _, Timer};
 
 use super::SavePoint;
 
@@ -33,6 +33,8 @@ pub(crate) async fn save_after_session_update(
 struct SaveState {
     pending: Option<SavePoint>,
     active: Option<ActiveSave>,
+    pending_save_at: Option<Instant>,
+    save_in_progress: bool,
     closing: bool,
     final_deadline: Option<Instant>,
     final_succeeded: Option<bool>,
@@ -53,12 +55,24 @@ impl Drop for ActiveSave {
 /// Runs one save at a time, retaining at most one pending request with `PostTurn` precedence.
 ///
 /// Closing rejects new requests and retains the final deadline and outcome across calls.
-#[derive(Default)]
 pub(crate) struct SaveCoordinator {
     state: Arc<Mutex<SaveState>>,
+    debounce_interval: Duration,
+}
+
+impl Default for SaveCoordinator {
+    fn default() -> Self {
+        Self::new(Duration::from_secs(30))
+    }
 }
 
 impl SaveCoordinator {
+    fn new(debounce_interval: Duration) -> Self {
+        Self {
+            state: Arc::default(),
+            debounce_interval,
+        }
+    }
     /// Starts a runner-scoped worker or coalesces this save point into its pending work.
     pub(crate) fn request(
         &self,
@@ -75,6 +89,7 @@ impl SaveCoordinator {
             (Some(SavePoint::Final), _) | (_, SavePoint::Final) => SavePoint::Final,
             (Some(SavePoint::Periodic) | None, SavePoint::Periodic) => SavePoint::Periodic,
         });
+        state.pending_save_at = Some(Instant::now() + self.debounce_interval);
         if state.active.is_some() {
             return;
         }
@@ -90,10 +105,31 @@ impl SaveCoordinator {
             .spawn(async move {
                 let worker = async {
                     loop {
+                        let delay = {
+                            let mut state = shared_state.lock();
+                            if state.closing || state.pending.is_none() {
+                                state.active = None;
+                                return;
+                            }
+                            state.pending_save_at.map_or(Duration::ZERO, |next| {
+                                next.saturating_duration_since(Instant::now())
+                            })
+                        };
+                        Timer::after(delay).await;
                         let save_point = {
                             let mut state = shared_state.lock();
+                            if state
+                                .pending_save_at
+                                .is_some_and(|next| next > Instant::now())
+                            {
+                                continue;
+                            }
                             match state.pending.take().filter(|_| !state.closing) {
-                                Some(save_point) => save_point,
+                                Some(save_point) => {
+                                    state.pending_save_at = None;
+                                    state.save_in_progress = true;
+                                    save_point
+                                }
                                 None => {
                                     state.active = None;
                                     return;
@@ -103,6 +139,7 @@ impl SaveCoordinator {
                         if let Err(error) = worker_operation(save_point).await {
                             log::warn!("Failed to save local harness state: {error:#}");
                         }
+                        shared_state.lock().save_in_progress = false;
                     }
                 };
                 let _ = Abortable::new(worker, registration).await;
@@ -129,6 +166,12 @@ impl SaveCoordinator {
             }
             state.closing = true;
             state.pending = None;
+            state.pending_save_at = None;
+            if !state.save_in_progress
+                && let Some(active) = &state.active
+            {
+                active.abort.abort();
+            }
             let deadline = *state
                 .final_deadline
                 .get_or_insert_with(|| Instant::now() + budget);

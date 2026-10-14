@@ -237,10 +237,16 @@ impl crate::Actor for Actor {
                         Timer::after(*duration).await;
                     }
                     Action::MouseDown { button, at } => {
-                        screen_mouse.move_to(*at)?;
+                        let at = match at {
+                            Some(at) => {
+                                screen_mouse.move_to(*at)?;
+                                *at
+                            }
+                            None => screen_mouse.current_position()?,
+                        };
                         screen_mouse.focus_window_under_pointer()?;
                         screen_mouse.button_down(button)?;
-                        last_mouse_position = Some(*at);
+                        last_mouse_position = Some(at);
                     }
                     Action::MouseUp { button } => {
                         screen_mouse.button_up(button)?;
@@ -280,8 +286,12 @@ impl crate::Actor for Actor {
                             Timer::after(*duration).await;
                         }
                         Action::MouseDown { button, at } => {
-                            let at =
-                                windows::window_local_to_root(&self.conn, root, window_id, *at)?;
+                            let at = match at {
+                                Some(at) => {
+                                    windows::window_local_to_root(&self.conn, root, window_id, *at)?
+                                }
+                                None => agent_mouse.current_position()?,
+                            };
                             ensure_window_clickable_at(&self.conn, root, window_id, at).await?;
                             // Mirror a real click's focus effect on the agent seat only, so the
                             // window accepts subsequent input while the user's focus stays put.

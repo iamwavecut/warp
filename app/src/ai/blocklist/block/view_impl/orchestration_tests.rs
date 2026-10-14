@@ -286,6 +286,8 @@ fn participant_for_restored_child_run_id_resolves_to_agent_name() {
                 id: 1,
                 conversation_id: child_id.to_string(),
                 conversation_data: serde_json::to_string(&AgentConversationData {
+                    is_external_harness: false,
+                    local_child_metadata: std::collections::HashMap::new(),
                     server_conversation_token: Some("child-token".to_string()),
                     conversation_usage_metadata: None,
                     reverted_action_ids: None,
@@ -315,6 +317,9 @@ fn participant_for_restored_child_run_id_resolves_to_agent_name() {
                     citations: vec![],
                     message: Some(warp_multi_agent_api::message::Message::UserQuery(
                         warp_multi_agent_api::message::UserQuery {
+                            author: Default::default(),
+                            origin: Default::default(),
+                            source_message: Default::default(),
                             query: "Child query".to_string(),
                             context: None,
                             referenced_attachments: Default::default(),
@@ -339,6 +344,8 @@ fn participant_for_restored_child_run_id_resolves_to_agent_name() {
                 id: 2,
                 conversation_id: parent_id.to_string(),
                 conversation_data: serde_json::to_string(&AgentConversationData {
+                    is_external_harness: false,
+                    local_child_metadata: std::collections::HashMap::new(),
                     server_conversation_token: Some("parent-token".to_string()),
                     conversation_usage_metadata: None,
                     reverted_action_ids: None,
@@ -368,6 +375,9 @@ fn participant_for_restored_child_run_id_resolves_to_agent_name() {
                     citations: vec![],
                     message: Some(warp_multi_agent_api::message::Message::UserQuery(
                         warp_multi_agent_api::message::UserQuery {
+                            author: Default::default(),
+                            origin: Default::default(),
+                            source_message: Default::default(),
                             query: "Parent query".to_string(),
                             context: None,
                             referenced_attachments: Default::default(),

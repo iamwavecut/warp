@@ -370,6 +370,8 @@ fn persisted_remote_child_conversation(
             id: 0,
             conversation_id: conversation_id.to_string(),
             conversation_data: serde_json::to_string(&AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: Some("restored-child-token".to_string()),
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,

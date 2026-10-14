@@ -147,6 +147,15 @@ pub async fn clone_repo_for_skill(
     repo: &str,
     working_dir: &Path,
 ) -> Result<(), ResolveSkillError> {
+    if !super::local_checkout::valid_repository_component(org)
+        || !super::local_checkout::valid_repository_component(repo)
+    {
+        return Err(ResolveSkillError::CloneFailed {
+            org: org.to_string(),
+            repo: repo.to_string(),
+            message: "Invalid repository owner or name".to_string(),
+        });
+    }
     let repo_url = format!("https://github.com/{org}/{repo}.git");
     let target_dir = working_dir.join(repo);
 
@@ -177,6 +186,27 @@ pub async fn clone_repo_for_skill(
         target_dir.display()
     );
 
+    if let Some(cache_root) = dirs::cache_dir() {
+        match super::local_checkout::clone_with_mirror(
+            &repo_url,
+            &target_dir,
+            &cache_root.join("WarpOss/git-mirrors"),
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(_) if !target_dir.exists() => {
+                log::warn!("Local Git mirror unavailable; cloning directly without cache")
+            }
+            Err(_) => {
+                return Err(ResolveSkillError::CloneFailed {
+                    org: org.to_string(),
+                    repo: repo.to_string(),
+                    message: "Local checkout failed; partial target preserved".to_string(),
+                });
+            }
+        }
+    }
     let output = AsyncCommand::new("git")
         .arg("clone")
         .arg(&repo_url)

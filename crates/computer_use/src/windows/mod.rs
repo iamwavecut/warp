@@ -132,7 +132,9 @@ impl super::Actor for Actor {
                     Timer::after(*duration).await;
                 }
                 Action::MouseDown { button, at } => {
-                    mouse.move_to(*at)?;
+                    if let Some(at) = at {
+                        mouse.move_to(*at)?;
+                    }
                     mouse.button_down(button)?;
                 }
                 Action::MouseUp { button } => mouse.button_up(button)?,

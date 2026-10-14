@@ -3,6 +3,7 @@
 //!
 //! The `BlocklistAIController` orchestrates state updates and service calls to power the
 //! Agent Mode UI.
+pub(crate) mod external_harness;
 pub mod input_context;
 mod pending_response_streams;
 pub mod response_stream;
@@ -319,6 +320,9 @@ pub struct BlocklistAIController {
     should_refresh_available_llms_on_stream_finish: bool,
 
     shared_session_state: shared_session::SharedSessionState,
+    native_prompt_conversation_id: Option<AIConversationId>,
+    external_harness_prompt_sink:
+        Option<async_channel::Sender<external_harness::ExternalHarnessPrompt>>,
 
     /// Ambient agent task ID attached to this controller. This is a property of the controller, and not an individual
     /// conversation, because the ambient agent task driver owns the entire Warp window working on a task, and any
@@ -455,7 +459,7 @@ impl BlocklistAIController {
                 .conversation(conversation_id)
                 .map(|conversation| {
                     (
-                        conversation.is_viewing_shared_session(),
+                        !conversation.driver().owns_turn_lifecycle(),
                         conversation.is_entirely_passive_code_diff(),
                     )
                 })
@@ -559,7 +563,7 @@ impl BlocklistAIController {
             let Some(conversation) = history.as_ref(ctx).conversation(conversation_id) else {
                 return;
             };
-            if conversation.is_viewing_shared_session() {
+            if !conversation.driver().owns_turn_lifecycle() {
                 return;
             }
             if conversation.status().is_in_progress() {
@@ -589,6 +593,8 @@ impl BlocklistAIController {
             terminal_surface_id,
             should_refresh_available_llms_on_stream_finish: false,
             shared_session_state: shared_session::SharedSessionState::default(),
+            native_prompt_conversation_id: None,
+            external_harness_prompt_sink: None,
             ambient_agent_task_id: None,
             attachments_download_dir: None,
             pending_auto_resume_handles: HashMap::new(),
@@ -623,6 +629,22 @@ impl BlocklistAIController {
 
         let query = input_query.query().to_owned();
         let explicit_conversation_id = explicit_conversation_id(&input_query.which_task);
+        if let Some(id) = explicit_conversation_id
+            && BlocklistAIHistoryModel::as_ref(ctx).conversation(&id)
+                .is_some_and(|conversation| conversation.driver() == crate::ai::agent::conversation_driver::ConversationDriver::ExternalHarness) {
+            if self.native_prompt_conversation_id != Some(id) {
+                return Err(anyhow::anyhow!("The local ACP session is not running; start a new local ACP run"));
+            }
+            let Some(sink) = &self.external_harness_prompt_sink else {
+                return Err(anyhow::anyhow!("The local ACP session is not running; start a new local ACP run"));
+            };
+            sink.try_send(external_harness::ExternalHarnessPrompt {
+                text: query,
+                attachments: input_query.additional_attachments.into_values().collect(),
+            })
+            .map_err(|_| anyhow::anyhow!("The local harness prompt channel is closed"))?;
+            return Ok(());
+        }
         let (conversation_id, task_id) = match input_query.which_task {
             WhichTask::NewConversation => {
                 let conversation = self.start_new_conversation_for_request(ctx);
@@ -2378,6 +2400,151 @@ impl BlocklistAIController {
             .try_cancel_stream(response_stream_id, reason, ctx)
     }
 
+    pub(super) fn apply_response_event(
+        &mut self,
+        stream_id: &ResponseStreamId,
+        conversation_id: AIConversationId,
+        event: warp_multi_agent_api::ResponseEvent,
+        did_input_contain_user_query: Option<bool>,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let stream_id = stream_id.clone();
+        let history_model = BlocklistAIHistoryModel::handle(ctx);
+        let did_input_contain_user_query = did_input_contain_user_query.unwrap_or_else(|| {
+            history_model
+                .as_ref(ctx)
+                .conversation(&conversation_id)
+                .is_some_and(|conversation| {
+                    conversation
+                        .new_exchange_ids_for_response(&stream_id)
+                        .filter_map(|id| conversation.exchange_with_id(id))
+                        .any(|exchange| exchange.has_user_query())
+                })
+        });
+        let Some(event) = event.r#type else {
+            return;
+        };
+        match event {
+            warp_multi_agent_api::response_event::Type::Init(init_event) => {
+                history_model.update(ctx, |history_model, ctx| {
+                    history_model.initialize_output_for_response_stream(
+                        &stream_id,
+                        conversation_id,
+                        self.terminal_surface_id,
+                        init_event,
+                        ctx,
+                    );
+
+                    // Clear the forked_from token after the first Init event.
+                    // For forked conversations, we only need to send this once so
+                    // viewers can update their conversation's server token. After
+                    // that, the viewer's conversation uses the new token directly.
+                    if let Some(conversation) = history_model.conversation_mut(&conversation_id) {
+                        conversation.clear_forked_from_server_conversation_token();
+                    }
+                });
+            }
+            warp_multi_agent_api::response_event::Type::Finished(finished_event) => {
+                if self.failed_client_action_streams.contains(&stream_id) {
+                    return;
+                }
+                self.handle_response_stream_finished(
+                    &stream_id,
+                    finished_event,
+                    conversation_id,
+                    did_input_contain_user_query,
+                    ctx,
+                );
+            }
+            warp_multi_agent_api::response_event::Type::ClientActions(actions) => {
+                let client_actions = actions.actions;
+                let is_local_compaction = client_actions.iter().any(|action| {
+                                     matches!(
+                                         action.action.as_ref(),
+                                         Some(
+                                             warp_multi_agent_api::client_action::Action::MoveMessagesToNewTask(
+                                                 move_action
+                                             )
+                                         ) if move_action.new_task.as_ref().is_some_and(
+                                             crate::ai::local_compaction::LocalCompactionMetadata::is_local_compaction_task
+                                         )
+                                     )
+                                 });
+                let apply_result = history_model.update(ctx, |history_model, ctx| {
+                    history_model.apply_client_actions(
+                        &stream_id,
+                        client_actions,
+                        conversation_id,
+                        self.terminal_surface_id,
+                        ctx,
+                    )
+                });
+                if let Err(e) = apply_result {
+                    if is_local_compaction {
+                        let error_message =
+                            format!("Failed to commit local conversation update: {e}");
+                        self.failed_client_action_streams.insert(stream_id.clone());
+                        history_model.update(ctx, |history_model, ctx| {
+                            history_model.mark_response_stream_completed_with_error(
+                                RenderableAIError::Other {
+                                    error_message,
+                                    will_attempt_resume: false,
+                                    waiting_for_network: false,
+                                },
+                                &stream_id,
+                                conversation_id,
+                                self.terminal_surface_id,
+                                ctx,
+                            );
+                        });
+                    }
+                    report_error!(
+                        anyhow::Error::new(e)
+                            .context("Failed to apply client actions to conversation")
+                    );
+                }
+            }
+        }
+
+        self.record_external_tool_results(&stream_id, conversation_id, ctx);
+    }
+
+    fn record_external_tool_results(
+        &mut self,
+        stream_id: &ResponseStreamId,
+        conversation_id: AIConversationId,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let history = BlocklistAIHistoryModel::as_ref(ctx);
+        let Some(conversation) = history.conversation(&conversation_id) else {
+            return;
+        };
+        if conversation.driver().executes_tool_calls_locally() {
+            return;
+        }
+        let results = conversation
+            .new_exchange_ids_for_response(stream_id)
+            .filter_map(|id| conversation.exchange_with_id(id))
+            .flat_map(|exchange| {
+                exchange
+                    .input
+                    .iter()
+                    .filter_map(|input| input.action_result().cloned())
+            })
+            .collect_vec();
+        for result in results {
+            if self
+                .action_model
+                .as_ref(ctx)
+                .get_action_result(&result.id)
+                .is_none()
+            {
+                self.action_model.update(ctx, |model, ctx| {
+                    model.apply_finished_action_result(conversation_id, result, ctx)
+                });
+            }
+        }
+    }
     fn handle_response_stream_event(
         &mut self,
         did_input_contain_user_query: bool,
@@ -2405,130 +2572,13 @@ impl BlocklistAIController {
                 };
                 let history_model = BlocklistAIHistoryModel::handle(ctx);
                 match event {
-                    Ok(event) => {
-                        // If this controller is part of a shared session, forward the entire response event to viewers first.
-                        if FeatureFlag::AgentSharedSessions.is_enabled() {
-                            let mut model = self.terminal_model.lock();
-                            if model.shared_session_status().is_sharer() {
-                                // Get the participant who initiated this response, falling back to the sharer if needed.
-                                let participant_id = self
-                                    .get_current_response_initiator()
-                                    .or_else(|| self.get_sharer_participant_id());
-
-                                // For forked conversations (e.g. when loading from cloud), include
-                                // the original conversation token so viewers can link the new
-                                // server-assigned token to their existing conversation.
-                                //
-                                // This token is cleared after the first Init event (see below),
-                                // so it's only sent once per forked conversation.
-                                let forked_from_token = history_model
-                                    .as_ref(ctx)
-                                    .conversation(&conversation_id)
-                                    .and_then(|conv| {
-                                        conv.forked_from_server_conversation_token()
-                                            .map(|t| t.as_str().to_string())
-                                    });
-
-                                model.send_agent_response_for_shared_session(
-                                    &event,
-                                    participant_id,
-                                    forked_from_token,
-                                );
-                            }
-                        }
-                        let Some(event) = event.r#type else {
-                            return;
-                        };
-                        match event {
-                            warp_multi_agent_api::response_event::Type::Init(init_event) => {
-                                history_model.update(ctx, |history_model, ctx| {
-                                    history_model.initialize_output_for_response_stream(
-                                        &stream_id,
-                                        conversation_id,
-                                        self.terminal_surface_id,
-                                        init_event,
-                                        ctx,
-                                    );
-
-                                    // Clear the forked_from token after the first Init event.
-                                    // For forked conversations, we only need to send this once so
-                                    // viewers can update their conversation's server token. After
-                                    // that, the viewer's conversation uses the new token directly.
-                                    if let Some(conversation) =
-                                        history_model.conversation_mut(&conversation_id)
-                                    {
-                                        conversation.clear_forked_from_server_conversation_token();
-                                    }
-                                });
-                            }
-                            warp_multi_agent_api::response_event::Type::Finished(
-                                finished_event,
-                            ) => {
-                                if self.failed_client_action_streams.contains(&stream_id) {
-                                    return;
-                                }
-                                self.handle_response_stream_finished(
-                                    &stream_id,
-                                    finished_event,
-                                    conversation_id,
-                                    did_input_contain_user_query,
-                                    ctx,
-                                );
-                            }
-                            warp_multi_agent_api::response_event::Type::ClientActions(actions) => {
-                                let client_actions = actions.actions;
-                                let is_local_compaction = client_actions.iter().any(|action| {
-                                    matches!(
-                                        action.action.as_ref(),
-                                        Some(
-                                            warp_multi_agent_api::client_action::Action::MoveMessagesToNewTask(
-                                                move_action
-                                            )
-                                        ) if move_action.new_task.as_ref().is_some_and(
-                                            crate::ai::local_compaction::LocalCompactionMetadata::is_local_compaction_task
-                                        )
-                                    )
-                                });
-                                let apply_result =
-                                    history_model.update(ctx, |history_model, ctx| {
-                                        history_model.apply_client_actions(
-                                            &stream_id,
-                                            client_actions,
-                                            conversation_id,
-                                            self.terminal_surface_id,
-                                            ctx,
-                                        )
-                                    });
-                                if let Err(e) = apply_result {
-                                    if is_local_compaction {
-                                        let error_message = format!(
-                                            "Failed to commit local conversation update: {e}"
-                                        );
-                                        self.failed_client_action_streams.insert(stream_id.clone());
-                                        history_model.update(ctx, |history_model, ctx| {
-                                            history_model
-                                                .mark_response_stream_completed_with_error(
-                                                    RenderableAIError::Other {
-                                                        error_message,
-                                                        will_attempt_resume: false,
-                                                        waiting_for_network: false,
-                                                    },
-                                                    &stream_id,
-                                                    conversation_id,
-                                                    self.terminal_surface_id,
-                                                    ctx,
-                                                );
-                                        });
-                                    }
-                                    report_error!(
-                                        anyhow::Error::new(e).context(
-                                            "Failed to apply client actions to conversation"
-                                        )
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    Ok(event) => self.apply_response_event(
+                        &stream_id,
+                        conversation_id,
+                        event,
+                        Some(did_input_contain_user_query),
+                        ctx,
+                    ),
                     Err(e) => {
                         let mut renderable_error: RenderableAIError = e.as_ref().into();
                         if let RenderableAIError::Other {
@@ -2762,6 +2812,14 @@ impl BlocklistAIController {
 
         let history_model = BlocklistAIHistoryModel::handle(ctx);
         match finished_event.reason {
+            Some(warp_multi_agent_api::response_event::stream_finished::Reason::ChatgptSubscriptionError(_)) => {
+                history_model.update(ctx, |history_model, ctx| {
+                    history_model.mark_response_stream_completed_with_error(
+                        RenderableAIError::Other { error_message: "Unsupported provider response".into(), will_attempt_resume: false, waiting_for_network: false },
+                        stream_id, conversation_id, self.terminal_surface_id, ctx,
+                    );
+                });
+            }
             Some(warp_multi_agent_api::response_event::stream_finished::Reason::Done(_)) | None => {
                 history_model.update(ctx, |history_model, ctx| {
                     history_model.mark_response_stream_completed_successfully(

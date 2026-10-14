@@ -241,6 +241,7 @@ pub(crate) fn plugin_manager_for_with_shell(
         | CLIAgent::CursorCli
         | CLIAgent::Hermes
         | CLIAgent::Kiro
+        | CLIAgent::Muse
         | CLIAgent::Goose
         | CLIAgent::Vibe
         | CLIAgent::Antigravity

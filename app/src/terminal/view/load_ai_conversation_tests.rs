@@ -235,6 +235,9 @@ fn user_query_with_pwd(id: &str, request_id: &str, query: &str, pwd: &str) -> ap
         server_message_data: String::new(),
         citations: vec![],
         message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+            author: Default::default(),
+            origin: Default::default(),
+            source_message: Default::default(),
             query: query.to_string(),
             context: Some(api::InputContext {
                 directory: Some(api::input_context::Directory {

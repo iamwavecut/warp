@@ -443,7 +443,10 @@ impl TryFrom<api::message::tool_call::UseComputer> for AIAgentActionType {
                     use_computer::action::Type::MouseDown(mouse_down) => {
                         Ok(computer_use::Action::MouseDown {
                             button: to_computer_use_button(mouse_down.button()),
-                            at: coordinates_to_vec(mouse_down.at.as_ref())?,
+                            at: mouse_down
+                                .at
+                                .as_ref()
+                                .map(|at| computer_use::Vector2I::new(at.x, at.y)),
                         })
                     }
                     use_computer::action::Type::MouseUp(mouse_up) => {

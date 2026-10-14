@@ -126,6 +126,7 @@ fn restored_runs_are_stopped_until_controller_reclaims_them() {
     let mut registry = LocalAgentRegistry::new();
     let restored = registry
         .restore_stopped(RestoredLocalAgent {
+            metadata: std::collections::HashMap::new(),
             run_id: "persisted-run".to_string(),
             conversation_id: AIConversationId::new(),
             terminal_surface_id: None,
@@ -202,6 +203,7 @@ fn restored_topology_is_rebuilt_in_persisted_order_when_child_arrives_first() {
     let child_conversation_id = AIConversationId::new();
     registry
         .restore_stopped(RestoredLocalAgent {
+            metadata: std::collections::HashMap::new(),
             run_id: "child-run".to_string(),
             conversation_id: child_conversation_id,
             terminal_surface_id: None,
@@ -213,6 +215,7 @@ fn restored_topology_is_rebuilt_in_persisted_order_when_child_arrives_first() {
         .unwrap();
     registry
         .restore_stopped(RestoredLocalAgent {
+            metadata: std::collections::HashMap::new(),
             run_id: "parent-run".to_string(),
             conversation_id: parent_conversation_id,
             terminal_surface_id: None,

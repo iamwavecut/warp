@@ -159,6 +159,7 @@ impl LocalAgentRegistration {
 /// are always inserted as [`LocalAgentStatus::Stopped`].
 #[derive(Debug, Clone)]
 pub struct RestoredLocalAgent {
+    pub metadata: HashMap<String, String>,
     pub run_id: String,
     pub conversation_id: AIConversationId,
     pub terminal_surface_id: Option<EntityId>,
@@ -171,6 +172,7 @@ pub struct RestoredLocalAgent {
 /// A snapshot returned to callers after registration or lookup.
 #[derive(Debug, Clone)]
 pub struct LocalAgentRun {
+    pub metadata: HashMap<String, String>,
     pub run_id: String,
     pub conversation_id: AIConversationId,
     pub terminal_surface_id: Option<EntityId>,
@@ -439,6 +441,7 @@ impl LocalAgentRegistry {
                                     conversation.parent_agent_id().map(ToString::to_string)
                                 });
                             Some(RestoredLocalAgent {
+                                metadata: conversation.local_child_metadata().clone(),
                                 run_id,
                                 conversation_id: *conversation_id,
                                 terminal_surface_id: Some(*terminal_surface_id),
@@ -514,6 +517,18 @@ impl LocalAgentRegistry {
 
     pub fn get(&self, run_id: &str) -> Option<&LocalAgentRun> {
         self.runs.get(run_id)
+    }
+
+    pub fn set_local_metadata(
+        &mut self,
+        conversation_id: AIConversationId,
+        metadata: HashMap<String, String>,
+    ) {
+        if let Some(run_id) = self.conversation_to_run.get(&conversation_id)
+            && let Some(run) = self.runs.get_mut(run_id)
+        {
+            run.metadata = metadata;
+        }
     }
 
     pub fn run_id_for_conversation(&self, conversation_id: AIConversationId) -> Option<&str> {
@@ -722,6 +737,7 @@ impl LocalAgentRegistry {
         let run = LocalAgentRun {
             run_id: run_id.clone(),
             conversation_id: request.conversation_id,
+            metadata: HashMap::new(),
             terminal_surface_id: request.terminal_surface_id,
             pane_id: request.pane_id,
             parent_run_id: request.parent_run_id.clone(),
@@ -812,6 +828,7 @@ impl LocalAgentRegistry {
         let run = LocalAgentRun {
             run_id: run_id.clone(),
             conversation_id,
+            metadata: HashMap::new(),
             terminal_surface_id,
             pane_id,
             parent_run_id: parent_run_id.clone(),
@@ -875,6 +892,7 @@ impl LocalAgentRegistry {
             .unwrap_or(0);
         let run = LocalAgentRun {
             run_id: restored.run_id.clone(),
+            metadata: restored.metadata,
             conversation_id: restored.conversation_id,
             terminal_surface_id: restored.terminal_surface_id,
             pane_id: restored.pane_id,

@@ -407,3 +407,11 @@ fn test_rich_input_submit_strategy_for_hermes_uses_bracketed_paste() {
         RichInputSubmitStrategy::BracketedPaste
     );
 }
+
+#[test]
+fn muse_uses_bracketed_paste_for_terminal_submission() {
+    assert_eq!(
+        rich_input_submit_strategy(CLIAgent::Muse),
+        RichInputSubmitStrategy::BracketedPaste
+    );
+}

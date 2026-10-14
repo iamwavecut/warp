@@ -813,6 +813,9 @@ mod tests {
             id,
             request_id,
             api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: text.to_string(),
                 context: None,
                 referenced_attachments: Default::default(),

@@ -20,6 +20,9 @@ fn restored_local_conversation_for_rename(conversation_id: AIConversationId) -> 
                 citations: vec![],
                 message: Some(warp_multi_agent_api::message::Message::UserQuery(
                     warp_multi_agent_api::message::UserQuery {
+                        author: Default::default(),
+                        origin: Default::default(),
+                        source_message: Default::default(),
                         query: "Original prompt".to_owned(),
                         context: None,
                         referenced_attachments: HashMap::new(),

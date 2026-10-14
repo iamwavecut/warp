@@ -2071,6 +2071,12 @@ impl TerminalModel {
         self.set_title(None);
     }
 
+    pub(crate) fn prepare_local_shell_recovery(&mut self, shell_type: ShellType) {
+        self.handled_exit = false;
+        self.lifecycle_coordinator = BlockLifecycleCoordinator::default();
+        self.set_login_shell_spawned(shell_type);
+    }
+
     pub fn get_pending_session_info(&self) -> &Option<SessionInfo> {
         &self.pending_session_info
     }

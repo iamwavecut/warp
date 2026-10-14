@@ -197,7 +197,7 @@ impl HarnessRunner for GeminiHarnessRunner {
     }
 }
 
-fn prepare_gemini_environment_config(
+pub(super) fn prepare_gemini_environment_config(
     working_dir: &Path,
     system_prompt: Option<&str>,
 ) -> Result<()> {

@@ -21,6 +21,7 @@ fn make_request_with_skills(
     skills: Vec<SkillReference>,
 ) -> RunAgentsRequest {
     RunAgentsRequest {
+        metadata: std::collections::HashMap::new(),
         summary: "summary".to_string(),
         base_prompt: "base".to_string(),
         skills,
@@ -28,6 +29,7 @@ fn make_request_with_skills(
         harness_type: harness.to_string(),
         execution_mode: mode,
         agent_run_configs: vec![RunAgentsAgentRunConfig {
+            metadata: std::collections::HashMap::new(),
             name: "child".to_string(),
             prompt: "do work".to_string(),
             title: "Child agent".to_string(),
@@ -42,6 +44,7 @@ fn make_edit_state_with_orch_fields(
 ) -> RunAgentsEditState {
     let request = make_request(harness, mode);
     RunAgentsEditState {
+        metadata: std::collections::HashMap::new(),
         orch: OrchestrationEditState::from_run_agents_fields(
             &request.model_id,
             &request.harness_type,

@@ -195,6 +195,7 @@ pub enum AIAgentActionType {
 /// fully-resolved instance only.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RunAgentsRequest {
+    pub metadata: std::collections::HashMap<String, String>,
     pub summary: String,
     pub base_prompt: String,
     pub skills: Vec<SkillReference>,
@@ -223,6 +224,7 @@ impl RunAgentsExecutionMode {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct RunAgentsAgentRunConfig {
+    pub metadata: std::collections::HashMap<String, String>,
     pub name: String,
     pub prompt: String,
     pub title: String,

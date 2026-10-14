@@ -741,7 +741,7 @@ impl AIDocumentModel {
         ctx: &warpui::AppContext,
     ) -> Option<String> {
         let doc = self.documents.get(id)?;
-        Some(doc.editor.as_ref(ctx).markdown_unescaped(ctx))
+        Some(doc.editor.as_ref(ctx).markdown_copyable(ctx))
     }
 
     /// Apply persisted content from SQLite on top of conversation-restored content.

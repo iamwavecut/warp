@@ -26,6 +26,7 @@ use std::collections::HashSet;
 use std::{collections::HashMap, fmt::Display};
 use warp_cli::agent::Harness;
 
+pub use super::conversation_driver::ConversationDriver;
 use super::task_store::TaskStore;
 use uuid::Uuid;
 use vec1::{Size0Error, Vec1};
@@ -135,6 +136,8 @@ pub(crate) struct UpdateConversationTitleError;
 /// An Agent Mode conversation.
 #[derive(Debug, Clone)]
 pub struct AIConversation {
+    is_external_harness: bool,
+    local_child_metadata: HashMap<String, String>,
     /// Unique ID for this conversation.
     id: AIConversationId,
 
@@ -291,6 +294,8 @@ impl AIConversation {
             code_review: None,
             is_viewing_shared_session,
             is_cli_agent_transcript,
+            is_external_harness: false,
+            local_child_metadata: HashMap::new(),
             todo_lists: vec![],
             status: ConversationStatus::InProgress,
             status_error: None,
@@ -350,6 +355,13 @@ impl AIConversation {
         tasks: Vec<api::Task>,
         conversation_data: Option<AgentConversationData>,
     ) -> Result<Self, RestoreConversationError> {
+        let is_external_harness = conversation_data
+            .as_ref()
+            .is_some_and(|data| data.is_external_harness);
+        let local_child_metadata = conversation_data
+            .as_ref()
+            .map(|data| data.local_child_metadata.clone())
+            .unwrap_or_default();
         let (task_store, todo_lists, status) = if tasks.is_empty() {
             // Bypass `derive_status_from_root_task`: it would return `Success`
             // for a root with no exchanges, silently misclassifying a restored
@@ -526,6 +538,8 @@ impl AIConversation {
             id,
             is_viewing_shared_session: false,
             is_cli_agent_transcript: false,
+            is_external_harness,
+            local_child_metadata,
             task_store,
             status,
             status_error: None,
@@ -579,6 +593,34 @@ impl AIConversation {
 
     pub fn is_viewing_shared_session(&self) -> bool {
         self.is_viewing_shared_session
+    }
+
+    pub fn driver(&self) -> ConversationDriver {
+        if self.is_external_harness {
+            ConversationDriver::ExternalHarness
+        } else if self.is_viewing_shared_session {
+            ConversationDriver::SharedSessionViewer
+        } else if self.is_cli_agent_transcript {
+            ConversationDriver::CliAgentTranscript
+        } else if self.is_remote_child {
+            ConversationDriver::RemoteChild
+        } else {
+            ConversationDriver::Native
+        }
+    }
+
+    pub fn set_driver(&mut self, driver: ConversationDriver) {
+        self.is_external_harness = driver == ConversationDriver::ExternalHarness;
+        self.is_viewing_shared_session = driver == ConversationDriver::SharedSessionViewer;
+        self.is_cli_agent_transcript = driver == ConversationDriver::CliAgentTranscript;
+        self.is_remote_child = driver == ConversationDriver::RemoteChild;
+    }
+
+    pub fn local_child_metadata(&self) -> &HashMap<String, String> {
+        &self.local_child_metadata
+    }
+    pub fn set_local_child_metadata(&mut self, metadata: HashMap<String, String>) {
+        self.local_child_metadata = metadata;
     }
 
     pub fn set_is_viewing_shared_session(&mut self, is_viewing_shared_session: bool) {
@@ -1978,7 +2020,7 @@ impl AIConversation {
             task_id,
         } in added_exchanges.into_iter()
         {
-            let is_viewing_shared_session = self.is_viewing_shared_session;
+            let is_viewing_shared_session = self.driver().reconstructs_inputs_from_messages();
             let task = self
                 .task_store
                 .get(&task_id)
@@ -2101,7 +2143,7 @@ impl AIConversation {
             task_id,
         } in added_exchanges.into_iter()
         {
-            let is_viewing_shared_session = self.is_viewing_shared_session;
+            let is_viewing_shared_session = self.driver().reconstructs_inputs_from_messages();
             let task = self
                 .task_store
                 .get(&task_id)
@@ -2168,7 +2210,7 @@ impl AIConversation {
             .get(task_id)
             .ok_or(UpdateConversationError::TaskNotFound)?
             .clone();
-        let is_viewing_shared_session = self.is_viewing_shared_session;
+        let is_viewing_shared_session = self.driver().reconstructs_inputs_from_messages();
         let exchange = self.get_exchange_to_update(exchange_id)?;
         let AIAgentOutputStatus::Streaming {
             output: Some(output),
@@ -2333,7 +2375,7 @@ impl AIConversation {
                             // sent on this client). Once we reconstruct these inputs, we will insert them
                             // to mimic the normal conversation flow. (If this is not a shared session, the
                             // exchange inputs will already be populated).
-                            self.is_viewing_shared_session,
+                            self.driver().reconstructs_inputs_from_messages(),
                         );
 
                         // Subtasks can come pre-populated with messages (for example: an advice subagent
@@ -2355,7 +2397,7 @@ impl AIConversation {
                             Vec::new()
                         };
 
-                        if self.is_viewing_shared_session {
+                        if self.driver().reconstructs_inputs_from_messages() {
                             // shared session viewers should move the current stream's new exchange from the root to the
                             // newly created subtask so there's exactly one "new" exchange and it
                             // belongs to the subtask (mirrors sharer semantics after optimistic upgrade).
@@ -2558,7 +2600,7 @@ impl AIConversation {
                         Some(api::message::Message::ToolCallResult(tcr)) => {
                             // Shared-session viewers do not own temp directories created by
                             // conversation search subagents.
-                            if !self.is_viewing_shared_session
+                            if self.driver().owns_turn_lifecycle()
                                 && matches!(
                                     &tcr.result,
                                     Some(api::message::tool_call_result::Result::Subagent(_))
@@ -2655,7 +2697,7 @@ impl AIConversation {
                     // sent on this client). Once we reconstruct these inputs, we will insert them
                     // to mimic the normal conversation flow. (If this is not a shared session, the
                     // exchange inputs will already be populated).
-                    self.is_viewing_shared_session,
+                    self.driver().reconstructs_inputs_from_messages(),
                 )?;
 
                 self.task_store.insert(task);
@@ -2737,7 +2779,7 @@ impl AIConversation {
 
                 let current_todo_list = self.todo_lists.last().cloned();
                 let current_comment_state = self.code_review.as_ref().cloned();
-                let is_viewing_shared_session = self.is_viewing_shared_session;
+                let is_viewing_shared_session = self.driver().reconstructs_inputs_from_messages();
                 // In shared-session viewers, we have to reconstruct what the original user input
                 // was using subsequent conversation messages (as the original input was not
                 // sent on this client). Once we reconstruct these inputs, we will insert them
@@ -3207,6 +3249,8 @@ impl AIConversation {
                 .filter_map(|task| task.source_for_persistence())
                 .collect(),
             conversation_data: AgentConversationData {
+                is_external_harness: self.is_external_harness,
+                local_child_metadata: self.local_child_metadata.clone(),
                 server_conversation_token: self
                     .server_conversation_token
                     .clone()

@@ -2524,6 +2524,7 @@ pub struct TerminalView {
 
     bootstrap_start: Option<Instant>,
     is_login_shell_bootstrapped: bool,
+    local_recovery_manager: Option<WeakModelHandle<Box<dyn crate::terminal::TerminalManager>>>,
     /// Set when a pending command is submitted to the shell. Cleared on the
     /// next `AfterBlockCompleted`, at which point `Event::PendingCommandCompleted`
     /// is emitted so subscribers know the command has finished.
@@ -4170,6 +4171,7 @@ impl TerminalView {
             last_hover_fragment_boundary: None,
             bootstrap_start: None,
             is_login_shell_bootstrapped: false,
+            local_recovery_manager: None,
             awaiting_pending_command_completion: false,
             pending_command_queue: Default::default(),
             enter_agent_view_after_pending_commands: false,
@@ -10981,6 +10983,50 @@ impl TerminalView {
                 ctx.request_user_attention();
             }
             ModelEvent::Exit { reason } => {
+                let native_agent = BlocklistAIHistoryModel::as_ref(ctx)
+                    .active_conversation(self.view_id)
+                    .map(|conversation| {
+                        (
+                            conversation.id(),
+                            conversation.status().is_in_progress(),
+                            conversation.driver(),
+                        )
+                    });
+                let host_local = matches!(
+                    self.model.lock().active_shell_launch_data(),
+                    Some(
+                        crate::terminal::ShellLaunchData::Executable { .. }
+                            | crate::terminal::ShellLaunchData::MSYS2 { .. }
+                    )
+                );
+                if matches!(
+                    reason,
+                    crate::terminal::model::terminal_model::ExitReason::ShellProcessExited
+                ) && let Some((conversation_id, running, driver)) = native_agent
+                    && crate::terminal::local_shell_recovery::local_shell_recovery_allowed(
+                        host_local,
+                        self.is_login_shell_bootstrapped,
+                        running,
+                        driver,
+                    )
+                    && let Some(manager) = self
+                        .local_recovery_manager
+                        .as_ref()
+                        .and_then(|manager| manager.upgrade(ctx))
+                {
+                    let working_dir = self.pwd().map(PathBuf::from);
+                    self.ai_controller.update(ctx, |controller, ctx| {
+                        controller.fail_conversation_due_to_shell_exit(conversation_id, ctx);
+                    });
+                    if manager.update(ctx, |manager, ctx| {
+                        manager.recover_local_shell(working_dir, ctx)
+                    }) {
+                        self.is_login_shell_bootstrapped = false;
+                        self.pending_command_queue.clear();
+                        self.awaiting_pending_command_completion = false;
+                        return;
+                    }
+                }
                 // If the pty spawn has failed, we've already inserted a banner.
                 if !self.pty_spawn_failed {
                     let shell_detail = self.shell_detail.take().unwrap_or("shell".to_owned());
@@ -22125,6 +22171,13 @@ impl TerminalView {
             .as_ref()
             .and_then(BlockMetadata::current_working_directory)
             .map(|pwd| pwd.to_string())
+    }
+
+    pub(super) fn set_local_recovery_manager(
+        &mut self,
+        manager: WeakModelHandle<Box<dyn crate::terminal::TerminalManager>>,
+    ) {
+        self.local_recovery_manager = Some(manager);
     }
 
     pub fn pwd_if_local(&self, ctx: &AppContext) -> Option<String> {

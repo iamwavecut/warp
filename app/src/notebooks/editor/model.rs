@@ -564,6 +564,10 @@ impl NotebooksEditorModel {
         self.content.as_ref(ctx).markdown_unescaped()
     }
 
+    pub fn markdown_copyable(&self, ctx: &AppContext) -> String {
+        self.content.as_ref(ctx).markdown_copyable()
+    }
+
     /// Returns a debug representation of the buffer contents.
     pub fn debug_buffer(&self, app: &impl ModelAsRef) -> String {
         self.content.as_ref(app).debug()

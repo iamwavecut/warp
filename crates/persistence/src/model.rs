@@ -1014,6 +1014,10 @@ fn is_false(value: &bool) -> bool {
 // Serializes to `conversation_data` column in `agent_conversations`.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AgentConversationData {
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub local_child_metadata: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_external_harness: bool,
     pub server_conversation_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_usage_metadata: Option<ConversationUsageMetadata>,
@@ -1097,25 +1101,25 @@ pub struct ModelTokenUsage {
     pub model_id: String,
     /// Alias for backward compat: old persisted data used `total_tokens` for warp usage.
     #[serde(default, alias = "total_tokens")]
-    pub warp_tokens: u32,
+    pub warp_tokens: u64,
     #[serde(default)]
-    pub byok_tokens: u32,
+    pub byok_tokens: u64,
     #[serde(default)]
-    pub custom_endpoint_tokens: u32,
+    pub custom_endpoint_tokens: u64,
     #[serde(default)]
-    pub warp_token_usage_by_category: HashMap<TokenUsageCategory, u32>,
+    pub warp_token_usage_by_category: HashMap<TokenUsageCategory, u64>,
     #[serde(default)]
-    pub byok_token_usage_by_category: HashMap<TokenUsageCategory, u32>,
+    pub byok_token_usage_by_category: HashMap<TokenUsageCategory, u64>,
     #[serde(default)]
-    pub custom_endpoint_token_usage_by_category: HashMap<TokenUsageCategory, u32>,
+    pub custom_endpoint_token_usage_by_category: HashMap<TokenUsageCategory, u64>,
 }
 
 impl ModelTokenUsage {
     #[allow(deprecated)]
     fn to_proto_usage(
         &self,
-        total_tokens: u32,
-        usage_by_category: &HashMap<TokenUsageCategory, u32>,
+        total_tokens: u64,
+        usage_by_category: &HashMap<TokenUsageCategory, u64>,
     ) -> Option<(String, stream_finished::ModelTokenUsage)> {
         if total_tokens == 0 {
             return None;
@@ -1503,6 +1507,8 @@ mod tests {
             orchestration_harness_type: Some("claude".to_string()),
             parent_conversation_id: None,
             is_remote_child: false,
+            is_external_harness: false,
+            local_child_metadata: Default::default(),
             root_task_is_optimistic: None,
             run_id: None,
             autoexecute_override: None,
@@ -1540,6 +1546,8 @@ mod tests {
             orchestration_harness_type: None,
             parent_conversation_id: None,
             is_remote_child: true,
+            is_external_harness: false,
+            local_child_metadata: Default::default(),
             root_task_is_optimistic: None,
             run_id: None,
             autoexecute_override: None,
@@ -1564,6 +1572,8 @@ mod tests {
             orchestration_harness_type: None,
             parent_conversation_id: None,
             is_remote_child: false,
+            is_external_harness: false,
+            local_child_metadata: Default::default(),
             root_task_is_optimistic: Some(true),
             run_id: None,
             autoexecute_override: None,
@@ -1600,6 +1610,8 @@ mod tests {
             orchestration_harness_type: None,
             parent_conversation_id: None,
             is_remote_child: false,
+            is_external_harness: false,
+            local_child_metadata: Default::default(),
             root_task_is_optimistic: None,
             run_id: None,
             autoexecute_override: None,
@@ -1626,6 +1638,8 @@ mod tests {
             orchestration_harness_type: None,
             parent_conversation_id: None,
             is_remote_child: false,
+            is_external_harness: false,
+            local_child_metadata: Default::default(),
             root_task_is_optimistic: None,
             run_id: None,
             autoexecute_override: None,
@@ -1650,6 +1664,8 @@ mod tests {
             orchestration_harness_type: None,
             parent_conversation_id: None,
             is_remote_child: false,
+            is_external_harness: false,
+            local_child_metadata: Default::default(),
             root_task_is_optimistic: None,
             run_id: None,
             autoexecute_override: None,
@@ -1692,6 +1708,19 @@ mod tests {
         assert_eq!(proto.model_id, "Friendly alias");
         assert_eq!(proto.total_tokens, 6);
         assert_eq!(proto.token_usage_by_category.get("primary_agent"), Some(&6));
+    }
+
+    #[test]
+    fn combined_local_token_usage_does_not_overflow_32_bit_counts() {
+        let usage = ModelTokenUsage {
+            warp_tokens: u32::MAX.into(),
+            byok_tokens: u32::MAX.into(),
+            custom_endpoint_tokens: u32::MAX.into(),
+            ..Default::default()
+        };
+        #[allow(deprecated)]
+        let proto = usage.to_proto_combined();
+        assert_eq!(proto.total_tokens, u64::from(u32::MAX) * 3);
     }
 
     #[allow(deprecated)]

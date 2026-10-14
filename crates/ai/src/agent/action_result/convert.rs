@@ -63,6 +63,7 @@ impl TryFrom<RequestCommandOutputResult> for api::request::input::tool_call_resu
                         result: Some(
                             api::run_shell_command_result::Result::LongRunningCommandSnapshot(
                                 api::LongRunningShellCommandSnapshot {
+                                    activity: None,
                                     command_id: block_id.to_string(),
                                     output: grid_contents,
                                     cursor: cursor.to_owned(),
@@ -76,8 +77,22 @@ impl TryFrom<RequestCommandOutputResult> for api::request::input::tool_call_resu
             ),
             // Busy-terminal errors use the direct provider's local JSON adapter, not a
             // hosted protocol extension. The legacy hosted serializer cannot route them.
-            RequestCommandOutputResult::CancelledBeforeExecution
-            | RequestCommandOutputResult::TerminalBusy { .. } => Err(ConvertToAPITypeError::Ignore),
+            RequestCommandOutputResult::CancelledBeforeExecution => {
+                Err(ConvertToAPITypeError::Ignore)
+            }
+            RequestCommandOutputResult::TerminalBusy { command, block_id } => Ok(
+                api::request::input::tool_call_result::Result::RunShellCommand(
+                    api::RunShellCommandResult {
+                        command,
+                        result: Some(api::run_shell_command_result::Result::TerminalBusy(
+                            api::run_shell_command_result::TerminalBusy {
+                                running_command_id: block_id.to_string(),
+                            },
+                        )),
+                        ..Default::default()
+                    },
+                ),
+            ),
             RequestCommandOutputResult::Denylisted { command } =>
             {
                 #[allow(deprecated)]
@@ -114,6 +129,7 @@ impl TryFrom<WriteToLongRunningShellCommandResult>
                     api::WriteToLongRunningShellCommandResult {
                         result: Some(api::write_to_long_running_shell_command_result::Result::LongRunningCommandSnapshot(
                             api::LongRunningShellCommandSnapshot {
+                                activity: None,
                                 command_id: block_id.to_string(),
                                 output: grid_contents,
                                 cursor: cursor.to_owned(),
@@ -701,6 +717,7 @@ impl TryFrom<ReadShellCommandOutputResult> for api::request::input::tool_call_re
                         result: Some(
                             api::read_shell_command_output_result::Result::LongRunningCommandSnapshot(
                                 api::LongRunningShellCommandSnapshot {
+                                    activity: None,
                                     command_id: block_id.to_string(),
                                     output: grid_contents,
                                     cursor: cursor.to_owned(),
@@ -751,6 +768,7 @@ impl TryFrom<TransferShellCommandControlToUserResult>
                         result: Some(
                             api::transfer_shell_command_control_to_user_result::Result::LongRunningCommandSnapshot(
                                 api::LongRunningShellCommandSnapshot {
+                                    activity: None,
                                     command_id: block_id.to_string(),
                                     output: grid_contents,
                                     cursor,
@@ -997,7 +1015,7 @@ impl TryFrom<RequestComputerUseResult> for api::request::input::tool_call_result
                                     height_px: screenshot.original_height as i32,
                                 }),
                                 initial_screenshot: Some(api::RawImage {
-                                    data: screenshot.data,
+                                    source: Some(api::raw_image::Source::Data(screenshot.data)),
                                     mime_type: screenshot.mime_type.to_string(),
                                     width: screenshot.width as i32,
                                     height: screenshot.height as i32,
@@ -1043,7 +1061,7 @@ impl TryFrom<UseComputerResult> for api::request::input::tool_call_result::Resul
                         result: Some(api::use_computer_result::Result::Success(
                             api::use_computer_result::Success {
                                 screenshot: result.screenshot.map(|s| api::RawImage {
-                                    data: s.data,
+                                    source: Some(api::raw_image::Source::Data(s.data)),
                                     mime_type: s.mime_type.to_string(),
                                     width: s.width as i32,
                                     height: s.height as i32,

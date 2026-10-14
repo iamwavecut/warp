@@ -12,6 +12,28 @@ use crate::content::buffer::{Buffer, BufferEditAction, EditOrigin, StyledBlockBo
 use crate::content::text::{IndentBehavior, TABLE_BLOCK_MARKDOWN_LANG};
 
 #[test]
+fn copyable_markdown_separates_blocks_without_changing_list_items_or_code() {
+    App::test((), |mut app| async move {
+        let (buffer, _selection) = Buffer::mock_from_markdown(
+            "# Plan\n\n1. One\n2. Two\n\n```rust\n// # keep code unchanged\n```",
+            None,
+            Box::new(|_, _| IndentBehavior::Ignore),
+            &mut app,
+        );
+        app.read_model(&buffer, |buffer, _| {
+            assert_eq!(
+                buffer.markdown_copyable(),
+                "# Plan\n\n1. One\n2. Two\n\n```rust\n// # keep code unchanged\n```\n"
+            );
+            assert_eq!(
+                buffer.markdown_unescaped(),
+                "# Plan\n\n1. One\n2. Two\n\n```rust\n// # keep code unchanged\n```\n"
+            );
+        });
+    });
+}
+
+#[test]
 fn test_export_normalizes_code_languages() {
     let formatted = parse_markdown(
         r#"

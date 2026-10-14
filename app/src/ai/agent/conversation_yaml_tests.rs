@@ -27,6 +27,9 @@ fn make_user_query_message(id: &str, task_id: &str, query: &str) -> api::Message
         server_message_data: String::new(),
         citations: vec![],
         message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+            author: Default::default(),
+            origin: Default::default(),
+            source_message: Default::default(),
             query: query.to_string(),
             context: None,
             mode: None,

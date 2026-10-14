@@ -260,6 +260,18 @@ only. They must not create external conversations, upload block snapshots, or
 depend on Warp hosted `/harness_support` APIs. Save/resume behavior should be
 local, or a no-op until local persistence exists.
 
+ACP adapters use a private host-local bridge and native local history. Do not
+execute their reported tool calls again in the native executor. Unknown or
+uncheckable permissions must be denied; approved requests use at most AllowOnce.
+Restored ACP history without a live local channel must reject follow-up prompts,
+not fall back to a different provider. PTY transcript resume is not ACP resume.
+
+Child-agent labels are local string metadata. Preserve them through confirmation,
+dispatch and local persistence; never inject them into the process environment.
+Local native-agent shell recovery may replace an app-owned terminal shell, but
+must fail interrupted work and discard queued command bytes rather than replay
+commands. External CLI prompts retain their existing user-owned lifecycle.
+
 An unattended local CLI `agent_needs_input` event should end the driver with a
 blocked result and retain local resumption state. Never type `/exit` or a
 confirmation into that open prompt, or force-kill the user-owned CLI. Desktop

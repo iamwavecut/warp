@@ -75,6 +75,37 @@ fn test_keybinding_name_to_display_string() {
 }
 
 #[test]
+fn test_markdown_display_mode_toggle_is_rebound_in_both_directions() {
+    use crate::notebooks::file::TOGGLE_MARKDOWN_DISPLAY_MODE_BINDING_NAME;
+
+    App::test((), |mut app| async move {
+        app.update(crate::code::view::init);
+        app.update(crate::notebooks::file::init);
+
+        app.update(|ctx| {
+            let toggle_keystrokes = |ctx: &warpui::AppContext| {
+                ctx.editable_bindings()
+                    .filter(|binding| binding.name == TOGGLE_MARKDOWN_DISPLAY_MODE_BINDING_NAME)
+                    .map(|binding| trigger_to_keystroke(binding.trigger))
+                    .collect::<Vec<_>>()
+            };
+
+            // The rendered and raw panes each register one direction of the toggle.
+            let default = Keystroke::parse("cmdorctrl-e").ok();
+            assert_eq!(vec![default.clone(), default], toggle_keystrokes(ctx));
+
+            ctx.set_custom_trigger(
+                TOGGLE_MARKDOWN_DISPLAY_MODE_BINDING_NAME.to_owned(),
+                Trigger::Keystrokes(vec![Keystroke::parse("cmd-shift-M").unwrap()]),
+            );
+
+            let custom = Keystroke::parse("cmd-shift-M").ok();
+            assert_eq!(vec![custom.clone(), custom], toggle_keystrokes(ctx));
+        });
+    });
+}
+
+#[test]
 fn test_toggle_maximize_pane_binding_is_editable() {
     App::test((), |mut app| async move {
         app.update(crate::pane_group::init);

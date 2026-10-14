@@ -412,3 +412,21 @@ fn local_harness_resume_help_requires_harness_specific_syntax() {
     assert!(resume_cli_help_is_compatible(Harness::Claude, "--resume <session-id>").is_ok());
     assert!(resume_cli_help_is_compatible(Harness::Claude, "uuid <message-id>").is_err());
 }
+#[test]
+fn claude_project_keys_match_windows_unicode_and_long_path_transcripts() {
+    for (cwd, expected) in [
+        (
+            r"C:\Users\runneradmin\workspace",
+            "C--Users-runneradmin-workspace",
+        ),
+        (r"\\server\share\my_project", "--server-share-my-project"),
+        ("/tmp/café/😀", "-tmp-caf----"),
+    ] {
+        assert_eq!(encode_claude_cwd(std::path::Path::new(cwd)), expected);
+    }
+    let prefix = format!("/{}", "a".repeat(199));
+    assert_eq!(
+        encode_claude_cwd(std::path::Path::new(&format!("{prefix}😀"))),
+        format!("-{}-86sic5", "a".repeat(199))
+    );
+}

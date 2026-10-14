@@ -1471,6 +1471,10 @@ impl RichTextEditorView {
         self.model.as_ref(ctx).markdown_unescaped(ctx)
     }
 
+    pub fn markdown_copyable(&self, ctx: &AppContext) -> String {
+        self.model.as_ref(ctx).markdown_copyable(ctx)
+    }
+
     pub fn interaction_state(&self, app: &AppContext) -> InteractionState {
         self.model.as_ref(app).interaction_state(app)
     }

@@ -85,9 +85,11 @@ impl crate::Actor for Actor {
                 }
                 Action::MouseDown { button, at } => {
                     session.require_pointer()?;
-                    self.mouse
-                        .move_to(remote_desktop, portal_session, stream_id, *at)
-                        .await?;
+                    if let Some(at) = at {
+                        self.mouse
+                            .move_to(remote_desktop, portal_session, stream_id, *at)
+                            .await?;
+                    }
                     self.mouse
                         .button_down(remote_desktop, portal_session, button)
                         .await?;

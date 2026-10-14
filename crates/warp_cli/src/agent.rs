@@ -392,6 +392,9 @@ pub struct RunAgentArgs {
     /// "claude" delegates to the `claude` CLI.
     #[arg(long = "harness", value_name = "HARNESS", hide = true)]
     pub harness: Option<Harness>,
+    /// Local CLI transport; ACP requires a separately installed adapter.
+    #[arg(long, value_enum, default_value = "pty", hide = true)]
+    pub harness_transport: HarnessTransport,
 }
 
 impl RunAgentArgs {
@@ -401,6 +404,13 @@ impl RunAgentArgs {
         specs.extend(self.mcp_servers.iter().cloned().map(MCPSpec::Uuid));
         specs
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, clap::ValueEnum)]
+pub enum HarnessTransport {
+    #[default]
+    Pty,
+    Acp,
 }
 
 /// Arguments for listing available agents.

@@ -62,7 +62,11 @@ use warpui::{
 use crate::util::openable_file_type::renders_in_warp_notebook_viewer;
 use crate::{
     menu::{MenuItem, MenuItemFields},
-    notebooks::file::MarkdownDisplayMode,
+    notebooks::file::{
+        MARKDOWN_DISPLAY_MODE_TOGGLE_CONTEXT, MarkdownDisplayMode,
+        TOGGLE_MARKDOWN_DISPLAY_MODE_BINDING_DESCRIPTION,
+        TOGGLE_MARKDOWN_DISPLAY_MODE_BINDING_NAME, TOGGLE_MARKDOWN_DISPLAY_MODE_KEY_BINDING,
+    },
     search::{ItemHighlightState, files::icon::icon_from_file_path},
     tab::TAB_BAR_BORDER_HEIGHT,
     ui_components::{blended_colors, buttons::icon_button},
@@ -130,6 +134,14 @@ pub fn init(app: &mut AppContext) {
         )
         .with_context_predicate(id!("CodeEditorView"))
         .with_key_binding("cmdorctrl-r u"),
+        #[cfg(feature = "local_fs")]
+        EditableBinding::new(
+            TOGGLE_MARKDOWN_DISPLAY_MODE_BINDING_NAME,
+            TOGGLE_MARKDOWN_DISPLAY_MODE_BINDING_DESCRIPTION,
+            CodeViewAction::RenderMarkdown,
+        )
+        .with_context_predicate(id!("CodeView") & id!(MARKDOWN_DISPLAY_MODE_TOGGLE_CONTEXT))
+        .with_key_binding(TOGGLE_MARKDOWN_DISPLAY_MODE_KEY_BINDING),
     ]);
 }
 
@@ -2221,6 +2233,14 @@ impl Entity for CodeView {
 }
 
 impl View for CodeView {
+    fn keymap_context(&self, _app: &AppContext) -> warpui::keymap::Context {
+        let mut context = Self::default_keymap_context();
+        if self.markdown_mode_segmented_control.is_some() {
+            context.set.insert(MARKDOWN_DISPLAY_MODE_TOGGLE_CONTEXT);
+        }
+        context
+    }
+
     fn ui_name() -> &'static str {
         "CodeView"
     }

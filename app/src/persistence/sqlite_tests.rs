@@ -201,6 +201,8 @@ fn sqlite_writer_reuses_codebase_index_metadata_events() {
 
 fn local_compaction_conversation_data() -> AgentConversationData {
     AgentConversationData {
+        is_external_harness: false,
+        local_child_metadata: std::collections::HashMap::new(),
         server_conversation_token: None,
         conversation_usage_metadata: None,
         reverted_action_ids: None,

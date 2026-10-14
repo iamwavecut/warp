@@ -49,14 +49,12 @@ impl<T> event::Source for Receiver<T> {
     ) -> io::Result<()> {
         let mut state = self.state.lock().unwrap();
 
-        if state.waker.is_none() {
-            let waker = Waker::new(registry, token)?;
-            if state.needs_wake_on_register {
-                waker.wake()?;
-                state.needs_wake_on_register = false;
-            }
-            state.waker = Some(waker);
+        let waker = Waker::new(registry, token)?;
+        if state.needs_wake_on_register {
+            waker.wake()?;
+            state.needs_wake_on_register = false;
         }
+        state.waker = Some(waker);
 
         Ok(())
     }
@@ -72,7 +70,7 @@ impl<T> event::Source for Receiver<T> {
     }
 
     fn deregister(&mut self, _: &mio::Registry) -> io::Result<()> {
-        // Not actually supported, so we do nothing.
+        self.state.lock().unwrap().waker = None;
         Ok(())
     }
 }
@@ -123,3 +121,7 @@ struct State {
     /// with a [`mio::Registry`].
     needs_wake_on_register: bool,
 }
+
+#[cfg(test)]
+#[path = "mio_channel_tests.rs"]
+mod tests;

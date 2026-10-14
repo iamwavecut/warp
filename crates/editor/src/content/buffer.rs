@@ -2270,6 +2270,20 @@ impl Buffer {
         })
     }
 
+    pub fn markdown_copyable(&self) -> String {
+        BufferMarkdownParser::new(
+            MarkdownStyle::Export {
+                app_context: None,
+                should_not_escape_markdown_punctuation: true,
+            },
+            self.styled_blocks_at(
+                CharOffset::from(1)..self.max_charoffset() + 1,
+                StyledBlockBoundaryBehavior::Exclusive,
+            ),
+        )
+        .to_copyable_markdown()
+    }
+
     /// Serialize the buffer as Markdown.
     pub fn to_markdown(&self, style: MarkdownStyle) -> String {
         BufferMarkdownParser::new(

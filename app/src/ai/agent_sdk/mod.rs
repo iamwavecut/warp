@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::ai::agent::api::direct_openai::CustomProviderRoute;
 use crate::ai::agent_sdk::driver::harness::{
-    HarnessKind, LocalHarnessRepository, LocalHarnessResumePayload, harness_kind,
+    HarnessKind, LocalHarnessRepository, LocalHarnessResumePayload, harness_kind_with_transport,
     resume_cli_help_is_compatible,
 };
 use crate::ai::agent_sdk::driver::{AgentDriverOptions, AgentRunPrompt, Task};
@@ -298,12 +298,13 @@ fn build_merged_config_and_task(
         model: model_override,
         profile: merged_config.profile_id.clone(),
         mcp_specs: runtime_mcp_specs,
-        harness: harness_kind(
+        harness: harness_kind_with_transport(
             merged_config
                 .harness
                 .as_ref()
                 .map(|config| config.harness_type)
                 .unwrap_or(args.harness.unwrap_or_default()),
+            args.harness_transport,
         )?,
         local_only: named_bundle.is_some(),
     };

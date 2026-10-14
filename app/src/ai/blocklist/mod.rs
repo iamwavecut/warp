@@ -44,6 +44,7 @@ pub(crate) use context_model::{
     AttachmentType, BlocklistAIContextEvent, PendingAttachment, PendingFile,
     block_context_from_terminal_model,
 };
+pub(in crate::ai) use controller::external_harness::{ExternalHarnessPrompt, ExternalHarnessTurn};
 pub(crate) use controller::{
     BlocklistAIController, BlocklistAIControllerEvent, ClientIdentifiers, SessionContext,
     SlashCommandRequest, response_stream::ResponseStreamId,
@@ -58,6 +59,7 @@ pub(crate) use input_model::{BlocklistAIInputEvent, InputConfig, InputType};
 pub(crate) use passive_suggestions::{
     LegacyPassiveSuggestionsEvent, LegacyPassiveSuggestionsModel, PassiveSuggestionsModels,
 };
+pub(crate) use permissions::{CommandExecutionPermission, FileWritePermission};
 #[cfg_attr(target_family = "wasm", allow(unused))]
 pub(crate) use persistence::PersistedAIInputType;
 pub(crate) use persistence::{PersistedAIInput, SerializedBlockListItem};

@@ -242,6 +242,7 @@ fn write_task_messages(
             | Message::CodeReview(_)
             | Message::ServerEvent(_)
             | Message::InvokeSkill(_)
+            | Message::RequestMetadata(_)
             | Message::OrchestrationConfigSnapshot(_) => {}
         }
     }
@@ -558,6 +559,13 @@ fn write_tool_call_result_content(out: &mut String, result: &ToolCallResultType)
                     }
                     Result::PermissionDenied(_) => {
                         out.push_str("status: permission_denied\n");
+                    }
+                    Result::TerminalBusy(result) => {
+                        out.push_str("status: terminal_busy\n");
+                        out.push_str(&format!(
+                            "running_command_id: {}\n",
+                            result.running_command_id
+                        ));
                     }
                 }
             }

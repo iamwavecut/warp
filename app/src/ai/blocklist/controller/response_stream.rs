@@ -22,6 +22,14 @@ use crate::{
 pub struct ResponseStreamId(String);
 
 impl ResponseStreamId {
+    pub fn for_external_harness(init_event: &response_event::StreamInit) -> Self {
+        Self(format!(
+            "{}:{}:{}",
+            init_event.conversation_id,
+            init_event.request_id,
+            Uuid::new_v4()
+        ))
+    }
     pub fn for_shared_session(init_event: &response_event::StreamInit) -> Self {
         // Make the stream ID unique per viewing by appending a local UUID
         // This prevents collisions when replaying the same conversation multiple times

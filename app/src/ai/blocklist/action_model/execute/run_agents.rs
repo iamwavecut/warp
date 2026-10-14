@@ -139,6 +139,7 @@ impl RunAgentsExecutor {
             .and_then(|c| c.run_id());
 
         let RunAgentsRequest {
+            metadata,
             execution_mode: run_execution_mode,
             harness_type,
             model_id,
@@ -204,10 +205,11 @@ impl RunAgentsExecutor {
                 }
             };
             let dispatch = self.start_agent_executor.update(ctx, |executor, exec_ctx| {
-                executor.dispatch(
+                executor.dispatch_with_metadata(
                     cfg.name.clone(),
                     prompt,
                     mode,
+                    combine_local_child_metadata(&metadata, &cfg.metadata),
                     None, /* lifecycle_subscription */
                     parent_conversation_id,
                     Some(parent_run_id.clone()),
@@ -595,6 +597,15 @@ pub fn compose_run_agents_child_prompt(base_prompt: &str, per_agent_prompt: &str
     }
 }
 
+fn combine_local_child_metadata(
+    batch: &HashMap<String, String>,
+    child: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut result = batch.clone();
+    result.extend(child.clone());
+    result
+}
+
 /// Translates run-wide config into a per-child
 /// [`StartAgentExecutionMode`].
 pub fn run_agents_to_start_agent_mode(
@@ -623,6 +634,7 @@ mod tests {
 
     fn local_request(names: &[&str]) -> RunAgentsRequest {
         RunAgentsRequest {
+            metadata: std::collections::HashMap::new(),
             summary: String::new(),
             base_prompt: "inspect locally".to_string(),
             skills: Vec::new(),
@@ -632,6 +644,7 @@ mod tests {
             agent_run_configs: names
                 .iter()
                 .map(|name| RunAgentsAgentRunConfig {
+                    metadata: std::collections::HashMap::new(),
                     name: (*name).to_string(),
                     prompt: format!("work for {name}"),
                     title: String::new(),
@@ -639,6 +652,19 @@ mod tests {
                 .collect(),
             plan_id: String::new(),
         }
+    }
+
+    #[test]
+    fn child_metadata_overrides_batch_labels_without_environment_injection() {
+        let batch = HashMap::from([
+            ("label".into(), "batch".into()),
+            ("group".into(), "local".into()),
+        ]);
+        let child = HashMap::from([("label".into(), "child".into())]);
+        let combined = combine_local_child_metadata(&batch, &child);
+        assert_eq!(combined["label"], "child");
+        assert_eq!(combined["group"], "local");
+        assert_eq!(batch["label"], "batch");
     }
 
     #[test]

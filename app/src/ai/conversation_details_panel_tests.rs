@@ -64,6 +64,9 @@ fn create_message_with_directory(id: &str, task_id: &str, directory: &str) -> ap
         server_message_data: String::new(),
         citations: vec![],
         message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+            author: Default::default(),
+            origin: Default::default(),
+            source_message: Default::default(),
             query: "test query".to_string(),
             context: Some(api::InputContext {
                 directory: Some(api::input_context::Directory {
@@ -136,6 +139,8 @@ fn test_from_task_includes_linked_directory_when_run_id_matches() {
             "root-task",
             directory,
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -279,6 +284,8 @@ fn test_from_conversation_populates_local_conversation_fields() {
             "root-task",
             directory,
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -350,6 +357,8 @@ fn test_from_task_includes_linked_directory_when_server_token_matches() {
             "root-task",
             directory,
             AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: Some(server_token.to_string()),
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,

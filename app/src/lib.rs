@@ -573,6 +573,13 @@ pub fn run() -> Result<()> {
             warp_util::windows::attach_to_parent_console();
         }
         match command {
+            warp_cli::Command::Worker(warp_cli::WorkerCommand::AcpBridge { launch_file }) => {
+                if let Err(error) = ai::agent_sdk::driver::harness::acp::run_bridge(launch_file) {
+                    eprintln!("ACP bridge failed: {error:#}");
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
             #[cfg(all(feature = "local_tty", unix))]
             warp_cli::Command::Worker(warp_cli::WorkerCommand::TerminalServer(args)) => {
                 // If we were asked to run as a terminal server (as opposed to the main

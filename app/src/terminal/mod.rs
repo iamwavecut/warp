@@ -50,6 +50,7 @@ mod line_editor_status;
 pub mod links;
 #[cfg(all(not(target_family = "wasm"), feature = "local_tty"))]
 pub mod local_shell;
+mod local_shell_recovery;
 #[cfg(feature = "local_tty")]
 pub mod local_tty;
 mod meta_shortcuts;

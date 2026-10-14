@@ -93,6 +93,7 @@ fn convert_run_agents_execution_mode(
 
 fn convert_run_agents(run_agents: api::RunAgents) -> AIAgentActionType {
     let api::RunAgents {
+        metadata,
         summary,
         base_prompt,
         skills,
@@ -103,6 +104,7 @@ fn convert_run_agents(run_agents: api::RunAgents) -> AIAgentActionType {
         plan_id,
     } = run_agents;
     AIAgentActionType::RunAgents(RunAgentsRequest {
+        metadata,
         summary,
         base_prompt,
         skills: skills
@@ -115,6 +117,7 @@ fn convert_run_agents(run_agents: api::RunAgents) -> AIAgentActionType {
         agent_run_configs: agent_run_configs
             .into_iter()
             .map(|config| RunAgentsAgentRunConfig {
+                metadata: config.metadata,
                 name: config.name,
                 prompt: config.prompt,
                 title: config.title,
@@ -576,6 +579,7 @@ impl ConvertAPIMessageToClientOutputMessage for api::Message {
             // Stage 2 plan-card config snapshot: hydrated separately by the
             // plan card's `AIDocumentModel` subscription, not via the
             // exchange/output stream. No client output message representation.
+            | api::message::Message::RequestMetadata(_)
             | api::message::Message::OrchestrationConfigSnapshot(_) => {
                 Ok(MaybeAIAgentOutputMessage::NoClientRepresentation)
             }

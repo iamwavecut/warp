@@ -374,8 +374,8 @@ pub enum Action {
     Wait(#[serde_as(as = "DurationSecondsWithFrac<f64>")] std::time::Duration),
     MouseDown {
         button: MouseButton,
-        #[serde(with = "Vector2IDef")]
-        at: Vector2I,
+        #[serde(default, with = "option_vector2i")]
+        at: Option<Vector2I>,
     },
     MouseUp {
         button: MouseButton,
@@ -591,3 +591,23 @@ impl From<Vector2IDef> for Vector2I {
         Vector2I::new(def.x, def.y)
     }
 }
+
+mod option_vector2i {
+    use super::{Vector2I, Vector2IDef};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    #[derive(Serialize, Deserialize)]
+    struct Wrapper(#[serde(with = "Vector2IDef")] Vector2I);
+    pub fn serialize<S: Serializer>(
+        value: &Option<Vector2I>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value.map(Wrapper).serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Vector2I>, D::Error> {
+        Ok(Option::<Wrapper>::deserialize(deserializer)?.map(|wrapper| wrapper.0))
+    }
+}
+#[cfg(test)]
+mod action_serde_tests;

@@ -87,6 +87,8 @@ fn ai_conversation_new_restored_preserves_last_event_sequence() {
         server_data: String::new(),
     };
     let data = AgentConversationData {
+        is_external_harness: false,
+        local_child_metadata: std::collections::HashMap::new(),
         server_conversation_token: None,
         conversation_usage_metadata: None,
         reverted_action_ids: None,

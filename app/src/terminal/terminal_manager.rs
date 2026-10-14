@@ -22,6 +22,14 @@ use super::{
 use crate::pane_group::pane::DetachType;
 
 pub trait TerminalManager: Any {
+    /// Replace only a terminated host-local shell, without replaying a command.
+    fn recover_local_shell(
+        &mut self,
+        _working_dir: Option<std::path::PathBuf>,
+        _ctx: &mut warpui::ModelContext<Box<dyn TerminalManager>>,
+    ) -> bool {
+        false
+    }
     /// Returns the backing terminal model.
     fn model(&self) -> Arc<FairMutex<TerminalModel>>;
 

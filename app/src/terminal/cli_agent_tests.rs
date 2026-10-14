@@ -331,6 +331,29 @@ fn test_detect_vibe_acp_binary() {
 }
 
 #[test]
+fn muse_detection_preserves_command_boundaries_and_local_configuration() {
+    App::test((), |mut app| async move {
+        app.update(|ctx| {
+            assert_eq!(
+                CLIAgent::detect("muse", None, None, ctx),
+                Some(CLIAgent::Muse)
+            );
+            assert_eq!(
+                CLIAgent::detect("muse exec 'hello'", None, None, ctx),
+                Some(CLIAgent::Muse)
+            );
+            assert_eq!(CLIAgent::detect("muse-other", None, None, ctx), None);
+            assert_eq!(CLIAgent::detect("npx muse", None, None, ctx), None);
+        });
+        assert_eq!(CLIAgent::Muse.command_prefix(), "muse");
+        assert_eq!(CLIAgent::Muse.display_name(), "Muse Code");
+        assert!(CLIAgent::Muse.supports_bash_mode());
+        assert_eq!(CLIAgent::Muse.skill_command_prefix(), "/");
+        assert_eq!(serde_json::to_string(&CLIAgent::Muse).unwrap(), "\"Muse\"");
+    });
+}
+
+#[test]
 fn test_detect_with_leading_whitespace() {
     App::test((), |mut app| async move {
         app.update(|ctx| {

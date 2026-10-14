@@ -134,7 +134,13 @@ pub struct TerminalManager {
     event_loop_tx: Arc<Mutex<mio_channel::Sender<Message>>>,
     /// This is an `Option` so that we can take ownership of the inner
     /// `JoinHandle` in `TerminalManager::drop`.
-    event_loop_handle: Option<JoinHandle<()>>,
+    event_loop_handle: Option<JoinHandle<mio_channel::Receiver<Message>>>,
+    local_recovery: Option<(
+        ShellStarter,
+        HashMap<OsString, OsString>,
+        ChannelEventListener,
+    )>,
+    local_recovery_sessions: ModelHandle<Sessions>,
     model: Arc<FairMutex<TerminalModel>>,
     view: ViewHandle<TerminalView>,
 
@@ -444,7 +450,7 @@ impl TerminalManager {
             &pty_controller,
             &view,
             model.clone(),
-            sessions,
+            sessions.clone(),
             model_event_sender,
             ctx,
         );
@@ -742,6 +748,8 @@ impl TerminalManager {
             event_loop_tx: Arc::new(Mutex::new(event_loop_tx)),
             model,
             event_loop_handle: None,
+            local_recovery: None,
+            local_recovery_sessions: sessions,
             view,
             #[cfg(unix)]
             terminal_attributes_poller: None,
@@ -755,7 +763,8 @@ impl TerminalManager {
             session_sharer,
         };
 
-        ctx.add_model(|ctx| {
+        let view_for_recovery = terminal_manager.view.clone();
+        let manager_handle = ctx.add_model(|ctx| {
             let terminal_manager: Box<dyn crate::terminal::TerminalManager> =
                 Box::new(terminal_manager);
 
@@ -791,7 +800,11 @@ impl TerminalManager {
             );
 
             terminal_manager
-        })
+        });
+        view_for_recovery.update(ctx, |view, _| {
+            view.set_local_recovery_manager(manager_handle.downgrade());
+        });
+        manager_handle
     }
 
     /// Callback invoked upon determining the shell to be spawned when starting the event loop.
@@ -861,6 +874,16 @@ impl TerminalManager {
         self.model()
             .lock()
             .set_login_shell_spawned(shell_starter.shell_type());
+        if matches!(
+            shell_starter,
+            ShellStarter::Direct(_) | ShellStarter::MSYS2(_)
+        ) {
+            self.local_recovery = Some((
+                shell_starter.clone(),
+                env_vars.clone(),
+                channel_event_proxy.clone(),
+            ));
+        }
 
         let shell_launch_data = match &shell_starter {
             ShellStarter::Direct(shell_starter) => ShellLaunchData::Executable {
@@ -1080,7 +1103,7 @@ impl TerminalManager {
         rx: mio_channel::Receiver<Message>,
         model: Arc<FairMutex<TerminalModel>>,
         channel_event_proxy: ChannelEventListener,
-    ) -> JoinHandle<()> {
+    ) -> JoinHandle<mio_channel::Receiver<Message>> {
         // Create the event loop and get a handle to the injector.
         let event_loop = EventLoop::new(model, channel_event_proxy, pty, rx);
 
@@ -1971,6 +1994,86 @@ pub fn shutdown_all_pty_event_loops(ctx: &mut AppContext) {
 }
 
 impl crate::terminal::TerminalManager for TerminalManager {
+    fn recover_local_shell(
+        &mut self,
+        working_dir: Option<PathBuf>,
+        ctx: &mut ModelContext<Box<dyn crate::terminal::TerminalManager>>,
+    ) -> bool {
+        let Some((starter, mut env, listener)) = self.local_recovery.clone() else {
+            return false;
+        };
+        if let Some(session_id) = self.model.lock().block_list().active_block().session_id()
+            && let Some(known_env) = self
+                .local_recovery_sessions
+                .as_ref(ctx)
+                .get_env_vars_for_session(session_id)
+        {
+            env.extend(
+                known_env
+                    .into_iter()
+                    .map(|(name, value)| (OsString::from(name), OsString::from(value))),
+            );
+        }
+        let Some(handle) = self.event_loop_handle.take() else {
+            return false;
+        };
+        let Ok(receiver) = handle.join() else {
+            return false;
+        };
+        if !discard_interrupted_shell_input(&receiver) {
+            return false;
+        }
+        let working_dir = working_dir
+            .filter(|dir| dir.is_dir())
+            .or_else(dirs::home_dir);
+        self.model
+            .lock()
+            .prepare_local_shell_recovery(starter.shell_type());
+        if self.enqueue_init_script(&starter).is_err() {
+            return false;
+        }
+        let pty = match Self::create_pty(
+            working_dir,
+            starter,
+            env,
+            self.model.clone(),
+            #[cfg(windows)]
+            self.event_loop_tx.lock().clone(),
+            ctx,
+        ) {
+            Ok(pty) => pty,
+            Err(error) => {
+                log::warn!("Local replacement shell failed: {error}");
+                return false;
+            }
+        };
+        let pid = pty.get_pid();
+        #[cfg(unix)]
+        let fd = pty.get_fd();
+        self.model.lock().set_shell_process_info(ShellProcessInfo {
+            pid,
+            #[cfg(unix)]
+            pty_leader_fd: Some(fd),
+        });
+        self.event_loop_handle = Some(Self::start_pty_event_loop(
+            pty,
+            receiver,
+            self.model.clone(),
+            listener,
+        ));
+        #[cfg(unix)]
+        {
+            let poller = ctx.add_model(|_| TerminalAttributesPoller::new(fd));
+            Self::wire_up_terminal_attribute_poller_with_view(
+                &poller,
+                &self.view,
+                self.model.clone(),
+                ctx,
+            );
+            self.terminal_attributes_poller = Some(poller);
+        }
+        true
+    }
     fn model(&self) -> Arc<FairMutex<TerminalModel>> {
         self.model.clone()
     }
@@ -2035,3 +2138,18 @@ impl EventLoopSender for mio_channel::Sender<Message> {
         })
     }
 }
+
+fn discard_interrupted_shell_input(receiver: &mio_channel::Receiver<Message>) -> bool {
+    loop {
+        match receiver.try_recv() {
+            Ok(Message::Shutdown) => return false,
+            Ok(_) => {}
+            Err(std::sync::mpsc::TryRecvError::Empty) => return true,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return false,
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "local_shell_recovery_manager_tests.rs"]
+mod local_recovery_tests;

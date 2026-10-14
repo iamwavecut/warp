@@ -35,7 +35,7 @@ use ai::agent::action_result::{
     AskUserQuestionAnswerItem, AskUserQuestionResult, FetchConversationResult, ReadSkillResult,
     RequestComputerUseResult, SendMessageToAgentResult, UseComputerResult,
 };
-use ai::skills::ParsedSkill;
+use ai::skills::{ParsedSkill, SkillPathOrigin};
 use chrono::{DateTime, Local, TimeZone};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -379,7 +379,7 @@ impl ConvertToExchanges for &api::Task {
                 }
                 api::message::Message::InvokeSkill(invoke_skill) => {
                     if let Some(api_skill) = invoke_skill.skill.clone()
-                        && let Ok(parsed_skill) = ParsedSkill::try_from(api_skill) {
+                        && let Ok(parsed_skill) = ParsedSkill::try_from_api_with_origin(api_skill, &SkillPathOrigin::RestoredDisplayOnly) {
                             let user_query = invoke_skill
                                 .user_query
                                 .clone()
@@ -430,6 +430,7 @@ impl ConvertToExchanges for &api::Task {
                 | api::message::Message::ArtifactEvent(_)
                 | api::message::Message::MessagesReceivedFromAgents(_)
                 | api::message::Message::ModelUsed(_)
+                | api::message::Message::RequestMetadata(_)
                 | api::message::Message::OrchestrationConfigSnapshot(_) => false,
             };
 
@@ -522,6 +523,12 @@ pub(crate) fn convert_tool_call_result_to_input(
                 | None => {
                     // If no result is present, treat as cancelled
                     RequestCommandOutputResult::CancelledBeforeExecution
+                }
+                Some(api::run_shell_command_result::Result::TerminalBusy(busy)) => {
+                    RequestCommandOutputResult::TerminalBusy {
+                        command: result.command.clone(),
+                        block_id: busy.running_command_id.clone().into(),
+                    }
                 }
             };
 
@@ -1231,17 +1238,17 @@ pub(crate) fn convert_tool_call_result_to_input(
         Some(ToolCallResultType::UseComputer(result)) => {
             let use_computer_result = match &result.result {
                 Some(api::use_computer_result::Result::Success(success)) => {
-                    let screenshot = success.screenshot.as_ref().map(|s| {
+                    let screenshot = success.screenshot.as_ref().and_then(|s| {
                         // The original dimensions are not preserved through the API, so we use
                         // the current dimensions for both.
-                        computer_use::Screenshot {
+                        Some(computer_use::Screenshot {
                             width: s.width as usize,
                             height: s.height as usize,
                             original_width: s.width as usize,
                             original_height: s.height as usize,
-                            data: s.data.clone(),
+                            data: inline_image_bytes(s)?.to_vec(),
                             mime_type: s.mime_type.clone().into(),
-                        }
+                        })
                     });
                     let cursor_position = success
                         .cursor_position
@@ -1278,18 +1285,22 @@ pub(crate) fn convert_tool_call_result_to_input(
                                 ..
                             },
                             Some(platform),
-                        ) => RequestComputerUseResult::Approved {
-                            screenshot: computer_use::Screenshot {
-                                width: initial_screenshot.width as usize,
-                                height: initial_screenshot.height as usize,
-                                original_width: screen_dimensions.width_px as usize,
-                                original_height: screen_dimensions.height_px as usize,
-                                data: initial_screenshot.data.clone(),
-                                mime_type: initial_screenshot.mime_type.clone().into(),
-                            },
-                            platform,
-                            windows: Vec::new(),
-                        },
+                        ) if inline_image_bytes(initial_screenshot).is_some() => {
+                            RequestComputerUseResult::Approved {
+                                screenshot: computer_use::Screenshot {
+                                    width: initial_screenshot.width as usize,
+                                    height: initial_screenshot.height as usize,
+                                    original_width: screen_dimensions.width_px as usize,
+                                    original_height: screen_dimensions.height_px as usize,
+                                    data: inline_image_bytes(initial_screenshot)
+                                        .unwrap_or_default()
+                                        .to_vec(),
+                                    mime_type: initial_screenshot.mime_type.clone().into(),
+                                },
+                                platform,
+                                windows: Vec::new(),
+                            }
+                        }
                         _ => RequestComputerUseResult::Error(
                             "Missing screen dimensions, initial screenshot, or valid platform"
                                 .to_string(),
@@ -1827,6 +1838,7 @@ where
                 | api::message::Message::UpdateTodos(_)
                 | api::message::Message::MessagesReceivedFromAgents(_)
                 | api::message::Message::EventsFromAgents(_)
+                | api::message::Message::RequestMetadata(_)
                 | api::message::Message::PassiveSuggestionResult(_) => None,
                 // Anything else is considered agent/stream activity we want to measure
                 api::message::Message::AgentOutput(_)
@@ -1861,6 +1873,13 @@ where
             .num_milliseconds()
             .max(0),
     )
+}
+
+pub(super) fn inline_image_bytes(image: &api::RawImage) -> Option<&[u8]> {
+    match image.source.as_ref() {
+        Some(api::raw_image::Source::Data(data)) => Some(data),
+        _ => None,
+    }
 }
 
 impl From<api::ExecutedShellCommand> for BlockContext {

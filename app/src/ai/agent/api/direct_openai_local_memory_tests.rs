@@ -67,6 +67,9 @@ fn restored_local_memory_is_revalidated_before_provider_projection() {
         "task",
         "request",
         api::message::Message::UserQuery(api::message::UserQuery {
+            author: Default::default(),
+            origin: Default::default(),
+            source_message: Default::default(),
             query: "use memory".to_string(),
             context: Some(context),
             referenced_attachments: Default::default(),

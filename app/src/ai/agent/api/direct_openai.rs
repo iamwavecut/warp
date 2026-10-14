@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -2869,6 +2869,9 @@ fn api_messages_from_inputs(
                     task_id,
                     request_id,
                     api::message::Message::UserQuery(api::message::UserQuery {
+                        author: Default::default(),
+                        origin: Default::default(),
+                        source_message: Default::default(),
                         query: query.clone(),
                         context: api_input_context_from_agent_context(context)?,
                         referenced_attachments: referenced_attachments
@@ -4349,6 +4352,7 @@ fn api_tool_from_openai_tool_call_inner(
         )),
         "read_mcp_resource" => Ok(api::message::tool_call::Tool::ReadMcpResource(
             api::message::tool_call::ReadMcpResource {
+                server_identity: None,
                 uri: required_string(&args, "uri")?,
                 server_id: optional_string_strict(&args, "server_id")?.unwrap_or_default(),
             },
@@ -4368,6 +4372,7 @@ fn api_tool_from_openai_tool_call_inner(
             };
             Ok(api::message::tool_call::Tool::CallMcpTool(
                 api::message::tool_call::CallMcpTool {
+                    server_identity: None,
                     name: required_string_from_alias(&args, &["name", "tool"])?,
                     args: Some(tool_args),
                     server_id: optional_string_strict(&args, "server_id")?.unwrap_or_default(),
@@ -4503,6 +4508,7 @@ fn local_run_agents_arg(args: &Value) -> Result<api::RunAgents, AIApiError> {
             "harness",
             "agent_run_configs",
             "plan_id",
+            "metadata",
         ],
     )?;
     let agent_run_configs = array(args, "agent_run_configs")?;
@@ -4528,9 +4534,10 @@ fn local_run_agents_arg(args: &Value) -> Result<api::RunAgents, AIApiError> {
             reject_unexpected_arguments_except(
                 config,
                 "run_agents.agent_run_configs",
-                &["name", "prompt", "title"],
+                &["name", "prompt", "title", "metadata"],
             )?;
             Ok(api::run_agents::AgentRunConfig {
+                metadata: local_metadata_arg(config)?,
                 name: required_string(config, "name")?,
                 prompt: optional_string_strict(config, "prompt")?.unwrap_or_default(),
                 title: optional_string_strict(config, "title")?.unwrap_or_default(),
@@ -4543,6 +4550,7 @@ fn local_run_agents_arg(args: &Value) -> Result<api::RunAgents, AIApiError> {
         .collect::<Result<Vec<_>, AIApiError>>()?;
 
     Ok(api::RunAgents {
+        metadata: local_metadata_arg(args)?,
         summary: optional_string_strict(args, "summary")?.unwrap_or_default(),
         base_prompt: optional_string_strict(args, "base_prompt")?.unwrap_or_default(),
         skills: local_skill_references_arg(args)?,
@@ -4556,6 +4564,36 @@ fn local_run_agents_arg(args: &Value) -> Result<api::RunAgents, AIApiError> {
         agent_run_configs,
         plan_id: optional_string_strict(args, "plan_id")?.unwrap_or_default(),
     })
+}
+
+fn local_metadata_arg(args: &Value) -> Result<HashMap<String, String>, AIApiError> {
+    let Some(value) = args.get("metadata") else {
+        return Ok(HashMap::new());
+    };
+    let values = value.as_object().ok_or_else(|| {
+        AIApiError::Other(anyhow::anyhow!(
+            "metadata must be an object of string labels"
+        ))
+    })?;
+    if values.len() > 64 {
+        return Err(AIApiError::Other(anyhow::anyhow!(
+            "metadata accepts at most 64 labels"
+        )));
+    }
+    values
+        .iter()
+        .map(|(key, value)| {
+            let text = value.as_str().filter(|text| text.len() <= 4096);
+            match text {
+                Some(text) if !key.is_empty() && key.len() <= 128 => {
+                    Ok((key.clone(), text.to_owned()))
+                }
+                _ => Err(AIApiError::Other(anyhow::anyhow!(
+                    "metadata labels need bounded string keys and values"
+                ))),
+            }
+        })
+        .collect()
 }
 
 fn local_skill_references_arg(args: &Value) -> Result<Vec<api::SkillRef>, AIApiError> {
@@ -5219,7 +5257,10 @@ fn use_computer_action_arg(
         }),
         "mouse_down" => Type::MouseDown(action::MouseDown {
             button: parse_mouse_button(value, "button")?,
-            at: Some(parse_coordinates(value, "at")?),
+            at: value
+                .get("at")
+                .map(|_| parse_coordinates(value, "at"))
+                .transpose()?,
         }),
         "mouse_up" => Type::MouseUp(action::MouseUp {
             button: parse_mouse_button(value, "button")?,
@@ -5928,7 +5969,7 @@ fn prost_value_to_json(value: &prost_types::Value) -> Value {
     }
 }
 
-fn serde_json_to_prost(value: Value) -> Result<prost_types::Value, String> {
+pub(crate) fn serde_json_to_prost(value: Value) -> Result<prost_types::Value, String> {
     use prost_types::value::Kind::*;
     use serde_json::Value::*;
 
@@ -6375,7 +6416,7 @@ fn computer_action_json_schema() -> Value {
             {
                 "type":"object",
                 "properties": {"type":{"const":"mouse_down"}, "button":{"type":"string","enum":["left","right","middle","back","forward"]}, "at":coordinates_json_schema()},
-                "required":["type", "button", "at"],
+                "required":["type", "button"],
                 "additionalProperties":false,
             },
             {
@@ -6867,6 +6908,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                 "name": {"type": "string", "minLength": 1},
                 "prompt": {"type": "string"},
                 "title": {"type": "string"},
+                "metadata": {"type": "object", "additionalProperties": {"type": "string"}},
             },
             "required": ["name"],
             "additionalProperties": false,
@@ -6896,6 +6938,7 @@ fn openai_tools_for_supported_tools(supported_tools: &[api::ToolType]) -> Vec<Op
                         }),
                     ),
                     ("plan_id", json!({"type": "string"})),
+                    ("metadata", json!({"type": "object", "additionalProperties": {"type": "string"}})),
                 ],
                 ["agent_run_configs"],
             ),
@@ -7035,6 +7078,32 @@ mod protocol_compaction_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn local_metadata_is_string_only_and_preserves_empty_labels() {
+        assert_eq!(
+            local_metadata_arg(&json!({"metadata":{"group":"local","optional":""}})).unwrap()["optional"],
+            ""
+        );
+        assert!(local_metadata_arg(&json!({"metadata":{"key":false}})).is_err());
+        assert!(local_metadata_arg(&json!({"metadata":[]})).is_err());
+    }
+    #[test]
+    fn mouse_down_accepts_current_pointer_without_accepting_malformed_coordinates() {
+        let action =
+            use_computer_action_arg(&json!({"type":"mouse_down", "button":"left"})).unwrap();
+        let Some(api::message::tool_call::use_computer::action::Type::MouseDown(action)) =
+            action.r#type
+        else {
+            panic!("expected mouse down")
+        };
+        assert_eq!(action.at, None);
+        assert!(
+            use_computer_action_arg(
+                &json!({"type":"mouse_down", "button":"left", "at":{"x":"invalid", "y":4}})
+            )
+            .is_err()
+        );
+    }
     use super::*;
     use crate::ai::agent::{AIAgentExchangeId, AnyFileContent, FileContext, ImageContext};
     use mockito::Matcher;
@@ -7539,6 +7608,9 @@ mod tests {
         let message = if is_user {
             api::message::Message::UserQuery(api::message::UserQuery {
                 query: text.to_string(),
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 context: None,
                 referenced_attachments: Default::default(),
                 mode: None,
@@ -11963,6 +12035,7 @@ mod tests {
     #[test]
     fn long_running_snapshot_exposes_local_activity_to_openai_compatible_models() {
         let snapshot = api::LongRunningShellCommandSnapshot {
+            activity: None,
             command_id: "block-activity".to_string(),
             output: "[local process activity: running; 3 live processes; CPU +2750 ms; writes +4096 bytes; last activity 1.5 s ago]".to_string(),
             cursor: "<|cursor|>".to_string(),

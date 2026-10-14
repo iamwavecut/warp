@@ -11,6 +11,9 @@ fn history() -> api::Task {
             };
             let payload = if index % 2 == 0 {
                 api::message::Message::UserQuery(api::message::UserQuery {
+                    author: Default::default(),
+                    origin: Default::default(),
+                    source_message: Default::default(),
                     query: text,
                     context: None,
                     referenced_attachments: Default::default(),

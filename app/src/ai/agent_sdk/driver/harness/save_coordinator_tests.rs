@@ -13,8 +13,54 @@ use super::{SaveCoordinator, SaveOperation, save_after_session_update};
 use crate::ai::agent_sdk::driver::harness::SavePoint;
 
 #[tokio::test]
+async fn local_transcript_bursts_debounce_and_final_save_bypasses_delay() {
+    let background = Background::default();
+    let coordinator = SaveCoordinator::new(Duration::from_millis(40));
+    let (saved, saves) = async_channel::unbounded();
+    let operation: SaveOperation = Arc::new(move |point| {
+        let saved = saved.clone();
+        Box::pin(async move {
+            saved.send(point).await?;
+            Ok(())
+        })
+    });
+    coordinator.request(SavePoint::Periodic, operation.clone(), &background);
+    coordinator.request(SavePoint::PostTurn, operation.clone(), &background);
+    assert!(
+        saves
+            .recv()
+            .with_timeout(Duration::from_millis(10))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        saves
+            .recv()
+            .with_timeout(Duration::from_secs(2))
+            .await
+            .unwrap()
+            .unwrap(),
+        SavePoint::PostTurn
+    );
+    coordinator.request(SavePoint::Periodic, operation, &background);
+    let final_saved = AtomicBool::new(false);
+    coordinator
+        .finish(
+            async {
+                final_saved.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+            Duration::from_millis(20),
+        )
+        .await
+        .unwrap();
+    assert!(final_saved.load(Ordering::SeqCst));
+    assert!(saves.is_empty());
+}
+
+#[tokio::test]
 async fn session_update_failure_does_not_skip_final_save() {
-    let coordinator = SaveCoordinator::default();
+    let coordinator = SaveCoordinator::new(Duration::ZERO);
     let operations = Mutex::new(Vec::new());
     coordinator
         .finish(
@@ -47,7 +93,7 @@ async fn save_error_is_preserved_after_session_update() {
 #[tokio::test]
 async fn coalesces_saves_without_blocking_other_work() {
     let background = Background::default();
-    let coordinator = SaveCoordinator::default();
+    let coordinator = SaveCoordinator::new(Duration::ZERO);
     let saved = Arc::new(Mutex::new(Vec::new()));
     let (started, starts) = async_channel::unbounded();
     let (release, releases) = async_channel::unbounded();
@@ -102,7 +148,7 @@ async fn coalesces_saves_without_blocking_other_work() {
 #[tokio::test]
 async fn cancelled_blocking_capture_cannot_save_after_final_save() {
     let background = Background::default();
-    let coordinator = SaveCoordinator::default();
+    let coordinator = SaveCoordinator::new(Duration::ZERO);
     let saved = Arc::new(Mutex::new(Vec::new()));
     let captured_saves = saved.clone();
     let (started, start) = oneshot::channel();
@@ -146,7 +192,7 @@ async fn cancelled_blocking_capture_cannot_save_after_final_save() {
 
 #[tokio::test]
 async fn expired_final_deadline_never_starts_or_rearms_a_save() {
-    let coordinator = SaveCoordinator::default();
+    let coordinator = SaveCoordinator::new(Duration::ZERO);
     let captured = AtomicBool::new(false);
     assert!(
         coordinator
@@ -177,7 +223,7 @@ async fn expired_final_deadline_never_starts_or_rearms_a_save() {
 
 #[tokio::test]
 async fn final_timeout_cancels_future_before_returning() {
-    let coordinator = SaveCoordinator::default();
+    let coordinator = SaveCoordinator::new(Duration::ZERO);
     let (release, released) = oneshot::channel::<()>();
     let saved = AtomicBool::new(false);
     assert!(
@@ -200,7 +246,7 @@ async fn final_timeout_cancels_future_before_returning() {
 #[tokio::test]
 async fn interrupted_finalizer_still_joins_the_cancelled_worker() {
     let background = Background::default();
-    let coordinator = SaveCoordinator::default();
+    let coordinator = SaveCoordinator::new(Duration::ZERO);
     let (started, start) = oneshot::channel();
     let (release, released) = oneshot::channel::<()>();
     let current = Mutex::new(Some((started, released)));
@@ -235,7 +281,7 @@ async fn interrupted_finalizer_still_joins_the_cancelled_worker() {
 
 #[tokio::test]
 async fn final_failure_is_retained_without_repeating_writes() {
-    let coordinator = SaveCoordinator::default();
+    let coordinator = SaveCoordinator::new(Duration::ZERO);
     let result = coordinator
         .finish(
             async { Err(anyhow!("save failed")) },

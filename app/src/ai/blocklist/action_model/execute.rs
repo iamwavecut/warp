@@ -199,6 +199,7 @@ pub enum NotExecutedReason {
     NotReady,
     NeedsConfirmation,
     WaitingOnSharer,
+    ExternalHarnessOwned,
 }
 
 impl NotExecutedReason {
@@ -563,6 +564,18 @@ impl BlocklistAIActionExecutor {
         is_user_initiated: bool,
         ctx: &mut ModelContext<Self>,
     ) -> TryExecuteResult {
+        if crate::ai::blocklist::history_model::BlocklistAIHistoryModel::as_ref(ctx)
+            .conversation(&conversation_id)
+            .is_some_and(|conversation| {
+                conversation.driver()
+                    == crate::ai::agent::conversation::ConversationDriver::ExternalHarness
+            })
+        {
+            return TryExecuteResult::NotExecuted {
+                reason: NotExecutedReason::ExternalHarnessOwned,
+                action: Box::new(action),
+            };
+        }
         // We should never actually execute actions in view-only mode.
         if self.is_shared_session_viewer() {
             return TryExecuteResult::NotExecuted {

@@ -161,6 +161,7 @@ pub enum CLIAgent {
     Antigravity,
     Grok,
     Kiro,
+    Muse,
     /// Represents an unknown/custom CLI agent matched by user-configured regex patterns.
     Unknown,
 }
@@ -186,6 +187,7 @@ impl CLIAgent {
             CLIAgent::Antigravity => "agy",
             CLIAgent::Grok => "grok",
             CLIAgent::Kiro => "kiro-cli",
+            CLIAgent::Muse => "muse",
             CLIAgent::Unknown => "",
         }
     }
@@ -237,6 +239,7 @@ impl CLIAgent {
             CLIAgent::Antigravity => "Antigravity",
             CLIAgent::Grok => "Grok Build",
             CLIAgent::Kiro => "Kiro CLI",
+            CLIAgent::Muse => "Muse Code",
             CLIAgent::Unknown => "CLI Agent",
         }
     }
@@ -264,6 +267,7 @@ impl CLIAgent {
             CLIAgent::Antigravity => Some(Icon::AntigravityLogo),
             CLIAgent::Grok => Some(Icon::GrokLogo),
             CLIAgent::Kiro => Some(Icon::KiroLogo),
+            CLIAgent::Muse => Some(Icon::MuseLogo),
             CLIAgent::Unknown => None,
         }
     }
@@ -298,6 +302,11 @@ impl CLIAgent {
             CLIAgent::Antigravity => &[],
             CLIAgent::Grok => &[SkillProvider::Agents],
             CLIAgent::Kiro => &[],
+            CLIAgent::Muse => &[
+                SkillProvider::Agents,
+                SkillProvider::Claude,
+                SkillProvider::Codex,
+            ],
             CLIAgent::Unknown => &[],
         }
     }
@@ -326,6 +335,7 @@ impl CLIAgent {
                 | CLIAgent::OhMyPi
                 | CLIAgent::Grok
                 | CLIAgent::Kiro
+                | CLIAgent::Muse
         )
     }
 
@@ -357,6 +367,7 @@ impl CLIAgent {
             CLIAgent::Antigravity => Some(ANTIGRAVITY_COLOR),
             CLIAgent::Grok => Some(ColorU::new(16, 16, 16, 255)),
             CLIAgent::Kiro => Some(KIRO_PURPLE),
+            CLIAgent::Muse => Some(ColorU::new(0, 129, 251, 255)),
             CLIAgent::Unknown => None,
         }
     }

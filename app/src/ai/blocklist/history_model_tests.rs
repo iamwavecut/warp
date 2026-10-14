@@ -76,6 +76,9 @@ fn create_user_query_message(
         citations: vec![],
         message: Some(warp_multi_agent_api::message::Message::UserQuery(
             warp_multi_agent_api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: query.to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),
@@ -186,6 +189,8 @@ fn persisted_agent_conversation_from_update_event(event: ModelEvent) -> AgentCon
 
 fn local_rename_conversation_data() -> AgentConversationData {
     AgentConversationData {
+        is_external_harness: false,
+        local_child_metadata: std::collections::HashMap::new(),
         server_conversation_token: None,
         conversation_usage_metadata: None,
         reverted_action_ids: None,
@@ -560,6 +565,8 @@ fn test_initialize_historical_conversations_resolves_parent_agent_id_children_vi
             persisted_agent_conversation(
                 child_id,
                 AgentConversationData {
+                    is_external_harness: false,
+                    local_child_metadata: std::collections::HashMap::new(),
                     server_conversation_token: Some("child-token".to_string()),
                     conversation_usage_metadata: None,
                     reverted_action_ids: None,
@@ -582,6 +589,8 @@ fn test_initialize_historical_conversations_resolves_parent_agent_id_children_vi
             persisted_agent_conversation(
                 parent_id,
                 AgentConversationData {
+                    is_external_harness: false,
+                    local_child_metadata: std::collections::HashMap::new(),
                     server_conversation_token: Some("parent-token".to_string()),
                     conversation_usage_metadata: None,
                     reverted_action_ids: None,
@@ -640,6 +649,8 @@ fn test_initialize_historical_conversations_eagerly_hydrates_orchestration_child
             persisted_agent_conversation(
                 child_id,
                 AgentConversationData {
+                    is_external_harness: false,
+                    local_child_metadata: std::collections::HashMap::new(),
                     server_conversation_token: Some("child-token".to_string()),
                     conversation_usage_metadata: None,
                     reverted_action_ids: None,
@@ -663,6 +674,8 @@ fn test_initialize_historical_conversations_eagerly_hydrates_orchestration_child
             persisted_agent_conversation(
                 parent_id,
                 AgentConversationData {
+                    is_external_harness: false,
+                    local_child_metadata: std::collections::HashMap::new(),
                     server_conversation_token: Some("parent-token".to_string()),
                     conversation_usage_metadata: None,
                     reverted_action_ids: None,
@@ -1593,6 +1606,8 @@ fn test_find_by_token_after_insert_forked_conversation_from_tasks() {
 
         let forked_conversation_id = AIConversationId::new();
         let conversation_data = AgentConversationData {
+            is_external_harness: false,
+            local_child_metadata: std::collections::HashMap::new(),
             server_conversation_token: Some("forked-token".to_string()),
             conversation_usage_metadata: None,
             reverted_action_ids: None,
@@ -1788,6 +1803,8 @@ fn test_fork_then_bind_handoff_token_resolves_to_forked_conversation() {
             source_id,
             vec![root_task],
             Some(AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: Some("src-token".to_string()),
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -1887,6 +1904,8 @@ fn test_fork_conversation_preserves_task_ids_when_requested() {
             source_id,
             vec![root_task, subtask],
             Some(AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: Some("src-token".to_string()),
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,
@@ -1975,6 +1994,8 @@ fn test_fork_conversation_title_override_replaces_prefix() {
             source_id,
             vec![root_task],
             Some(AgentConversationData {
+                is_external_harness: false,
+                local_child_metadata: std::collections::HashMap::new(),
                 server_conversation_token: None,
                 conversation_usage_metadata: None,
                 reverted_action_ids: None,

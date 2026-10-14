@@ -81,6 +81,7 @@ fn initialize_editor(
     ViewHandle<TestView>,
 ) {
     initialize_settings_for_tests(app);
+    app.add_singleton_model(|_| crate::voice::transcriber::VoiceTranscriber::disabled());
 
     let global_resources = GlobalResourceHandles::mock(app);
     app.add_singleton_model(|_| GlobalResourceHandlesProvider::new(global_resources));

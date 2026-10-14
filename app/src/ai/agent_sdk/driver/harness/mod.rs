@@ -23,6 +23,7 @@ use warp_managed_secrets::ManagedSecretValue;
 use super::terminal::{CommandHandle, TerminalDriver};
 use super::{AgentDriver, AgentDriverError};
 
+pub(crate) mod acp;
 pub(crate) mod claude_code;
 mod codex;
 pub(crate) mod exit_escalation;
@@ -49,6 +50,10 @@ pub(crate) trait ThirdPartyHarness: Send + Sync {
 
     /// Returns the CLIAgent type associated with this harness.
     fn cli_agent(&self) -> CLIAgent;
+
+    fn drives_cli_agent_session(&self) -> bool {
+        true
+    }
 
     /// URL to install instructions for this harness's CLI, surfaced in the
     /// default [`validate`] impl when the CLI is not on `PATH`.
@@ -145,6 +150,21 @@ pub(crate) fn harness_kind(harness: Harness) -> Result<HarnessKind, AgentDriverE
         Harness::OpenCode => Ok(HarnessKind::Unsupported(Harness::OpenCode)),
         Harness::Gemini => Ok(HarnessKind::ThirdParty(Box::new(GeminiHarness))),
         Harness::Unknown => Err(AgentDriverError::InvalidRuntimeState),
+    }
+}
+
+pub(crate) fn harness_kind_with_transport(
+    harness: Harness,
+    transport: warp_cli::agent::HarnessTransport,
+) -> Result<HarnessKind, AgentDriverError> {
+    match transport {
+        warp_cli::agent::HarnessTransport::Pty => harness_kind(harness),
+        warp_cli::agent::HarnessTransport::Acp => acp::AcpLaunchSpec::for_harness(harness)
+            .map(|launch| HarnessKind::ThirdParty(Box::new(acp::AcpHarness::new(harness, launch))))
+            .ok_or_else(|| AgentDriverError::HarnessSetupFailed {
+                harness: harness.to_string(),
+                reason: "this harness has no local ACP adapter".into(),
+            }),
     }
 }
 
@@ -291,6 +311,10 @@ pub(crate) enum HarnessCleanupDisposition {
 pub(crate) trait HarnessRunner: Send + Sync {
     /// Name of the local CLI command this runner starts.
     fn harness_name(&self) -> &str;
+
+    fn drives_native_conversation(&self) -> bool {
+        false
+    }
 
     /// Start the harness command in the local terminal.
     ///

@@ -1489,6 +1489,13 @@ fn handle_terminal_view_event(
                                     ctx,
                                 );
                             });
+                            crate::ai::local_agent_registry::LocalAgentRegistry::handle(ctx)
+                                .update(ctx, |registry, _| {
+                                    registry.set_local_metadata(
+                                        conversation_id,
+                                        request.metadata.clone(),
+                                    );
+                                });
 
                             register_legacy_local_lifecycle_subscription(
                                 request.parent_conversation_id,

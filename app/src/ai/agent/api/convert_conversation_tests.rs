@@ -27,6 +27,20 @@ fn test_skill() -> api::Skill {
 }
 
 #[test]
+fn screenshot_replay_uses_inline_bytes_without_fetching_storage_references() {
+    let image = api::RawImage {
+        source: Some(api::raw_image::Source::Data(vec![1, 2, 3])),
+        ..Default::default()
+    };
+    assert_eq!(inline_image_bytes(&image), Some(&[1, 2, 3][..]));
+    let stored = api::RawImage {
+        source: Some(api::raw_image::Source::StoredRef(Default::default())),
+        ..Default::default()
+    };
+    assert_eq!(inline_image_bytes(&stored), None);
+}
+
+#[test]
 fn test_convert_tool_call_result_to_input_transfer_control_snapshot() {
     let task_id = crate::ai::agent::task::TaskId::new("task".to_string());
     let mut document_versions = HashMap::new();
@@ -39,6 +53,7 @@ fn test_convert_tool_call_result_to_input_transfer_control_snapshot() {
                     result: Some(
                         api::transfer_shell_command_control_to_user_result::Result::LongRunningCommandSnapshot(
                         api::LongRunningShellCommandSnapshot {
+                            activity: None,
                                 command_id: "cmd1".to_string(),
                                 output: "snapshot".to_string(),
                                 cursor: "<|cursor|>".to_string(),
@@ -132,6 +147,9 @@ fn test_into_exchanges_basic() {
             server_message_data: "".to_string(),
             citations: vec![],
             message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: "test query".to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),
@@ -162,6 +180,9 @@ fn test_into_exchanges_basic() {
             server_message_data: "".to_string(),
             citations: vec![],
             message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: "second query".to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),
@@ -192,6 +213,9 @@ fn test_into_exchanges_basic() {
             server_message_data: "".to_string(),
             citations: vec![],
             message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: "third query".to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),
@@ -256,6 +280,9 @@ fn test_invoke_skill_arguments_round_trip() {
                 api::message::InvokeSkill {
                     skill: Some(test_skill()),
                     user_query: Some(api::message::UserQuery {
+                        author: Default::default(),
+                        origin: Default::default(),
+                        source_message: Default::default(),
                         query: query.clone(),
                         context: None,
                         referenced_attachments: HashMap::new(),
@@ -369,6 +396,9 @@ fn test_into_exchanges_with_tool_calls_and_cancellation() {
             server_message_data: "".to_string(),
             citations: vec![],
             message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: "run parallel commands".to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),
@@ -571,6 +601,9 @@ fn test_into_exchanges_with_tool_calls_and_cancellation() {
             server_message_data: "".to_string(),
             citations: vec![],
             message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: "did it work?".to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),
@@ -690,6 +723,9 @@ fn test_into_exchanges_with_code_diffs() {
             server_message_data: "".to_string(),
             citations: vec![],
             message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: "Fix the imports in main.rs".to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),
@@ -761,6 +797,9 @@ fn test_into_exchanges_with_code_diffs() {
             server_message_data: "".to_string(),
             citations: vec![],
             message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: "Actually, let's remove the unused import instead".to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),
@@ -858,6 +897,9 @@ fn test_into_exchanges_with_code_diffs() {
             server_message_data: "".to_string(),
             citations: vec![],
             message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: "Great! Now does it compile?".to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),
@@ -973,6 +1015,9 @@ fn test_user_query_mode_conversion() {
         server_message_data: "".to_string(),
         citations: vec![],
         message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+            author: Default::default(),
+            origin: Default::default(),
+            source_message: Default::default(),
             query: "test query with plan mode".to_string(),
             context: None,
             referenced_attachments: HashMap::new(),
@@ -1020,6 +1065,9 @@ fn test_user_query_mode_conversion() {
         server_message_data: "".to_string(),
         citations: vec![],
         message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+            author: Default::default(),
+            origin: Default::default(),
+            source_message: Default::default(),
             query: "test query with normal mode".to_string(),
             context: None,
             referenced_attachments: HashMap::new(),
@@ -1065,6 +1113,9 @@ fn test_user_query_mode_conversion() {
         server_message_data: "".to_string(),
         citations: vec![],
         message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+            author: Default::default(),
+            origin: Default::default(),
+            source_message: Default::default(),
             query: "test query with default mode".to_string(),
             context: None,
             referenced_attachments: HashMap::new(),
@@ -1139,6 +1190,9 @@ fn test_exchanges_grouped_by_request_id() {
             server_message_data: "".to_string(),
             citations: vec![],
             message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: "demonstrate your ability".to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),
@@ -1207,6 +1261,7 @@ fn test_exchanges_grouped_by_request_id() {
                             result: Some(
                                 api::run_shell_command_result::Result::LongRunningCommandSnapshot(
                                     api::LongRunningShellCommandSnapshot {
+                                        activity: None,
                                         command_id: "cmd1".to_string(),
                                         output: "\n<|cursor|>".to_string(),
                                         cursor: String::new(),
@@ -1253,6 +1308,7 @@ fn test_exchanges_grouped_by_request_id() {
                             result: Some(
                                 api::write_to_long_running_shell_command_result::Result::LongRunningCommandSnapshot(
                                     api::LongRunningShellCommandSnapshot {
+                                        activity: None,
                                         command_id: "cmd1".to_string(),
                                         output: "wrote to vim".to_string(),
                                         cursor: String::new(),
@@ -1396,6 +1452,9 @@ fn test_multiple_create_documents_get_default_version() {
             server_message_data: "".to_string(),
             citations: vec![],
             message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: "create two plans".to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),
@@ -1613,6 +1672,9 @@ fn test_create_then_edit_then_create_version_tracking() {
             server_message_data: "".to_string(),
             citations: vec![],
             message: Some(api::message::Message::UserQuery(api::message::UserQuery {
+                author: Default::default(),
+                origin: Default::default(),
+                source_message: Default::default(),
                 query: "create and edit plans".to_string(),
                 context: None,
                 referenced_attachments: HashMap::new(),

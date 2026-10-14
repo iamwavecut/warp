@@ -85,6 +85,7 @@ pub fn init(app: &mut AppContext) {
 /// and adds card-specific fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunAgentsEditState {
+    pub metadata: std::collections::HashMap<String, String>,
     pub orch: oc::OrchestrationEditState,
     pub agent_run_configs: Vec<RunAgentsAgentRunConfig>,
     pub base_prompt: String,
@@ -103,6 +104,7 @@ impl RunAgentsEditState {
                 &req.harness_type,
                 &req.execution_mode,
             ),
+            metadata: req.metadata.clone(),
             agent_run_configs: req.agent_run_configs.clone(),
             base_prompt: req.base_prompt.clone(),
             summary: req.summary.clone(),
@@ -113,6 +115,7 @@ impl RunAgentsEditState {
 
     pub fn to_request(&self) -> RunAgentsRequest {
         RunAgentsRequest {
+            metadata: self.metadata.clone(),
             summary: self.summary.clone(),
             base_prompt: self.base_prompt.clone(),
             skills: self.skills.clone(),

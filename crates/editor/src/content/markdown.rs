@@ -50,19 +50,48 @@ pub enum MarkdownStyle<'a> {
 pub struct BufferMarkdownParser<'a> {
     blocks: StyledBufferBlocks<'a>,
     style: MarkdownStyle<'a>,
+    copyable_spacing: bool,
 }
 
 impl<'a> BufferMarkdownParser<'a> {
     pub fn new(style: MarkdownStyle<'a>, blocks: StyledBufferBlocks<'a>) -> Self {
-        Self { blocks, style }
+        Self {
+            blocks,
+            style,
+            copyable_spacing: false,
+        }
+    }
+
+    pub fn to_copyable_markdown(&mut self) -> String {
+        self.copyable_spacing = true;
+        self.to_markdown()
     }
 
     // Consumes the iterator and returns the corresponding markdown string.
     pub fn to_markdown(&mut self) -> String {
         let mut res = String::new();
         let mut ordered_list_numbering = ListNumbering::new();
+        let mut previous_was_list = false;
 
         for block in self.blocks.by_ref() {
+            if self.copyable_spacing
+                && matches!(&block, StyledBufferBlock::Text(text)
+                    if matches!(&text.style, BufferBlockStyle::PlainText)
+                        && text.block.iter().all(|run| run.run.trim().is_empty()))
+            {
+                previous_was_list = false;
+                continue;
+            }
+            let is_list = matches!(&block, StyledBufferBlock::Text(text)
+                if matches!(&text.style, BufferBlockStyle::UnorderedList { .. } | BufferBlockStyle::OrderedList { .. } | BufferBlockStyle::TaskList { .. }));
+            if self.copyable_spacing
+                && !res.is_empty()
+                && !res.ends_with("\n\n")
+                && !(previous_was_list && is_list)
+            {
+                res.push('\n');
+            }
+            previous_was_list = is_list;
             match block {
                 StyledBufferBlock::Item(item) => {
                     res.push_str(&item.as_markdown(self.style));

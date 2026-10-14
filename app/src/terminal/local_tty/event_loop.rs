@@ -320,7 +320,7 @@ where
         Ok(())
     }
 
-    pub fn spawn(mut self) -> JoinHandle<()> {
+    pub fn spawn(mut self) -> JoinHandle<Receiver<Message>> {
         #[cfg(test)]
         let feature_flag_overrides = warp_core::features::get_overrides();
 
@@ -488,6 +488,7 @@ where
                 }
                 // Notify the terminal model that the PTY process has exited.
                 self.terminal.lock().exit(ExitReason::PtyDisconnected);
+                self.rx
             })
             .expect("thread spawn works")
     }

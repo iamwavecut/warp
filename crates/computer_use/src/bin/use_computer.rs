@@ -174,7 +174,7 @@ async fn main() -> ExitCode {
                 vec![
                     Action::MouseDown {
                         button: button.clone(),
-                        at: pos,
+                        at: Some(pos),
                     },
                     Action::MouseUp { button },
                 ],
