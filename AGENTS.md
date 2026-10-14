@@ -477,7 +477,38 @@ Simple binary:
 target/debug/warp-oss
 ```
 
-## Build Cache Cleanup
+## Mandatory End-of-Work Cleanup
+
+Clean up after every work iteration, regardless of success, failure, blocker,
+no-op result, or requested stop. Cleanup is a required finalization step, not
+conditional on a successful build, push, or production install. Use a
+finally-style finalizer for long jobs so ordinary errors do not skip cleanup.
+
+Track temporary files, directories and processes created by the work. Use a
+dedicated `mktemp -d` directory for temporary scripts, downloads and logs.
+Before deleting it, retain only a concise diagnostic summary and any evidence
+needed to resume incomplete work in a durable report or automation memory.
+Do not retain full temporary logs by default.
+
+Stop only agent-owned temporary processes before removing their artifacts.
+Check for active builds and open files. Do not kill user-owned processes or
+delete outputs used by another task. Validate exact paths and reject symlink
+targets. Never sweep shared temporary directories, the workspace root, user
+data, Git changes, source files, credentials or unrelated caches.
+
+Remove agent-owned temporary files, intermediate builds and Cargo debug
+outputs, including temporary debug bundles. Keep an existing or newly requested
+debug app only when it is an explicit deliverable or needed by an active user
+session. Otherwise remove it and report that the debug launch command is no
+longer available. Never delete `target/release/bundle/osx/WarpOss.app` or the
+installed `/Applications/WarpOss.app` as cleanup. Avoid full `cargo clean`.
+
+Verify that each cleanup target is absent and protected deliverables remain.
+Report what was removed, measured disk space, and any retained paths with the
+reason. If cleanup is blocked by an active owner or tool restriction, report
+the exact blocker; do not claim cleanup passed or bypass the restriction.
+
+### Cargo Verification Batches
 
 Avoid full `cargo clean` when the current `.app` bundle should be preserved.
 After every agent-owned verification batch that runs Cargo tests, checks,
@@ -489,7 +520,9 @@ This repo's debug artifacts can grow by hundreds of gigabytes because
 `incremental`, hashed `deps` outputs, and top-level debug binaries keep multiple
 feature-set generations side by side.
 
-Safe cleanup after successful heavy builds:
+The following reproducible outputs are cleanup candidates after successful or
+failed builds. Resolve their exact paths and ownership before removal. Use
+non-forced removal when tool policy rejects forced deletion:
 
 ```sh
 rm -rf target/debug/incremental \
@@ -505,10 +538,10 @@ rm -f target/debug/libwarp*.rlib \
 ```
 
 This cleanup removes the simple top-level `target/debug/warp-oss` binary. That
-binary is reproducible; preserve and verify the `.app` bundle instead when the
-goal is to keep a launchable local build.
+binary is reproducible. Preserve and verify a debug `.app` bundle only under
+the explicit-deliverable or active-user-session exceptions above.
 
-Verify the bundle still exists:
+When preserving a debug bundle, verify it still exists:
 
 ```sh
 test -d target/debug/bundle/osx/WarpOss.app && echo app-bundle-present

@@ -1497,9 +1497,50 @@ fn stream_chat_completion_with_tool_policy(
     body: ChatCompletionRequest,
     task_id: String,
     request_id: String,
+    prefix_actions: Vec<api::ClientAction>,
+    supported_tools: Vec<api::ToolType>,
+    long_running_shell_controls_advertised: bool,
+) -> ResponseStream {
+    stream_chat_completion_with_tool_policy_and_repair(
+        route,
+        body,
+        task_id,
+        request_id,
+        prefix_actions,
+        supported_tools,
+        long_running_shell_controls_advertised,
+        true,
+    )
+}
+
+fn tool_call_repair_request(
+    mut body: ChatCompletionRequest,
+    tool_calls: Vec<OpenAIToolCall>,
+) -> ChatCompletionRequest {
+    let ids = tool_calls
+        .iter()
+        .map(|call| call.id.clone())
+        .collect::<Vec<_>>();
+    body.messages
+        .push(ChatMessage::assistant_tool_calls(tool_calls));
+    for id in ids {
+        body.messages.push(ChatMessage::tool(id, json!({
+            "error": "local_tool_validation_failed",
+            "message": "No tool call in this response was executed. A tool name or argument did not match the enabled tool definitions. Submit corrected calls. Use only enabled tools and their JSON schemas. Do not repeat invalid arguments.",
+        }).to_string()));
+    }
+    body
+}
+
+fn stream_chat_completion_with_tool_policy_and_repair(
+    route: CustomProviderRoute,
+    body: ChatCompletionRequest,
+    task_id: String,
+    request_id: String,
     mut prefix_actions: Vec<api::ClientAction>,
     supported_tools: Vec<api::ToolType>,
     long_running_shell_controls_advertised: bool,
+    allow_tool_argument_repair: bool,
 ) -> ResponseStream {
     Box::pin(stream! {
     let response = match send_chat_completion_request(&route, &body).await {
@@ -1528,12 +1569,20 @@ fn stream_chat_completion_with_tool_policy(
             yield Err(Arc::new(error));
             return;
         }
+        let repair_calls = response.choices.iter()
+            .flat_map(|choice| choice.message.tool_calls.iter().cloned())
+            .collect::<Vec<_>>();
+        let can_repair = allow_tool_argument_repair
+            && route.api_type == CustomApiType::OpenAiCompatible
+            && response.choices.len() == 1
+            && !repair_calls.is_empty()
+            && repair_calls.iter().all(|call| validate_openai_tool_call_envelope(call).is_ok());
         match events_from_non_streaming_response(
             response,
             &route,
             &task_id,
             &request_id,
-            prefix_actions,
+            prefix_actions.clone(),
             &supported_tools,
             long_running_shell_controls_advertised,
         ) {
@@ -1541,6 +1590,14 @@ fn stream_chat_completion_with_tool_policy(
                 for event in events {
                     yield Ok(event);
                 }
+            }
+            Err(_) if can_repair => {
+                log::warn!("Direct provider tool validation failed. Requesting one correction before executing any calls");
+                let mut repair = stream_chat_completion_with_tool_policy_and_repair(
+                    route, tool_call_repair_request(body, repair_calls), task_id, request_id,
+                    prefix_actions, supported_tools, long_running_shell_controls_advertised, false,
+                );
+                while let Some(event) = repair.next().await { yield event; }
             }
             Err(error) => yield Err(Arc::new(error)),
         }
@@ -1724,24 +1781,30 @@ fn stream_chat_completion_with_tool_policy(
         residual_buffer_bytes
     );
     if !completed_tool_calls.is_empty() {
-        let mut messages = Vec::new();
-        for tool_call in completed_tool_calls {
-            match api_tool_call_message_for_supported_tools(
-                &task_id,
-                &request_id,
-                tool_call,
-                &supported_tools,
+        // Validate the entire batch before exposing any executable tool call.
+        let mut messages = match completed_tool_calls.iter().cloned().map(|tool_call| {
+            api_tool_call_message_for_supported_tools(
+                &task_id, &request_id, tool_call, &supported_tools,
                 long_running_shell_controls_advertised,
-            ) {
-                Ok(message) => messages.push(message),
-                Err(_) => {
-                    yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
-                        "malformed OpenAI-compatible SSE tool call arguments"
-                    ))));
-                    return;
-                }
+            )
+        }).collect::<Result<Vec<_>, _>>() {
+            Ok(messages) => messages,
+            Err(_) if allow_tool_argument_repair && route.api_type == CustomApiType::OpenAiCompatible => {
+                log::warn!("Direct provider tool validation failed. Requesting one correction before executing any calls");
+                let mut repair = stream_chat_completion_with_tool_policy_and_repair(
+                    route, tool_call_repair_request(body, completed_tool_calls), task_id, request_id,
+                    prefix_actions, supported_tools, long_running_shell_controls_advertised, false,
+                );
+                while let Some(event) = repair.next().await { yield event; }
+                return;
             }
-        }
+            Err(_) => {
+                yield Err(Arc::new(AIApiError::Other(anyhow::anyhow!(
+                    "malformed OpenAI-compatible SSE tool call arguments"
+                ))));
+                return;
+            }
+        };
         let mut actions = take_prefix_actions(&mut prefix_actions);
         if let Some(output) = &response_output {
             if let Some(message_id) = &content_message_id {
@@ -9306,6 +9369,217 @@ mod tests {
             }
         }
         assert!(saw_tool_call);
+    }
+
+    fn tool_validation_test_response(calls: Vec<OpenAIToolCall>, streamed: bool) -> String {
+        if streamed {
+            let calls = calls.into_iter().enumerate().map(|(index, call)| {
+                json!({"index": index, "id": call.id, "type": call.kind, "function": call.function})
+            }).collect::<Vec<_>>();
+            format!(
+                "data: {}\n\ndata: [DONE]\n\n",
+                json!({
+                    "choices": [{"delta": {"tool_calls": calls}, "finish_reason": "tool_calls"}]
+                })
+            )
+        } else {
+            json!({"choices": [{"message": {"tool_calls": calls}, "finish_reason": "tool_calls"}]})
+                .to_string()
+        }
+    }
+
+    fn tool_validation_test_call(id: &str, name: &str, args: Value) -> OpenAIToolCall {
+        OpenAIToolCall {
+            id: id.to_string(),
+            kind: "function".to_string(),
+            function: OpenAIFunctionCall {
+                name: name.to_string(),
+                arguments: args.to_string(),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn public_generate_repairs_invalid_tool_arguments_before_emitting_any_calls() {
+        for streamed in [true, false] {
+            let mut server = mockito::Server::new_async().await;
+            let first = server
+                .mock("POST", "/v1/chat/completions")
+                .match_body(mockito::Matcher::PartialJson(
+                    json!({"messages": [{"role": "system"}]}),
+                ))
+                .with_header(
+                    "content-type",
+                    if streamed {
+                        "text/event-stream"
+                    } else {
+                        "application/json"
+                    },
+                )
+                .with_body(tool_validation_test_response(
+                    vec![
+                        tool_validation_test_call(
+                            "valid-but-held",
+                            "run_shell_command",
+                            json!({"command": "must-not-run"}),
+                        ),
+                        tool_validation_test_call(
+                            "invalid-call",
+                            "run_shell_command",
+                            json!({"command": "sensitive-command", "is_read_only": "true"}),
+                        ),
+                    ],
+                    streamed,
+                ))
+                .expect(1)
+                .create_async()
+                .await;
+            let repair = server.mock("POST", "/v1/chat/completions")
+                .match_body(mockito::Matcher::PartialJson(json!({"messages": [
+                    {"role": "system"},
+                    {"role": "assistant", "tool_calls": [{"id": "valid-but-held"}, {"id": "invalid-call"}]},
+                    {"role": "tool", "tool_call_id": "valid-but-held"},
+                    {"role": "tool", "tool_call_id": "invalid-call"},
+                ]})))
+                .with_header("content-type", "text/event-stream")
+                .with_body(tool_validation_test_response(vec![
+                    tool_validation_test_call("corrected-call", "run_shell_command", json!({"command": "printf corrected", "is_read_only": true})),
+                ], true))
+                .expect(1).create_async().await;
+            let mut response = generate(
+                vision_test_route(format!("{}/v1", server.url())),
+                super::super::RequestParams::new_for_test(),
+                vec![api::ToolType::RunShellCommand],
+            )
+            .await
+            .unwrap();
+            let mut calls = Vec::new();
+            while let Some(event) = response.next().await {
+                let event =
+                    event.expect("invalid arguments should be corrected within this request");
+                if let Some(api::response_event::Type::ClientActions(actions)) = event.r#type {
+                    for action in actions.actions {
+                        if let Some(api::client_action::Action::AddMessagesToTask(add)) =
+                            action.action
+                        {
+                            for message in add.messages {
+                                if let Some(api::message::Message::ToolCall(call)) = message.message
+                                {
+                                    calls.push(call);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].tool_call_id, "corrected-call");
+            let Some(api::message::tool_call::Tool::RunShellCommand(command)) = &calls[0].tool
+            else {
+                panic!("expected corrected shell call")
+            };
+            assert_eq!(command.command, "printf corrected");
+            assert!(command.is_read_only);
+            first.assert_async().await;
+            repair.assert_async().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn public_generate_tool_argument_repair_is_bounded_and_does_not_echo_payload() {
+        let mut server = mockito::Server::new_async().await;
+        let repeated = server
+            .mock("POST", "/v1/chat/completions")
+            .with_header("content-type", "text/event-stream")
+            .with_body(tool_validation_test_response(
+                vec![tool_validation_test_call(
+                    "bad-call",
+                    "run_shell_command",
+                    json!({"command": "private-command", "is_read_only": "private-value"}),
+                )],
+                true,
+            ))
+            .expect(2)
+            .create_async()
+            .await;
+        let mut response = generate(
+            vision_test_route(format!("{}/v1", server.url())),
+            super::super::RequestParams::new_for_test(),
+            vec![api::ToolType::RunShellCommand],
+        )
+        .await
+        .unwrap();
+        let mut errors = Vec::new();
+        while let Some(event) = response.next().await {
+            match event {
+                Err(error) => errors.push(error.to_string()),
+                Ok(event) => {
+                    if let Some(api::response_event::Type::ClientActions(actions)) = event.r#type {
+                        for action in actions.actions {
+                            if let Some(api::client_action::Action::AddMessagesToTask(add)) =
+                                action.action
+                            {
+                                assert!(add.messages.iter().all(|message| !matches!(
+                                    message.message,
+                                    Some(api::message::Message::ToolCall(_))
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("tool call arguments"));
+        assert!(!errors[0].contains("private-command"));
+        assert!(!errors[0].contains("private-value"));
+        repeated.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn public_generate_tool_argument_repair_cannot_enable_an_unadvertised_tool() {
+        let mut server = mockito::Server::new_async().await;
+        let repeated = server
+            .mock("POST", "/v1/chat/completions")
+            .with_header("content-type", "text/event-stream")
+            .with_body(tool_validation_test_response(
+                vec![tool_validation_test_call(
+                    "disabled-call",
+                    "run_shell_command",
+                    json!({"command": "must-not-run"}),
+                )],
+                true,
+            ))
+            .expect(2)
+            .create_async()
+            .await;
+        let mut response = generate(
+            vision_test_route(format!("{}/v1", server.url())),
+            super::super::RequestParams::new_for_test(),
+            vec![api::ToolType::ReadFiles],
+        )
+        .await
+        .unwrap();
+        let mut error = None;
+        while let Some(event) = response.next().await {
+            if let Err(value) = event {
+                error = Some(value.to_string());
+            } else if let Some(api::response_event::Type::ClientActions(actions)) =
+                event.unwrap().r#type
+            {
+                for action in actions.actions {
+                    if let Some(api::client_action::Action::AddMessagesToTask(add)) = action.action
+                    {
+                        assert!(add.messages.iter().all(|message| !matches!(
+                            message.message,
+                            Some(api::message::Message::ToolCall(_))
+                        )));
+                    }
+                }
+            }
+        }
+        assert!(error.is_some());
+        repeated.assert_async().await;
     }
 
     #[tokio::test]
