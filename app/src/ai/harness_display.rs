@@ -23,6 +23,7 @@ pub fn display_name(harness: Harness) -> &'static str {
         Harness::Gemini => "Gemini CLI",
         Harness::Codex => "Codex",
         Harness::Unknown => "Unknown",
+        Harness::Pi => "Pi",
     }
 }
 
@@ -35,6 +36,7 @@ pub fn icon_for(harness: Harness) -> Icon {
         Harness::Gemini => Icon::GeminiLogo,
         Harness::Codex => Icon::OpenAILogo,
         Harness::Unknown => Icon::HelpCircle,
+        Harness::Pi => Icon::Terminal,
     }
 }
 
@@ -48,6 +50,7 @@ pub fn brand_color(harness: Harness) -> Option<ColorU> {
         Harness::Gemini => Some(GEMINI_BLUE),
         Harness::Codex => Some(OPENAI_COLOR),
         Harness::Unknown => None,
+        Harness::Pi => None,
     }
 }
 
@@ -61,6 +64,7 @@ pub fn circle_background(harness: Harness, theme: &WarpTheme) -> WarpThemeFill {
         Harness::Gemini => WarpThemeFill::Solid(GEMINI_BLUE),
         Harness::OpenCode => WarpThemeFill::Solid(OPENCODE_COLOR),
         Harness::Unknown => internal_colors::fg_overlay_2(theme),
+        Harness::Pi => internal_colors::fg_overlay_2(theme),
     }
 }
 
@@ -72,6 +76,7 @@ pub fn icon_fill_on_circle(harness: Harness, theme: &WarpTheme) -> WarpThemeFill
             WarpThemeFill::Solid(ColorU::white())
         }
         Harness::Unknown => theme.main_text_color(internal_colors::fg_overlay_2(theme)),
+        Harness::Pi => theme.main_text_color(internal_colors::fg_overlay_2(theme)),
     }
 }
 

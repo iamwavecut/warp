@@ -437,6 +437,7 @@ fn harness_label(harness: Harness) -> &'static str {
         Harness::Gemini => "gemini",
         Harness::Codex => "codex",
         Harness::Unknown => "unknown",
+        Harness::Pi => "pi",
     }
 }
 

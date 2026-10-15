@@ -473,6 +473,7 @@ impl TerminalView {
             Harness::Gemini => matches!(cli_agent, CLIAgent::Gemini),
             Harness::Codex => matches!(cli_agent, CLIAgent::Codex),
             Harness::Unknown => false,
+            Harness::Pi => false,
         }
     }
 

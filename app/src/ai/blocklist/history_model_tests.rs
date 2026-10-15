@@ -486,38 +486,51 @@ fn start_new_child_conversation_persists_harness_metadata() {
         let terminal_view_id = EntityId::new();
         let history_model = app.add_singleton_model(|_| BlocklistAIHistoryModel::new_for_test());
 
-        let (child_a, child_b, child_ids) = history_model.update(&mut app, |history_model, ctx| {
-            let parent_conversation_id =
-                history_model.start_new_conversation(terminal_view_id, false, false, false, ctx);
-            history_model.set_server_conversation_token_for_conversation(
-                parent_conversation_id,
-                "parent-agent-id".to_string(),
-            );
-            let child_a = history_model.start_new_child_conversation(
-                terminal_view_id,
-                "Agent 1".to_string(),
-                parent_conversation_id,
-                Some(Harness::Claude),
-                ctx,
-            );
-            let child_b = history_model.start_new_child_conversation(
-                terminal_view_id,
-                "Agent 2".to_string(),
-                parent_conversation_id,
-                Some(Harness::Codex),
-                ctx,
-            );
-            (
-                child_a,
-                child_b,
-                history_model
-                    .child_conversation_ids_of(&parent_conversation_id)
-                    .to_vec(),
-            )
-        });
+        let (parent, child_a, child_b, child_ids) =
+            history_model.update(&mut app, |history_model, ctx| {
+                let parent_conversation_id = history_model.start_new_conversation(
+                    terminal_view_id,
+                    false,
+                    false,
+                    false,
+                    ctx,
+                );
+                history_model.set_server_conversation_token_for_conversation(
+                    parent_conversation_id,
+                    "parent-agent-id".to_string(),
+                );
+                let child_a = history_model.start_new_child_conversation(
+                    terminal_view_id,
+                    "Agent 1".to_string(),
+                    parent_conversation_id,
+                    Some(Harness::Claude),
+                    ctx,
+                );
+                let child_b = history_model.start_new_child_conversation(
+                    terminal_view_id,
+                    "Agent 2".to_string(),
+                    parent_conversation_id,
+                    Some(Harness::Codex),
+                    ctx,
+                );
+                (
+                    parent_conversation_id,
+                    child_a,
+                    child_b,
+                    history_model
+                        .child_conversation_ids_of(&parent_conversation_id)
+                        .to_vec(),
+                )
+            });
 
         assert_eq!(child_ids, vec![child_a, child_b]);
         history_model.read(&app, |history_model, _| {
+            let parent_run_id = history_model
+                .conversation(&parent)
+                .expect("parent conversation should exist")
+                .run_id()
+                .expect("local parent must have a run ID");
+            assert_ne!(parent_run_id, "parent-agent-id");
             let child_a_conversation = history_model
                 .conversation(&child_a)
                 .expect("child conversation should exist");
@@ -542,11 +555,11 @@ fn start_new_child_conversation_persists_harness_metadata() {
             );
             assert_eq!(
                 child_a_conversation.parent_agent_id(),
-                Some("parent-agent-id")
+                Some(parent_run_id.as_str())
             );
             assert_eq!(
                 child_b_conversation.parent_agent_id(),
-                Some("parent-agent-id")
+                Some(parent_run_id.as_str())
             );
         });
     });

@@ -3,6 +3,24 @@ use warp_cli::agent::Harness;
 use super::{auth_check_command_for, validate_cli_installed};
 use crate::ai::agent_sdk::driver::AgentDriverError;
 
+#[test]
+fn pi_uses_local_acp_without_a_hosted_or_pty_fallback() {
+    use super::{HarnessKind, harness_kind, harness_kind_with_transport};
+    use warp_cli::agent::HarnessTransport;
+    let launch = super::acp::AcpLaunchSpec::for_harness(Harness::Pi).unwrap();
+    assert_eq!(launch.program, "pi-acp");
+    assert!(launch.args.is_empty());
+    let HarnessKind::ThirdParty(default_runner) = harness_kind(Harness::Pi).unwrap() else {
+        panic!("Pi must use the local ACP adapter by default");
+    };
+    assert!(!default_runner.drives_cli_agent_session());
+    assert!(matches!(
+        harness_kind_with_transport(Harness::Pi, HarnessTransport::Acp).unwrap(),
+        HarnessKind::ThirdParty(_)
+    ));
+    assert!(auth_check_command_for(Harness::Pi).is_none());
+}
+
 fn assert_harness_setup_failed(err: &AgentDriverError) -> (&str, &str) {
     match err {
         AgentDriverError::HarnessSetupFailed { harness, reason } => (harness, reason),

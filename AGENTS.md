@@ -260,6 +260,8 @@ only. They must not create external conversations, upload block snapshots, or
 depend on Warp hosted `/harness_support` APIs. Save/resume behavior should be
 local, or a no-op until local persistence exists.
 
+Pi runs through an installed `pi-acp` adapter and its own local configuration.
+Do not download adapters automatically or add Factory/managed-secret setup.
 ACP adapters use a private host-local bridge and native local history. Do not
 execute their reported tool calls again in the native executor. Unknown or
 uncheckable permissions must be denied; approved requests use at most AllowOnce.

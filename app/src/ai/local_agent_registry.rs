@@ -607,7 +607,10 @@ impl LocalAgentRegistry {
         if !request.tools_available {
             return Err(LocalAgentRegistryError::ToolsUnavailable);
         }
-        if matches!(request.harness, Harness::Unknown | Harness::Gemini) {
+        if matches!(
+            request.harness,
+            Harness::Unknown | Harness::Gemini | Harness::Pi
+        ) {
             return Err(LocalAgentRegistryError::UnsupportedHarness(request.harness));
         }
         if let Some(path) = request.working_directory.as_ref()

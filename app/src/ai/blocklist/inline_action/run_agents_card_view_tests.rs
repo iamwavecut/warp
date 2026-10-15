@@ -257,6 +257,8 @@ mod override_from_approved_config_tests {
 
     #[test]
     fn overrides_model_and_harness_unconditionally() {
+        let _local_harnesses =
+            crate::features::FeatureFlag::LocalClaudeCodexChildHarnesses.override_enabled(true);
         let mut state =
             RunAgentsEditState::from_request(&make_request("oz", RunAgentsExecutionMode::Local));
         assert_eq!(state.orch.model_id, "auto");
@@ -271,6 +273,8 @@ mod override_from_approved_config_tests {
 
     #[test]
     fn overrides_even_when_request_has_values() {
+        let _local_harnesses =
+            crate::features::FeatureFlag::LocalClaudeCodexChildHarnesses.override_enabled(true);
         let mut state = RunAgentsEditState::from_request(&make_request(
             "claude",
             RunAgentsExecutionMode::Local,

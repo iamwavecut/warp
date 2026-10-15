@@ -79,6 +79,9 @@ impl AcpHarness {
     /// The terminal-based harness with the same identity, whose per-harness knowledge (install
     /// docs, auth checks) applies regardless of transport.
     fn pty_harness(&self) -> Option<Box<dyn ThirdPartyHarness>> {
+        if self.harness == Harness::Pi {
+            return None;
+        }
         match harness_kind(self.harness) {
             Ok(HarnessKind::ThirdParty(harness)) => Some(harness),
             Ok(HarnessKind::Oz | HarnessKind::Unsupported(_)) | Err(_) => None,
@@ -123,7 +126,7 @@ impl ThirdPartyHarness for AcpHarness {
             Harness::Claude => CLIAgent::Claude,
             Harness::Codex => CLIAgent::Codex,
             Harness::Gemini => CLIAgent::Gemini,
-            Harness::Oz | Harness::OpenCode | Harness::Unknown => CLIAgent::Unknown,
+            Harness::Oz | Harness::OpenCode | Harness::Pi | Harness::Unknown => CLIAgent::Unknown,
         }
     }
 
@@ -187,7 +190,9 @@ impl ThirdPartyHarness for AcpHarness {
         // harness bootstrap did not already place is folded into the user turn ahead of the
         // prompt itself.
         let system_prompt_in_turn = match self.harness {
-            Harness::Claude | Harness::Oz | Harness::OpenCode | Harness::Unknown => system_prompt,
+            Harness::Claude | Harness::Oz | Harness::OpenCode | Harness::Pi | Harness::Unknown => {
+                system_prompt
+            }
             Harness::Codex | Harness::Gemini => None,
         };
         let prompt_text = [
@@ -429,7 +434,14 @@ impl HarnessRunner for AcpHarnessRunner {
         }
 
         let run_id = self.task_id.map(|id| id.to_string());
-        let turn = begin_turn(foreground, &self.terminal_driver, run_id.clone()).await?;
+        let turn = match begin_turn(foreground, &self.terminal_driver, run_id.clone()).await {
+            Ok(turn) => turn,
+            Err(error) => {
+                connection.close().await;
+                self.interrupt_terminal(foreground).await;
+                return Err(error);
+            }
+        };
         let (follow_up_tx, follow_up_rx) = async_channel::unbounded::<ExternalHarnessPrompt>();
         with_ai_controller(foreground, &self.terminal_driver, move |controller, _| {
             controller.set_external_harness_prompt_sink(follow_up_tx);

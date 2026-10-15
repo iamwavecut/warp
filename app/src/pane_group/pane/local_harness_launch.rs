@@ -121,6 +121,7 @@ pub(super) async fn prepare_local_harness_child_launch(
     let command = match harness {
         Harness::Oz => unreachable!("normalize_local_child_harness filters out Oz"),
         Harness::Unknown => unreachable!("normalize_local_child_harness filters out Unknown"),
+        Harness::Pi => unreachable!("Pi requires the local ACP driver"),
         Harness::Claude => {
             let HarnessKind::ThirdParty(third_party_harness) =
                 harness_kind(harness).map_err(|error: AgentDriverError| error.to_string())?
