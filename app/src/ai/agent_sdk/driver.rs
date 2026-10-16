@@ -2664,6 +2664,10 @@ impl AgentDriver {
                         return;
                     }
 
+                    if me.harness.as_ref().is_some_and(|runner| runner.is_settling_turn()) {
+                        return;
+                    }
+
                     // Conversation is no longer in progress. Handle completion based on the result.
                     if let Some(conversation_status) =
                          conversation_output_status_from_conversation(conversation)

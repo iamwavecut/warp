@@ -415,3 +415,10 @@ fn muse_uses_bracketed_paste_for_terminal_submission() {
         RichInputSubmitStrategy::BracketedPaste
     );
 }
+#[test]
+fn antigravity_rich_input_waits_before_submitting() {
+    assert_eq!(
+        rich_input_submit_strategy(CLIAgent::Antigravity),
+        RichInputSubmitStrategy::DelayedEnter
+    );
+}

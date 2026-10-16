@@ -44,7 +44,7 @@ fn minimum_version() {
     let _guard = FeatureFlag::CodexPlugin.override_enabled(true);
     assert_eq!(
         CodexPluginManager::new(None, None, None).minimum_plugin_version(),
-        "0.4.2"
+        "0.4.3"
     );
 }
 

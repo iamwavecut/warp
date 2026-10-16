@@ -6,23 +6,26 @@ use crate::terminal::CLIAgent;
 /// Resolves a CLI agent from the `"agent"` string in a CLI agent event.
 /// Returns `None` if the string doesn't match any known agent.
 fn resolve_agent(agent: &str) -> Option<CLIAgent> {
-    enum_iterator::all::<CLIAgent>()
-        .find(|a| !matches!(a, CLIAgent::Unknown) && a.command_prefix() == agent)
+    enum_iterator::all::<CLIAgent>().find(|a| {
+        !matches!(a, CLIAgent::Unknown)
+            && (a.command_prefix() == agent
+                || (*a == CLIAgent::Antigravity && agent == "antigravity"))
+    })
 }
 
 pub(super) fn parse(body: &str) -> Option<CLIAgentEvent> {
     let raw: RawEvent = serde_json::from_str(body).ok()?;
 
     let event = match raw.event.as_str() {
-        "session_start" => CLIAgentEventType::SessionStart,
+        "session_start" | "task_started" => CLIAgentEventType::SessionStart,
         "prompt_submit" => CLIAgentEventType::PromptSubmit,
         "tool_complete" => CLIAgentEventType::ToolComplete,
-        "stop" => CLIAgentEventType::Stop,
+        "stop" | "task_complete" => CLIAgentEventType::Stop,
         "stop_failure" => CLIAgentEventType::StopFailure,
         "permission_request" => CLIAgentEventType::PermissionRequest,
         "permission_replied" => CLIAgentEventType::PermissionReplied,
         "question_asked" => CLIAgentEventType::QuestionAsked,
-        "agent_needs_input" => CLIAgentEventType::NeedsInput,
+        "agent_needs_input" | "prompt_required" => CLIAgentEventType::NeedsInput,
         "idle_prompt" => CLIAgentEventType::IdlePrompt,
         other => CLIAgentEventType::Unknown(other.to_string()),
     };

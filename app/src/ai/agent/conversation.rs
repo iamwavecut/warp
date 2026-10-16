@@ -1612,7 +1612,12 @@ impl AIConversation {
             ..
         } = request_input;
 
-        for (task_id, inputs) in input_messages.into_iter() {
+        let mut inputs_by_task: indexmap::IndexMap<TaskId, Vec<AIAgentInput>> =
+            indexmap::IndexMap::new();
+        for (task_id, inputs) in input_messages {
+            inputs_by_task.entry(task_id).or_default().extend(inputs);
+        }
+        for (task_id, inputs) in inputs_by_task {
             let should_hide = inputs
                 .iter()
                 .any(|input| input.is_passive_suggestion_trigger());
@@ -1639,13 +1644,16 @@ impl AIConversation {
             let new_exchange_id = new_exchange.id;
             self.append_exchange_to_task(&task_id, new_exchange)?;
 
-            self.added_exchanges_by_response.insert(
-                stream_id.clone(),
-                Vec1::new(AddedExchange {
-                    task_id: task_id.clone(),
-                    exchange_id: new_exchange_id,
-                }),
-            );
+            let added = AddedExchange {
+                task_id: task_id.clone(),
+                exchange_id: new_exchange_id,
+            };
+            if let Some(exchanges) = self.added_exchanges_by_response.get_mut(&stream_id) {
+                exchanges.push(added);
+            } else {
+                self.added_exchanges_by_response
+                    .insert(stream_id.clone(), Vec1::new(added));
+            }
 
             if should_hide {
                 self.hidden_exchanges.insert(new_exchange_id);

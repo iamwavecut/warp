@@ -326,6 +326,10 @@ pub(crate) trait HarnessRunner: Send + Sync {
         false
     }
 
+    fn is_settling_turn(&self) -> bool {
+        false
+    }
+
     /// Start the harness command in the local terminal.
     ///
     /// Returns a [`CommandHandle`] that resolves to the exit code. The runner

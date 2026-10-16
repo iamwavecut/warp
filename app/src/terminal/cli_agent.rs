@@ -445,6 +445,8 @@ impl CLIAgent {
                         && Self::is_aifx_agent_run_claude(&resolved_command, ctx))
                     || (matches!(agent, CLIAgent::Vibe) && resolved_first_word == "vibe-acp")
                     || (matches!(agent, CLIAgent::Kiro) && resolved_first_word == "kiro")
+                    || (matches!(agent, CLIAgent::Antigravity)
+                        && resolved_first_word == "antigravity")
             })
     }
 

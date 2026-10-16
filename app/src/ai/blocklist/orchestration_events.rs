@@ -931,6 +931,17 @@ impl OrchestrationEventService {
         conversation_id: AIConversationId,
         ctx: &mut ModelContext<Self>,
     ) -> Option<(Vec<AIAgentInput>, TaskId)> {
+        if BlocklistAIHistoryModel::as_ref(ctx)
+            .conversation(&conversation_id)
+            .is_some_and(|conversation| {
+                conversation.driver()
+                    == crate::ai::agent::conversation::ConversationDriver::ExternalHarness
+            })
+        {
+            self.pending_events.remove(&conversation_id);
+            self.awaiting_server_echo_events.remove(&conversation_id);
+            return None;
+        }
         let inputs = self.drain_and_convert_events(conversation_id);
         if inputs.is_empty() {
             return None;

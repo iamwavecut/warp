@@ -1,4 +1,22 @@
 use super::*;
+
+#[test]
+fn antigravity_lifecycle_aliases_reach_the_local_listener() {
+    assert!(is_agent_supported(&CLIAgent::Antigravity));
+    let handler = create_handler(&CLIAgent::Antigravity).unwrap();
+    for (name, expected) in [
+        ("task_started", CLIAgentEventType::SessionStart),
+        ("task_complete", CLIAgentEventType::Stop),
+        ("prompt_required", CLIAgentEventType::NeedsInput),
+    ] {
+        let body = format!(r#"{{"v":1,"agent":"antigravity","event":"{name}"}}"#);
+        let parsed = handler
+            .try_parse(Some(CLI_AGENT_NOTIFICATION_SENTINEL), &body)
+            .unwrap();
+        assert_eq!(parsed.agent, CLIAgent::Antigravity);
+        assert_eq!(parsed.event, expected);
+    }
+}
 #[test]
 fn muse_structured_events_update_local_sessions_without_osc9_fallback() {
     assert!(is_agent_supported(&CLIAgent::Muse));

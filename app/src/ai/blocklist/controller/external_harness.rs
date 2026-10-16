@@ -29,6 +29,24 @@ pub(in crate::ai) struct ExternalHarnessPrompt {
 }
 
 impl BlocklistAIController {
+    pub(in crate::ai) fn set_external_harness_cancel_sink(
+        &mut self,
+        sink: async_channel::Sender<()>,
+    ) {
+        self.external_harness_cancel_sink = Some(sink);
+    }
+    pub(in crate::ai) fn mark_external_harness_cancelled(&self, ctx: &mut ModelContext<Self>) {
+        if let Some(id) = self.native_prompt_conversation_id {
+            BlocklistAIHistoryModel::handle(ctx).update(ctx, |history, ctx| {
+                history.update_conversation_status(
+                    self.terminal_surface_id,
+                    id,
+                    ConversationStatus::Cancelled,
+                    ctx,
+                );
+            });
+        }
+    }
     pub(crate) fn native_prompt_conversation_id(&self) -> Option<AIConversationId> {
         self.native_prompt_conversation_id
     }

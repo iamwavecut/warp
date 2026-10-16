@@ -6,11 +6,13 @@ mod launch;
 mod mapping;
 mod policy;
 mod protocol;
+mod steering;
 
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -206,7 +208,7 @@ impl ThirdPartyHarness for AcpHarness {
         .filter(|part| !part.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-        let attachments = AttachmentResolver;
+        let attachments = AttachmentResolver::default();
         Ok(Box::new(AcpHarnessRunner {
             harness: self.harness,
             launch: self.launch.clone(),
@@ -221,6 +223,7 @@ impl ThirdPartyHarness for AcpHarness {
                 .map(|(name, server)| mcp_server_for_acp(name, server))
                 .collect(),
             agent: Mutex::new(None),
+            settling: Arc::new(AtomicBool::new(false)),
         }))
     }
 }
@@ -244,6 +247,7 @@ pub(crate) struct AcpHarnessRunner {
     attachments: Arc<AttachmentResolver>,
     mcp_servers: Vec<McpServer>,
     agent: Mutex<Option<RunningAgent>>,
+    settling: Arc<AtomicBool>,
 }
 
 impl AcpHarnessRunner {
@@ -282,6 +286,9 @@ impl AcpHarnessRunner {
 impl HarnessRunner for AcpHarnessRunner {
     fn drives_native_conversation(&self) -> bool {
         true
+    }
+    fn is_settling_turn(&self) -> bool {
+        self.settling.load(Ordering::SeqCst)
     }
     fn harness_name(&self) -> &str {
         &self.launch.program
@@ -356,6 +363,7 @@ impl HarnessRunner for AcpHarnessRunner {
         });
 
         let handshake_connection = connection.clone();
+        let attachment_capabilities = self.attachments.clone();
         let handshake = async move {
             let connection = handshake_connection;
             let initialize: InitializeResponse = connection
@@ -381,6 +389,7 @@ impl HarnessRunner for AcpHarnessRunner {
                 )
                 .await
                 .context("initialize failed")?;
+            attachment_capabilities.set_prompt_capabilities(initialize.agent_capabilities.prompt_capabilities);
             let agent_description = initialize
                 .agent_info
                 .as_ref()
@@ -443,8 +452,10 @@ impl HarnessRunner for AcpHarnessRunner {
             }
         };
         let (follow_up_tx, follow_up_rx) = async_channel::unbounded::<ExternalHarnessPrompt>();
+        let (cancel_tx, cancel_rx) = async_channel::unbounded();
         with_ai_controller(foreground, &self.terminal_driver, move |controller, _| {
             controller.set_external_harness_prompt_sink(follow_up_tx);
+            controller.set_external_harness_cancel_sink(cancel_tx);
         })
         .await?;
 
@@ -461,6 +472,9 @@ impl HarnessRunner for AcpHarnessRunner {
             connection,
             notifications,
             follow_ups: follow_up_rx,
+            cancels: cancel_rx,
+            queued: steering::QueuedPrompts::default(),
+            settling: self.settling.clone(),
             foreground: foreground.clone(),
             terminal_driver: self.terminal_driver.clone(),
             run_id,
@@ -542,6 +556,9 @@ struct TurnDriver {
     notifications: async_channel::Receiver<InboundNotification>,
     /// Follow-up prompts injected into the conversation (e.g. by shared-session viewers).
     follow_ups: async_channel::Receiver<ExternalHarnessPrompt>,
+    cancels: async_channel::Receiver<()>,
+    queued: steering::QueuedPrompts,
+    settling: Arc<AtomicBool>,
     foreground: ModelSpawner<AgentDriver>,
     terminal_driver: ModelHandle<TerminalDriver>,
     run_id: Option<String>,
@@ -556,7 +573,7 @@ impl TurnDriver {
     /// A failed turn is already reflected in the conversation status (the stream finishes with
     /// an internal error), which is what the task status follows; the block's exit code remains
     /// the agent's own.
-    async fn run(self, mapper: &mut AcpTurnMapper) {
+    async fn run(mut self, mapper: &mut AcpTurnMapper) {
         let initial = vec![ContentBlock::Text {
             text: self.prompt_text.clone(),
         }];
@@ -564,7 +581,20 @@ impl TurnDriver {
 
         log::info!("ACP turn finished; accepting follow-ups until the driver ends the run");
         loop {
+            if turn_result.is_err() {
+                break;
+            }
+            if let Some(prompt) = self.queued.take() {
+                turn_result = self.run_follow_up(mapper, prompt).await;
+                continue;
+            }
             select! {
+                cancel = self.cancels.recv().fuse() => match cancel {
+                    Ok(()) => {
+                        self.mark_cancelled().await;
+                    }
+                    Err(_) => break,
+                },
                 prompt = self.follow_ups.recv().fuse() => match prompt {
                     Ok(prompt) => {
                         log::info!("Running ACP follow-up turn");
@@ -594,32 +624,42 @@ impl TurnDriver {
     /// echo shows the text only; attachments reach the agent but are not yet rendered on the
     /// user-query entry.
     async fn run_follow_up(
-        &self,
+        &mut self,
         mapper: &mut AcpTurnMapper,
         prompt: ExternalHarnessPrompt,
     ) -> Result<StopReason> {
-        let next = begin_turn(&self.foreground, &self.terminal_driver, self.run_id.clone())
-            .await
-            .map_err(|error| anyhow!("{error}"))?;
-        mapper.start_segment(next.request_id.clone());
-        *self.turn.lock() = next;
-        let echo = vec![mapper.user_query_action(&prompt.text)];
-        self.apply_events(mapper, vec![TurnEvent::Actions(echo)])
-            .await?;
         let content = self
             .attachments
-            .prompt_content(prompt.text, prompt.attachments)
+            .prompt_content(prompt.text.clone(), prompt.attachments)
+            .await?;
+        let next = begin_turn(&self.foreground, &self.terminal_driver, self.run_id.clone())
+            .await
+            .map_err(|error| {
+                self.settling.store(false, Ordering::SeqCst);
+                anyhow!("{error}")
+            })?;
+        mapper.start_segment(next.request_id.clone());
+        *self.turn.lock() = next;
+        self.settling.store(false, Ordering::SeqCst);
+        let echo = vec![mapper.user_query_action(&prompt.text)];
+        self.apply_events(mapper, vec![TurnEvent::Actions(echo)])
             .await?;
         self.run_turn(mapper, content).await
     }
 
     /// Runs one prompt turn to completion and finishes its last request stream.
     async fn run_turn(
-        &self,
+        &mut self,
         mapper: &mut AcpTurnMapper,
         prompt: Vec<ContentBlock>,
     ) -> Result<StopReason> {
         let turn_result = self.prompt(mapper, prompt).await;
+        if turn_result.is_err() {
+            self.queued.clear();
+        }
+        let cancelled = matches!(&turn_result, Ok(StopReason::Cancelled));
+        self.settling
+            .store(cancelled || !self.queued.is_empty(), Ordering::SeqCst);
         let finished = match &turn_result {
             Ok(stop_reason) => stream_finished_for(*stop_reason),
             Err(error) => {
@@ -645,17 +685,31 @@ impl TurnDriver {
         {
             log::warn!("Agent driver dropped before the ACP turn could be finished");
         }
+        if cancelled {
+            self.settling
+                .store(!self.queued.is_empty(), Ordering::SeqCst);
+            self.mark_cancelled().await;
+        }
         turn_result
+    }
+
+    async fn mark_cancelled(&self) {
+        let _ = with_ai_controller(
+            &self.foreground,
+            &self.terminal_driver,
+            |controller, ctx| controller.mark_external_harness_cancelled(ctx),
+        )
+        .await;
     }
 
     /// Sends the prompt and applies every update the agent streams before responding.
     async fn prompt(
-        &self,
+        &mut self,
         mapper: &mut AcpTurnMapper,
         prompt: Vec<ContentBlock>,
     ) -> Result<StopReason> {
-        let prompt_fut = self
-            .connection
+        let connection = self.connection.clone();
+        let prompt_fut = connection
             .request::<_, PromptResponse>(
                 protocol::METHOD_SESSION_PROMPT,
                 PromptParams {
@@ -665,15 +719,45 @@ impl TurnDriver {
             )
             .fuse();
         pin_mut!(prompt_fut);
+        let mut cancelling = false;
+        let mut deadline = future::pending::<()>().boxed().fuse();
         loop {
             select! {
+                follow_up = self.follow_ups.recv().fuse() => {
+                    self.queued.push(follow_up.map_err(|_| anyhow!("local ACP prompt channel closed"))?);
+                    if !cancelling {
+                        self.settling.store(true, Ordering::SeqCst);
+                        steering::cancel_turn(&connection, &self.session_id).await?;
+                        cancelling = true;
+                        deadline = Timer::after(steering::CANCEL_TIMEOUT).map(|_| ()).boxed().fuse();
+                    }
+                },
+                cancel = self.cancels.recv().fuse() => {
+                    cancel.map_err(|_| anyhow!("local ACP cancellation channel closed"))?;
+                    self.queued.clear();
+                    if !cancelling {
+                        self.settling.store(true, Ordering::SeqCst);
+                        steering::cancel_turn(&connection, &self.session_id).await?;
+                        cancelling = true;
+                        deadline = Timer::after(steering::CANCEL_TIMEOUT).map(|_| ()).boxed().fuse();
+                    }
+                },
+                _ = deadline => {
+                    self.queued.clear();
+                    self.interrupt_after_cancel_timeout().await;
+                    return Err(anyhow!("ACP agent did not acknowledge session/cancel within 15 seconds"));
+                },
                 notification = self.notifications.recv().fuse() => match notification {
                     Ok(notification) => self.handle_notification(mapper, notification).await?,
                     // The agent closed its stdout; the pending prompt resolves with the error.
                     Err(_) => break,
                 },
                 response = prompt_fut => {
-                    let response = response?;
+                    let response = match response {
+                        Ok(response) => response,
+                        Err(error) if cancelling && error.downcast_ref::<RpcError>().is_some() => PromptResponse { stop_reason: StopReason::Cancelled },
+                        Err(error) => return Err(error),
+                    };
                     while let Ok(notification) = self.notifications.try_recv() {
                         self.handle_notification(mapper, notification).await?;
                     }
@@ -682,6 +766,20 @@ impl TurnDriver {
             }
         }
         prompt_fut.await.map(|response| response.stop_reason)
+    }
+
+    async fn interrupt_after_cancel_timeout(&self) {
+        let terminal_driver = self.terminal_driver.clone();
+        let _ = self
+            .foreground
+            .spawn(move |_, ctx| {
+                terminal_driver.update(ctx, |driver, ctx| {
+                    driver.with_terminal_view(ctx, |terminal, ctx| {
+                        terminal.write_user_bytes_to_pty(vec![3], ctx);
+                    })
+                });
+            })
+            .await;
     }
 
     async fn handle_notification(
@@ -700,6 +798,14 @@ impl TurnDriver {
                 return Ok(());
             }
         };
+        if params
+            .session_id
+            .as_deref()
+            .is_some_and(|id| id != self.session_id)
+        {
+            log::warn!("Ignoring ACP update for another local session");
+            return Ok(());
+        }
         let events = mapper.map_update(params.update);
         self.apply_events(mapper, events).await
     }

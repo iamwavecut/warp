@@ -33,6 +33,21 @@ fn aliases(pairs: &[(&str, &str)]) -> HashMap<SmolStr, String> {
 }
 
 #[test]
+fn antigravity_commands_use_local_rich_input() {
+    App::test((), |mut app| async move {
+        app.update(|ctx| {
+            for command in ["agy", "antigravity"] {
+                assert_eq!(
+                    CLIAgent::detect(command, None, None, ctx),
+                    Some(CLIAgent::Antigravity)
+                );
+            }
+            assert_eq!(CLIAgent::detect("antigravity-other", None, None, ctx), None);
+        });
+    });
+}
+
+#[test]
 fn kiro_commands_use_local_rich_input() {
     App::test((), |mut app| async move {
         app.update(|ctx| {

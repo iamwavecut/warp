@@ -276,9 +276,8 @@ impl RequestParams {
         };
         let request_task_id = request_input
             .input_messages
-            .keys()
-            .next()
-            .map(ToString::to_string);
+            .first()
+            .map(|(task, _)| task.to_string());
         let computer_use_enabled = FeatureFlag::AgentModeComputerUse.is_enabled()
             && BlocklistAIPermissions::as_ref(app)
                 .get_computer_use_setting(app, terminal_view_id)

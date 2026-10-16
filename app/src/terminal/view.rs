@@ -7860,13 +7860,16 @@ impl TerminalView {
             .as_ref(ctx)
             .has_active_stream_for_conversation(conversation_id, ctx);
 
-        self.ai_controller.update(ctx, |controller, ctx| {
-            controller.cancel_conversation_progress(
+        let protocol_cancelled = self.ai_controller.update(ctx, |controller, ctx| {
+            controller.cancel_conversation_progress_routed(
                 conversation_id,
                 CancellationReason::ManuallyCancelled,
                 ctx,
-            );
+            )
         });
+        if protocol_cancelled {
+            return;
+        }
 
         let visible_conversation_id = self
             .agent_view_controller

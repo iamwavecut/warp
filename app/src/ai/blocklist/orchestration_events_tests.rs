@@ -398,6 +398,34 @@ fn test_has_pending_events_tracks_any_event_kind() {
 }
 
 #[test]
+fn external_harness_does_not_receive_native_orchestration_inputs() {
+    App::test((), |mut app| async move {
+        initialize_history_persistence_for_tests(&mut app);
+        let history = app.add_singleton_model(|_| BlocklistAIHistoryModel::new_for_test());
+        let id = history.update(&mut app, |history, ctx| {
+            let id = history.start_new_conversation(EntityId::new(), false, false, false, ctx);
+            history
+                .conversation_mut(&id)
+                .unwrap()
+                .set_driver(crate::ai::agent::conversation::ConversationDriver::ExternalHarness);
+            id
+        });
+        let service = app.add_model(|_| OrchestrationEventService::new_without_subscriptions());
+        service.update(&mut app, |service, ctx| {
+            service
+                .pending_events
+                .insert(id, vec![message_pending_event("native-only")]);
+            service
+                .awaiting_server_echo_events
+                .insert(id, vec![message_pending_event("old-native")]);
+            assert!(service.drain_events_for_request(id, ctx).is_none());
+            assert!(!service.pending_events.contains_key(&id));
+            assert!(!service.awaiting_server_echo_events.contains_key(&id));
+        });
+    });
+}
+
+#[test]
 fn test_emit_child_killed_enqueues_cancelled_event_for_parent() {
     App::test((), |mut app| async move {
         let _orchestration_v2 = FeatureFlag::OrchestrationV2.override_enabled(true);

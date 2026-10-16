@@ -189,7 +189,7 @@ pub enum BlocklistAIControllerEvent {
 #[derive(Debug)]
 pub struct RequestInput {
     pub conversation_id: AIConversationId,
-    pub input_messages: HashMap<TaskId, Vec<AIAgentInput>>,
+    pub input_messages: Vec<(TaskId, Vec<AIAgentInput>)>,
     pub working_directory: Option<String>,
     pub model_id: LLMId,
     pub coding_model_id: LLMId,
@@ -217,7 +217,7 @@ impl RequestInput {
             terminal_surface_id,
             app,
         );
-        me.input_messages.insert(task_id, inputs);
+        me.input_messages.push((task_id, inputs));
         me
     }
 
@@ -238,19 +238,19 @@ impl RequestInput {
             app,
         );
         for result in action_results.into_iter() {
-            me.input_messages
-                .entry(result.task_id.clone())
-                .or_default()
-                .push(AIAgentInput::ActionResult {
+            me.input_messages.push((
+                result.task_id.clone(),
+                vec![AIAgentInput::ActionResult {
                     result,
                     context: context.clone(),
-                });
+                }],
+            ));
         }
         me
     }
 
     pub fn all_inputs(&self) -> impl Iterator<Item = &AIAgentInput> {
-        self.input_messages.values().flatten()
+        self.input_messages.iter().flat_map(|(_, inputs)| inputs)
     }
 
     pub fn with_supported_tools(mut self, tools: Vec<ToolType>) -> Self {
@@ -323,6 +323,7 @@ pub struct BlocklistAIController {
     native_prompt_conversation_id: Option<AIConversationId>,
     external_harness_prompt_sink:
         Option<async_channel::Sender<external_harness::ExternalHarnessPrompt>>,
+    external_harness_cancel_sink: Option<async_channel::Sender<()>>,
 
     /// Ambient agent task ID attached to this controller. This is a property of the controller, and not an individual
     /// conversation, because the ambient agent task driver owns the entire Warp window working on a task, and any
@@ -595,6 +596,7 @@ impl BlocklistAIController {
             shared_session_state: shared_session::SharedSessionState::default(),
             native_prompt_conversation_id: None,
             external_harness_prompt_sink: None,
+            external_harness_cancel_sink: None,
             ambient_agent_task_id: None,
             attachments_download_dir: None,
             pending_auto_resume_handles: HashMap::new(),
@@ -1622,11 +1624,7 @@ impl BlocklistAIController {
             })
         {
             has_piggybacked_events = true;
-            request_input
-                .input_messages
-                .entry(task_id)
-                .or_default()
-                .extend(event_inputs);
+            request_input.input_messages.push((task_id, event_inputs));
         }
 
         let result = self.send_request_input(
@@ -1669,7 +1667,7 @@ impl BlocklistAIController {
             conversation.status(),
             ConversationStatus::Success | ConversationStatus::WaitingForEvents
         );
-        if !owns || has_active_stream || !is_ready {
+        if !owns || has_active_stream || !is_ready || !conversation.driver().owns_turn_lifecycle() {
             log::info!(
                 "Pending events are not ready: conversation_id={conversation_id:?} owns_conversation={owns} has_active_stream={has_active_stream} status={:?}",
                 conversation.status()
@@ -1971,6 +1969,13 @@ impl BlocklistAIController {
         ctx: &mut ModelContext<Self>,
     ) -> anyhow::Result<(AIConversationId, ResponseStreamId)> {
         let history_model = BlocklistAIHistoryModel::handle(ctx);
+        anyhow::ensure!(
+            history_model
+                .as_ref(ctx)
+                .conversation(&request_input.conversation_id)
+                .is_none_or(|conversation| conversation.driver().owns_turn_lifecycle()),
+            "External harness conversations cannot send native provider requests"
+        );
         let is_local_compaction = request_input
             .all_inputs()
             .any(|input| matches!(input, AIAgentInput::SummarizeConversation { .. }));
@@ -2263,6 +2268,16 @@ impl BlocklistAIController {
         reason: CancellationReason,
         ctx: &mut ModelContext<Self>,
     ) {
+        self.cancel_conversation_progress_routed(conversation_id, reason, ctx);
+    }
+
+    /// Returns true when the local external harness owns cancellation and stream settlement.
+    pub(crate) fn cancel_conversation_progress_routed(
+        &mut self,
+        conversation_id: AIConversationId,
+        reason: CancellationReason,
+        ctx: &mut ModelContext<Self>,
+    ) -> bool {
         // Restore the user's keyboard focus if a background computer-use session is still active
         // for this conversation. ctrl-c / stop / pane-close all funnel through here, and on
         // cancellation the computer-use subagent never produces a normal SubagentResult, so the
@@ -2280,6 +2295,15 @@ impl BlocklistAIController {
         self.pending_passive_suggestion_results
             .remove(&conversation_id);
 
+        if self.native_prompt_conversation_id == Some(conversation_id)
+            && self
+                .external_harness_cancel_sink
+                .as_ref()
+                .is_some_and(|sink| sink.try_send(()).is_ok())
+        {
+            return true;
+        }
+
         if !self
             .in_flight_response_streams
             .try_cancel_streams_for_conversation(conversation_id, reason, ctx)
@@ -2290,6 +2314,7 @@ impl BlocklistAIController {
             });
             self.set_input_mode_for_cancellation(ctx);
         }
+        false
     }
 
     /// Finalizes a conversation as a terminal failure because an agent-issued

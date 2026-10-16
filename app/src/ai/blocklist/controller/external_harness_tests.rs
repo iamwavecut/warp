@@ -1,5 +1,30 @@
 use std::time::SystemTime;
 
+#[test]
+fn external_harness_stop_routes_to_protocol_without_finishing_the_native_stream() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |terminal, ctx| {
+            terminal.ai_controller().update(ctx, |controller, ctx| {
+                let id = controller.bind_native_prompt_conversation(None, ctx);
+                let _turn = controller
+                    .begin_external_harness_turn(id, None, ctx)
+                    .unwrap();
+                let (sender, receiver) = async_channel::unbounded();
+                controller.set_external_harness_cancel_sink(sender);
+                assert!(controller.cancel_conversation_progress_routed(
+                    id,
+                    crate::ai::agent::CancellationReason::ManuallyCancelled,
+                    ctx
+                ));
+                assert!(receiver.try_recv().is_ok());
+                assert_eq!(status(ctx, id), ConversationStatus::InProgress);
+            });
+        });
+    });
+}
+
 use uuid::Uuid;
 use warp_multi_agent_api::client_action::{AddMessagesToTask, CreateTask};
 use warp_multi_agent_api::message::tool_call::{RunShellCommand, Tool};
