@@ -1714,7 +1714,9 @@ impl AgentDriver {
             }
             HarnessKind::ThirdParty(harness) => {
                 let harness_exit_rx = Self::setup_harness(harness.as_ref(), &foreground).await?;
-                let runtime_error_patterns = harness.runtime_error_patterns();
+                let runtime_error_patterns = harness.runtime_error_patterns_for_run();
+                let pattern_refs: Vec<&str> =
+                    runtime_error_patterns.iter().map(String::as_str).collect();
                 let runner = Self::prepare_harness(
                     &task.prompt,
                     &task.mcp_specs,
@@ -1724,8 +1726,7 @@ impl AgentDriver {
                 .await?;
                 Self::run_preflight_checks(harness.as_ref(), &foreground).await?;
 
-                Self::run_harness(runner, runtime_error_patterns, &foreground, harness_exit_rx)
-                    .await
+                Self::run_harness(runner, &pattern_refs, &foreground, harness_exit_rx).await
             }
             HarnessKind::Unsupported(harness) => Err(AgentDriverError::HarnessSetupFailed {
                 harness: harness.to_string(),
@@ -2023,7 +2024,7 @@ impl AgentDriver {
     /// by the auth preflight.
     async fn run_harness(
         runner: Arc<dyn harness::HarnessRunner>,
-        runtime_error_patterns: &'static [&'static str],
+        runtime_error_patterns: &[&str],
         foreground: &ModelSpawner<Self>,
         harness_exit_rx: oneshot::Receiver<()>,
     ) -> Result<(), AgentDriverError> {

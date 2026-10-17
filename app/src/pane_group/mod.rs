@@ -3142,62 +3142,7 @@ impl PaneGroup {
         ctx: &mut ViewContext<Self>,
     ) {
         let child_id = child_conversation.id();
-        if child_conversation.is_remote_child() {
-            let Some(task_id) = child_conversation.task_id() else {
-                log::warn!(
-                    "Cannot restore remote child conversation {child_id:?} without a task ID"
-                );
-                return;
-            };
-
-            let new_pane_id =
-                self.insert_ambient_agent_pane_hidden_for_child_agent(parent_pane_id, ctx);
-
-            match self.terminal_view_from_pane_id(new_pane_id, ctx) {
-                Some(new_terminal_view) => {
-                    let mut restored = false;
-                    new_terminal_view.update(ctx, |terminal_view, ctx| {
-                        terminal_view.restore_conversation_after_view_creation(
-                            RestoredAIConversation::new(child_conversation),
-                            true,
-                            RestoreConversationEntryBehavior::PreserveAgentViewState,
-                            ctx,
-                        );
-                        terminal_view.enter_agent_view(
-                            None,
-                            Some(child_id),
-                            AgentViewEntryOrigin::CloudAgent,
-                            ctx,
-                        );
-                        let Some(ambient_agent_view_model) = terminal_view
-                            .ambient_agent_view_model()
-                            .into_optional_handle()
-                            .cloned()
-                        else {
-                            return;
-                        };
-                        ambient_agent_view_model.update(ctx, |model, ctx| {
-                            model.set_conversation_id(Some(child_id));
-                            model.enter_viewing_existing_session(task_id, ctx);
-                        });
-                        restored = true;
-                    });
-                    if restored {
-                        self.child_agent_panes.insert(child_id, new_pane_id.into());
-                    } else {
-                        log::error!(
-                            "Failed to restore remote child agent pane {child_id:?}: missing ambient agent view model"
-                        );
-                        self.discard_pane(new_pane_id.into(), ctx);
-                    }
-                }
-                _ => {
-                    log::error!(
-                        "Failed to get terminal view for remote child agent pane {child_id:?}"
-                    );
-                    self.discard_pane(new_pane_id.into(), ctx);
-                }
-            }
+        if child_conversation.is_remote_child() || child_conversation.is_viewing_shared_session() {
             return;
         }
         let child_task_context =

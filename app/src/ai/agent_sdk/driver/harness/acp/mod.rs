@@ -3,6 +3,7 @@ mod attachments;
 mod bridge;
 mod connection;
 mod launch;
+mod manifest;
 mod mapping;
 mod policy;
 mod protocol;
@@ -71,11 +72,32 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
 pub(crate) struct AcpHarness {
     harness: Harness,
     launch: AcpLaunchSpec,
+    manifest: Option<manifest::HarnessManifest>,
 }
 
 impl AcpHarness {
     pub(crate) fn new(harness: Harness, launch: AcpLaunchSpec) -> Self {
-        Self { harness, launch }
+        Self {
+            harness,
+            launch,
+            manifest: None,
+        }
+    }
+
+    pub(crate) fn from_manifest(harness: Harness) -> Result<Self, AgentDriverError> {
+        if !matches!(
+            harness,
+            Harness::Claude | Harness::Codex | Harness::Gemini | Harness::Pi
+        ) {
+            return Err(AgentDriverError::HarnessSetupFailed {
+                harness: harness.to_string(),
+                reason: "this harness has no local ACP adapter".into(),
+            });
+        }
+        let manifest = manifest::resolve(harness)?;
+        let mut harness = Self::new(harness, manifest.launch.clone());
+        harness.manifest = Some(manifest);
+        Ok(harness)
     }
 
     /// The terminal-based harness with the same identity, whose per-harness knowledge (install
@@ -142,6 +164,9 @@ impl ThirdPartyHarness for AcpHarness {
     }
 
     fn auth_check_command(&self) -> Option<String> {
+        if let Some(manifest) = &self.manifest {
+            return manifest.auth_check_command.clone();
+        }
         self.pty_harness()
             .and_then(|harness| harness.auth_check_command())
     }
@@ -151,6 +176,16 @@ impl ThirdPartyHarness for AcpHarness {
         self.pty_harness()
             .map(|harness| harness.runtime_error_patterns())
             .unwrap_or(&[])
+    }
+
+    fn runtime_error_patterns_for_run(&self) -> Vec<String> {
+        if let Some(manifest) = &self.manifest {
+            return manifest.runtime_error_patterns.clone();
+        }
+        self.runtime_error_patterns()
+            .iter()
+            .map(|pattern| (*pattern).to_owned())
+            .collect()
     }
 
     fn drives_cli_agent_session(&self) -> bool {
@@ -659,7 +694,7 @@ impl TurnDriver {
         }
         let cancelled = matches!(&turn_result, Ok(StopReason::Cancelled));
         self.settling
-            .store(cancelled || !self.queued.is_empty(), Ordering::SeqCst);
+            .store(!self.queued.is_empty(), Ordering::SeqCst);
         let finished = match &turn_result {
             Ok(stop_reason) => stream_finished_for(*stop_reason),
             Err(error) => {
@@ -679,16 +714,27 @@ impl TurnDriver {
             log::warn!("Failed to settle ACP tool calls: {error}");
         }
         let stream_id = self.turn.lock().stream_id.clone();
-        if finish_turn(&self.foreground, &self.terminal_driver, stream_id, finished)
+        if cancelled {
+            let reason = if self.queued.is_empty() {
+                crate::ai::agent::CancellationReason::ManuallyCancelled
+            } else {
+                crate::ai::agent::CancellationReason::FollowUpSubmitted {
+                    is_for_same_conversation: true,
+                }
+            };
+            let _ = with_ai_controller(
+                &self.foreground,
+                &self.terminal_driver,
+                move |controller, ctx| {
+                    controller.cancel_external_harness_turn(&stream_id, reason, ctx);
+                },
+            )
+            .await;
+        } else if finish_turn(&self.foreground, &self.terminal_driver, stream_id, finished)
             .await
             .is_err()
         {
             log::warn!("Agent driver dropped before the ACP turn could be finished");
-        }
-        if cancelled {
-            self.settling
-                .store(!self.queued.is_empty(), Ordering::SeqCst);
-            self.mark_cancelled().await;
         }
         turn_result
     }

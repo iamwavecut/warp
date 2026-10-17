@@ -1,6 +1,39 @@
 use std::time::SystemTime;
 
 #[test]
+fn external_harness_steering_keeps_progress_but_stop_cancels() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        terminal.update(&mut app, |terminal, ctx| {
+            terminal.ai_controller().update(ctx, |controller, ctx| {
+                let id = controller.bind_native_prompt_conversation(None, ctx);
+                let first = controller
+                    .begin_external_harness_turn(id, None, ctx)
+                    .unwrap();
+                controller.cancel_external_harness_turn(
+                    &first.stream_id,
+                    crate::ai::agent::CancellationReason::FollowUpSubmitted {
+                        is_for_same_conversation: true,
+                    },
+                    ctx,
+                );
+                assert_eq!(status(ctx, id), ConversationStatus::InProgress);
+                let next = controller
+                    .begin_external_harness_turn(id, None, ctx)
+                    .unwrap();
+                controller.cancel_external_harness_turn(
+                    &next.stream_id,
+                    crate::ai::agent::CancellationReason::ManuallyCancelled,
+                    ctx,
+                );
+                assert_eq!(status(ctx, id), ConversationStatus::Cancelled);
+            });
+        });
+    });
+}
+
+#[test]
 fn external_harness_stop_routes_to_protocol_without_finishing_the_native_stream() {
     App::test((), |mut app| async move {
         initialize_app_for_terminal_view(&mut app);

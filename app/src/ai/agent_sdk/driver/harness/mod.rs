@@ -79,6 +79,13 @@ pub(crate) trait ThirdPartyHarness: Send + Sync {
         &[]
     }
 
+    fn runtime_error_patterns_for_run(&self) -> Vec<String> {
+        self.runtime_error_patterns()
+            .iter()
+            .map(|pattern| (*pattern).to_owned())
+            .collect()
+    }
+
     /// Build a runner for executing this harness with the given prompt.
     ///
     /// Responsible for all harness-specific setup: writing config files (auth,
@@ -148,11 +155,9 @@ pub(crate) fn harness_kind(harness: Harness) -> Result<HarnessKind, AgentDriverE
         Harness::Claude => Ok(HarnessKind::ThirdParty(Box::new(ClaudeHarness))),
         Harness::Codex => Ok(HarnessKind::ThirdParty(Box::new(CodexHarness))),
         Harness::OpenCode => Ok(HarnessKind::Unsupported(Harness::OpenCode)),
-        Harness::Pi => Ok(HarnessKind::ThirdParty(Box::new(acp::AcpHarness::new(
-            harness,
-            acp::AcpLaunchSpec::for_harness(harness)
-                .expect("Pi has a local ACP launch specification"),
-        )))),
+        Harness::Pi => Ok(HarnessKind::ThirdParty(Box::new(
+            acp::AcpHarness::from_manifest(harness)?,
+        ))),
         Harness::Gemini => Ok(HarnessKind::ThirdParty(Box::new(GeminiHarness))),
         Harness::Unknown => Err(AgentDriverError::InvalidRuntimeState),
     }
@@ -164,12 +169,9 @@ pub(crate) fn harness_kind_with_transport(
 ) -> Result<HarnessKind, AgentDriverError> {
     match transport {
         warp_cli::agent::HarnessTransport::Pty => harness_kind(harness),
-        warp_cli::agent::HarnessTransport::Acp => acp::AcpLaunchSpec::for_harness(harness)
-            .map(|launch| HarnessKind::ThirdParty(Box::new(acp::AcpHarness::new(harness, launch))))
-            .ok_or_else(|| AgentDriverError::HarnessSetupFailed {
-                harness: harness.to_string(),
-                reason: "this harness has no local ACP adapter".into(),
-            }),
+        warp_cli::agent::HarnessTransport::Acp => Ok(HarnessKind::ThirdParty(Box::new(
+            acp::AcpHarness::from_manifest(harness)?,
+        ))),
     }
 }
 

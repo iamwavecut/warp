@@ -1,7 +1,8 @@
 use warp_cli::agent::Harness;
 
 /// The process to run for a harness driven over the Agent Client Protocol.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct AcpLaunchSpec {
     pub program: String,
     pub args: Vec<String>,

@@ -29,6 +29,25 @@ pub(in crate::ai) struct ExternalHarnessPrompt {
 }
 
 impl BlocklistAIController {
+    pub(in crate::ai) fn cancel_external_harness_turn(
+        &mut self,
+        stream_id: &ResponseStreamId,
+        reason: crate::ai::agent::CancellationReason,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let history = BlocklistAIHistoryModel::handle(ctx);
+        let Some(id) = history
+            .as_ref(ctx)
+            .conversation_for_response_stream(stream_id)
+        else {
+            return;
+        };
+        let terminal = self.terminal_surface_id;
+        history.update(ctx, |history, ctx| {
+            history.mark_response_stream_cancelled(stream_id, id, terminal, reason, ctx);
+        });
+    }
+
     pub(in crate::ai) fn set_external_harness_cancel_sink(
         &mut self,
         sink: async_channel::Sender<()>,

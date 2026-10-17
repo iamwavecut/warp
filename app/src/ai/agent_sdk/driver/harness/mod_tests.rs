@@ -4,6 +4,16 @@ use super::{auth_check_command_for, validate_cli_installed};
 use crate::ai::agent_sdk::driver::AgentDriverError;
 
 #[test]
+fn unsupported_hosted_harnesses_cannot_use_acp_manifest_dispatch() {
+    for harness in [Harness::Oz, Harness::OpenCode, Harness::Unknown] {
+        assert!(
+            super::harness_kind_with_transport(harness, warp_cli::agent::HarnessTransport::Acp)
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn pi_uses_local_acp_without_a_hosted_or_pty_fallback() {
     use super::{HarnessKind, harness_kind, harness_kind_with_transport};
     use warp_cli::agent::HarnessTransport;

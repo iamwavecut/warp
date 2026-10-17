@@ -77,3 +77,13 @@ fn stall_confirmation_budget_matches_six_poll_intervals() {
     // Sanity: STALL_POLL_INTERVAL must be non-zero or the loop would spin.
     assert!(STALL_POLL_INTERVAL > Duration::ZERO);
 }
+#[test]
+fn owned_manifest_patterns_match_without_static_storage() {
+    let pattern = String::from("local adapter rejected key");
+    let patterns = vec![pattern.as_str()];
+    assert!(super::build_dfas(&patterns).is_some());
+    assert_eq!(
+        super::pattern_for_match("LOCAL ADAPTER REJECTED KEY", &patterns),
+        Some("local adapter rejected key")
+    );
+}
