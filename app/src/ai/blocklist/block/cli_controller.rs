@@ -552,6 +552,10 @@ impl CLISubagentController {
                 else {
                     return;
                 };
+                // A delayed history event must not reopen a completed local command.
+                if block.finished() {
+                    return;
+                }
                 let block_id = block.id().clone();
                 if let Err(e) = block.set_agent_interaction_mode_for_agent_monitored_command(
                     task_id,

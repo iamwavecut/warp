@@ -273,6 +273,14 @@ pub(crate) fn harness_model_env_vars(
     match selected_harness {
         Harness::Claude => {
             env_vars.insert(OsString::from("ANTHROPIC_MODEL"), OsString::from(model_id));
+            // The local ACP adapter needs to register non-default model IDs too.
+            // Claude's PTY CLI ignores this adapter-specific environment variable.
+            if model_id != "default" {
+                env_vars.insert(
+                    OsString::from("ANTHROPIC_CUSTOM_MODEL_OPTION"),
+                    OsString::from(model_id),
+                );
+            }
         }
         Harness::Oz
         | Harness::OpenCode

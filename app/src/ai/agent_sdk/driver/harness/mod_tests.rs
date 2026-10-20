@@ -4,6 +4,28 @@ use super::{auth_check_command_for, validate_cli_installed};
 use crate::ai::agent_sdk::driver::AgentDriverError;
 
 #[test]
+fn claude_model_environment_supports_custom_acp_models_without_hosted_metadata() {
+    use crate::ai::ambient_agents::task::HarnessModelConfig;
+    for model in ["custom-model", "default", ""] {
+        let config: HarnessModelConfig =
+            serde_json::from_value(serde_json::json!({"model_id": model})).unwrap();
+        let env = super::harness_model_env_vars(Harness::Claude, Some(&config));
+        assert_eq!(
+            env.get(std::ffi::OsStr::new("ANTHROPIC_MODEL"))
+                .map(|s| s.to_str().unwrap()),
+            (!model.is_empty()).then_some(model)
+        );
+        assert_eq!(
+            env.get(std::ffi::OsStr::new("ANTHROPIC_CUSTOM_MODEL_OPTION"))
+                .map(|s| s.to_str().unwrap()),
+            (!model.is_empty() && model != "default").then_some(model)
+        );
+        assert!(super::harness_model_env_vars(Harness::Codex, Some(&config)).is_empty());
+    }
+    assert!(super::harness_model_env_vars(Harness::Claude, None).is_empty());
+}
+
+#[test]
 fn unsupported_hosted_harnesses_cannot_use_acp_manifest_dispatch() {
     for harness in [Harness::Oz, Harness::OpenCode, Harness::Unknown] {
         assert!(
