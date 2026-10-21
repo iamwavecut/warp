@@ -10,7 +10,7 @@ futures.workspace = true
 http = "1"
 pin-project-lite = "0.2"
 reqwest = { workspace = true, features = ["json", "stream"] }
-rmcp = { workspace = true, features = ["client", "client-side-sse", "auth"] }
+rmcp = { workspace = true, features = ["client", "client-side-sse", "auth", "transport-streamable-http-client-reqwest"] }
 serde_json.workspace = true
 sse-stream = "0.2.6"
 thiserror.workspace = true

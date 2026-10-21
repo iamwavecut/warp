@@ -30,7 +30,7 @@ use crate::{
 use async_compat::CompatExt as _;
 use cfg_if::cfg_if;
 use futures::FutureExt as _;
-use rmcp::{ServiceExt as _, transport::ConfigureCommandExt as _};
+use rmcp::{ServiceExt as _, service::ClientServiceExt as _, transport::ConfigureCommandExt as _};
 use simple_logger::SimpleLogger;
 use simple_logger::manager::LogManager;
 use tokio::io::AsyncBufReadExt as _;
@@ -1291,7 +1291,20 @@ async fn spawn_server(
             };
 
             // Create the MCP client and connect to the server.
-            Ok::<_, rmcp::RmcpError>(make_client_info().into_dyn().serve(transport).await?)
+            Ok::<_, rmcp::RmcpError>(
+                make_client_info()
+                    .into_dyn()
+                    .serve_with_lifecycle(
+                        transport,
+                        rmcp::service::ClientLifecycleMode::Auto {
+                            preferred_versions: mcp::protocol::supported_versions(false),
+                            legacy_version: Some(
+                                rmcp::model::ProtocolVersion::LATEST_WITH_INITIALIZE,
+                            ),
+                        },
+                    )
+                    .await?,
+            )
         }
         TransportType::ServerSentEvents(sse_server) => {
             let headers: std::collections::HashMap<String, String> = sse_server
@@ -1303,7 +1316,7 @@ async fn spawn_server(
                 .await
             {
                 // TODO: these need headers also?
-                Ok(Transport::Http(Some(client))) => {
+                Ok(Transport::Http(Some(client), protocol)) => {
                     is_authenticated_transport = true;
 
                     logger.log("[info] MCP: Using Streaming HTTP transport".to_string());
@@ -1317,9 +1330,13 @@ async fn spawn_server(
                         transport,
                         logger: logger.clone(),
                     };
-                    Ok(make_client_info().into_dyn().serve(transport).await?)
+                    Ok(make_client_info()
+                        .with_protocol_version(protocol.version.clone())
+                        .into_dyn()
+                        .serve_with_lifecycle(transport, protocol.lifecycle())
+                        .await?)
                 }
-                Ok(Transport::Http(None)) => {
+                Ok(Transport::Http(None, protocol)) => {
                     logger.log("[info] MCP: Using Streaming HTTP transport".to_string());
                     let transport = if headers.is_empty() {
                         rmcp::transport::StreamableHttpClientTransport::from_uri(
@@ -1338,7 +1355,11 @@ async fn spawn_server(
                         transport,
                         logger: logger.clone(),
                     };
-                    Ok(make_client_info().into_dyn().serve(transport).await?)
+                    Ok(make_client_info()
+                        .with_protocol_version(protocol.version.clone())
+                        .into_dyn()
+                        .serve_with_lifecycle(transport, protocol.lifecycle())
+                        .await?)
                 }
                 Ok(Transport::Sse(Some(client))) => {
                     is_authenticated_transport = true;
@@ -1357,7 +1378,11 @@ async fn spawn_server(
                         transport,
                         logger: logger.clone(),
                     };
-                    Ok(make_client_info().into_dyn().serve(transport).await?)
+                    Ok(make_client_info()
+                        .with_protocol_version(rmcp::model::ProtocolVersion::LATEST_WITH_INITIALIZE)
+                        .into_dyn()
+                        .serve(transport)
+                        .await?)
                 }
                 Ok(Transport::Sse(None)) => {
                     logger.log("[info] MCP: Using (legacy) SSE transport (due to preflight failing with a 404)".to_string());
@@ -1383,7 +1408,11 @@ async fn spawn_server(
                         transport,
                         logger: logger.clone(),
                     };
-                    Ok(make_client_info().into_dyn().serve(transport).await?)
+                    Ok(make_client_info()
+                        .with_protocol_version(rmcp::model::ProtocolVersion::LATEST_WITH_INITIALIZE)
+                        .into_dyn()
+                        .serve(transport)
+                        .await?)
                 }
                 Err(err) => {
                     logger.log(format!(
@@ -1418,7 +1447,10 @@ async fn spawn_server(
 /// The transport to use for MCP.
 enum Transport {
     /// The HTTP transport, with an optional authenticated client.
-    Http(Option<rmcp::transport::auth::AuthClient<reqwest::Client>>),
+    Http(
+        Option<rmcp::transport::auth::AuthClient<reqwest::Client>>,
+        mcp::protocol::NegotiatedProtocol,
+    ),
     /// The SSE transport, with an optional authenticated client.
     Sse(Option<rmcp::transport::auth::AuthClient<reqwest::Client>>),
 }
@@ -1492,9 +1524,8 @@ fn should_report_rejected_credentials(
 
 /// Determines which transport to use.
 ///
-/// This sends a "preflight" InitializeRequest to the server to determine whether the
-/// server supports the HTTP transport (or needs to use the SSE transport), and if
-/// authentication is required.
+/// Negotiates the MCP revision and lifecycle while preserving endpoint authentication
+/// challenges and legacy SSE transport selection.
 async fn determine_transport(
     server_name: String,
     url: &str,
@@ -1508,9 +1539,9 @@ async fn determine_transport(
             "Unexpected status code: {status}"
         ))
     }
-    let preflight = send_initialize_request(url, headers, None).await?;
+    let preflight = negotiate_protocol(url, headers, None).await?;
     match preflight.status {
-        StatusCode::OK => Ok(Transport::Http(None)),
+        StatusCode::OK => Ok(Transport::Http(None, preflight.protocol)),
         StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED => Ok(Transport::Sse(None)),
         StatusCode::UNAUTHORIZED => {
             if should_report_rejected_credentials(headers, &preflight.www_authenticate) {
@@ -1534,11 +1565,9 @@ async fn determine_transport(
                 .boxed()
                 .await
                 .map_err(rmcp::RmcpError::transport_creation::<ReqwestHttpTransport>)?;
-            let transport = match send_initialize_request(url, headers, Some(&client))
-                .await?
-                .status
-            {
-                StatusCode::OK => Ok(Transport::Http(Some(client))),
+            let preflight = negotiate_protocol(url, headers, Some(&client)).await?;
+            let transport = match preflight.status {
+                StatusCode::OK => Ok(Transport::Http(Some(client), preflight.protocol)),
                 StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED => {
                     Ok(Transport::Sse(Some(client)))
                 }
@@ -1568,58 +1597,28 @@ async fn determine_transport(
     }
 }
 
-struct PreflightResponse {
-    status: reqwest::StatusCode,
-    www_authenticate: Vec<String>,
-}
-
-/// Sends an InitializeRequest to the server and returns the response data needed for transport selection.
-async fn send_initialize_request(
+/// Negotiates the protocol directly with the configured MCP endpoint.
+async fn negotiate_protocol(
     url: &str,
-    headers: &std::collections::HashMap<String, String>,
+    headers: &HashMap<String, String>,
     auth_client: Option<&rmcp::transport::auth::AuthClient<reqwest::Client>>,
-) -> Result<PreflightResponse, rmcp::RmcpError> {
-    use rmcp::transport::common::http_header::{EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE};
-
-    let request = rmcp::model::InitializeRequest::new(make_client_info());
-    let request = rmcp::model::ClientJsonRpcMessage::request(
-        rmcp::model::ClientRequest::InitializeRequest(request),
-        rmcp::model::RequestId::Number(0),
-    );
-
-    let mut request = build_client_with_headers(headers)?
-        .post(url)
-        .header(
-            http::header::ACCEPT,
-            [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "),
-        )
-        .json(&request);
-
-    if let Some(auth_client) = auth_client.as_ref() {
-        let access_token = auth_client
-            .get_access_token()
-            .await
-            .map_err(rmcp::RmcpError::transport_creation::<ReqwestHttpTransport>)?;
-        request = request.bearer_auth(access_token);
-    }
-
-    let response = request
-        .send()
-        .await
-        .map_err(rmcp::RmcpError::transport_creation::<ReqwestHttpTransport>)?;
-
-    let www_authenticate = response
-        .headers()
-        .get_all(http::header::WWW_AUTHENTICATE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .map(ToString::to_string)
-        .collect();
-
-    Ok(PreflightResponse {
-        status: response.status(),
-        www_authenticate,
-    })
+) -> Result<mcp::protocol::PreflightResponse, rmcp::RmcpError> {
+    let token = match auth_client {
+        Some(client) => Some(
+            client
+                .get_access_token()
+                .await
+                .map_err(rmcp::RmcpError::transport_creation::<ReqwestHttpTransport>)?,
+        ),
+        None => None,
+    };
+    mcp::protocol::negotiate_protocol(
+        url,
+        &build_client_with_headers(headers)?,
+        make_client_info(),
+        token.as_deref(),
+    )
+    .await
 }
 
 /// Creates a [`rmcp::model::ClientConfig`] for the MCP client.

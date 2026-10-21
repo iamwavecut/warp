@@ -72,8 +72,16 @@ fn subscribe_events(
                 me.despawned_uuids
                     .extend(installation_uuids.iter().copied());
             }
+            FileBasedMCPManagerEvent::AgentEnvMcpScanComplete {
+                repo_path,
+                detected_servers,
+                wait_server_uuids,
+            } => me.scan_completions.push(ScanCompletion {
+                repo_path: repo_path.clone(),
+                detected_servers: detected_servers.clone(),
+                wait_server_uuids: wait_server_uuids.clone(),
+            }),
             FileBasedMCPManagerEvent::PurgeCredentials { .. }
-            | FileBasedMCPManagerEvent::AgentEnvMcpScanComplete { .. }
             | FileBasedMCPManagerEvent::InitialGlobalMcpScanComplete { .. } => {}
         });
     });
