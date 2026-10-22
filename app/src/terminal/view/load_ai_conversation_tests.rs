@@ -223,6 +223,19 @@ fn single_block_at_same_time_as_exchange() {
     assert_eq!(result, vec![Some(bi(0))]);
 }
 
+#[test]
+fn restoring_into_existing_terminal_ignores_prefix_even_when_timestamps_tie() {
+    let blocks = vec![(bi(0), ts(10)), (bi(1), ts(10)), (bi(2), ts(10))];
+    assert_eq!(
+        super::find_block_indices_from(&blocks, &[ts(10)], bi(2)),
+        vec![Some(bi(2))]
+    );
+    assert_eq!(
+        super::find_block_indices_from(&blocks, &[ts(10)], bi(3)),
+        vec![None]
+    );
+}
+
 // ── Forked conversation startup working directory ──────────────────────
 
 /// Build a user query message that records `pwd` as its directory context, so

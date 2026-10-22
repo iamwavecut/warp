@@ -598,6 +598,7 @@ impl TerminalView {
         // This ensures command_block_indices_for_exchanges finds them and AI blocks
         // get command_block_index = Some(...), so process_restored_outputs doesn't
         // need to create blocks itself.
+        let first_restored_command = self.model.lock().block_list().active_block_index();
         let serialized_items = restored.ai_conversation.to_serialized_blocklist_items();
         if !serialized_items.is_empty() {
             let mut model = self.model.lock();
@@ -624,7 +625,7 @@ impl TerminalView {
             command_block_indices_for_exchanges(
                 &terminal_model,
                 exchanges.iter().copied(),
-                exchanges.len(),
+                first_restored_command,
             )
         };
 
@@ -765,13 +766,12 @@ impl TerminalView {
         // Compute all block indices based on the restoration type
         let command_block_indices = {
             let terminal_model = self.model.lock();
-            let exchange_count = all_exchanges_with_conversation_ids.len();
             command_block_indices_for_exchanges(
                 &terminal_model,
                 all_exchanges_with_conversation_ids
                     .iter()
                     .map(|(exchange, _)| exchange),
-                exchange_count,
+                BlockIndex::from(0),
             )
         };
 
@@ -1235,11 +1235,11 @@ impl TerminalView {
 /// appends blocks at the end during `restore_conversation_after_view_creation`), so we scan
 /// all command blocks for each exchange rather than relying on a forward-only cursor.
 ///
-/// The returned vec is guaranteed to have `exchange_count` len.
+/// Only blocks at or after `first_command_block` belong to this restoration.
 fn command_block_indices_for_exchanges<'a>(
     terminal_model: &TerminalModel,
     exchanges: impl Iterator<Item = &'a AIAgentExchange>,
-    _exchange_count: usize,
+    first_command_block: BlockIndex,
 ) -> Vec<Option<BlockIndex>> {
     let blocks = terminal_model.block_list().blocks();
 
@@ -1259,7 +1259,7 @@ fn command_block_indices_for_exchanges<'a>(
 
     let exchange_timestamps: Vec<DateTime<Local>> =
         exchanges.map(|exchange| exchange.start_time).collect();
-    find_block_indices_for_exchange_timestamps(&command_blocks, &exchange_timestamps)
+    find_block_indices_from(&command_blocks, &exchange_timestamps, first_command_block)
 }
 
 /// Pure implementation of the block-index search used by
@@ -1272,15 +1272,27 @@ fn command_block_indices_for_exchanges<'a>(
 /// pre-existing terminal blocks we don't want to match against. The backwards scan
 /// tracks the best candidate and stops as soon as it sees a block before the exchange
 /// timestamp — within the sorted tail, everything earlier is also <=.
+#[cfg(test)]
 fn find_block_indices_for_exchange_timestamps(
     command_blocks: &[(BlockIndex, DateTime<Local>)],
     exchange_timestamps: &[DateTime<Local>],
+) -> Vec<Option<BlockIndex>> {
+    find_block_indices_from(command_blocks, exchange_timestamps, BlockIndex::from(0))
+}
+
+fn find_block_indices_from(
+    command_blocks: &[(BlockIndex, DateTime<Local>)],
+    exchange_timestamps: &[DateTime<Local>],
+    first_command_block: BlockIndex,
 ) -> Vec<Option<BlockIndex>> {
     let mut result = Vec::with_capacity(exchange_timestamps.len());
 
     for &exchange_timestamp in exchange_timestamps {
         let mut best: Option<(BlockIndex, DateTime<Local>)> = None;
         for &(idx, ts) in command_blocks.iter().rev() {
+            if idx < first_command_block {
+                break;
+            }
             if ts >= exchange_timestamp {
                 // This block is at or after the exchange; remember it if it's
                 // the earliest such block we've seen. We use >= because a

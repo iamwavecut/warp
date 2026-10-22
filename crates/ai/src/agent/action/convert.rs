@@ -98,6 +98,7 @@ impl From<api::message::tool_call::ApplyFileDiffs> for AIAgentActionType {
                     .hunks
                     .into_iter()
                     .map(|hunk| V4AHunk {
+                        line_data: None,
                         change_context: hunk.change_context,
                         pre_context: hunk.pre_context,
                         old: hunk.old,

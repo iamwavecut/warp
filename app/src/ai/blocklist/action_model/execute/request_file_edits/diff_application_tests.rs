@@ -871,6 +871,7 @@ fn test_apply_v4a_edits_simple_match() {
             file: Some(file_path.clone()),
             move_to: None,
             hunks: vec![V4AHunk {
+                line_data: None,
                 change_context: vec![],
                 pre_context: "function foo() {".to_string(),
                 old: "    console.log('hello');".to_string(),
@@ -922,6 +923,7 @@ fn test_apply_v4a_edits_with_jump_context() {
             file: Some(file_path.clone()),
             move_to: None,
             hunks: vec![V4AHunk {
+                line_data: None,
                 change_context: vec!["class Foo".to_string()],
                 pre_context: "    def bar():".to_string(),
                 old: "        pass".to_string(),
@@ -967,6 +969,7 @@ fn test_apply_v4a_edits_no_match() {
             file: Some(file_path.clone()),
             move_to: None,
             hunks: vec![V4AHunk {
+                line_data: None,
                 change_context: vec![],
                 pre_context: "Non-existent pre context".to_string(),
                 old: "Non-existent old content".to_string(),
@@ -1016,6 +1019,7 @@ fn test_apply_v4a_edits_noop() {
             file: Some(file_path.clone()),
             move_to: None,
             hunks: vec![V4AHunk {
+                line_data: None,
                 change_context: vec![],
                 pre_context: "Line One".to_string(),
                 old: "Line Two".to_string(),
@@ -1071,6 +1075,7 @@ fn test_apply_v4a_edits_multiline_change() {
             file: Some(file_path.clone()),
             move_to: None,
             hunks: vec![V4AHunk {
+                line_data: None,
                 change_context: vec![],
                 pre_context: "def calculate():".to_string(),
                 old: "    x = 1\n    y = 2".to_string(),
@@ -1121,6 +1126,7 @@ fn test_apply_v4a_edits_nested_jump_context() {
             file: Some(file_path.clone()),
             move_to: None,
             hunks: vec![V4AHunk {
+                line_data: None,
                 change_context: vec!["class Outer".to_string(), "class Inner".to_string()],
                 pre_context: "        def method():".to_string(),
                 old: "            pass".to_string(),
@@ -1163,6 +1169,7 @@ fn test_apply_v4a_edits_missing_file() {
             file: Some(non_existent_file.clone()),
             move_to: None,
             hunks: vec![V4AHunk {
+                line_data: None,
                 change_context: vec![],
                 pre_context: "pre".to_string(),
                 old: "old content".to_string(),
@@ -1208,6 +1215,7 @@ fn test_apply_v4a_edits_empty_context() {
             file: Some(file_path.clone()),
             move_to: None,
             hunks: vec![V4AHunk {
+                line_data: None,
                 change_context: vec![],
                 pre_context: "".to_string(),
                 old: "second".to_string(),
@@ -1258,6 +1266,7 @@ fn test_apply_v4a_rename_to_nonexistent_file() {
             file: Some(source_path.clone()),
             move_to: Some(target_path.clone()),
             hunks: vec![V4AHunk {
+                line_data: None,
                 change_context: vec![],
                 pre_context: "line one".to_string(),
                 old: "line two".to_string(),
@@ -1321,6 +1330,7 @@ fn test_apply_v4a_rename_to_existing_file() {
             file: Some(source_path.clone()),
             move_to: Some(target_path.clone()),
             hunks: vec![V4AHunk {
+                line_data: None,
                 change_context: vec![],
                 pre_context: "source line one".to_string(),
                 old: "source line two".to_string(),

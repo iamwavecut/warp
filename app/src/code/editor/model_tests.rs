@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use futures::channel::oneshot;
+use line_ending::LineEnding;
 use vec1::vec1;
 use warp_editor::content::buffer::{InitialBufferState, SelectionOffsets};
 use warp_editor::multiline::MultilineString;
@@ -16,6 +17,52 @@ use crate::test_util::settings::initialize_settings_for_tests;
 fn initialize_deps(app: &mut App) {
     app.add_singleton_model(|_| Appearance::mock());
     initialize_settings_for_tests(app);
+}
+
+#[test]
+fn test_apply_v4a_final_bytes() {
+    use ai::diff_validation::{DiffType, V4AHunk, fuzzy_match_v4a_diffs};
+
+    App::test((), |mut app| async move {
+        initialize_deps(&mut app);
+        let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../../../crates/ai/src/diff_validation/testdata/blank_lines.json"
+        ))
+        .unwrap();
+        for fixture in fixtures {
+            let hunk: V4AHunk = serde_json::from_value(fixture["dual"].clone()).unwrap();
+            let initial = fixture["initial"].as_str().unwrap();
+            let diff = fuzzy_match_v4a_diffs("fixture.txt", &[hunk], None, initial);
+            let DiffType::Update { deltas, .. } = diff.diff_type else {
+                panic!("expected update");
+            };
+            let editor = mock_model(&mut app, initial, ContentVersion::new());
+            // LF fixtures must not inherit the platform default for empty buffers.
+            editor.update(&mut app, |editor, ctx| {
+                editor.buffer().update(ctx, |buffer, _| {
+                    buffer.set_line_ending_mode(LineEnding::LF);
+                });
+            });
+            layout_model(&mut app, &editor).await;
+            editor.update(&mut app, |editor, ctx| editor.apply_diffs(deltas, ctx));
+            editor.read(&app, |editor, ctx| {
+                assert_eq!(
+                    editor
+                        .content()
+                        .as_ref(ctx)
+                        .text_with_line_ending()
+                        .as_str(),
+                    fixture
+                        .get("gui_final")
+                        .unwrap_or(&fixture["final"])
+                        .as_str()
+                        .unwrap(),
+                    "{}",
+                    fixture["name"]
+                );
+            });
+        }
+    });
 }
 
 fn mock_model(app: &mut App, text: &str, version: ContentVersion) -> ModelHandle<CodeEditorModel> {

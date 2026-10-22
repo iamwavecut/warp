@@ -19,7 +19,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 pub(crate) use bridge::run_bridge;
-use futures::{FutureExt, future, pin_mut, select};
+use futures::{FutureExt, future, pin_mut, select, select_biased};
 pub(crate) use launch::AcpLaunchSpec;
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -619,7 +619,11 @@ impl TurnDriver {
             if turn_result.is_err() {
                 break;
             }
-            if let Some(prompt) = self.queued.take() {
+            self.queued.collect_ready(&self.follow_ups);
+            if let Some(prompt) = self
+                .queued
+                .take(matches!(turn_result, Ok(StopReason::Cancelled)))
+            {
                 turn_result = self.run_follow_up(mapper, prompt).await;
                 continue;
             }
@@ -633,6 +637,9 @@ impl TurnDriver {
                 prompt = self.follow_ups.recv().fuse() => match prompt {
                     Ok(prompt) => {
                         log::info!("Running ACP follow-up turn");
+                        self.queued.push(prompt);
+                        self.queued.collect_ready(&self.follow_ups);
+                        let prompt = self.queued.take(false).expect("queued follow-up");
                         turn_result = self.run_follow_up(mapper, prompt).await;
                     }
                     // The controller unbound the conversation; nothing more can be routed here.
@@ -689,6 +696,7 @@ impl TurnDriver {
         prompt: Vec<ContentBlock>,
     ) -> Result<StopReason> {
         let turn_result = self.prompt(mapper, prompt).await;
+        self.queued.collect_ready(&self.follow_ups);
         if turn_result.is_err() {
             self.queued.clear();
         }
@@ -756,59 +764,79 @@ impl TurnDriver {
     ) -> Result<StopReason> {
         let connection = self.connection.clone();
         let prompt_fut = connection
-            .request::<_, PromptResponse>(
+            .send_request::<_, PromptResponse>(
                 protocol::METHOD_SESSION_PROMPT,
                 PromptParams {
                     session_id: self.session_id.clone(),
                     prompt,
                 },
             )
+            .await?
             .fuse();
         pin_mut!(prompt_fut);
-        let mut cancelling = false;
+        let mut cancellation = steering::Cancellation::default();
         let mut deadline = future::pending::<()>().boxed().fuse();
+        let mut retry = future::pending::<()>().boxed().fuse();
         loop {
-            select! {
-                follow_up = self.follow_ups.recv().fuse() => {
-                    self.queued.push(follow_up.map_err(|_| anyhow!("local ACP prompt channel closed"))?);
-                    if !cancelling {
-                        self.settling.store(true, Ordering::SeqCst);
-                        steering::cancel_turn(&connection, &self.session_id).await?;
-                        cancelling = true;
-                        deadline = Timer::after(steering::CANCEL_TIMEOUT).map(|_| ()).boxed().fuse();
-                    }
-                },
-                cancel = self.cancels.recv().fuse() => {
-                    cancel.map_err(|_| anyhow!("local ACP cancellation channel closed"))?;
-                    self.queued.clear();
-                    if !cancelling {
-                        self.settling.store(true, Ordering::SeqCst);
-                        steering::cancel_turn(&connection, &self.session_id).await?;
-                        cancelling = true;
-                        deadline = Timer::after(steering::CANCEL_TIMEOUT).map(|_| ()).boxed().fuse();
-                    }
-                },
-                _ = deadline => {
-                    self.queued.clear();
-                    self.interrupt_after_cancel_timeout().await;
-                    return Err(anyhow!("ACP agent did not acknowledge session/cancel within 15 seconds"));
-                },
-                notification = self.notifications.recv().fuse() => match notification {
-                    Ok(notification) => self.handle_notification(mapper, notification).await?,
-                    // The agent closed its stdout; the pending prompt resolves with the error.
-                    Err(_) => break,
-                },
+            select_biased! {
                 response = prompt_fut => {
                     let response = match response {
                         Ok(response) => response,
-                        Err(error) if cancelling && error.downcast_ref::<RpcError>().is_some() => PromptResponse { stop_reason: StopReason::Cancelled },
+                        Err(error) if cancellation.is_requested() && error.downcast_ref::<RpcError>().is_some() => PromptResponse { stop_reason: StopReason::Cancelled },
                         Err(error) => return Err(error),
                     };
                     while let Ok(notification) = self.notifications.try_recv() {
                         self.handle_notification(mapper, notification).await?;
                     }
                     return Ok(response.stop_reason);
-                }
+                },
+                cancel = self.cancels.recv().fuse() => {
+                    cancel.map_err(|_| anyhow!("local ACP cancellation channel closed"))?;
+                    self.queued.clear();
+                    if cancellation.interrupt() {
+                        self.settling.store(true, Ordering::SeqCst);
+                        steering::cancel_turn(&connection, &self.session_id).await?;
+                        deadline = Timer::after(steering::CANCEL_TIMEOUT).map(|_| ()).boxed().fuse();
+                        retry = future::pending::<()>().boxed().fuse();
+                    }
+                },
+                _ = deadline => {
+                    if cancellation.expire(&mut self.queued) {
+                        self.interrupt_after_cancel_timeout().await;
+                        return Err(anyhow!("ACP agent did not acknowledge session/cancel within 15 seconds"));
+                    }
+                    // A queued correction must not kill the active local CLI or discard user input.
+                    deadline = future::pending::<()>().boxed().fuse();
+                    retry = future::pending::<()>().boxed().fuse();
+                },
+                _ = retry => {
+                    steering::cancel_turn(&connection, &self.session_id).await?;
+                    retry = match cancellation.next_retry_delay() {
+                        Some(after) => Timer::after(after).map(|_| ()).boxed().fuse(),
+                        None => future::pending::<()>().boxed().fuse(),
+                    };
+                },
+                incoming = async {
+                    select! {
+                        prompt = self.follow_ups.recv().fuse() => future::Either::Left(prompt),
+                        notification = self.notifications.recv().fuse() => future::Either::Right(notification),
+                    }
+                }.fuse() => match incoming {
+                    future::Either::Left(follow_up) => {
+                        self.queued.push(follow_up.map_err(|_| anyhow!("local ACP prompt channel closed"))?);
+                        if cancellation.follow_up() {
+                            self.settling.store(true, Ordering::SeqCst);
+                            steering::cancel_turn(&connection, &self.session_id).await?;
+                            deadline = Timer::after(steering::CANCEL_TIMEOUT).map(|_| ()).boxed().fuse();
+                            if let Some(after) = cancellation.next_retry_delay() {
+                                retry = Timer::after(after).map(|_| ()).boxed().fuse();
+                            }
+                        }
+                    },
+                    future::Either::Right(Ok(notification)) => self.handle_notification(mapper, notification).await?,
+                    // The pending prompt resolves with the read-loop error.
+                    future::Either::Right(Err(_)) => break,
+                },
             }
         }
         prompt_fut.await.map(|response| response.stop_reason)
