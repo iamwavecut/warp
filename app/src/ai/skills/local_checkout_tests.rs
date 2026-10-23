@@ -25,10 +25,33 @@ async fn cached_checkouts_refresh_full_history_and_remain_independent() {
     git(&source, &["add", "file"]);
     git(&source, &["commit", "-m", "first"]);
     git(&source, &["branch", "other"]);
+    git(&source, &["tag", "v1"]);
+    git(&source, &["update-ref", "refs/pull/1/head", "HEAD"]);
     let url = source.to_str().unwrap();
     let mirrors = temp.path().join("mirrors");
     let first = temp.path().join("first");
     clone_with_mirror(url, &first, &mirrors).await.unwrap();
+    let key = format!("{:x}", Sha256::digest(url.as_bytes()));
+    let mirror = mirrors.join(format!("{key}.git"));
+    let refs = command::blocking::Command::new("git")
+        .current_dir(&mirror)
+        .args(["for-each-ref", "--format=%(refname)"])
+        .output()
+        .unwrap();
+    let refs = String::from_utf8(refs.stdout).unwrap();
+    assert!(refs.contains("refs/heads/other"));
+    assert!(refs.contains("refs/tags/v1"));
+    assert!(!refs.contains("refs/pull/"));
+    git(
+        &mirror,
+        &[
+            "config",
+            "--replace-all",
+            "remote.origin.fetch",
+            "+refs/*:refs/*",
+        ],
+    );
+    git(&mirror, &["config", "remote.origin.mirror", "true"]);
     assert_eq!(
         std::fs::read_to_string(first.join("file")).unwrap(),
         "first"
@@ -38,6 +61,9 @@ async fn cached_checkouts_refresh_full_history_and_remain_independent() {
     git(&source, &["commit", "-am", "second"]);
     let second = temp.path().join("second");
     clone_with_mirror(url, &second, &mirrors).await.unwrap();
+    let config = std::fs::read_to_string(mirror.join("config")).unwrap();
+    assert!(!config.contains("+refs/*:refs/*"));
+    assert!(!config.contains("mirror = true"));
     assert_eq!(
         std::fs::read_to_string(second.join("file")).unwrap(),
         "second"

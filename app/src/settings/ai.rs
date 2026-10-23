@@ -1160,7 +1160,37 @@ impl settings_value::SettingsValue for ToolbarCommandMap {
     }
 }
 
+#[derive(
+    Default,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    settings_value::SettingsValue,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptSubmissionMode {
+    #[default]
+    Interrupt,
+    Steer,
+    Queue,
+}
+
 define_settings_group!(AISettings, settings: [
+    default_prompt_submission_mode: DefaultPromptSubmissionMode {
+        type: PromptSubmissionMode,
+        default: PromptSubmissionMode::Interrupt,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Never,
+        surface: settings::SettingSurfaces::GUI,
+        private: false,
+        toml_path: "agents.warp_agent.other.default_prompt_submission_mode",
+        description: "Interrupt, steer at the next model request, or queue until the response finishes.",
+    },
     // If `false`, all AI features are disabled.
     is_any_ai_enabled: IsAnyAIEnabled {
         type: bool,

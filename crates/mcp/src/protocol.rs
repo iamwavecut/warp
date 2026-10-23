@@ -106,8 +106,17 @@ pub async fn negotiate_protocol(
                 return Ok(preflight);
             }
             Some(ServerJsonRpcMessage::Error(error)) => {
+                let legacy_transport_error = protocol.discover
+                    && preflight.status == reqwest::StatusCode::BAD_REQUEST
+                    && error.id == Some(RequestId::String("server-error".into()))
+                    && error.error.code == ErrorCode::INVALID_REQUEST
+                    && error.error.message.starts_with(&format!(
+                        "Bad Request: Unsupported protocol version: {}. Supported versions: ",
+                        protocol.version
+                    ));
                 if let Some(id) = error.id
                     && id != RequestId::Number(0)
+                    && !legacy_transport_error
                 {
                     return Err(ClientInitializeError::UncorrelatedErrorResponse {
                         expected: RequestId::Number(0),

@@ -35,6 +35,14 @@ enum FixtureProtocol {
     Discover,
     InitializeCounteroffer,
     InitializeVersionError,
+    LegacyVersionError,
+}
+
+fn legacy_version_error(version: &str) -> Value {
+    json!({"jsonrpc": "2.0", "id": "server-error", "error": {
+        "code": ErrorCode::INVALID_REQUEST,
+        "message": format!("Bad Request: Unsupported protocol version: {version}. Supported versions: 2025-11-25")
+    }})
 }
 
 fn rpc_error(request: &Value, code: ErrorCode, data: Option<Value>) -> Value {
@@ -116,8 +124,14 @@ async fn assert_http_startup(
     let app = Router::new().route("/mcp", post(move |headers: HeaderMap, Json(request): Json<Value>| {
         captured.lock().expect("request capture").push(request.clone());
         async move {
-            if static_credential && headers.get("x-api-key").and_then(|v| v.to_str().ok()) != Some("test-key") {
+            if static_credential && (headers.get("x-api-key").and_then(|v| v.to_str().ok()) != Some("test-key")
+                || headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer test-token")) {
                 return StatusCode::UNAUTHORIZED.into_response();
+            }
+            let requested_version = headers.get("mcp-protocol-version").and_then(|v| v.to_str().ok());
+            if matches!(protocol, FixtureProtocol::LegacyVersionError)
+                && requested_version.is_some_and(|value| value != version) {
+                return (StatusCode::BAD_REQUEST, Json(legacy_version_error(requested_version.unwrap()))).into_response();
             }
             let method = request["method"].as_str().expect("request method");
             let result = match method {
@@ -169,6 +183,12 @@ async fn assert_http_startup(
                     }
                     json!({ "jsonrpc": "2.0", "id": request["id"], "result": { "tools": [test_tool("query_metrics")] } })
                 }
+                "tools/call" => {
+                    assert_eq!(request["params"]["name"], "query_metrics");
+                    json!({"jsonrpc":"2.0", "id": request["id"], "result": {
+                        "content":[{"type":"text", "text":"metrics available"}], "isError":false
+                    }})
+                }
                 _ => return StatusCode::BAD_REQUEST.into_response(),
             };
             if sse_responses {
@@ -183,12 +203,14 @@ async fn assert_http_startup(
     }));
     let (url, server) = serve_http_router(app).await;
     let headers = if static_credential {
-        HashMap::from([("X-Api-Key".to_string(), "test-key".to_string())])
+        HashMap::from([
+            ("X-Api-Key".to_string(), "test-key".to_string()),
+            ("Authorization".to_string(), "Bearer test-token".to_string()),
+        ])
     } else {
         HashMap::new()
     };
     let info = start_http_server(url, headers).await;
-    server.abort();
     let info = info.expect("Warp startup should succeed");
     assert_eq!(info.tools, vec![test_tool("query_metrics")]);
     assert_eq!(
@@ -199,8 +221,136 @@ async fn assert_http_startup(
             .as_str(),
         version
     );
+    if matches!(protocol, FixtureProtocol::LegacyVersionError) {
+        let result = info
+            .service
+            .call_tool(rmcp::model::CallToolRequestParams::new("query_metrics"))
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(
+            serde_json::to_value(result.content).unwrap(),
+            json!([{"type":"text", "text":"metrics available"}])
+        );
+    }
     info.service.cancel().await.expect("cancel service");
+    server.abort();
     requests.lock().expect("captured requests").clone()
+}
+
+#[tokio::test]
+async fn legacy_transport_version_rejection_allows_tool_calls() {
+    for sse in [false, true] {
+        let requests =
+            assert_http_startup(FixtureProtocol::LegacyVersionError, "2025-11-25", sse, true).await;
+        assert_eq!(
+            requests
+                .iter()
+                .map(|r| r["method"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "server/discover",
+                "initialize",
+                "initialize",
+                "notifications/initialized",
+                "tools/list",
+                "tools/call"
+            ]
+        );
+    }
+}
+
+#[tokio::test]
+async fn legacy_transport_exception_preserves_error_correlation() {
+    for (status, id, code, version) in [
+        (
+            StatusCode::BAD_REQUEST,
+            json!(99),
+            ErrorCode::INVALID_REQUEST,
+            "2026-07-28",
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            json!("server-error"),
+            ErrorCode::INVALID_REQUEST,
+            "2099-01-01",
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            json!("server-error"),
+            ErrorCode::INTERNAL_ERROR,
+            "2026-07-28",
+        ),
+        (
+            StatusCode::OK,
+            json!("server-error"),
+            ErrorCode::INVALID_REQUEST,
+            "2026-07-28",
+        ),
+    ] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured = calls.clone();
+        let app = Router::new().route(
+            "/mcp",
+            post(move || {
+                captured.fetch_add(1, Ordering::SeqCst);
+                let mut response = legacy_version_error(version);
+                response["id"] = id.clone();
+                response["error"]["code"] = json!(code);
+                async move { (status, Json(response)) }
+            }),
+        );
+        let (url, server) = serve_http_router(app).await;
+        let result = preflight(&url, &HashMap::new()).await;
+        server.abort();
+        assert!(result.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn legacy_transport_fallback_is_bounded_and_preserves_http_failures() {
+    for status in [
+        StatusCode::BAD_REQUEST,
+        StatusCode::UNAUTHORIZED,
+        StatusCode::FORBIDDEN,
+        StatusCode::INTERNAL_SERVER_ERROR,
+    ] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured = calls.clone();
+        let app = Router::new().route(
+            "/mcp",
+            post(move |headers: HeaderMap| {
+                captured.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    (
+                        status,
+                        Json(legacy_version_error(
+                            headers["mcp-protocol-version"].to_str().unwrap(),
+                        )),
+                    )
+                }
+            }),
+        );
+        let (url, server) = serve_http_router(app).await;
+        let result = tokio::time::timeout(Duration::from_secs(5), preflight(&url, &HashMap::new()))
+            .await
+            .unwrap();
+        server.abort();
+        if status == StatusCode::BAD_REQUEST {
+            assert!(result.is_err());
+        } else {
+            assert_eq!(result.unwrap().status, status);
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            if status == StatusCode::BAD_REQUEST {
+                2
+            } else {
+                1
+            }
+        );
+    }
 }
 
 #[tokio::test]

@@ -26,7 +26,7 @@ use crate::settings::{
     CustomProviderCapabilities, CustomProviderConfig, FileBasedMcpEnabled,
     GitOperationsAutogenEnabled, IncludeAgentCommandsInHistory, IntelligentAutosuggestionsEnabled,
     MemoryEnabled, NLDInTerminalEnabled, NaturalLanguageAutosuggestionsEnabled,
-    RuleSuggestionsEnabled, ShouldRenderCLIAgentToolbar,
+    PromptSubmissionMode, RuleSuggestionsEnabled, ShouldRenderCLIAgentToolbar,
     ShouldRenderUseAgentToolbarForUserCommands, ShowAgentTips, ShowConversationHistory,
     ShowHintText, ThinkingDisplayMode, custom_provider_capabilities_from_ui_with_models,
     custom_provider_config_from_ui_with_capabilities, normalize_custom_provider_env_var,
@@ -537,6 +537,7 @@ pub struct AISettingsPageView {
     dragged_context_window_value: Option<u32>,
 
     thinking_display_mode_dropdown: ViewHandle<Dropdown<AISettingsPageAction>>,
+    prompt_submission_mode_dropdown: ViewHandle<Dropdown<AISettingsPageAction>>,
     #[cfg(feature = "local_fs")]
     conversation_layout_dropdown: ViewHandle<Dropdown<AISettingsPageAction>>,
 
@@ -643,6 +644,37 @@ impl AISettingsPageView {
 
         let thinking_display_mode_dropdown =
             OtherAIWidget::create_thinking_display_mode_dropdown(ctx);
+        let prompt_submission_mode_dropdown = ctx.add_typed_action_view(|ctx| {
+            let mut dropdown = Dropdown::new(ctx);
+            dropdown.set_top_bar_max_width(AI_SETTINGS_DROPDOWN_WIDTH);
+            dropdown.set_menu_width(AI_SETTINGS_DROPDOWN_WIDTH, ctx);
+            dropdown.add_items(
+                vec![
+                    DropdownItem::new(
+                        "Interrupt response",
+                        AISettingsPageAction::SetPromptSubmissionMode(
+                            PromptSubmissionMode::Interrupt,
+                        ),
+                    ),
+                    DropdownItem::new(
+                        "Steer at next model request",
+                        AISettingsPageAction::SetPromptSubmissionMode(PromptSubmissionMode::Steer),
+                    ),
+                    DropdownItem::new(
+                        "Queue until response finishes",
+                        AISettingsPageAction::SetPromptSubmissionMode(PromptSubmissionMode::Queue),
+                    ),
+                ],
+                ctx,
+            );
+            dropdown.set_selected_by_action(
+                AISettingsPageAction::SetPromptSubmissionMode(
+                    *AISettings::as_ref(ctx).default_prompt_submission_mode,
+                ),
+                ctx,
+            );
+            dropdown
+        });
         // Set initial selection based on current setting value.
         {
             let current_mode = AISettings::as_ref(ctx).thinking_display_mode;
@@ -1010,6 +1042,16 @@ impl AISettingsPageView {
                         .collect();
                     me.cli_agent_footer_command_agent_dropdowns =
                         Self::create_cli_agent_dropdowns(ctx);
+                }
+                AISettingsChangedEvent::DefaultPromptSubmissionMode { .. } => {
+                    let mode = *AISettings::as_ref(ctx).default_prompt_submission_mode;
+                    me.prompt_submission_mode_dropdown
+                        .update(ctx, |dropdown, ctx| {
+                            dropdown.set_selected_by_action(
+                                AISettingsPageAction::SetPromptSubmissionMode(mode),
+                                ctx,
+                            );
+                        });
                 }
                 AISettingsChangedEvent::ThinkingDisplayMode { .. } => {
                     let current_mode = *AISettings::as_ref(ctx).thinking_display_mode.value();
@@ -1465,6 +1507,7 @@ impl AISettingsPageView {
             mcp_denylist_dropdown,
             mcp_denylist_mouse_state_handles,
             thinking_display_mode_dropdown,
+            prompt_submission_mode_dropdown,
             #[cfg(feature = "local_fs")]
             conversation_layout_dropdown,
             profile_views,
@@ -2241,6 +2284,7 @@ pub enum AISettingsPageAction {
     ToggleShowInputHintText,
     ToggleShowAgentTips,
     SetThinkingDisplayMode(ThinkingDisplayMode),
+    SetPromptSubmissionMode(PromptSubmissionMode),
     RemoveCLIAgentToolbarEnabledCommand(String),
     RemoveFromCommandExecutionAllowlist(AgentModeCommandExecutionPredicate),
     RemoveFromCommandExecutionDenylist(AgentModeCommandExecutionPredicate),
@@ -2532,6 +2576,23 @@ impl TypedActionView for AISettingsPageView {
                 AISettings::handle(ctx).update(ctx, |settings, ctx| {
                     report_if_error!(settings.thinking_display_mode.set_value(*mode, ctx));
                 });
+                ctx.notify();
+            }
+            AISettingsPageAction::SetPromptSubmissionMode(mode) => {
+                AISettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(
+                        settings
+                            .default_prompt_submission_mode
+                            .set_value(*mode, ctx)
+                    );
+                });
+                self.prompt_submission_mode_dropdown
+                    .update(ctx, |dropdown, ctx| {
+                        dropdown.set_selected_by_action(
+                            AISettingsPageAction::SetPromptSubmissionMode(*mode),
+                            ctx,
+                        );
+                    });
                 ctx.notify();
             }
             AISettingsPageAction::RemoveCLIAgentToolbarEnabledCommand(command) => {
@@ -5137,6 +5198,15 @@ impl SettingsWidget for OtherAIWidget {
             app,
         ));
 
+        column.add_child(render_dropdown_item(
+            appearance,
+            "Prompt submission while working",
+            Some("Steer applies at the next local model request without interrupting current tools. The conversation queue toggle takes precedence."),
+            None,
+            LocalOnlyIconState::Hidden,
+            (!is_any_ai_enabled).then(|| appearance.theme().disabled_ui_text_color()),
+            &view.prompt_submission_mode_dropdown,
+        ));
         column.add_child(render_dropdown_item(
             appearance,
             "Agent thinking display",

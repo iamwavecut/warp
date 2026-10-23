@@ -6,7 +6,10 @@ use std::time::SystemTime;
 use prost_types::FieldMask;
 use serde_json::Value;
 use uuid::Uuid;
-use warp_multi_agent_api::client_action::{AddMessagesToTask, AppendToMessageContent, CreateTask};
+use warp_multi_agent_api::McpServerIdentity;
+use warp_multi_agent_api::client_action::{
+    AddMessagesToTask, AppendToMessageContent, CreateTask, UpdateTaskMessage,
+};
 use warp_multi_agent_api::message::tool_call::apply_file_diffs::{FileDiff, NewFile};
 use warp_multi_agent_api::message::tool_call::read_files::File as ReadFilesFile;
 use warp_multi_agent_api::message::tool_call::{
@@ -69,6 +72,7 @@ enum ToolProjection {
     Generic {
         name: String,
         args: Option<prost_types::Struct>,
+        server_identity: Option<McpServerIdentity>,
     },
 }
 
@@ -78,6 +82,7 @@ impl ToolProjection {
         title: &str,
         raw_input: Option<&Value>,
         content: Option<&[ToolCallContent]>,
+        mcp_servers: &HashMap<String, McpServerIdentity>,
     ) -> Self {
         if let Some(command) = command_from_raw_input(raw_input, kind, title) {
             return Self::Shell { command };
@@ -99,15 +104,14 @@ impl ToolProjection {
                 line_range: line_range_from_raw_input(raw_input),
             };
         }
+        let (name, server_identity) = match split_mcp_tool_name(title, mcp_servers) {
+            Some((tool, identity)) => (tool.to_owned(), Some(identity.clone())),
+            None => (mcp_tool_name(kind, title), None),
+        };
         Self::Generic {
-            name: mcp_tool_name(kind, title),
-            args: raw_input
-                .cloned()
-                .and_then(|input| serde_json_to_prost(input).ok())
-                .and_then(|value| match value.kind {
-                    Some(prost_types::value::Kind::StructValue(fields)) => Some(fields),
-                    _ => None,
-                }),
+            name,
+            args: generic_args(raw_input),
+            server_identity,
         }
     }
 
@@ -146,9 +150,14 @@ impl ToolProjection {
                     line_ranges: line_range.iter().copied().collect(),
                 }],
             }),
-            Self::Generic { name, args } => Tool::CallMcpTool(CallMcpTool {
+            Self::Generic {
+                name,
+                args,
+                server_identity,
+            } => Tool::CallMcpTool(CallMcpTool {
                 name: name.clone(),
                 args: args.clone(),
+                server_identity: server_identity.clone(),
                 ..Default::default()
             }),
         }
@@ -251,6 +260,7 @@ struct ToolCallState {
     /// the action model indexes results by id across conversations, and agents are free to
     /// reuse their ids across turns.
     action_id: String,
+    message_id: String,
     kind: Option<ToolKind>,
     title: String,
     projection: ToolProjection,
@@ -277,6 +287,7 @@ pub(super) enum TurnEvent {
 }
 
 pub(super) struct AcpTurnMapper {
+    mcp_servers: HashMap<String, McpServerIdentity>,
     task_id: String,
     request_id: String,
     open_message: Option<OpenMessage>,
@@ -289,8 +300,13 @@ pub(super) struct AcpTurnMapper {
 }
 
 impl AcpTurnMapper {
-    pub(super) fn new(task_id: String, request_id: String) -> Self {
+    pub(super) fn new(
+        task_id: String,
+        request_id: String,
+        mcp_servers: HashMap<String, McpServerIdentity>,
+    ) -> Self {
         Self {
+            mcp_servers,
             task_id,
             request_id,
             open_message: None,
@@ -475,11 +491,16 @@ impl AcpTurnMapper {
             &title,
             call.raw_input.as_ref(),
             call.content.as_deref(),
+            &self.mcp_servers,
         );
         let action_id = Uuid::new_v4().to_string();
-        let tool = projection.tool(&title);
+        let message = self.new_message(MessageKind::ToolCall(ToolCall {
+            tool_call_id: action_id.clone(),
+            tool: Some(projection.tool(&title)),
+        }));
         let state = ToolCallState {
             action_id: action_id.clone(),
+            message_id: message.id.clone(),
             kind: call.kind,
             title,
             projection,
@@ -489,12 +510,7 @@ impl AcpTurnMapper {
         self.tool_calls.insert(call.tool_call_id.clone(), state);
         self.tool_call_announced_in_segment = true;
 
-        let mut events = vec![TurnEvent::Actions(vec![self.add_messages(vec![
-            self.new_message(MessageKind::ToolCall(ToolCall {
-                tool_call_id: action_id,
-                tool: Some(tool),
-            })),
-        ])])];
+        let mut events = vec![TurnEvent::Actions(vec![self.add_messages(vec![message])])];
         if let Some(result) = self.result_if_finished(&call.tool_call_id, call.status) {
             events.extend(self.boundary_before_results());
             events.push(TurnEvent::Actions(vec![self.add_messages(vec![result])]));
@@ -522,13 +538,16 @@ impl AcpTurnMapper {
         if call.kind.is_some() {
             state.kind = call.kind;
         }
+        let mut input_changed = false;
         match &mut state.projection {
             ToolProjection::Shell { command } => {
                 if call.raw_input.is_some()
                     && let Some(updated) =
                         command_from_raw_input(call.raw_input.as_ref(), state.kind, "")
+                    && *command != updated
                 {
                     *command = updated;
+                    input_changed = true;
                 }
             }
             // The announced call already carries the diff; a later one (e.g. the applied
@@ -543,20 +562,48 @@ impl AcpTurnMapper {
                     *new_text = updated_new;
                 }
             }
-            ToolProjection::ReadFiles { .. } | ToolProjection::Generic { .. } => {}
+            ToolProjection::Generic { args, .. } => {
+                if call.raw_input.is_some() {
+                    let updated = generic_args(call.raw_input.as_ref());
+                    if *args != updated {
+                        *args = updated;
+                        input_changed = true;
+                    }
+                }
+            }
+            ToolProjection::ReadFiles { .. } => {}
         }
         let output = tool_output_text(call.content.as_deref(), call.raw_output.as_ref());
         if !output.is_empty() {
             state.output = output;
         }
-        match self.result_if_finished(&call.tool_call_id, call.status) {
-            Some(result) => {
-                let mut events = self.boundary_before_results();
-                events.push(TurnEvent::Actions(vec![self.add_messages(vec![result])]));
-                events
-            }
-            None => Vec::new(),
+        let mut events = Vec::new();
+        if input_changed {
+            let message = Message {
+                id: state.message_id.clone(),
+                task_id: self.task_id.clone(),
+                request_id: self.request_id.clone(),
+                message: Some(MessageKind::ToolCall(ToolCall {
+                    tool_call_id: state.action_id.clone(),
+                    tool: Some(state.projection.tool(&state.title)),
+                })),
+                ..Default::default()
+            };
+            events.push(TurnEvent::Actions(vec![action(
+                client_action::Action::UpdateTaskMessage(UpdateTaskMessage {
+                    task_id: self.task_id.clone(),
+                    message: Some(message),
+                    mask: Some(FieldMask {
+                        paths: vec!["tool_call".to_owned()],
+                    }),
+                }),
+            )]));
         }
+        if let Some(result) = self.result_if_finished(&call.tool_call_id, call.status) {
+            events.extend(self.boundary_before_results());
+            events.push(TurnEvent::Actions(vec![self.add_messages(vec![result])]));
+        }
+        events
     }
 
     /// Some agents announce an edit before they know what it changes and attach the diff only
@@ -810,6 +857,40 @@ fn thought_text(call: &ToolCallFields) -> String {
         .filter(|text| !text.is_empty())
         .or_else(|| call.title.clone())
         .unwrap_or_default()
+}
+
+fn generic_args(input: Option<&Value>) -> Option<prost_types::Struct> {
+    input
+        .cloned()
+        .and_then(|value| serde_json_to_prost(value).ok())
+        .and_then(|value| match value.kind {
+            Some(prost_types::value::Kind::StructValue(fields)) => Some(fields),
+            _ => None,
+        })
+}
+
+fn split_mcp_tool_name<'a>(
+    title: &'a str,
+    servers: &'a HashMap<String, McpServerIdentity>,
+) -> Option<(&'a str, &'a McpServerIdentity)> {
+    let qualified = title.strip_prefix("mcp__")?;
+    servers
+        .iter()
+        .filter_map(|(name, identity)| {
+            let normalized: String = name
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || matches!(c, '_' | '-') {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
+            let tool = qualified.strip_prefix(&normalized)?.strip_prefix("__")?;
+            (!tool.is_empty()).then_some((tool, identity))
+        })
+        .min_by_key(|(tool, _)| tool.len())
 }
 
 fn mcp_tool_name(kind: Option<ToolKind>, title: &str) -> String {

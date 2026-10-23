@@ -1783,6 +1783,27 @@ fn test_history_up_for_shared_session_executor() {
 }
 
 #[test]
+fn pending_share_does_not_block_local_command_execution() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let session_info = SessionInfo::new_for_test()
+            .with_id(SessionId::from(1))
+            .with_shell_type(ShellType::Zsh);
+        let terminal =
+            add_window_with_bootstrapped_terminal(&mut app, None, Some(session_info)).await;
+        terminal.update(&mut app, |view, _| {
+            view.model
+                .lock()
+                .set_shared_session_status(SharedSessionStatus::SharePending)
+        });
+        let input = terminal.read(&app, |view, _| view.input().clone());
+        input.update(&mut app, |input, ctx| {
+            assert!(input.try_execute_command("echo local", ctx));
+        });
+    });
+}
+
+#[test]
 fn test_history_up_multiline() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

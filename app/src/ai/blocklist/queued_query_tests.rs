@@ -51,6 +51,123 @@ fn user_query(text: &str) -> QueuedQuery {
     QueuedQuery::new(text.to_owned(), QueuedQueryOrigin::QueueSlashCommand)
 }
 
+#[test]
+fn local_steering_waits_for_command_and_edit_barriers() {
+    with_model(|mut app, model, _| {
+        let id = AIConversationId::new();
+        let row = model
+            .update(&mut app, |m, ctx| {
+                m.append(
+                    id,
+                    QueuedQuery::new(
+                        "Use the local fixture".into(),
+                        QueuedQueryOrigin::LocalSteering,
+                    ),
+                    ctx,
+                )
+            })
+            .unwrap();
+        assert_eq!(
+            model.read(&app, |m, _| m.steering_head(id).unwrap().text().to_owned()),
+            "Use the local fixture"
+        );
+        model
+            .update(&mut app, |m, ctx| m.enter_edit_mode(id, row, ctx))
+            .unwrap();
+        assert!(model.read(&app, |m, _| m.steering_head(id).is_none()));
+        model
+            .update(&mut app, |m, ctx| m.cancel_edit(id, ctx))
+            .unwrap();
+        model
+            .update(&mut app, |m, ctx| m.begin_dispatch(id, row, ctx))
+            .unwrap();
+        assert!(model.read(&app, |m, _| m.steering_head(id).is_none()));
+        assert_eq!(
+            model.read(&app, |m, _| m.queue(id).len()),
+            1,
+            "uncertain delivery must remain durable"
+        );
+        let other = AIConversationId::new();
+        model
+            .update(&mut app, |m, ctx| {
+                m.append(
+                    other,
+                    QueuedQuery::new_command(
+                        "echo local".into(),
+                        QueuedQueryOrigin::AutoQueueToggle,
+                    ),
+                    ctx,
+                )
+            })
+            .unwrap();
+        model
+            .update(&mut app, |m, ctx| {
+                m.append(
+                    other,
+                    QueuedQuery::new("Wait for command".into(), QueuedQueryOrigin::LocalSteering),
+                    ctx,
+                )
+            })
+            .unwrap();
+        assert!(model.read(&app, |m, _| m.steering_head(other).is_none()));
+    });
+}
+
+#[test]
+fn local_steering_response_acknowledges_only_its_row_while_tools_continue() {
+    with_model(|mut app, model, _| {
+        let id = AIConversationId::new();
+        let stream = ResponseStreamId::new_for_test();
+        model
+            .update(&mut app, |m, ctx| {
+                let first = m.append(
+                    id,
+                    QueuedQuery::new("First correction".into(), QueuedQueryOrigin::LocalSteering),
+                    ctx,
+                )?;
+                m.append(
+                    id,
+                    QueuedQuery::new("Second correction".into(), QueuedQueryOrigin::LocalSteering),
+                    ctx,
+                )?;
+                m.begin_dispatch(id, first, ctx)?;
+                m.set_prompt_dispatch_marker(id, stream.clone())?;
+                assert!(
+                    m.complete_prompt_after_response(
+                        id,
+                        &ResponseStreamId::new_for_test(),
+                        true,
+                        ctx
+                    )?
+                    .is_none()
+                );
+                assert_eq!(
+                    m.complete_prompt_after_response(id, &stream, true, ctx)?
+                        .unwrap()
+                        .text(),
+                    "First correction"
+                );
+                assert_eq!(m.steering_head(id).unwrap().text(), "Second correction");
+                Ok::<_, anyhow::Error>(())
+            })
+            .unwrap();
+        let other = AIConversationId::new();
+        model
+            .update(&mut app, |m, ctx| {
+                let row = m.append(other, user_query("Full-turn queue"), ctx)?;
+                m.begin_dispatch(other, row, ctx)?;
+                m.set_prompt_dispatch_marker(other, stream.clone())?;
+                assert!(
+                    m.complete_prompt_after_response(other, &stream, true, ctx)?
+                        .is_none()
+                );
+                assert_eq!(m.queue(other).len(), 1);
+                Ok::<_, anyhow::Error>(())
+            })
+            .unwrap();
+    });
+}
+
 fn locked_query(text: &str) -> QueuedQuery {
     QueuedQuery::new_locked_for_test(text.to_owned(), QueuedQueryOrigin::QueueSlashCommand)
 }

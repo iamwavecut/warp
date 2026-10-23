@@ -43,6 +43,8 @@ pub enum QueuedQueryOrigin {
     QueueSlashCommand,
     /// Filed via the auto-queue toggle in the warping indicator.
     AutoQueueToggle,
+    /// A correction for the next local model request, without cancelling current work.
+    LocalSteering,
 }
 
 impl QueuedQueryOrigin {
@@ -50,6 +52,7 @@ impl QueuedQueryOrigin {
         match self {
             Self::QueueSlashCommand => "queue_slash_command",
             Self::AutoQueueToggle => "auto_queue_toggle",
+            Self::LocalSteering => "local_steering",
         }
     }
 
@@ -57,6 +60,7 @@ impl QueuedQueryOrigin {
         match value {
             "queue_slash_command" => Ok(Self::QueueSlashCommand),
             "auto_queue_toggle" => Ok(Self::AutoQueueToggle),
+            "local_steering" => Ok(Self::LocalSteering),
             other => Err(anyhow::anyhow!("unknown queued prompt origin {other}")),
         }
     }
@@ -741,9 +745,30 @@ impl QueuedQueryModel {
         Some(action)
     }
 
-    /// Returns an action for the head row without removing it. Runtime dispatch uses this method,
-    /// followed by [`Self::begin_dispatch`], so a crash after dispatch leaves the durable row for
-    /// explicit user recovery instead of silently replaying a side effect.
+    /// Selects a ready correction without crossing durable queue barriers.
+    pub fn steering_head(&self, conversation_id: AIConversationId) -> Option<&QueuedQuery> {
+        let state = self.queues.get(&conversation_id)?;
+        let head = state.queue.first()?;
+        (head.origin == QueuedQueryOrigin::LocalSteering
+            && !head.is_command()
+            && state.editing != Some(head.id)
+            && matches!(
+                self.peek_autofire(conversation_id),
+                Some(AutofireAction::Submit { .. })
+            ))
+        .then_some(head)
+    }
+
+    pub fn steering_in_flight(&self, conversation_id: AIConversationId) -> bool {
+        self.queues.get(&conversation_id).is_some_and(|state| {
+            state.queue.first().is_some_and(|row| {
+                row.origin == QueuedQueryOrigin::LocalSteering
+                    && state.prompt_in_flight == Some(row.id)
+            })
+        })
+    }
+
+    /// Selects the head without removing it; dispatch is committed before sending.
     pub fn peek_autofire(&self, conversation_id: AIConversationId) -> Option<AutofireAction> {
         let state = self.queues.get(&conversation_id)?;
         if state.command_in_flight {
@@ -1093,6 +1118,19 @@ impl QueuedQueryModel {
     /// Completes a prompt whose dispatch marker was committed on the previous terminal-state
     /// transition. Keeping the marker until the next terminal state avoids dropping a row during
     /// an uncertain provider failure.
+    pub fn complete_prompt_after_response(
+        &mut self,
+        conversation_id: AIConversationId,
+        stream_id: &ResponseStreamId,
+        tools_running: bool,
+        ctx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<Option<QueuedQuery>> {
+        if tools_running && !self.steering_in_flight(conversation_id) {
+            return Ok(None);
+        }
+        self.complete_prompt_in_flight(conversation_id, stream_id, ctx)
+    }
+
     pub fn complete_prompt_in_flight(
         &mut self,
         conversation_id: AIConversationId,

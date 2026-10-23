@@ -494,7 +494,27 @@ impl HarnessRunner for AcpHarnessRunner {
         })
         .await?;
 
-        let mut mapper = AcpTurnMapper::new(Uuid::new_v4().to_string(), turn.request_id.clone());
+        let identities = self
+            .mcp_servers
+            .iter()
+            .map(|server| {
+                let name = match server {
+                    McpServer::Stdio { name, .. } | McpServer::Remote { name, .. } => name,
+                };
+                (
+                    name.clone(),
+                    warp_multi_agent_api::McpServerIdentity {
+                        display_name: name.clone(),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let mut mapper = AcpTurnMapper::new(
+            Uuid::new_v4().to_string(),
+            turn.request_id.clone(),
+            identities,
+        );
         apply_actions(
             foreground,
             &self.terminal_driver,

@@ -5,6 +5,8 @@
 //! Agent Mode UI.
 pub(crate) mod external_harness;
 pub mod input_context;
+#[cfg(test)]
+mod local_steering_tests;
 mod pending_response_streams;
 pub mod response_stream;
 pub(super) mod shared_session;
@@ -1949,20 +1951,63 @@ impl BlocklistAIController {
             .expect("Conversation exists- was just created.")
     }
 
-    /// Attempts to send a request to the AI model API. Adds context to the input if it
-    /// contains a user query. Returns `Err` if the AI input was not able to be sent due to an
-    /// existing in-flight request. Emits an event containing a receiver for the AI's output.
-    /// If conversation_id is Some, we follow up in that conversation.
-    /// If it's None or we can't find a conversation with that ID, we start a new one.
-    /// Returns the conversation ID of affected conversation and response stream ID.
-    ///
-    ///  This function does not handle cancelling any in flight requests (and sending them back as
-    /// input) for an existing conversation. Consider calling [`Self::send_custom_ai_input_query`] if
-    /// you're trying to send a query with a custom [`AIAgentInput`] type where you'd like the "normal"
-    /// flow that handles existing conversations properly.
+    /// Adds one durable correction at a native request boundary without cancelling tools.
+    fn attach_local_steering(
+        &self,
+        request: &mut RequestInput,
+        ctx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<bool> {
+        use super::QueuedQueryModel;
+        if request.all_inputs().any(|input| {
+            input.is_user_query() || matches!(input, AIAgentInput::SummarizeConversation { .. })
+        }) {
+            return Ok(false);
+        }
+        let Some(row) = QueuedQueryModel::as_ref(ctx)
+            .steering_head(request.conversation_id)
+            .cloned()
+        else {
+            return Ok(false);
+        };
+        let task_id = BlocklistAIHistoryModel::as_ref(ctx)
+            .conversation(&request.conversation_id)
+            .ok_or_else(|| anyhow!("Steering conversation is missing"))?
+            .get_root_task_id()
+            .clone();
+        let input = input_for_query(
+            row.text().to_owned(),
+            &task_id,
+            request.conversation_id,
+            None,
+            UserQueryMode::Normal,
+            None,
+            HashMap::new(),
+            Some(row.attachments().to_vec()),
+            self.context_model.as_ref(ctx),
+            self.active_session.as_ref(ctx),
+            ctx,
+        );
+        let capability = AISettings::as_ref(ctx).is_any_ai_enabled(ctx)
+            && (!row
+                .attachments()
+                .iter()
+                .any(|attachment| matches!(attachment, PendingAttachment::Image(_)))
+                || LLMPreferences::as_ref(ctx)
+                    .vision_supported(ctx, Some(self.terminal_surface_id)));
+        if let Err(error) = QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
+            model.begin_dispatch_with_capability(request.conversation_id, row.id(), capability, ctx)
+        }) {
+            log::warn!("Local steering remains queued: {error:#}");
+            return Ok(false);
+        }
+        request.input_messages.push((task_id, vec![input]));
+        Ok(true)
+    }
+
+    /// Sends input only when the conversation has no in-flight provider request.
     fn send_request_input(
         &mut self,
-        request_input: RequestInput,
+        mut request_input: RequestInput,
         query_metadata: Option<RequestMetadata>,
         can_attempt_resume_on_error: bool,
         is_queued_prompt: bool,
@@ -2082,6 +2127,8 @@ impl BlocklistAIController {
             return Err(anyhow::anyhow!(AI_INPUT_NOT_SENT_ERROR_STR));
         }
 
+        let is_queued_prompt =
+            is_queued_prompt || self.attach_local_steering(&mut request_input, ctx)?;
         let conversation_data = api::ConversationData {
             id: conversation_id,
             tasks: active_tasks,
@@ -2112,6 +2159,11 @@ impl BlocklistAIController {
             ResponseStream::new(request_params.clone(), can_attempt_resume_on_error, ctx)
         });
         let response_stream_id = response_stream.as_ref(ctx).id().clone();
+        if super::QueuedQueryModel::as_ref(ctx).steering_in_flight(conversation_id) {
+            super::QueuedQueryModel::handle(ctx).update(ctx, |model, _| {
+                model.set_prompt_dispatch_marker(conversation_id, response_stream_id.clone())
+            })?;
+        }
         let response_stream_clone = response_stream.clone();
         let input_contains_user_query = request_input
             .all_inputs()

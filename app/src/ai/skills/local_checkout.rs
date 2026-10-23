@@ -36,7 +36,7 @@ async fn run_git(args: &[&std::ffi::OsStr]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Refreshes a local full mirror, then creates a checkout with no object-store dependency.
+/// Refreshes local branches and tags, then creates an independent full checkout.
 pub(super) async fn clone_with_mirror(url: &str, target: &Path, root: &Path) -> anyhow::Result<()> {
     use std::ffi::OsStr;
     if target.symlink_metadata().is_ok() {
@@ -60,6 +60,7 @@ pub(super) async fn clone_with_mirror(url: &str, target: &Path, root: &Path) -> 
             anyhow::bail!("Invalid mirror cache path")
         }
         Ok(_) => {
+            configure_mirror(url, &mirror).await?;
             run_git(&[
                 OsStr::new("-C"),
                 mirror.as_os_str(),
@@ -74,17 +75,20 @@ pub(super) async fn clone_with_mirror(url: &str, target: &Path, root: &Path) -> 
             let candidate = temporary.path().join("mirror.git");
             run_git(&[
                 OsStr::new("clone"),
-                OsStr::new("--mirror"),
+                OsStr::new("--bare"),
                 OsStr::new("--"),
                 OsStr::new(url),
                 candidate.as_os_str(),
             ])
             .await?;
+            configure_mirror(url, &candidate).await?;
             std::fs::rename(candidate, &mirror)?;
         }
         Err(error) => return Err(error.into()),
     }
     run_git(&[
+        OsStr::new("-c"),
+        OsStr::new("checkout.workers=0"),
         OsStr::new("clone"),
         OsStr::new("--no-hardlinks"),
         OsStr::new("--"),
@@ -99,6 +103,35 @@ pub(super) async fn clone_with_mirror(url: &str, target: &Path, root: &Path) -> 
         OsStr::new("set-url"),
         OsStr::new("origin"),
         OsStr::new(url),
+    ])
+    .await
+}
+
+async fn configure_mirror(url: &str, mirror: &Path) -> anyhow::Result<()> {
+    use std::ffi::OsStr;
+    // Retain repository-format and extension metadata while narrowing fetched refs.
+    for (key, value) in [
+        ("remote.origin.url", url),
+        ("remote.origin.mirror", "false"),
+        ("remote.origin.fetch", "+refs/heads/*:refs/heads/*"),
+    ] {
+        run_git(&[
+            OsStr::new("-C"),
+            mirror.as_os_str(),
+            OsStr::new("config"),
+            OsStr::new("--replace-all"),
+            OsStr::new(key),
+            OsStr::new(value),
+        ])
+        .await?;
+    }
+    run_git(&[
+        OsStr::new("-C"),
+        mirror.as_os_str(),
+        OsStr::new("config"),
+        OsStr::new("--add"),
+        OsStr::new("remote.origin.fetch"),
+        OsStr::new("+refs/tags/*:refs/tags/*"),
     ])
     .await
 }

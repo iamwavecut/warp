@@ -4929,25 +4929,29 @@ impl TerminalView {
     ) {
         match finish_reason {
             FinishReason::Complete => {
-                if self
+                let tools_running = self
                     .ai_action_model
                     .as_ref(ctx)
                     .has_unfinished_actions_for_conversation(conversation_id)
-                    || self.has_active_long_running_command_for_conversation(conversation_id)
-                {
-                    // A response stream can finish before a local tool or shell action reaches
-                    // its terminal state. Leave the durable head untouched until that action is
-                    // terminal, so no following row can fire early.
-                    return;
-                }
+                    || self.has_active_long_running_command_for_conversation(conversation_id);
                 let Some(stream_id) = stream_id else {
                     return;
                 };
                 let completed_prompt = QueuedQueryModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.complete_prompt_in_flight(conversation_id, stream_id, ctx)
+                    model.complete_prompt_after_response(
+                        conversation_id,
+                        stream_id,
+                        tools_running,
+                        ctx,
+                    )
                 });
                 if let Err(error) = completed_prompt {
                     log::error!("failed to complete queued prompt dispatch: {error:#}");
+                    return;
+                }
+                // A completed provider response acknowledges steering even while its tools
+                // run. Ordinary queued prompts still wait for the full turn to finish.
+                if tools_running {
                     return;
                 }
                 let input_is_empty = self.input.as_ref(ctx).buffer_text(ctx).is_empty();

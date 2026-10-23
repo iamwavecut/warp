@@ -6188,7 +6188,8 @@ impl Input {
 
     pub fn try_execute_command(&mut self, command: &str, ctx: &mut ViewContext<Self>) -> bool {
         let shared_session_status = self.model.lock().shared_session_status().clone();
-        if shared_session_status.is_sharer_or_viewer() {
+        if shared_session_status.is_sharer_or_viewer() && !shared_session_status.is_share_pending()
+        {
             // If this is a viewer who isn't also an executor, they should not
             // be allowed to execute commands.
             if shared_session_status.is_reader() {
@@ -12804,7 +12805,19 @@ impl Input {
             return false;
         };
 
-        if !QueuedQueryModel::as_ref(ctx).is_queue_next_prompt_enabled(conversation_id) {
+        let mode = *AISettings::as_ref(ctx).default_prompt_submission_mode;
+        let queue_override =
+            QueuedQueryModel::as_ref(ctx).is_queue_next_prompt_enabled(conversation_id);
+        let steer = !is_command
+            && !queue_override
+            && mode == crate::settings::ai::PromptSubmissionMode::Steer
+            && BlocklistAIHistoryModel::as_ref(ctx)
+                .conversation(&conversation_id)
+                .is_some_and(|c| c.driver().owns_turn_lifecycle());
+        if !queue_override
+            && (is_command || mode != crate::settings::ai::PromptSubmissionMode::Queue)
+            && !steer
+        {
             return false;
         }
 
@@ -12821,6 +12834,9 @@ impl Input {
         }
 
         let prompt = self.editor.as_ref(ctx).buffer_text(ctx);
+        if steer && prompt.trim_start().starts_with('/') {
+            return false;
+        }
         if prompt.is_empty() {
             return false;
         }
@@ -12866,7 +12882,11 @@ impl Input {
         } else {
             QueuedQuery::new_with_attachments(
                 prompt,
-                QueuedQueryOrigin::AutoQueueToggle,
+                if steer {
+                    QueuedQueryOrigin::LocalSteering
+                } else {
+                    QueuedQueryOrigin::AutoQueueToggle
+                },
                 attachments,
             )
         };
