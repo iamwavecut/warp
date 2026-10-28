@@ -24,4 +24,7 @@ jobs:
     name: CI
     if: github.repository_owner == 'warpdotdev'
     uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read # Checkout sources in the local-first CI workflow.
+      pull-requests: read # Read changed PR files in the called workflow.
     secrets: inherit

@@ -45,6 +45,9 @@ jobs:
     runs-on: ubuntu-latest
     # Don't automatically run CI for draft PRs, to reduce GitHub Actions costs.
     if: github.event.pull_request.draft == false
+    permissions:
+      contents: read # Checkout sources.
+      pull-requests: read # Read changed PR files with dorny/paths-filter.
     outputs:
       affects-database-schema: ${{ github.ref == 'master' || steps.filter.outputs.affects-database-schema }}
       affects-rust-sources: ${{ github.ref == 'master' || steps.filter.outputs.affects-rust-sources }}
