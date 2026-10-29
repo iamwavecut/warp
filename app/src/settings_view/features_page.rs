@@ -855,6 +855,20 @@ const MAX_MOUSE_SCROLL_MULTIPLIER: f32 = 20.0;
 
 const TAB_KEYSTROKE_STR: &str = "Tab";
 
+fn tab_behavior_for_bindings(completions: &str, autosuggestions: &str) -> TabBehavior {
+    if completions == TAB_KEYSTROKE_STR {
+        TabBehavior::Completions
+    } else if autosuggestions == TAB_KEYSTROKE_STR {
+        TabBehavior::Autosuggestions
+    } else {
+        TabBehavior::UserDefined
+    }
+}
+
+#[cfg(test)]
+#[path = "features_page_tests.rs"]
+mod tests;
+
 /// Function to get maximum value for max grid size: 10 million for dogfood/dev builds,
 /// 1 million for release builds.
 ///
@@ -3033,13 +3047,8 @@ impl FeaturesPageView {
                 .unwrap_or_default();
 
         // Determine the current tab behavior based on the user's keybindings.
-        *self.tab_behavior = if self.completions_keystroke.to_uppercase() == TAB_KEYSTROKE_STR {
-            TabBehavior::Completions
-        } else if self.autosuggestions_keystroke.to_uppercase() == TAB_KEYSTROKE_STR {
-            TabBehavior::Autosuggestions
-        } else {
-            TabBehavior::UserDefined
-        };
+        *self.tab_behavior =
+            tab_behavior_for_bindings(&self.completions_keystroke, &self.autosuggestions_keystroke);
     }
 
     /// Sets the keybindings for opening the completions menu and inserting autosuggestions

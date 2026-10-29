@@ -305,6 +305,18 @@ impl TerminalDriver {
         })
     }
 
+    /// Stop waiting without interrupting a running user-owned shell command.
+    pub(super) fn abandon_waiting_command(&mut self, ctx: &mut ModelContext<Self>) {
+        if let Some((command, _)) = self.pending_command_start.take() {
+            self.terminal_view.update(ctx, |terminal, ctx| {
+                terminal.input().update(ctx, |input, ctx| {
+                    input.discard_pending_command_if_matches(&command, ctx);
+                });
+            });
+        }
+        self.waiting_command = None;
+    }
+
     /// Execute a command through the active session's in-band command
     /// executor, without adding a block to the user-visible blocklist.
     ///

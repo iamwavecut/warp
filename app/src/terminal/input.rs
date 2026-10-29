@@ -6096,6 +6096,16 @@ impl Input {
             return;
         }
 
+        // The final bootstrap precmd replaces the active block after Bootstrapped.
+        if !self
+            .model
+            .lock()
+            .block_list()
+            .is_bootstrapping_precmd_done()
+        {
+            return;
+        }
+
         let command = self.get_command(ctx);
         if self.can_execute_command(ctx).is_no() {
             return;
@@ -6107,6 +6117,20 @@ impl Input {
         self.editor.update(ctx, |editor, ctx| {
             editor.set_interaction_state(InteractionState::Editable, ctx);
         });
+    }
+
+    /// Discard this unstarted command without removing replacement input.
+    pub fn discard_pending_command_if_matches(
+        &mut self,
+        command: &str,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.has_pending_command && self.get_command(ctx) == command {
+            self.has_pending_command = false;
+            self.editor.update(ctx, |editor, ctx| {
+                editor.set_interaction_state(InteractionState::Editable, ctx);
+            });
+        }
     }
 
     fn should_block_cloud_mode_setup_submission(&self, app: &AppContext) -> bool {

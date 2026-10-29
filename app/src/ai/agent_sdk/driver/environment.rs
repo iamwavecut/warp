@@ -12,19 +12,28 @@ use crate::terminal::shell::ShellType;
 use ai::index::full_source_code_embedding::manager::{
     CodebaseIndexManager, CodebaseIndexManagerEvent,
 };
-use futures::{channel::oneshot, future::join_all};
+use futures::{
+    channel::oneshot,
+    future::{Either, join_all, select},
+};
 use repo_metadata::repositories::{DetectedRepositories, RepoDetectionSource};
 use warp_completer::completer::CommandExitStatus;
 use warp_core::{command::ExitCode, safe_info, safe_warn};
-use warpui::{ModelContext, ModelSpawner, SingletonEntity, r#async::FutureExt};
+use warpui::{
+    ModelContext, ModelSpawner, SingletonEntity,
+    r#async::{FutureExt, Timer},
+};
 
 use super::{AgentDriverError, terminal::TerminalDriver};
 use warp_cli::agent::Harness;
 
 const CODEBASE_INDEX_SYNC_TIMEOUT: Duration = Duration::from_secs(60);
+const ENVIRONMENT_COMMAND_TIMEOUT: Duration = Duration::from_secs(1800);
 
 #[derive(Debug, thiserror::Error)]
 pub enum PrepareEnvironmentError {
+    #[error("Local environment command timed out after {timeout_seconds}s")]
+    CommandTimedOut { timeout_seconds: u64 },
     #[error("Invalid runtime state. Check local logs for details.")]
     InvalidRuntimeState,
     #[error("Failed to clone {repo_name}")]
@@ -433,29 +442,71 @@ async fn index_repo_codebase(
         .map_err(|_| PrepareEnvironmentError::InvalidRuntimeState)
 }
 
-/// Execute a command in the context of a terminal session.
+/// Await command startup and exit under one deadline.
+async fn await_environment_command<T>(
+    operation: impl Future<Output = Result<T, PrepareEnvironmentError>>,
+    deadline: impl Future,
+) -> Result<T, PrepareEnvironmentError> {
+    match select(Box::pin(operation), Box::pin(deadline)).await {
+        Either::Left((result, _)) => result,
+        Either::Right((_, _)) => Err(PrepareEnvironmentError::CommandTimedOut {
+            timeout_seconds: ENVIRONMENT_COMMAND_TIMEOUT.as_secs(),
+        }),
+    }
+}
+
 async fn execute_command(
     command: String,
     spawner: &ModelSpawner<TerminalDriver>,
 ) -> Result<ExitCode, PrepareEnvironmentError> {
-    spawner
-        .spawn(move |terminal_driver, ctx| terminal_driver.execute_command(&command, ctx))
-        .await
-        .map_err(|_| PrepareEnvironmentError::InvalidRuntimeState)?
-        .map_err(|error| match error {
-            AgentDriverError::InvalidRuntimeState => PrepareEnvironmentError::InvalidRuntimeState,
-            source => PrepareEnvironmentError::TerminalDriver { source },
-        })?
-        .await
-        .map_err(|error| match error {
-            AgentDriverError::InvalidRuntimeState => PrepareEnvironmentError::InvalidRuntimeState,
-            source => PrepareEnvironmentError::TerminalDriver { source },
-        })?
-        .await
-        .map_err(|error| match error {
-            AgentDriverError::InvalidRuntimeState => PrepareEnvironmentError::InvalidRuntimeState,
-            source => PrepareEnvironmentError::TerminalDriver { source },
-        })
+    execute_command_with_deadline(command, spawner, Timer::after(ENVIRONMENT_COMMAND_TIMEOUT)).await
+}
+
+async fn execute_command_with_deadline(
+    command: String,
+    spawner: &ModelSpawner<TerminalDriver>,
+    deadline: impl Future,
+) -> Result<ExitCode, PrepareEnvironmentError> {
+    let (liveness, liveness_rx) = oneshot::channel::<()>();
+    let operation = async {
+        let _command_liveness = liveness_rx;
+        spawner
+            .spawn(move |terminal_driver, ctx| {
+                if liveness.is_canceled() {
+                    return Err(AgentDriverError::InvalidRuntimeState);
+                }
+                terminal_driver.execute_command(&command, ctx)
+            })
+            .await
+            .map_err(|_| PrepareEnvironmentError::InvalidRuntimeState)?
+            .map_err(|error| match error {
+                AgentDriverError::InvalidRuntimeState => {
+                    PrepareEnvironmentError::InvalidRuntimeState
+                }
+                source => PrepareEnvironmentError::TerminalDriver { source },
+            })?
+            .await
+            .map_err(|error| match error {
+                AgentDriverError::InvalidRuntimeState => {
+                    PrepareEnvironmentError::InvalidRuntimeState
+                }
+                source => PrepareEnvironmentError::TerminalDriver { source },
+            })?
+            .await
+            .map_err(|error| match error {
+                AgentDriverError::InvalidRuntimeState => {
+                    PrepareEnvironmentError::InvalidRuntimeState
+                }
+                source => PrepareEnvironmentError::TerminalDriver { source },
+            })
+    };
+    let result = await_environment_command(operation, deadline).await;
+    if matches!(result, Err(PrepareEnvironmentError::CommandTimedOut { .. })) {
+        let _ = spawner
+            .spawn(|driver, ctx| driver.abandon_waiting_command(ctx))
+            .await;
+    }
+    result
 }
 
 /// Change the current directory in the context of a terminal session (using `cd {dir}`).

@@ -33,6 +33,25 @@ fn aliases(pairs: &[(&str, &str)]) -> HashMap<SmolStr, String> {
 }
 
 #[test]
+fn warp_acp_bridge_is_not_an_interactive_cli_agent() {
+    App::test((), |mut app| async move {
+        app.update(|ctx| {
+            for command in [
+                "warp acp-bridge --launch-file launch.json",
+                "warp-dev acp-bridge --launch-file launch.json",
+                "FOO=bar '/Applications/Warp Local.app/Contents/MacOS/warp' 'acp-bridge'",
+                "warp-oss acp-bridge --launch-file launch.json",
+            ] {
+                assert_eq!(
+                    CLIAgent::detect(command, Some(EscapeChar::Backslash), None, ctx),
+                    None
+                );
+            }
+        });
+    });
+}
+
+#[test]
 fn antigravity_commands_use_local_rich_input() {
     App::test((), |mut app| async move {
         app.update(|ctx| {

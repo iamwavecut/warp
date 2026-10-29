@@ -21,6 +21,47 @@ fn command_started_event(command: &str) -> Event {
     })
 }
 
+#[test]
+fn abandoned_environment_command_cannot_execute_after_bootstrap() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal_view = add_window_with_terminal(&mut app, None);
+        let input = terminal_view.read(&app, |terminal, _| terminal.input().clone());
+        let driver =
+            app.update(|ctx| TerminalDriver::create_from_existing_view(terminal_view.clone(), ctx));
+        let command_future = driver
+            .update(&mut app, |driver, ctx| {
+                driver.execute_command("echo expired", ctx)
+            })
+            .unwrap();
+        assert!(input.read(&app, |input, _| input.has_pending_command()));
+        driver.update(&mut app, |driver, ctx| driver.abandon_waiting_command(ctx));
+        assert!(!input.read(&app, |input, _| input.has_pending_command()));
+        assert!(command_future.await.is_err());
+    });
+}
+
+#[test]
+fn abandoning_old_environment_command_preserves_a_replacement_pending_command() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal_view = add_window_with_terminal(&mut app, None);
+        let input = terminal_view.read(&app, |terminal, _| terminal.input().clone());
+        let driver =
+            app.update(|ctx| TerminalDriver::create_from_existing_view(terminal_view.clone(), ctx));
+        let _command_future = driver
+            .update(&mut app, |driver, ctx| {
+                driver.execute_command("echo expired", ctx)
+            })
+            .unwrap();
+        terminal_view.update(&mut app, |terminal, ctx| {
+            terminal.set_pending_command("echo replacement", ctx);
+        });
+        driver.update(&mut app, |driver, ctx| driver.abandon_waiting_command(ctx));
+        assert!(input.read(&app, |input, _| input.has_pending_command()));
+    });
+}
+
 fn block_completed_event(id: BlockId, exit_code: i32) -> Event {
     Event::BlockCompleted {
         block: Arc::new(SerializedBlock {

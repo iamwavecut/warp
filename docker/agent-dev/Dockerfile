@@ -48,7 +48,7 @@ RUN set -eux; \
   rm go1.26.1.linux-$ARCH.tar.gz
 
 # Install golangci-lint
-RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b /usr/local/go/bin v2.6.1 \
+RUN curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b /usr/local/go/bin v2.15.0 \
     && golangci-lint --version
 
 # Install Node
