@@ -208,14 +208,15 @@ async fn send_preflight_request(
     let mut request = client
         .post(url)
         .timeout(Duration::from_secs(10))
-        .header(HEADER_MCP_PROTOCOL_VERSION, protocol.version.as_str())
         .header(
             http::header::ACCEPT,
             [EVENT_STREAM_MIME_TYPE, JSON_MIME_TYPE].join(", "),
         )
         .json(&message);
     if protocol.discover {
-        request = request.header(HEADER_MCP_METHOD, "server/discover");
+        request = request
+            .header(HEADER_MCP_PROTOCOL_VERSION, protocol.version.as_str())
+            .header(HEADER_MCP_METHOD, "server/discover");
     }
 
     if let Some(token) = bearer_token {

@@ -13,7 +13,7 @@ use pathfinder_color::ColorU;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use warp_cli::agent::Harness;
-use warp_completer::parsers::simple::top_level_command;
+use warp_completer::parsers::simple::{all_parsed_commands, top_level_command};
 use warp_editor::content::buffer::Buffer;
 use warp_editor::content::markdown::MarkdownStyle;
 use warp_util::path::EscapeChar;
@@ -433,6 +433,22 @@ impl CLIAgent {
             .unwrap_or(Cow::Borrowed(trimmed));
 
         let resolved_first_word = Self::extract_first_command(&resolved_command, escape_char)?;
+
+        let subcommand = match escape_char {
+            Some(esc) => all_parsed_commands(&resolved_command, esc)
+                .next()
+                .and_then(|command| command.parts.get(1).map(|part| part.item.to_string())),
+            None => resolved_command
+                .split_whitespace()
+                .nth(1)
+                .map(str::to_owned),
+        };
+        if matches!(
+            (resolved_first_word.as_str(), subcommand.as_deref()),
+            ("codex", Some("login" | "logout")) | ("claude", Some("auth"))
+        ) {
+            return None;
+        }
 
         // Check if resolved command matches any known CLI agent.
         // Also matches `aifx agent run claude` as Claude for Uber employees,

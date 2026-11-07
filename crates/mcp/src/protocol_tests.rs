@@ -128,7 +128,8 @@ async fn assert_http_startup(
                 || headers.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer test-token")) {
                 return StatusCode::UNAUTHORIZED.into_response();
             }
-            let requested_version = headers.get("mcp-protocol-version").and_then(|v| v.to_str().ok());
+            let requested_version = headers.get("mcp-protocol-version").and_then(|v| v.to_str().ok())
+                .or_else(|| request["params"]["protocolVersion"].as_str());
             if matches!(protocol, FixtureProtocol::LegacyVersionError)
                 && requested_version.is_some_and(|value| value != version) {
                 return (StatusCode::BAD_REQUEST, Json(legacy_version_error(requested_version.unwrap()))).into_response();
@@ -153,6 +154,10 @@ async fn assert_http_startup(
                     }
                 }
                 "initialize" => {
+                    if matches!(protocol, FixtureProtocol::InitializeCounteroffer)
+                        && headers.contains_key("mcp-protocol-version") {
+                        return StatusCode::BAD_REQUEST.into_response();
+                    }
                     if matches!(protocol, FixtureProtocol::Discover) {
                         return StatusCode::BAD_REQUEST.into_response();
                     }
@@ -221,7 +226,10 @@ async fn assert_http_startup(
             .as_str(),
         version
     );
-    if matches!(protocol, FixtureProtocol::LegacyVersionError) {
+    if matches!(
+        protocol,
+        FixtureProtocol::LegacyVersionError | FixtureProtocol::InitializeCounteroffer
+    ) {
         let result = info
             .service
             .call_tool(rmcp::model::CallToolRequestParams::new("query_metrics"))
@@ -320,13 +328,17 @@ async fn legacy_transport_fallback_is_bounded_and_preserves_http_failures() {
         let captured = calls.clone();
         let app = Router::new().route(
             "/mcp",
-            post(move |headers: HeaderMap| {
+            post(move |headers: HeaderMap, Json(request): Json<Value>| {
                 captured.fetch_add(1, Ordering::SeqCst);
                 async move {
                     (
                         status,
                         Json(legacy_version_error(
-                            headers["mcp-protocol-version"].to_str().unwrap(),
+                            headers
+                                .get("mcp-protocol-version")
+                                .and_then(|value| value.to_str().ok())
+                                .or_else(|| request["params"]["protocolVersion"].as_str())
+                                .unwrap(),
                         )),
                     )
                 }
@@ -400,8 +412,8 @@ async fn http_startup_falls_back_and_propagates_sse_version_error_selection_with
 async fn http_startup_passes_legacy_counteroffer_to_real_sdk_connection() {
     let requests = assert_http_startup(
         FixtureProtocol::InitializeCounteroffer,
-        "2025-03-26",
-        false,
+        "2025-06-18",
+        true,
         false,
     )
     .await;
@@ -416,7 +428,7 @@ async fn http_startup_passes_legacy_counteroffer_to_real_sdk_connection() {
                 .as_str()
                 .expect("protocol version"))
             .collect::<Vec<_>>(),
-        vec!["2025-11-25", "2025-03-26"],
+        vec!["2025-11-25", "2025-06-18"],
     );
 }
 

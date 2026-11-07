@@ -33,6 +33,35 @@ fn aliases(pairs: &[(&str, &str)]) -> HashMap<SmolStr, String> {
 }
 
 #[test]
+fn cli_auth_commands_are_not_agent_sessions() {
+    App::test((), |mut app| async move {
+        app.update(|ctx| {
+            for command in [
+                "codex login",
+                "codex logout",
+                "claude auth",
+                "codex 'login'",
+                "KEY=value claude auth status",
+            ] {
+                assert_eq!(
+                    CLIAgent::detect(command, Some(EscapeChar::Backslash), None, ctx),
+                    None,
+                    "{command}"
+                );
+            }
+            assert_eq!(
+                CLIAgent::detect("codex", Some(EscapeChar::Backslash), None, ctx),
+                Some(CLIAgent::Codex)
+            );
+            assert_eq!(
+                CLIAgent::detect("claude", Some(EscapeChar::Backslash), None, ctx),
+                Some(CLIAgent::Claude)
+            );
+        });
+    });
+}
+
+#[test]
 fn warp_acp_bridge_is_not_an_interactive_cli_agent() {
     App::test((), |mut app| async move {
         app.update(|ctx| {

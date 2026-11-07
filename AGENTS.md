@@ -334,6 +334,12 @@ or unreachable from visible UI.
 
 ## Upstream Sync
 
+When upstream integration changes this fork, carry delivery through verification,
+commit, push to `fork/master`, release bundle build and installation into
+`/Applications/WarpOss.app`. Do not end at intake, a plan, or uncommitted edits.
+Stop only for a concrete blocker or a user-requested stop. A verified no-op
+does not require a rebuild, reinstall or restart.
+
 At the start of each repo work session, check whether `origin/master` has new
 commits compared with local `master` before feature work or fixes:
 
