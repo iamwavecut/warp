@@ -144,6 +144,11 @@ fn pending_command_waits_for_final_bootstrap_precmd() {
         });
         assert!(input.read(&app, |input, _| input.has_pending_command()));
         assert!(events.borrow().is_empty());
+        input.update(&mut app, |input, ctx| {
+            input.editor.update(ctx, |editor, ctx| {
+                editor.set_buffer_text("echo replacement", ctx);
+            });
+        });
 
         terminal.update(&mut app, |terminal, ctx| {
             {

@@ -84,6 +84,13 @@ impl ToolProjection {
         content: Option<&[ToolCallContent]>,
         mcp_servers: &HashMap<String, McpServerIdentity>,
     ) -> Self {
+        if let Some((tool, identity)) = split_mcp_tool_name(title, mcp_servers) {
+            return Self::Generic {
+                name: tool.to_owned(),
+                args: generic_args(raw_input),
+                server_identity: Some(identity.clone()),
+            };
+        }
         if let Some(command) = command_from_raw_input(raw_input, kind, title) {
             return Self::Shell { command };
         }
@@ -104,14 +111,10 @@ impl ToolProjection {
                 line_range: line_range_from_raw_input(raw_input),
             };
         }
-        let (name, server_identity) = match split_mcp_tool_name(title, mcp_servers) {
-            Some((tool, identity)) => (tool.to_owned(), Some(identity.clone())),
-            None => (mcp_tool_name(kind, title), None),
-        };
         Self::Generic {
-            name,
+            name: mcp_tool_name(kind, title),
             args: generic_args(raw_input),
-            server_identity,
+            server_identity: None,
         }
     }
 

@@ -1572,6 +1572,11 @@ impl CanExecuteCommand {
     }
 }
 
+enum PendingCommand {
+    InputBuffer,
+    Exact(String),
+}
+
 pub struct Input {
     model: Arc<FairMutex<TerminalModel>>,
     menu_positioning_provider: Arc<dyn MenuPositioningProvider>,
@@ -1599,7 +1604,7 @@ pub struct Input {
     debounce_ai_query_prediction_tx: Sender<()>,
     /// If true, will submit the command in the editor to the shell upon receiving the
     /// precmd message.
-    has_pending_command: bool,
+    pending_command: Option<PendingCommand>,
     last_word_insertion: LastWordInsertion,
 
     ai_controller: ModelHandle<BlocklistAIController>,
@@ -2177,7 +2182,7 @@ impl Input {
     }
 
     pub fn run_command_in_synced_terminal_input(&mut self, ctx: &mut ViewContext<Self>) {
-        self.has_pending_command = true;
+        self.pending_command = Some(PendingCommand::InputBuffer);
         self.execute_pending_command(ctx);
     }
 
@@ -3431,7 +3436,7 @@ impl Input {
             last_parsed_tokens: None,
             debounce_input_background_tx,
             debounce_ai_query_prediction_tx,
-            has_pending_command: false,
+            pending_command: None,
             last_word_insertion,
             decorations_future_handle: None,
             autosuggestions_abort_handle: None,
@@ -6092,7 +6097,7 @@ impl Input {
     }
 
     pub fn execute_pending_command(&mut self, ctx: &mut ViewContext<Self>) {
-        if !self.has_pending_command {
+        if self.pending_command.is_none() {
             return;
         }
 
@@ -6106,13 +6111,25 @@ impl Input {
             return;
         }
 
-        let command = self.get_command(ctx);
         if self.can_execute_command(ctx).is_no() {
             return;
         }
 
-        self.try_execute_command(&command, ctx);
-        self.has_pending_command = false;
+        let command = match self.pending_command.as_ref() {
+            Some(PendingCommand::Exact(command)) => {
+                let command = command.clone();
+                self.editor.update(ctx, |editor, ctx| {
+                    editor.set_buffer_text(&command, ctx);
+                });
+                command
+            }
+            Some(PendingCommand::InputBuffer) => self.get_command(ctx),
+            None => return,
+        };
+        if !self.try_execute_command(&command, ctx) {
+            return;
+        }
+        self.pending_command = None;
 
         self.editor.update(ctx, |editor, ctx| {
             editor.set_interaction_state(InteractionState::Editable, ctx);
@@ -6125,8 +6142,9 @@ impl Input {
         command: &str,
         ctx: &mut ViewContext<Self>,
     ) {
-        if self.has_pending_command && self.get_command(ctx) == command {
-            self.has_pending_command = false;
+        if matches!(&self.pending_command, Some(PendingCommand::Exact(queued)) if queued == command)
+        {
+            self.pending_command = None;
             self.editor.update(ctx, |editor, ctx| {
                 editor.set_interaction_state(InteractionState::Editable, ctx);
             });
@@ -11839,12 +11857,14 @@ impl Input {
     }
 
     pub fn has_pending_command(&self) -> bool {
-        self.has_pending_command
+        self.pending_command.is_some()
     }
 
     pub fn set_pending_command(&mut self, exec: &str, ctx: &mut ViewContext<Self>) {
-        self.has_pending_command = true;
-        self.system_insert(exec, ctx);
+        self.pending_command = Some(PendingCommand::Exact(exec.to_owned()));
+        self.editor.update(ctx, |editor, ctx| {
+            editor.set_buffer_text(exec, ctx);
+        });
     }
 
     fn should_enter_accept_completion_suggestion(&self, app: &AppContext) -> bool {

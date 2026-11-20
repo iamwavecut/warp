@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 
 type ReqwestHttpTransport = rmcp::transport::StreamableHttpClientTransport<reqwest::Client>;
 
@@ -8,7 +8,11 @@ type ReqwestHttpTransport = rmcp::transport::StreamableHttpClientTransport<reqwe
 ///
 /// Invalid header names or values are skipped.
 fn build_header_map(headers: &HashMap<String, String>) -> HeaderMap {
-    headers.try_into().unwrap_or_default()
+    let mut headers: HeaderMap = headers.try_into().unwrap_or_default();
+    headers
+        .entry(USER_AGENT)
+        .or_insert(HeaderValue::from_static("WarpOss-MCP-Client/1.0"));
+    headers
 }
 
 /// Builds a reqwest client with custom headers for MCP HTTP/SSE connections.
@@ -27,3 +31,7 @@ pub fn build_client_with_headers(
             ))
         })
 }
+
+#[cfg(test)]
+#[path = "http_client_tests.rs"]
+mod tests;

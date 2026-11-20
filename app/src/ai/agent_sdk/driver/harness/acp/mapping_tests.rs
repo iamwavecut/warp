@@ -323,7 +323,7 @@ fn mcp_tool_calls_name_their_tool_and_server_and_take_input_that_arrives_late() 
         "sessionUpdate": "tool_call",
         "toolCallId": "slack-1",
         "title": "mcp__slack__send_message_to_thread",
-        "kind": "other",
+        "kind": "execute",
         "status": "pending",
         "rawInput": {}
     })));
