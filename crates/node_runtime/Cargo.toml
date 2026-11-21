@@ -23,7 +23,17 @@ async-fs = { workspace = true }
 command.workspace = true
 flate2 = "1.0"
 tar = "0.4"
-zip = "2.1"
+# zip 9 defaults enable bzip2 -> libbz2-rs-sys (license bzip2-1.0.6), which cargo-deny rejects.
+zip = { version = "9.0.5", default-features = false, features = [
+    "aes-crypto",
+    "deflate",
+    "deflate64",
+    "lzma",
+    "ppmd",
+    "time",
+    "xz",
+    "zstd",
+] }
 
 [build-dependencies]
 anyhow.workspace = true

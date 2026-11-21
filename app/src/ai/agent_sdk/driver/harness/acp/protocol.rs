@@ -254,6 +254,7 @@ pub(super) enum SessionUpdate {
 #[serde(rename_all = "camelCase", default)]
 pub(super) struct ToolCallFields {
     pub tool_call_id: String,
+    pub name: Option<String>,
     pub title: Option<String>,
     pub kind: Option<ToolKind>,
     pub status: Option<ToolCallStatus>,

@@ -286,33 +286,118 @@ impl ShellCommandExecutor {
                     } else {
                         command.clone()
                     };
-                ctx.emit(ShellCommandExecutorEvent::ExecuteCommand {
-                    action_id: action_id.clone(),
-                    command: decorated_command,
-                });
-
                 let block_selector = BlockSelector::RequestedCommandId(action_id.clone());
                 let command = command.clone();
                 drop(model);
-
-                ActionExecution::new_async(
-                    self.action_result_future(
-                        block_selector.clone(),
-                        wait_policy_for_requested_command(*wait_until_completion),
-                        ctx,
-                    ),
-                    move |result, ctx| {
-                        // Remove the senders from the maps.
-                        if let Some(handle) = handle.upgrade(ctx) {
-                            handle.update(ctx, |me, _| {
-                                me.block_finished_senders.remove(&block_selector);
-                                me.force_refresh_senders.remove(&block_selector);
-                            });
+                #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
+                let dispatch = if let Some(config) = std::env::var_os("WARPOSS_LOCAL_HOOKS") {
+                    let session = self.active_session.as_ref(ctx);
+                    let cwd = session
+                        .current_working_directory()
+                        .map(std::path::PathBuf::from);
+                    if session.session_type(ctx) != Some(SessionType::Local) || cwd.is_none() {
+                        return ActionExecution::Sync(
+                            AIAgentActionResultType::RequestCommandOutput(
+                                RequestCommandOutputResult::CancelledBeforeExecution,
+                            ),
+                        );
+                    }
+                    Some((
+                        std::path::PathBuf::from(config),
+                        cwd.unwrap(),
+                        ctx.spawner(),
+                    ))
+                } else {
+                    None
+                };
+                #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
+                let execute_now = dispatch.is_none();
+                #[cfg(not(all(feature = "local_fs", not(target_family = "wasm"))))]
+                let execute_now = true;
+                if execute_now {
+                    ctx.emit(ShellCommandExecutorEvent::ExecuteCommand {
+                        action_id: action_id.clone(),
+                        command: decorated_command.clone(),
+                    });
+                }
+                let result = self.action_result_future(
+                    block_selector.clone(),
+                    wait_policy_for_requested_command(*wait_until_completion),
+                    ctx,
+                );
+                #[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
+                let result = {
+                    let conversation_id = input.conversation_id;
+                    let action = input.action.action.clone();
+                    let selector = block_selector.clone();
+                    async move {
+                        if let Some((config, cwd, spawner)) = dispatch {
+                            let cancel = CancelLocalHookOnDrop::default();
+                            if !local_hook_allows(
+                                &config,
+                                &cwd,
+                                conversation_id,
+                                &action_id,
+                                action,
+                                cancel.0.clone(),
+                            )
+                            .await
+                            {
+                                return ActionResult::Cancelled;
+                            }
+                            let cancellation = cancel.0.clone();
+                            let dispatched = spawner
+                                .spawn(move |executor, ctx| {
+                                    if cancellation.load(std::sync::atomic::Ordering::Acquire) {
+                                        return false;
+                                    }
+                                    let session = executor.active_session.as_ref(ctx);
+                                    let model = executor.terminal_model.lock();
+                                    if !executor.block_finished_senders.contains_key(&selector)
+                                        || session.session_type(ctx) != Some(SessionType::Local)
+                                        || session
+                                            .current_working_directory()
+                                            .map(std::path::Path::new)
+                                            != Some(cwd.as_path())
+                                        || model
+                                            .block_list()
+                                            .active_block()
+                                            .is_active_and_long_running()
+                                        || model
+                                            .block_list()
+                                            .agent_view_state()
+                                            .active_conversation_id()
+                                            .is_some_and(|id| id != conversation_id)
+                                    {
+                                        return false;
+                                    }
+                                    drop(model);
+                                    ctx.emit(ShellCommandExecutorEvent::ExecuteCommand {
+                                        action_id,
+                                        command: decorated_command,
+                                    });
+                                    true
+                                })
+                                .await;
+                            if !matches!(dispatched, Ok(true)) {
+                                return ActionResult::Cancelled;
+                            }
                         }
+                        result.await
+                    }
+                };
 
-                        action_result_for_requested_command(command, result)
-                    },
-                )
+                ActionExecution::new_async(result, move |result, ctx| {
+                    // Remove the senders from the maps.
+                    if let Some(handle) = handle.upgrade(ctx) {
+                        handle.update(ctx, |me, _| {
+                            me.block_finished_senders.remove(&block_selector);
+                            me.force_refresh_senders.remove(&block_selector);
+                        });
+                    }
+
+                    action_result_for_requested_command(command, result)
+                })
             }
             AIAgentActionType::WriteToLongRunningShellCommand {
                 block_id,
@@ -691,6 +776,9 @@ impl ShellCommandExecutor {
     }
 
     pub(super) fn cancel_execution(&mut self, id: &AIAgentActionId, _ctx: &mut ModelContext<Self>) {
+        let requested = BlockSelector::RequestedCommandId(id.clone());
+        self.block_finished_senders.remove(&requested);
+        self.force_refresh_senders.remove(&requested);
         let terminal_model = self.terminal_model.lock();
         let active_block = terminal_model.block_list().active_block();
         if !active_block.is_active_and_long_running() {
@@ -1067,6 +1155,51 @@ enum ActionResult {
     Cancelled,
     BlockNotFound,
 }
+
+#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
+#[derive(Default)]
+struct CancelLocalHookOnDrop(Arc<std::sync::atomic::AtomicBool>);
+
+#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
+impl Drop for CancelLocalHookOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
+async fn local_hook_allows(
+    config: &std::path::Path,
+    cwd: &std::path::Path,
+    conversation: crate::ai::agent::conversation::AIConversationId,
+    action_id: &AIAgentActionId,
+    action: AIAgentActionType,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+) -> bool {
+    let AIAgentActionType::RequestCommandOutput { command, .. } = action else {
+        return false;
+    };
+    match local_hooks::check_shell(
+        config,
+        cwd,
+        &conversation.to_string(),
+        &action_id.to_string(),
+        &command,
+        cancel,
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(_) => {
+            log::warn!("Could not evaluate local command hooks; command was not run");
+            false
+        }
+    }
+}
+
+#[cfg(all(feature = "local_fs", not(target_family = "wasm")))]
+#[path = "shell_command_local_hooks.rs"]
+mod local_hooks;
 
 fn append_activity(grid_contents: &mut String, activity: Option<LrcActivity>) {
     let Some(activity) = activity else {

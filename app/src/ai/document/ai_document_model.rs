@@ -1309,7 +1309,8 @@ impl AIDocumentModel {
             .collect()
     }
 
-    /// Re-insert dirty events that were taken but not successfully sent.
+    /// Re-insert dirty events that were taken but not successfully sent. A plan edited again
+    /// since the events were taken keeps its newer edit.
     pub fn set_dirty_orchestration_events(
         &mut self,
         conversation_id: AIConversationId,
@@ -1318,7 +1319,8 @@ impl AIDocumentModel {
         for event in events {
             let plan_id = event.plan_id.clone();
             self.dirty_orchestration_events
-                .insert((conversation_id, plan_id), event);
+                .entry((conversation_id, plan_id))
+                .or_insert(event);
         }
     }
 

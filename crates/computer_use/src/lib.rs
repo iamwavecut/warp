@@ -1,3 +1,5 @@
+#[cfg(any(macos, test))]
+mod click_sequence;
 #[cfg_attr(macos, path = "mac/mod.rs")]
 #[cfg_attr(linux, path = "linux/mod.rs")]
 #[cfg_attr(windows, path = "windows/mod.rs")]
@@ -33,6 +35,33 @@ pub enum Platform {
     Windows,
     LinuxX11,
     LinuxWayland,
+}
+
+/// Returns the scaling factor applied to a `width`x`height` capture so that it meets the given
+/// screenshot size constraints.
+///
+/// The scale factor is chosen to ensure that:
+/// 1. The longer edge is at most `max_long_edge_px` pixels (if specified)
+/// 2. The total number of pixels is at most `max_total_px` (if specified)
+/// 3. The scale factor is at most 1.0 (no upscaling)
+///
+pub fn screenshot_scale_factor(
+    width: u32,
+    height: u32,
+    max_long_edge_px: Option<usize>,
+    max_total_px: Option<usize>,
+) -> f64 {
+    let long_edge = width.max(height);
+    let total_pixels = f64::from(width) * f64::from(height);
+
+    let long_edge_scale = max_long_edge_px
+        .map(|max| max as f64 / long_edge as f64)
+        .unwrap_or(1.0);
+    let total_pixels_scale = max_total_px
+        .map(|max| (max as f64 / total_pixels).sqrt())
+        .unwrap_or(1.0);
+
+    long_edge_scale.min(total_pixels_scale).min(1.0)
 }
 
 pub fn is_supported_on_current_platform() -> bool {
@@ -324,6 +353,11 @@ pub struct RecordingHandle {
 }
 
 impl RecordingHandle {
+    #[cfg(all(feature = "test-util", not(linux)))]
+    pub fn new_test(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+
     /// The applied capture width in pixels.
     pub fn width(&self) -> u32 {
         self.width
@@ -502,7 +536,7 @@ pub struct Options {
 }
 
 /// The buttons of a mouse.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub enum MouseButton {
     Left,
     Right,

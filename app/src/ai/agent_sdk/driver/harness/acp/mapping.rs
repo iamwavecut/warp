@@ -80,11 +80,15 @@ impl ToolProjection {
     fn for_call(
         kind: Option<ToolKind>,
         title: &str,
+        name: Option<&str>,
         raw_input: Option<&Value>,
         content: Option<&[ToolCallContent]>,
         mcp_servers: &HashMap<String, McpServerIdentity>,
     ) -> Self {
-        if let Some((tool, identity)) = split_mcp_tool_name(title, mcp_servers) {
+        let mcp = name
+            .and_then(|name| split_mcp_tool_name(name, mcp_servers))
+            .or_else(|| split_mcp_tool_name(title, mcp_servers));
+        if let Some((tool, identity)) = mcp {
             return Self::Generic {
                 name: tool.to_owned(),
                 args: generic_args(raw_input),
@@ -492,6 +496,7 @@ impl AcpTurnMapper {
         let projection = ToolProjection::for_call(
             call.kind,
             &title,
+            call.name.as_deref(),
             call.raw_input.as_ref(),
             call.content.as_deref(),
             &self.mcp_servers,
@@ -876,7 +881,10 @@ fn split_mcp_tool_name<'a>(
     title: &'a str,
     servers: &'a HashMap<String, McpServerIdentity>,
 ) -> Option<(&'a str, &'a McpServerIdentity)> {
-    let qualified = title.strip_prefix("mcp__")?;
+    let (qualified, separator) = title
+        .strip_prefix("mcp__")
+        .map(|name| (name, "__"))
+        .or_else(|| title.strip_prefix("mcp.").map(|name| (name, ".")))?;
     servers
         .iter()
         .filter_map(|(name, identity)| {
@@ -890,7 +898,9 @@ fn split_mcp_tool_name<'a>(
                     }
                 })
                 .collect();
-            let tool = qualified.strip_prefix(&normalized)?.strip_prefix("__")?;
+            let tool = qualified
+                .strip_prefix(&normalized)?
+                .strip_prefix(separator)?;
             (!tool.is_empty()).then_some((tool, identity))
         })
         .min_by_key(|(tool, _)| tool.len())

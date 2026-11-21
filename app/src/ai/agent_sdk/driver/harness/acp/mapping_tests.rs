@@ -322,7 +322,8 @@ fn mcp_tool_calls_name_their_tool_and_server_and_take_input_that_arrives_late() 
     let announced = mapper.map_update(update(json!({
         "sessionUpdate": "tool_call",
         "toolCallId": "slack-1",
-        "title": "mcp__slack__send_message_to_thread",
+        "title": "Send message to thread",
+        "name": "mcp__slack__send_message_to_thread",
         "kind": "execute",
         "status": "pending",
         "rawInput": {}
@@ -436,6 +437,10 @@ fn mcp_tool_names_match_servers_by_their_normalized_names() {
 
     assert_eq!(
         announce("a", "mcp__warp_factory__send_task"),
+        ("send_task".to_owned(), Some(factory.clone()))
+    );
+    assert_eq!(
+        announce("dot", "mcp.warp_factory.send_task"),
         ("send_task".to_owned(), Some(factory))
     );
     assert_eq!(

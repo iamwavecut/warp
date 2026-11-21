@@ -3,6 +3,21 @@ use clap::Parser;
 
 use crate::agent::{AgentCommand, Harness};
 
+#[cfg(not(target_family = "wasm"))]
+#[test]
+fn computer_use_worker_accepts_local_recording_directory() {
+    let args = Args::try_parse_from(["warp", "computer-use-mcp", "--recordings-dir", "recordings"])
+        .unwrap();
+    let Some(Command::Worker(WorkerCommand::ComputerUseMcp(args))) = args.command() else {
+        panic!("expected computer-use MCP worker");
+    };
+    assert_eq!(
+        args.recordings_dir.as_deref(),
+        Some(std::path::Path::new("recordings"))
+    );
+    assert!(Args::try_parse_from(["warp", "computer-use-mcp", "--run-id", "remote"]).is_err());
+}
+
 #[test]
 fn agent_run_accepts_model() {
     let args = Args::try_parse_from([

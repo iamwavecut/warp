@@ -15,6 +15,7 @@ pub mod skill;
 
 pub mod agent;
 pub mod completions;
+pub mod computer_use_mcp;
 pub mod config_file;
 pub mod json_filter;
 pub mod local_control;
@@ -245,6 +246,11 @@ pub enum WorkerCommand {
     #[cfg(not(target_family = "wasm"))]
     #[clap(hide = true)]
     RemoteServerDaemon(RemoteServerIdentityArgs),
+
+    /// Serve computer-use tools to an external agent harness over MCP on stdin/stdout.
+    #[cfg(not(target_family = "wasm"))]
+    #[clap(hide = true)]
+    ComputerUseMcp(computer_use_mcp::ComputerUseMcpArgs),
 
     /// Run a headless ripgrep search worker.
     #[cfg(not(target_family = "wasm"))]

@@ -573,6 +573,39 @@ pub fn run() -> Result<()> {
             warp_util::windows::attach_to_parent_console();
         }
         match command {
+            #[cfg(not(target_family = "wasm"))]
+            warp_cli::Command::Worker(warp_cli::WorkerCommand::ComputerUseMcp(args)) => {
+                use computer_use_mcp::{
+                    ComputerUseMcpConfig, ImageConstraints, KeyDialect, RecordingDestination,
+                };
+                use warp_cli::computer_use_mcp::ComputerUseModelFamily;
+
+                let (defaults, key_dialect) = match args.model_family {
+                    ComputerUseModelFamily::Anthropic => {
+                        (ImageConstraints::ANTHROPIC, KeyDialect::Anthropic)
+                    }
+                    ComputerUseModelFamily::OpenAi => {
+                        (ImageConstraints::OPENAI, KeyDialect::OpenAi)
+                    }
+                };
+                return computer_use_mcp::run_stdio(ComputerUseMcpConfig {
+                    image_constraints: ImageConstraints {
+                        max_long_edge_px: args
+                            .max_long_edge_px
+                            .unwrap_or(defaults.max_long_edge_px),
+                        max_total_px: args.max_total_px.unwrap_or(defaults.max_total_px),
+                    },
+                    key_dialect,
+                    settle_delay: std::time::Duration::from_millis(args.settle_ms),
+                    recording: if args.no_recording {
+                        None
+                    } else {
+                        args.recordings_dir
+                            .clone()
+                            .map(RecordingDestination::Directory)
+                    },
+                });
+            }
             warp_cli::Command::Worker(warp_cli::WorkerCommand::AcpBridge { launch_file }) => {
                 if let Err(error) = ai::agent_sdk::driver::harness::acp::run_bridge(launch_file) {
                     eprintln!("ACP bridge failed: {error:#}");

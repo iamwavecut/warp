@@ -278,6 +278,7 @@ app-installation-detection.workspace = true
 async-io.workspace = true
 axum.workspace = true
 comfy-table = "7.1.4"
+computer_use_mcp.workspace = true
 diesel = { workspace = true, features = ["sqlite", "chrono"] }
 diesel_migrations = { version = "2.2.0", features = ["sqlite"] }
 git2 = { version = "0.20.4", default-features = false, features = [
