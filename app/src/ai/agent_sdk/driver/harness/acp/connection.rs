@@ -37,13 +37,23 @@ const INTERNAL_ERROR: i64 = -32603;
 pub(super) struct RpcError {
     pub code: i64,
     pub message: String,
+    data: Option<Value>,
 }
 
 impl RpcError {
+    /// A prompt rejection does not close the session unless the agent reports it missing.
+    pub(super) fn allows_follow_up(&self) -> bool {
+        self.code != -32002
+            && !(self.code == 1001
+                && self.data.as_ref().and_then(|data| data.get("restartable"))
+                    == Some(&Value::Bool(false)))
+    }
+
     pub(super) fn method_not_found(method: &str) -> Self {
         Self {
             code: METHOD_NOT_FOUND,
             message: format!("Method {method} not supported"),
+            data: None,
         }
     }
 
@@ -51,6 +61,7 @@ impl RpcError {
         Self {
             code: INTERNAL_ERROR,
             message: error.to_string(),
+            data: None,
         }
     }
 }

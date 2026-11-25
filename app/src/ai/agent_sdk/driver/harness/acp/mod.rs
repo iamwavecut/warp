@@ -636,7 +636,11 @@ impl TurnDriver {
 
         log::info!("ACP turn finished; accepting follow-ups until the driver ends the run");
         loop {
-            if turn_result.is_err() {
+            if turn_result.as_ref().is_err_and(|error| {
+                !error
+                    .downcast_ref::<RpcError>()
+                    .is_some_and(RpcError::allows_follow_up)
+            }) {
                 break;
             }
             self.queued.collect_ready(&self.follow_ups);

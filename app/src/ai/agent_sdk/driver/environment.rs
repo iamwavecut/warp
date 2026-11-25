@@ -268,7 +268,15 @@ pub(super) async fn clone_repo(
             full: ("Cloning repository via terminal: {repo_name}")
         );
 
-        let exit_code = execute_command(command, spawner).await?;
+        let exit_code = execute_command(command.clone(), spawner).await?;
+        // Git normally removes a failed clone. If a directory remains, leave it alone.
+        let exit_code = if exit_code != 0.into()
+            && !terminal_directory_exists(&repo_dir.to_string_lossy(), spawner).await?
+        {
+            execute_command(command, spawner).await?
+        } else {
+            exit_code
+        };
         if exit_code != 0.into() {
             return Err(PrepareEnvironmentError::CloneRepo {
                 repo_name: repo_name.clone(),

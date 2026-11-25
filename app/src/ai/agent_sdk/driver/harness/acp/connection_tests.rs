@@ -510,6 +510,15 @@ fn agent_eof_fails_pending_requests_and_closes_the_notification_stream() {
 }
 
 #[test]
+fn prompt_rejection_can_retry_except_when_session_is_missing() {
+    let rejected = RpcError::internal("turn rejected");
+    assert!(rejected.allows_follow_up());
+    let missing: RpcError =
+        serde_json::from_value(json!({"code": -32002, "message": "Resource not found"})).unwrap();
+    assert!(!missing.allows_follow_up());
+}
+
+#[test]
 fn requests_after_close_fail_immediately() {
     let (connection, _notifications, _agent) = connect(rejecting_handler());
     block_on(async {
