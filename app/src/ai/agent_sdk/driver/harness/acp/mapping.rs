@@ -272,6 +272,7 @@ struct ToolCallState {
     title: String,
     projection: ToolProjection,
     output: String,
+    mcp_failed: bool,
     has_result: bool,
 }
 
@@ -506,13 +507,19 @@ impl AcpTurnMapper {
             tool_call_id: action_id.clone(),
             tool: Some(projection.tool(&title)),
         }));
+        let mcp_error = matches!(projection, ToolProjection::Generic { .. })
+            .then(|| mcp_error_text(call.raw_output.as_ref()))
+            .flatten();
         let state = ToolCallState {
             action_id: action_id.clone(),
             message_id: message.id.clone(),
             kind: call.kind,
             title,
             projection,
-            output: tool_output_text(call.content.as_deref(), call.raw_output.as_ref()),
+            mcp_failed: mcp_error.is_some(),
+            output: mcp_error.unwrap_or_else(|| {
+                tool_output_text(call.content.as_deref(), call.raw_output.as_ref())
+            }),
             has_result: false,
         };
         self.tool_calls.insert(call.tool_call_id.clone(), state);
@@ -581,9 +588,17 @@ impl AcpTurnMapper {
             }
             ToolProjection::ReadFiles { .. } => {}
         }
-        let output = tool_output_text(call.content.as_deref(), call.raw_output.as_ref());
-        if !output.is_empty() {
-            state.output = output;
+        if let Some(error) = matches!(state.projection, ToolProjection::Generic { .. })
+            .then(|| mcp_error_text(call.raw_output.as_ref()))
+            .flatten()
+        {
+            state.mcp_failed = true;
+            state.output = error;
+        } else if !state.mcp_failed {
+            let output = tool_output_text(call.content.as_deref(), call.raw_output.as_ref());
+            if !output.is_empty() {
+                state.output = output;
+            }
         }
         let mut events = Vec::new();
         if input_changed {
@@ -689,6 +704,7 @@ impl AcpTurnMapper {
             return None;
         }
         state.has_result = true;
+        let failed = failed || state.mcp_failed;
         let action_id = state.action_id.clone();
         let output = if state.output.is_empty() && failed {
             format!("{} failed", state.title)
@@ -924,6 +940,31 @@ fn mcp_tool_name(kind: Option<ToolKind>, title: &str) -> String {
     } else {
         format!("{kind}: {title}")
     }
+}
+
+fn mcp_error_text(raw_output: Option<&Value>) -> Option<String> {
+    let output = raw_output?;
+    let result = output
+        .get("result")
+        .filter(|value| value.is_object())
+        .unwrap_or(output);
+    if result.get("isError").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let text = result
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(if text.is_empty() {
+        "MCP tool reported an error".to_owned()
+    } else {
+        text
+    })
 }
 
 fn tool_output_text(content: Option<&[ToolCallContent]>, raw_output: Option<&Value>) -> String {

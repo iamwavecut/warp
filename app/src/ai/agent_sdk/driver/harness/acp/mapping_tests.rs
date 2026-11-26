@@ -608,6 +608,34 @@ fn a_new_file_edit_projects_to_new_files_and_a_failure_to_an_error() {
 }
 
 #[test]
+fn completed_mcp_call_with_error_envelope_is_not_reported_as_success() {
+    let mut mapper = mapper();
+    mapper.map_update(update(json!({
+        "sessionUpdate": "tool_call",
+        "toolCallId": "local-mcp",
+        "title": "mcp.local.read",
+        "kind": "other",
+        "status": "pending"
+    })));
+    let events = mapper.map_update(update(json!({
+        "sessionUpdate": "tool_call_update",
+        "toolCallId": "local-mcp",
+        "status": "completed",
+        "rawOutput": {"result": {"isError": true, "content": [
+            {"type": "text", "text": "Local file was not found"}
+        ]}}
+    })));
+    let (_, ToolResult::CallMcpTool(result)) = reported_result(events.last().unwrap()) else {
+        panic!("expected MCP result");
+    };
+    assert!(matches!(
+        result.result,
+        Some(warp_multi_agent_api::call_mcp_tool_result::Result::Error(error))
+            if error.message == "Local file was not found"
+    ));
+}
+
+#[test]
 fn an_edit_whose_diff_arrives_late_is_reannounced_as_a_file_edit() {
     let mut mapper = mapper();
     let announced = mapper.map_update(update(json!({
